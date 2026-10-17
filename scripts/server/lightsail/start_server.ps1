@@ -1,9 +1,9 @@
 param(
-    [switch]$SkipMutex
+    [switch]$SkipMutex,
+    [string]$Root = "C:\OtherGodsServer"
 )
 
 $ErrorActionPreference = "Stop"
-$Root = "C:\OtherGodsServer"
 $PreferredExe = Join-Path $Root "OtherGodsServer.exe"
 $LegacyExe = Join-Path $Root "ClaudeOtherGodsServer.exe"
 $PreferredConsoleExe = Join-Path $Root "OtherGodsServer_console.exe"
@@ -63,11 +63,18 @@ function Get-ServerProcess {
 
 function Test-LobbyListener {
     $udpReady = @(Get-NetUDPEndpoint -LocalPort $LobbyPort -ErrorAction SilentlyContinue).Count -gt 0
-    if (-not [string]::IsNullOrWhiteSpace($env:OTHERGODS_PUBLIC_WEBSOCKET_URL)) {
-        $webSocketReady = @(Get-NetTCPConnection -LocalPort $WebSocketPort -State Listen -ErrorAction SilentlyContinue).Count -gt 0
-        return $udpReady -and $webSocketReady
-    }
-    return $udpReady
+    # The launcher always passes ws_port, even without a public URL or proxy.
+    # Never accept an older UDP-only process as a healthy lobby.
+    $webSocketReady = @(Get-NetTCPConnection -LocalPort $WebSocketPort -State Listen -ErrorAction SilentlyContinue |
+        Where-Object { $_.LocalAddress -in @('127.0.0.1', '0.0.0.0') }).Count -gt 0
+    return $udpReady -and $webSocketReady
+}
+
+function Write-ListenerStatus {
+    $udpListeners = @(Get-NetUDPEndpoint -LocalPort $LobbyPort -ErrorAction SilentlyContinue)
+    $webSocketListeners = @(Get-NetTCPConnection -LocalPort $WebSocketPort -State Listen -ErrorAction SilentlyContinue)
+    $webSocketAddresses = ($webSocketListeners | ForEach-Object { $_.LocalAddress }) -join ', '
+    Write-Log "Startup: listener status: UDP ${LobbyPort}=$($udpListeners.Count); WebSocket TCP ${WebSocketPort}=$($webSocketListeners.Count) addresses=[$webSocketAddresses] (requires IPv4 loopback access)."
 }
 
 function Remove-OldLogs {
@@ -144,12 +151,13 @@ try {
     }
 
     if (Test-LobbyListener) {
-        Write-Log "Startup: lobby listener already healthy on UDP $LobbyPort."
+        Write-Log "Startup: lobby listeners already healthy on UDP $LobbyPort and WebSocket TCP $WebSocketPort."
         return
     }
 
+    Write-ListenerStatus
     if (@(Get-ServerProcess).Count -gt 0) {
-        Write-Log "Startup: process exists but lobby listener on UDP $LobbyPort is down; restarting."
+        Write-Log "Startup: process exists but required lobby listeners are missing; restarting with ws_port=$WebSocketPort."
         Stop-StaleServerProcess
     }
 
@@ -207,13 +215,14 @@ try {
     }
 
     if ($listenerReady) {
-        Write-Log "Startup: lobby listener recovered on UDP $LobbyPort."
+        Write-Log "Startup: lobby listeners recovered on UDP $LobbyPort and WebSocket TCP $WebSocketPort."
         return
     }
 
-    if (-not $serverProcess.HasExited) {
-        Write-Log "Startup: process is running but lobby listener on UDP $LobbyPort did not appear within 10s."
-    }
+    Write-ListenerStatus
+    $startupFailure = "Startup: required lobby listeners on UDP $LobbyPort and WebSocket TCP $WebSocketPort did not become ready within 10s. Check $godotLogPath and $tracePath."
+    Write-Log $startupFailure
+    throw $startupFailure
 } finally {
     if ($acquiredMutex -and $null -ne $mutex) {
         $mutex.ReleaseMutex() | Out-Null

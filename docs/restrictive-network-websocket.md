@@ -44,8 +44,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/ci/server_runtim
 ```
 
 The test covers the old updater's archive extraction, first-install defaults,
-configuration preservation on a second update, and a non-mutating proxy setup
-preview. It does not install a real Windows service or request certificates.
+configuration preservation on a second update, a non-mutating proxy setup
+preview, and launcher recovery of a UDP-only lobby using mocked processes and
+listeners. It does not install a real Windows service or request certificates.
 Pass `-CaddyExe <path-to-caddy.exe>` to also check real Caddy validation,
 idempotent service setup, and recovery of a stopped proxy using mocked Windows
 firewall/service commands.
@@ -69,8 +70,12 @@ firewall/service commands.
    [service documentation](https://caddyserver.com/docs/running).
 6. Deploy the updated game server and restart it through start_server.ps1.
    It reads network.json and propagates the public URL into match assignments.
-   Its health check requires both the UDP and WebSocket lobby listeners when
-   network.json enables the public endpoint.
+   Its health check always requires both the UDP and WebSocket lobby listeners,
+   including when the public endpoint environment variable is absent. The TCP
+   listener must accept IPv4 loopback connections for Caddy. A UDP-only process
+   is restarted with the configured ws_port; failed recovery throws an error
+   so the updater cannot mark the release successfully restarted. Startup logs
+   identify both ports and include listener counts when recovery is needed.
 
 The default match pool has 64 ports, 12345-12408. If changing MatchPort or
 LobbyWebSocketPort, regenerate the proxy and network.json together. Generation

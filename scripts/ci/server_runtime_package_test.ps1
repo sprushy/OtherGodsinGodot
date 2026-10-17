@@ -16,6 +16,100 @@ function Assert-Condition([bool]$Condition, [string]$Message) {
     }
 }
 
+function Test-LobbyStartup {
+    param(
+        [string]$Name,
+        [bool]$InitiallyHealthy = $false,
+        [bool]$RecoverWebSocket = $true,
+        [bool]$WithConfig = $false,
+        [int]$Port = 24443,
+        [string]$InitialAddress = '127.0.0.1',
+        [bool]$InitiallyRunning = $true
+    )
+    $startupRoot = Join-Path $testRoot $Name
+    $null = New-Item -ItemType Directory -Path $startupRoot -Force
+    Copy-Item -LiteralPath (Join-Path $runtimeSource 'start_server.ps1') -Destination $startupRoot
+    Set-Content -LiteralPath (Join-Path $startupRoot 'OtherGodsServer.exe') -Value 'must not execute'
+    if ($WithConfig) {
+        @{
+            public_websocket_url = 'wss://startup.example.com'
+            lobby_websocket_port = $Port
+            match_port = 12345
+        } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $startupRoot 'network.json')
+    }
+    $startupState = @{
+        Running = $InitiallyRunning; WebSocket = $InitiallyHealthy; Address = $InitialAddress
+        Starts = 0; Stops = 0
+    }
+    # Exercise the real launcher, replacing every process, port and wait call.
+    # The invalid fixture executable must never run, and no real server stops.
+    function Get-NetUDPEndpoint {
+        [CmdletBinding()] param($LocalPort)
+        if ($startupState.Running) { [pscustomobject]@{ LocalPort = $LocalPort } }
+    }
+    function Get-NetTCPConnection {
+        [CmdletBinding()] param($LocalPort, $State)
+        Assert-Condition ($LocalPort -eq $Port -and $State -eq 'Listen') 'Health must check the configured WebSocket listener.'
+        if ($startupState.Running -and $startupState.WebSocket) {
+            [pscustomobject]@{ LocalPort = $LocalPort; LocalAddress = $startupState.Address }
+        }
+    }
+    function Get-Process {
+        [CmdletBinding()] param($Name)
+        if ($startupState.Running) { [pscustomobject]@{ Id = 424242; ProcessName = 'OtherGodsServer' } }
+    }
+    function Stop-Process {
+        [CmdletBinding()] param($Id, [switch]$Force)
+        Assert-Condition ($Id -eq 424242) 'Only the mocked server process may be stopped.'
+        $startupState.Stops += 1
+        $startupState.Running = $false
+    }
+    function Start-Sleep { param($Seconds) }
+    function Start-Process {
+        [CmdletBinding()]
+        param($FilePath, $ArgumentList, $WorkingDirectory, $WindowStyle, [switch]$PassThru)
+        Assert-Condition ($WorkingDirectory -eq $startupRoot -and $WindowStyle -eq 'Hidden') 'Startup must use the selected install directory and hide its process.'
+        Assert-Condition ($ArgumentList -contains "ws_port=$Port") 'Startup must explicitly enable the configured WebSocket port.'
+        if ($WithConfig) {
+            Assert-Condition ($env:OTHERGODS_PUBLIC_WEBSOCKET_URL -eq 'wss://startup.example.com') 'Startup must pass the configured public endpoint to Godot.'
+        }
+        $startupState.Starts += 1
+        $startupState.Running = $true
+        $startupState.WebSocket = $RecoverWebSocket
+        $startupState.Address = '127.0.0.1'
+        [pscustomobject]@{ Id = 424242; HasExited = $false }
+    }
+    $savedPublicUrl = $env:OTHERGODS_PUBLIC_WEBSOCKET_URL
+    try {
+        $env:OTHERGODS_PUBLIC_WEBSOCKET_URL = $null
+        $startupError = $null
+        try {
+            & (Join-Path $startupRoot 'start_server.ps1') -Root $startupRoot -SkipMutex
+        } catch {
+            $startupError = $_
+        }
+        $alreadyHealthy = $InitiallyRunning -and $InitiallyHealthy -and $InitialAddress -in @('127.0.0.1', '0.0.0.0')
+        if ($alreadyHealthy) {
+            Assert-Condition ($null -eq $startupError -and $startupState.Starts -eq 0 -and $startupState.Stops -eq 0) 'A healthy UDP/WebSocket lobby must not restart.'
+        } else {
+            Assert-Condition ($startupState.Starts -eq 1 -and $startupState.Stops -eq [int]$InitiallyRunning) 'An unhealthy or stopped lobby must launch with WebSockets even without a public URL environment variable.'
+            if ($RecoverWebSocket) {
+                Assert-Condition ($null -eq $startupError) "WebSocket recovery failed: $startupError"
+            } else {
+                Assert-Condition ($null -ne $startupError -and $startupError.ToString().Contains('required lobby listeners')) 'A missing WebSocket listener must fail startup so the updater cannot report success.'
+            }
+        }
+        $startupLog = Get-Content -LiteralPath (Join-Path $startupRoot 'updater.log') -Raw
+        if ($alreadyHealthy -or $RecoverWebSocket) {
+            Assert-Condition ($startupLog.Contains("WebSocket TCP $Port")) 'Healthy and recovery logs must identify the WebSocket port.'
+        } else {
+            Assert-Condition (-not $startupLog.Contains('listeners recovered')) 'Startup must not claim recovery while WebSockets are down.'
+        }
+    } finally {
+        $env:OTHERGODS_PUBLIC_WEBSOCKET_URL = $savedPublicUrl
+    }
+}
+
 function Test-ProxyServiceSetup([string]$ServerRoot, [string]$CaddySource) {
     $proxyState = @{ FirewallCreates = 0; ServiceCreates = 0; ServiceStarts = 0; AutomaticUpdates = 0; BinaryPath = ''; Running = $false }
     # Shadow the Windows machine-level cmdlets. Caddy only validates the
@@ -123,6 +217,14 @@ try {
     if (-not [string]::IsNullOrWhiteSpace($CaddyExe)) {
         Test-ProxyServiceSetup -ServerRoot (Join-Path $testRoot 'proxy-service') -CaddySource $CaddyExe
     }
+
+    Test-LobbyStartup -Name 'startup-no-public-url'
+    Test-LobbyStartup -Name 'startup-cold-start' -InitiallyRunning $false
+    Test-LobbyStartup -Name 'startup-custom-port' -WithConfig $true -Port 24444
+    Test-LobbyStartup -Name 'startup-already-healthy' -InitiallyHealthy $true
+    Test-LobbyStartup -Name 'startup-wildcard-listener' -InitiallyHealthy $true -InitialAddress '0.0.0.0'
+    Test-LobbyStartup -Name 'startup-wrong-interface' -InitiallyHealthy $true -InitialAddress '192.0.2.1'
+    Test-LobbyStartup -Name 'startup-websocket-failed' -RecoverWebSocket $false
 
     Set-Content -LiteralPath $projectFixture -Value 'config/public_websocket_url=""'
     $udpReleaseRoot = Join-Path $testRoot 'udp-release'
