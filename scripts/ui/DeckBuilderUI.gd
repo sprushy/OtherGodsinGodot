@@ -25,6 +25,7 @@ const CARD_H    := 192
 const MIN_REGULAR_CARDS := 40
 const DEFAULT_COLLECTION_ROWS := 3
 const COLLECTION_GAP  := 8.0
+const SAVED_DECK_COVER_MARGIN := 12
 const PAGE_REPEAT_INTERVAL_MS := 90
 const COLLECTION_MODE_CARDS := "cards"
 const COLLECTION_MODE_SAVED_DECKS := "saved_decks"
@@ -75,6 +76,8 @@ var _last_page_turn_ms: int = -PAGE_REPEAT_INTERVAL_MS
 static var _art_cache: Dictionary = {}
 var _collection_mode: String = COLLECTION_MODE_CARDS
 var _saved_decks_cache: Array[Dictionary] = []
+var _grid_refresh_queued: bool = false
+var _collection_layout_refresh_queued: bool = false
 
 # ── major UI refs ──────────────────────────────────────────────────
 var _grid:             HFlowContainer
@@ -231,9 +234,8 @@ func _ready() -> void:
 	_mark_current_deck_saved()
 
 func configure_profile_store(profile_store, profile_id: String, player_name: String = "") -> bool:
-	# Change-detection gate: _refresh_open_deck_builder_saved_decks() runs this
-	# on every account_deck_list response. Returning false means nothing changed
-	# and the caller can skip its own reload pass.
+	# Account-deck responses repeatedly configure the open builder. Reload only
+	# when the profile changes, and report whether an update was applied.
 	var clean_id := profile_id.strip_edges()
 	var clean_name := player_name.strip_edges()
 	if clean_name.is_empty():
@@ -274,6 +276,7 @@ func configure_account_decks(decks: Array, use_remote: bool = false, preferred_d
 	if _account_decks_configured and _remote_account_decks_key == remote_key \
 			and _use_remote_account_decks == use_remote and _remote_preferred_deck_id == clean_preferred:
 		return false
+	var reset_collection_mode := not _account_decks_configured or _use_remote_account_decks != use_remote
 	_account_decks_configured = true
 	_remote_account_decks_key = remote_key
 	_remote_account_decks_cache.clear()
@@ -294,9 +297,9 @@ func configure_account_decks(decks: Array, use_remote: bool = false, preferred_d
 	_remote_preferred_deck_id = clean_preferred
 	if is_inside_tree():
 		_load_profile_decks()
-		_apply_default_collection_mode()
-		_refresh_collection_grid_and_layout()
-		_refresh_profile_labels()
+		if reset_collection_mode:
+			_apply_default_collection_mode()
+			_refresh_collection_grid_and_layout()
 	return true
 
 func configure_friends(friend_usernames: PackedStringArray) -> void:
@@ -1018,9 +1021,22 @@ func _build_send_friend_dialog() -> void:
 
 # ── collection grid ────────────────────────────────────────────────
 func _refresh_grid() -> void:
+	# Account updates and layout changes can request several refreshes in one
+	# frame. Build only the final state once those changes have been applied.
+	if _grid_refresh_queued:
+		return
+	_grid_refresh_queued = true
+	call_deferred("_rebuild_grid")
+
+func _rebuild_grid() -> void:
+	# Settle the tile dimensions before building; any layout-triggered rebuild
+	# request is already covered by this pending refresh.
+	_update_collection_layout()
+	_grid_refresh_queued = false
 	_count_badges.clear()
 	_collection_card_roots.clear()
 	for child in _grid.get_children():
+		_grid.remove_child(child)
 		child.queue_free()
 
 	var total_items := _current_grid_total()
@@ -3904,7 +3920,7 @@ func _make_saved_deck_cover(saved_deck: Dictionary) -> Control:
 	var saved_deck_name := str(saved_deck.get("name", "Deck")).strip_edges()
 	if saved_deck_name.is_empty():
 		saved_deck_name = "Deck"
-	var glow_margin := 12
+	var glow_margin := SAVED_DECK_COVER_MARGIN
 	var wrapper := MarginContainer.new()
 	wrapper.add_theme_constant_override("margin_left", glow_margin)
 	wrapper.add_theme_constant_override("margin_top", glow_margin)
@@ -4073,7 +4089,7 @@ func _make_saved_deck_cover(saved_deck: Dictionary) -> Control:
 	return wrapper
 
 func _make_new_deck_cover() -> Control:
-	var glow_margin := 12
+	var glow_margin := SAVED_DECK_COVER_MARGIN
 	var wrapper := MarginContainer.new()
 	wrapper.add_theme_constant_override("margin_left", glow_margin)
 	wrapper.add_theme_constant_override("margin_top", glow_margin)
@@ -4180,7 +4196,7 @@ func _on_saved_deck_cover_pressed(deck_id: String) -> void:
 	_load_selected_deck()
 
 func _queue_saved_deck_actions_visibility_update(cover: Control, actions: Control) -> void:
-	if cover == null or actions == null:
+	if cover == null or actions == null or not cover.is_inside_tree() or cover.is_queued_for_deletion():
 		return
 	if not is_instance_valid(cover) or not is_instance_valid(actions):
 		return
@@ -4714,7 +4730,14 @@ func _try_handle_deck_undo_shortcut(key_event: InputEventKey) -> bool:
 	return _undo_last_deck_change()
 
 func _queue_collection_layout_refresh() -> void:
-	call_deferred("_update_collection_layout")
+	if _collection_layout_refresh_queued:
+		return
+	_collection_layout_refresh_queued = true
+	call_deferred("_flush_collection_layout_refresh")
+
+func _flush_collection_layout_refresh() -> void:
+	_collection_layout_refresh_queued = false
+	_update_collection_layout()
 
 func _queue_responsive_layout_refresh() -> void:
 	call_deferred("_update_responsive_layout")
@@ -4856,32 +4879,34 @@ func _update_collection_layout() -> void:
 	var next_size := Vector2(CARD_W, CARD_H)
 	var visible_rows := 1
 
-	# Saved-deck covers share the card view size presets; they have no
-	# add/count footer, so that height allowance is skipped.
+	# Size and paginate using the full tile footprint, including the saved
+	# deck's glow margins. _card_size itself is the inner cover size.
+	var cover_padding := float(SAVED_DECK_COVER_MARGIN * 2) if _collection_mode == COLLECTION_MODE_SAVED_DECKS else 0.0
 	var footer_height := COLLECTION_ADD_FOOTER_HEIGHT if _collection_mode == COLLECTION_MODE_CARDS else 0.0
 	var base_max_card_height = floor((available.y - COLLECTION_GAP * float(_collection_rows - 1)) / float(_collection_rows))
-	base_max_card_height = max(base_max_card_height, footer_height + 1.0)
-	var base_visual_height = maxf(1.0, base_max_card_height - footer_height)
-	var base_estimated_width = floor(base_visual_height * aspect)
+	base_max_card_height = max(base_max_card_height, cover_padding + footer_height + 1.0)
+	var base_visual_height = maxf(1.0, base_max_card_height - cover_padding - footer_height)
+	var base_estimated_width = floor(base_visual_height * aspect) + cover_padding
 	var base_columns = max(1, int(floor((available.x + COLLECTION_GAP) / max(1.0, base_estimated_width + COLLECTION_GAP))))
 	var base_width_limited = floor((available.x - COLLECTION_GAP * float(base_columns - 1)) / float(base_columns))
-	var base_height_from_width = floor(base_width_limited / aspect) + footer_height
+	var base_height_from_width = floor(maxf(1.0, base_width_limited - cover_padding) / aspect) + footer_height + cover_padding
 
 	if base_height_from_width < base_max_card_height:
 		base_max_card_height = base_height_from_width
 		base_estimated_width = base_width_limited
 	else:
-		base_estimated_width = floor(maxf(1.0, base_max_card_height - footer_height) * aspect)
+		base_estimated_width = floor(maxf(1.0, base_max_card_height - cover_padding - footer_height) * aspect) + cover_padding
 
-	var base_card_size := Vector2(max(1.0, base_estimated_width), max(1.0, base_max_card_height))
-	var base_visible_rows := maxi(1, mini(_collection_rows, int(floor((available.y + COLLECTION_GAP) / max(1.0, base_card_size.y + COLLECTION_GAP)))))
+	var base_card_size := Vector2(max(1.0, base_estimated_width - cover_padding), max(1.0, base_max_card_height - cover_padding))
+	var tile_height: float = base_card_size.y + cover_padding
+	var base_visible_rows := maxi(1, mini(_collection_rows, int(floor((available.y + COLLECTION_GAP) / max(1.0, tile_height + COLLECTION_GAP)))))
 	next_size = base_card_size
 	columns = base_columns
 	visible_rows = base_visible_rows
 	_page_grid_columns = columns
 	_page_visible_collection_rows = visible_rows
 
-	_grid.custom_minimum_size.y = visible_rows * next_size.y + COLLECTION_GAP * float(visible_rows - 1)
+	_grid.custom_minimum_size.y = visible_rows * tile_height + COLLECTION_GAP * float(visible_rows - 1)
 
 	if columns != _grid_columns \
 			or next_size != _card_size \

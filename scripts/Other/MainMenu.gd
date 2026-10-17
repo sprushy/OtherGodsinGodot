@@ -6858,6 +6858,7 @@ func _start_practice_tutorial_lesson(lesson: Dictionary) -> void:
 	if practice_game.has_method("set_player_practice_deck"):
 		practice_game.set_player_practice_deck(selected_practice_deck)
 	await practice_game.start_game(false, false, "127.0.0.1", 12345, {
+		"player_names": [_get_active_profile_display_name("Player"), "Thor"],
 		"tutorial_lesson_id": String(lesson.get("lesson_id", "")),
 		"tutorial_lesson_title": String(lesson.get("title", "Tutorial")),
 	})
@@ -7491,7 +7492,9 @@ func _on_practice_thor_pressed() -> void:
 	show_game()
 	if practice_game != null:
 		practice_game.set_player_practice_deck(selected_practice_deck)
-		await practice_game.start_game()
+		await practice_game.start_game(false, false, "127.0.0.1", 12345, {
+			"player_names": [_get_active_profile_display_name("Player"), "Thor"],
+		})
 
 func _on_host_game_pressed() -> void:
 	print("[SMOKE-DIAG] _on_host_game_pressed entered")
@@ -9348,27 +9351,20 @@ func _refresh_open_deck_builder_saved_decks() -> void:
 	var deck_builder = game_container.get_node_or_null("DeckBuilder")
 	if deck_builder == null:
 		return
-	# configure_profile_store/configure_account_decks return false when nothing
-	# changed. account_deck_list responses arrive repeatedly while connected and
-	# are usually identical, so only reload the local store when one actually
-	# applied an update; otherwise each response froze the builder for seconds.
-	var changed := false
+	# Configuration methods apply changed data themselves and skip identical
+	# responses. Reloading again here needlessly rebuilds the deck gallery.
 	if deck_builder.has_method("configure_profile_store"):
-		changed = deck_builder.configure_profile_store(_local_profile_store, _local_profile_id, _get_active_profile_display_name("Player")) or changed
+		deck_builder.configure_profile_store(_local_profile_store, _local_profile_id, _get_active_profile_display_name("Player"))
 	if deck_builder.has_method("configure_online_sync"):
 		deck_builder.configure_online_sync(lobby_client)
 	if deck_builder.has_method("configure_account_decks"):
-		changed = deck_builder.configure_account_decks(
+		deck_builder.configure_account_decks(
 			_account_decks_cache,
 			_uses_server_account_storage(),
 			_get_server_preferred_account_deck_id()
-		) or changed
+		)
 	if deck_builder.has_method("configure_friends"):
 		deck_builder.configure_friends(_get_friend_usernames())
-	if not changed:
-		return
-	if deck_builder.has_method("reload_saved_decks_from_store"):
-		deck_builder.reload_saved_decks_from_store()
 
 func _build_profile_summary_controls() -> void:
 	if multiplayer_container == null or _profile_summary_label != null:
@@ -10937,13 +10933,20 @@ func _run_practice_thor_smoke() -> void:
 		return
 	show_game()
 	practice_game.set_player_practice_deck({})
-	await practice_game.start_game()
+	await practice_game.start_game(false, false, "127.0.0.1", 12345, {
+		"player_names": ["Practice Player", "Thor"],
+	})
 	await get_tree().process_frame
 	await get_tree().process_frame
 
 	var setup_error := _get_practice_thor_smoke_setup_error(practice_game)
 	if not setup_error.is_empty():
 		_complete_practice_thor_smoke(false, setup_error)
+		return
+	if practice_game.player1.player_name != "Practice Player" \
+			or practice_game._get_player_display_name_for_index(0) != "Practice Player" \
+			or practice_game._get_player_display_name_for_index(1) != "Thor":
+		_complete_practice_thor_smoke(false, "practice_thor_player_names_not_preserved")
 		return
 
 	var player_one_mana_before_draw: int = practice_game.player1.mana

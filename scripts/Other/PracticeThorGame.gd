@@ -38,6 +38,12 @@ func start_game(
 
 func _build_initial_match_players(_default_match_setup, _server_match_session = null, _match_info: Dictionary = {}) -> Dictionary:
 	var result := _practice_match_setup.build_thor_practice_match(game_manager, _player_practice_deck, _thor_practice_deck)
+	var player_names = _match_info.get("player_names", [])
+	var practice_player := result.get("player1", null) as Player
+	if practice_player != null and player_names is Array and not player_names.is_empty():
+		var player_name := str(player_names[0]).strip_edges()
+		if not player_name.is_empty():
+			practice_player.player_name = player_name
 	_practice_deck_name = str(result.get("player_deck_name", ""))
 	_attach_thor_bot(result.get("player2", null) as Player)
 	return result

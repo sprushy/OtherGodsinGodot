@@ -99,6 +99,7 @@ const GravesiteTexture = preload("res://images/ui/zones/grave_tumulus_base.png")
 const SnowGravesiteTexture = preload("res://images/ui/zones/grave_tumulus_snow_base.png")
 const GravesiteVisualScript = preload("res://scripts/ui/GravesiteVisual.gd")
 const ManaGlobeScript = preload("res://scripts/ui/ManaGlobe.gd")
+const TurnClocktowerScript = preload("res://scripts/ui/TurnClocktower.gd")
 const FollowerCountBadgeScript = preload("res://scripts/ui/FollowerCountBadge.gd")
 const GameSettingsTabsScript = preload("res://scripts/ui/GameSettingsTabs.gd")
 const AudioSettingsScript = preload("res://scripts/core/AudioSettings.gd")
@@ -328,7 +329,10 @@ var _board_style: String = BOARD_STYLE_NORMAL
 var _grave_shovel_shifted: Dictionary = {}
 const MATCH_GRAVE_RIGHT_OFFSET := 72.0
 var _match_player_grave: PanelContainer = null
+var _turn_clocktower: TurnClocktowerScript = null
 var _match_opponent_grave: PanelContainer = null
+var _match_player_abyss: PanelContainer = null
+var _match_opponent_abyss: PanelContainer = null
 var _turn_choice_gap: Control = null
 const _HAND_CONTEXT_MENU_KEEPALIVE_MARGIN := 10.0
 
@@ -4269,6 +4273,7 @@ func _process(delta: float) -> void:
 	_layout_turn_start_props()
 	_sync_priority_control_turn_boundary()
 	_sync_turn_activity_timers()
+	_sync_turn_clocktower()
 	_sync_local_scheduled_callbacks()
 	_sync_local_priority_recovery()
 	_sync_deferred_turn_action_after_opponent_priority()
@@ -4530,7 +4535,8 @@ func _refresh_turn_label() -> void:
 	var remaining_msec := _get_move_timer_remaining_msec()
 	if remaining_msec < 0:
 		return
-	turn_label.text += " [" + _format_move_timer_clock(remaining_msec) + "]"
+	if not is_instance_valid(_turn_clocktower):
+		turn_label.text += " [" + _format_move_timer_clock(remaining_msec) + "]"
 	if remaining_msec <= MOVE_TIMEOUT_CRITICAL_WARNING_MSEC:
 		turn_label.modulate = Color(1.0, 0.45, 0.45, 1.0)
 	elif remaining_msec <= MOVE_TIMEOUT_WARNING_MSEC:
@@ -11625,51 +11631,94 @@ func _make_match_grave_slot(zone: Zone, is_opponent: bool) -> Control:
 		_match_player_grave = grave
 	return slot
 
+func _make_match_abyss_slot(zone: Zone, is_opponent: bool) -> Control:
+	# Keep the board column stable while the full gateway art is laid out beside it.
+	var slot := Control.new()
+	slot.custom_minimum_size = Vector2.ONE * ZONE_INFO_ICON_SIZE
+	slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var gateway := _make_zone_info_icon("Abyss", "AB", zone, Color(0.6, 0.1, 0.6))
+	slot.add_child(gateway)
+	gateway.size = Vector2.ONE * ZONE_INFO_ICON_SIZE
+	if is_opponent:
+		_match_opponent_abyss = gateway
+	else:
+		_match_player_abyss = gateway
+	return slot
+
+func _sync_turn_clocktower() -> void:
+	if not is_instance_valid(_turn_clocktower):
+		return
+	var remaining := -1 if _get_local_move_timer_context().is_empty() else _get_move_timer_remaining_msec()
+	var available: bool = end_turn_button != null and end_turn_button.visible and not end_turn_button.disabled
+	var status := "End Turn" if available else "Waiting"
+	if _game_finished:
+		status = "Match Over"
+	elif _is_observer_mode:
+		status = "Spectating"
+	elif remaining >= 0 and not available:
+		status = "Paused" if not _move_timer_running else "Your Turn"
+	var active_player: Player = null
+	if game_manager != null:
+		active_player = game_manager.turn_player if game_manager.turn_player != null else game_manager.current_player
+	var player_name := _get_player_display_name_for_index(game_manager.players.find(active_player)) if active_player != null else "Waiting"
+	var opponent_turn := active_player != null and active_player != _get_display_player()
+	var turn_number := game_manager.turn_number if game_manager != null else 0
+	_turn_clocktower.set_turn_state(remaining, MOVE_TIMEOUT_MSEC, _move_timer_running, status, player_name, opponent_turn, turn_number)
+
 func _layout_match_grave_turn_label() -> void:
 	if not is_instance_valid(_match_player_grave) or not is_instance_valid(_match_opponent_grave) or turn_label == null:
 		return
-	if turn_label.get_parent() != self:
-		turn_label.reparent(self, false)
-		turn_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
-		turn_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var grave_midpoint := (_match_player_grave.get_global_rect().get_center() + _match_opponent_grave.get_global_rect().get_center()) * 0.5
-	var local_midpoint: Vector2 = get_global_transform().affine_inverse() * grave_midpoint
-	if end_turn_button != null:
-		if end_turn_button.get_parent() != self:
-			end_turn_button.reparent(self, false)
-			end_turn_button.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
-		end_turn_button.size = end_turn_button.get_combined_minimum_size()
-		end_turn_button.position = local_midpoint - end_turn_button.size * 0.5
-	turn_label.size.x = maxf(180.0, right_panel.custom_minimum_size.x - 4.0)
-	turn_label.size.y = turn_label.get_combined_minimum_size().y
-	turn_label.position = local_midpoint - turn_label.size * 0.5
-	if end_turn_button != null:
-		turn_label.position.y = end_turn_button.position.y - turn_label.size.y - 12.0
+	if not is_instance_valid(_turn_clocktower):
+		return
+	# Anchor to the unshifted row slots, so moving the mounds cannot move the tower.
+	var slot_center := Vector2(MATCH_GRAVE_RIGHT_OFFSET, 0.0) + Vector2.ONE * ZONE_INFO_ICON_SIZE * 0.5
+	var player_anchor: Vector2 = _match_player_grave.get_parent().get_global_transform() * slot_center
+	var opponent_anchor: Vector2 = _match_opponent_grave.get_parent().get_global_transform() * slot_center
+	var local_midpoint: Vector2 = get_global_transform().affine_inverse() * ((player_anchor + opponent_anchor) * 0.5)
+	_turn_clocktower.visible = _match_player_grave.is_visible_in_tree() and _match_opponent_grave.is_visible_in_tree()
+	turn_label.visible = false # The active player's name now lives on the tower plaque.
+	var prop_scale := clampf(size.y / 1080.0, 0.65, 1.0)
+	var tower_scale := prop_scale * 1.20
+	_turn_clocktower.scale = Vector2.ONE * tower_scale
+	var tower_size: Vector2 = TurnClocktowerScript.DISPLAY_SIZE * tower_scale
+	var grave_height := ZONE_INFO_ICON_SIZE * GravesiteVisualScript.VISUAL_SCALE * prop_scale
+	var gateway_scale := prop_scale * 0.90
+	var gateway_height := (AbyssGatewayIcon.ART_OVERSCAN.size.y + 48.0) * AbyssGatewayIcon.VISUAL_SCALE * gateway_scale
+	var gap := 12.0 * prop_scale
+	var column_half_height := tower_size.y * 0.5 + grave_height + gateway_height + gap * 2.0
+	local_midpoint.y = clampf(local_midpoint.y, column_half_height + 8.0, maxf(column_half_height + 8.0, size.y - column_half_height - 8.0))
+	_turn_clocktower.position = Vector2(
+		clampf(local_midpoint.x - tower_size.x * 0.5, 8.0, maxf(8.0, size.x - tower_size.x - 12.0)),
+		local_midpoint.y - tower_size.y * 0.5
+	)
+	var column_center := _turn_clocktower.position + tower_size * 0.5
+	var grave_distance := tower_size.y * 0.5 + gap + grave_height * 0.5
+	_place_match_side_prop(_match_opponent_grave, column_center - Vector2(0.0, grave_distance), prop_scale, Vector2.ONE * ZONE_INFO_ICON_SIZE * 0.5)
+	_place_match_side_prop(_match_player_grave, column_center + Vector2(0.0, grave_distance), prop_scale, Vector2.ONE * ZONE_INFO_ICON_SIZE * 0.5)
+	var gateway_distance := tower_size.y * 0.5 + gap * 2.0 + grave_height + gateway_height * 0.5
+	for entry in [[_match_opponent_abyss, -1.0], [_match_player_abyss, 1.0]]:
+		var panel := entry[0] as PanelContainer
+		if not is_instance_valid(panel):
+			continue
+		var gateway := panel.get_node_or_null("ZoneInfoVBox/ZoneAbyssGatewayIcon") as AbyssGatewayIcon
+		if gateway != null:
+			_place_match_side_prop(panel, column_center + Vector2(0.0, gateway_distance * float(entry[1])), gateway_scale, gateway.position + gateway.pivot_offset)
+
+func _place_match_side_prop(prop: Control, center: Vector2, prop_scale: float, art_center: Vector2) -> void:
+	prop.scale = Vector2.ONE * prop_scale
+	var target_position := center - art_center * prop_scale
+	prop.position = prop.get_parent().get_global_transform().affine_inverse() * (get_global_transform() * target_position)
 
 func _style_match_end_turn_button() -> void:
 	if end_turn_button == null:
 		return
-	end_turn_button.custom_minimum_size = Vector2(200.0, 64.0)
-	end_turn_button.add_theme_font_size_override("font_size", 26)
-	for font_color in ["font_color", "font_hover_color", "font_pressed_color"]:
-		end_turn_button.add_theme_color_override(font_color, Color.WHITE)
-	end_turn_button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	end_turn_button.z_index = 10
-	for button_state in ["normal", "hover", "pressed", "focus"]:
-		var style := StyleBoxFlat.new()
-		style.bg_color = Color(0.06, 0.22, 0.32, 1.0)
-		if button_state == "hover":
-			style.bg_color = Color(0.10, 0.36, 0.48, 1.0)
-		elif button_state == "pressed":
-			style.bg_color = Color(0.04, 0.15, 0.23, 1.0)
-		elif button_state == "focus":
-			style.bg_color = Color.TRANSPARENT
-		style.border_color = Color(1.0, 0.85, 0.42, 1.0)
-		style.set_border_width_all(3)
-		style.set_corner_radius_all(10)
-		style.shadow_color = Color(0.0, 0.0, 0.0, 0.65)
-		style.shadow_size = 6
-		end_turn_button.add_theme_stylebox_override(button_state, style)
+	if not is_instance_valid(_turn_clocktower):
+		_turn_clocktower = TurnClocktowerScript.new()
+		_turn_clocktower.name = "TurnClocktower"
+		_turn_clocktower.z_index = 10
+		add_child(_turn_clocktower)
+	_turn_clocktower.bind_end_turn_button(end_turn_button)
 
 func _get_gravesite_texture() -> Texture2D:
 	return SnowGravesiteTexture if _board_style == BOARD_STYLE_SNOW else GravesiteTexture
@@ -14000,7 +14049,6 @@ func _show_zone_contents(zone_name: String, zone: Zone) -> void:
 		vc.set_hover_use_board_popup(true, game_manager)
 		vc.set_hover_preview_when_disabled(true)
 		vc.set_disabled(true, false)
-		vc.set_selection_glow(true)
 		vc.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		fan.add_card(vc)
 
@@ -16588,7 +16636,7 @@ func draw_board() -> void:
 		zu.creature_right_clicked.connect(_on_creature_right_clicked)
 		_board_zone_uis.append(zu)
 
-	reserve_row.add_child(_make_zone_info_icon("Abyss", "AB", display_player.abyss_zone, Color(0.6, 0.1, 0.6)))
+	reserve_row.add_child(_make_match_abyss_slot(display_player.abyss_zone, false))
 
 func draw_enemy_board() -> void:
 	var enemy_player := _get_display_opponent()
@@ -16634,7 +16682,7 @@ func draw_enemy_board() -> void:
 		zu.equipment_target_action_clicked.connect(_on_equipment_target_action_clicked)
 		_enemy_zone_uis.append(zu)
 
-	enemy_reserve_row.add_child(_make_zone_info_icon("Abyss", "AB", enemy_player.abyss_zone, Color(0.6, 0.1, 0.6)))
+	enemy_reserve_row.add_child(_make_match_abyss_slot(enemy_player.abyss_zone, true))
 
 	var enemy_row := HBoxContainer.new()
 	enemy_row.add_theme_constant_override("separation", int(BOARD_ZONE_COLUMN_GAP))
@@ -29330,9 +29378,17 @@ func _get_player_display_name_for_index(player_index: int) -> String:
 	if game_manager == null or player_index < 0 or player_index >= game_manager.players.size():
 		return "Player %d" % (player_index + 1)
 	var player := game_manager.players[player_index]
-	if player != null and str(player.player_name).strip_edges() != "":
-		return player.player_name
-	return "Player %d" % (player_index + 1)
+	var fallback := "Player %d" % (player_index + 1)
+	var player_name := str(player.player_name).strip_edges() if player != null else ""
+	if not player_name.is_empty() and player_name != fallback and player_name != "Player":
+		return player_name
+	# Public names arrive with match metadata before the personalized full state.
+	var player_names = _current_match_info.get("player_names", [])
+	if player_names is Array and player_index < player_names.size():
+		var public_name := str(player_names[player_index]).strip_edges()
+		if not public_name.is_empty():
+			return public_name
+	return player_name if not player_name.is_empty() else fallback
 
 func _clamp_observer_perspective_index() -> void:
 	if game_manager == null or game_manager.players.is_empty():
