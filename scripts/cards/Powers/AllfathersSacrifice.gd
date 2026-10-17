@@ -51,7 +51,7 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 		print(card_name + ": Chosen spell is no longer in deck.")
 		return
 
-	player.lose_followers(FOLLOWER_COST)
+	player.lose_followers(FOLLOWER_COST, self)
 	player.deck_zone.cards.erase(target)
 	player.deck_zone.cards.shuffle()
 	player.deck_zone.cards.insert(0, target)

@@ -53,6 +53,9 @@ func _on_move_validated(move: Dictionary) -> void:
 		str(move.keys()),
 	])
 	if move_type == "end_turn":
+		network_manager.broadcast_event_to_all("turn_bell_rung", {
+			"player_index": game_manager.players.find(game_manager.current_player),
+		})
 		# End turn may now wait on priority after move_validated fires. Broadcast
 		# after MatchManager has queued or resolved that window so every client
 		# immediately receives the authoritative stack/turn state.
@@ -215,6 +218,7 @@ func _on_game_ended(winner: Player, loser: Player) -> void:
 		winner_index = winner_idx,
 		winner_name  = winner.player_name if winner != null else "",
 		result_message = result_message,
+		match_result_stats = game_manager.match_result_stats.duplicate(true),
 	})
 
 func broadcast_current_state(action_message: String = "") -> void:
@@ -240,9 +244,10 @@ func shutdown() -> void:
 
 func _on_ui_interaction_requested(player_index: int, type: String, data: Dictionary) -> void:
 	_sync_remote_prompt_player_state(player_index)
-	if type == "priority" and network_manager != null:
+	if type in ["priority", "nusku_well_of_fire"] and network_manager != null:
 		# Priority may advance after the last move snapshot. Both players need
 		# the offered-window marker so the other client can show its wait status.
+		# Well of Fire also waits on an opponent choice during resolution.
 		# Keep the prompted player's existing delivery order: a host can auto-
 		# pass during a state update before its prompt has been delivered.
 		for waiting_player_index in network_manager.player_peer_ids:
@@ -444,6 +449,8 @@ func _build_full_state_event_data(
 			and match_manager.has_unresolved_stack_action_window(),
 		authoritative_visual_linger_pending = match_manager != null \
 			and match_manager.is_visual_linger_pending(),
+		well_of_fire_choosing_player_index = match_manager.get_pending_well_of_fire_player_index() \
+			if match_manager != null else -1,
 	}
 	if match_manager != null and player_index >= 0 and player_index < game_manager.players.size():
 		var pending_priority_prompt := match_manager.get_pending_priority_prompt_data(

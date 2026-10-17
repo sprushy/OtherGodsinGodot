@@ -565,6 +565,7 @@ var board_style_override: String = ""
 var show_god_deck_count: bool = true
 var game_manager: GameManager
 var owning_player: Player
+var follower_loss_flash_started_msec: int = -1
 var zone_index: int
 var _drop_callback: Callable
 var _is_enemy: bool = false
@@ -594,6 +595,7 @@ var _incorporeal_fade_card_uid: String = ""
 var _incorporeal_fade_base_alpha: float = 1.0
 var _badge_hover_popup: Control = null
 var _stealth_fog_overlay: Control = null
+var _dromi_drain_visual_states: Dictionary = {}
 
 const BASE_ZONE_EXTENT := 165.0
 const DROMI_BINDING_NAME := "Dromi"
@@ -3103,6 +3105,7 @@ func _add_follower_count_badge(overlay: Control) -> void:
 	var badge := FollowerCountBadgeScript.new()
 	badge.name = "FollowerCountBadge"
 	badge.set_followers(owning_player.followers)
+	badge.show_loss_flash(follower_loss_flash_started_msec)
 	owning_player.followers_changed.connect(badge.set_followers)
 	# Keep aligned with the mana globe, near the top of the God card.
 	badge.set_anchors_preset(Control.PRESET_TOP_LEFT)
@@ -3624,25 +3627,38 @@ func _has_dromi_binding(card: Card) -> bool:
 	return _get_dromi_binding_source(card) != null
 
 func _add_binding_affordances(overlay: Control, card: Card) -> void:
-	if overlay == null or card == null or card.card_type != Card.CardType.CREATURE:
+	if overlay == null or not (card is PermanentHexCard):
 		return
-	var dromi_source := _get_dromi_binding_source(card)
-	if dromi_source == null:
+	var target := (card as PermanentHexCard).attached_target
+	if target == null or target.current_zone == null:
 		return
-	var badge_top := _get_secondary_left_affordance_row_top(card)
-	var art_preview: Control = null
-	if dromi_source != card:
-		art_preview = _make_card_art_preview(dromi_source)
-	if art_preview == null:
+	var viewer := _get_viewer_player()
+	var target_hidden := target.is_hidden_from_viewer(viewer)
+	var preview := _make_debuff_source_preview({
+		"source_card": target,
+		"preview_texture": UITextureCacheScript.get_texture("res://images/cardbackAI.png") if target_hidden else null,
+	})
+	if preview == null:
 		return
-	_add_equipment_indicator_badge(
-		overlay,
-		art_preview,
-		6.0,
-		badge_top,
-		Color(0.28, 0.05, 0.05, 0.94),
-		Color(1.0, 0.35, 0.28, 0.96)
-	)
+	var badge := DebuffBadgeScript.create(preview)
+	badge.name = "BindingTargetBadge"
+	var style := badge.get_theme_stylebox("panel").duplicate() as StyleBoxFlat
+	style.bg_color = Color(0.16, 0.04, 0.24, 0.95)
+	style.border_color = Color(0.76, 0.38, 1.0, 0.98)
+	style.shadow_color = Color(0.22, 0.04, 0.34, 0.52)
+	badge.add_theme_stylebox_override("panel", style)
+	badge.mouse_filter = Control.MOUSE_FILTER_PASS
+	_connect_badge_hover(badge, "Binding (%s)" % target.get_log_display_name(viewer))
+	var badge_top := 32.0 if _is_card_targeted_on_stack(card) else _get_badge_row_top()
+	var badge_right := -6.0
+	if _is_card_publicly_identified(card) and viewer != null and card.card_owner == viewer:
+		badge_right -= DEBUFF_BADGE_SIZE + DEBUFF_AFFORDANCE_GAP
+	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	badge.offset_left = badge_right - DEBUFF_BADGE_SIZE
+	badge.offset_top = badge_top
+	badge.offset_right = badge_right
+	badge.offset_bottom = badge_top + DEBUFF_BADGE_SIZE
+	overlay.add_child(badge)
 
 func _add_debuff_affordances(overlay: Control, card: Card) -> void:
 	if overlay == null or card == null or card.card_type != Card.CardType.CREATURE or card.is_god:
@@ -3664,8 +3680,29 @@ func _add_debuff_affordances(overlay: Control, card: Card) -> void:
 		badge.offset_right = badge_right
 		badge.offset_bottom = badge_top + DEBUFF_BADGE_SIZE
 		overlay.add_child(badge)
+		_flash_dromi_drain_badge(badge, entry)
 
 		badge_right -= DEBUFF_BADGE_SIZE + DEBUFF_AFFORDANCE_GAP
+
+func _flash_dromi_drain_badge(badge: Control, entry: Dictionary) -> void:
+	var dromi := entry.get("source_card", null) as Dromi
+	if dromi == null:
+		return
+	var source_uid := BoardZoneUI.get_action_point_card_uid(dromi)
+	var now := Time.get_ticks_msec()
+	# Keep the count and flash start across redraws and network card replacements.
+	# The first snapshot establishes a baseline so joining does not replay old drains.
+	var state: Dictionary = _dromi_drain_visual_states.get(source_uid, {
+		"count": dromi.follower_drain_count,
+		"flash_started_ms": -1,
+	})
+	if dromi.follower_drain_count > int(state["count"]):
+		state["flash_started_ms"] = now
+	state["count"] = dromi.follower_drain_count
+	_dromi_drain_visual_states[source_uid] = state
+	var started_ms := int(state["flash_started_ms"])
+	if started_ms >= 0:
+		DebuffBadgeScript.flash_red(badge, float(now - started_ms) / 1000.0)
 
 func _is_card_publicly_identified(card: Card) -> bool:
 	return card != null and card.is_publicly_identified(game_manager)
@@ -5626,6 +5663,7 @@ func _refresh_display() -> void:
 		_add_sleep_affordance(card_overlay, card)
 		if not card.is_stealth or card.get_controller() == board_viewer or card.is_temporarily_revealed():
 			_add_equipment_affordances(card_overlay, card)
+			_add_binding_affordances(card_overlay, card)
 			_add_boon_affordances(card_overlay, card)
 			_add_debuff_affordances(card_overlay, card)
 			_add_nimue_badges(card_overlay, card)

@@ -128,7 +128,7 @@ func on_perish(game_manager: GameManager) -> void:
 	if grave_count <= 0:
 		game_manager.note_player_feedback("%s's Celestial Light triggers, but the graveyard is empty." % card_name)
 		return
-	var converted := game_manager.convert_followers(opponent, controller, grave_count)
+	var converted := game_manager.convert_followers(opponent, controller, grave_count, self)
 	if converted <= 0:
 		return
 	game_manager.note_player_feedback("%s's Celestial Light converts %d followers." % [card_name, converted])

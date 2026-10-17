@@ -1495,6 +1495,10 @@ func can_special_intercept(_game_manager: GameManager, _attacker: Card, _protect
 func halves_follower_damage_inflicted() -> bool:
 	return false
 
+func halves_follower_damage_in_combat() -> bool:
+	# Applies to both sides of combat, including when this card intercepts.
+	return false
+
 func get_tonal_extraction_spirit_profile() -> Dictionary:
 	return {}
 

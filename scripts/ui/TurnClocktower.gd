@@ -123,7 +123,7 @@ func bind_end_turn_button(button: Button) -> void:
 		_button.mouse_exited.connect(_set_hovered.bind(false))
 		_button.focus_entered.connect(_set_hovered.bind(true))
 		_button.focus_exited.connect(_set_hovered.bind(false))
-		_button.pressed.connect(_ring_bell)
+		_button.pressed.connect(ring_bell)
 	if _button.get_parent() != self:
 		_button.reparent(self, false)
 	_button.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
@@ -226,7 +226,7 @@ func _set_hovered(hovered: bool) -> void:
 	_update_display()
 
 
-func _ring_bell() -> void:
+func ring_bell() -> void:
 	if DisplayServer.get_name() != "headless":
 		_bell_player.play()
 	if is_instance_valid(_ring_tween):

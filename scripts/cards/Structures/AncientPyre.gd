@@ -69,7 +69,7 @@ func activate(game_manager: GameManager, target = null) -> void:
 	card_owner.spend_mana(ACTIVATION_COST)
 	var opponent := game_manager.get_opponent(card_owner)
 	if force_convert or not is_frontline() or is_valid_convert_target(target_card, game_manager):
-		game_manager.convert_followers(opponent, card_owner, EFFECT_AMOUNT)
+		game_manager.convert_followers(opponent, card_owner, EFFECT_AMOUNT, self)
 		uses_this_turn += 1
 		print("Ancient Pyre: Ritual Flame converts %d followers from %s." % [EFFECT_AMOUNT, opponent.player_name])
 		return

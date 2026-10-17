@@ -20,7 +20,7 @@ func on_unlock(_game_manager: GameManager) -> void:
 func on_creature_sent_to_void(creature: Card, _game_manager: GameManager) -> void:
 	if creature == null or creature.card_owner == null:
 		return
-	creature.card_owner.lose_followers(LOSS_AMOUNT)
+	creature.card_owner.lose_followers(LOSS_AMOUNT, self)
 	print("%s: %s loses %d followers." % [card_name, creature.card_owner.player_name, LOSS_AMOUNT])
 
 func on_creature_returned_from_void(creature: Card, _game_manager: GameManager) -> void:

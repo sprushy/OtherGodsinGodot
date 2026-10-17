@@ -59,6 +59,7 @@ static func serialize(gm: GameManager, viewer_player_index: int = -1, visible_pl
 	if gm.is_game_over:
 		data["game_end_reason"] = gm.game_end_reason
 		data["result_message"] = gm.get_game_result_message()
+		data["match_result_stats"] = gm.match_result_stats.duplicate(true)
 
 	for i in gm.players.size():
 		var player := gm.players[i]
@@ -417,6 +418,7 @@ static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 	gm.current_phase = int(data.get("phase", GameManager.GamePhase.MULLIGAN)) as GameManager.GamePhase
 	gm.is_game_over = data.get("is_game_over", false)
 	gm.game_end_reason = str(data.get("game_end_reason", ""))
+	gm.match_result_stats = data.get("match_result_stats", {}).duplicate(true)
 	gm.winning_player = null
 	gm.losing_player = null
 	var winner_idx := int(data.get("winner_index", -1))

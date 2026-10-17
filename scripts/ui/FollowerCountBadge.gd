@@ -1,8 +1,12 @@
 extends PanelContainer
 
 const SYMBOL_TEXTURE := preload("res://images/ui/followers/FollowersSymbol.svg")
+const COUNT_COLOR := Color(1.0, 0.94, 0.74)
+const LOSS_COLOR := Color(1.0, 0.18, 0.14)
+const LOSS_FLASH_SECONDS := 0.7
 
 var _count_label: Label
+var _loss_flash_started_msec: int = -1
 
 func _init() -> void:
 	mouse_filter = Control.MOUSE_FILTER_PASS
@@ -37,8 +41,9 @@ func _init() -> void:
 	_count_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_count_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_count_label.add_theme_font_size_override("font_size", 20)
-	_count_label.add_theme_color_override("font_color", Color(1.0, 0.94, 0.74))
+	_count_label.add_theme_color_override("font_color", COUNT_COLOR)
 	row.add_child(_count_label)
+	set_process(false)
 
 func set_followers(count: int, show_caption: bool = false) -> void:
 	var count_text := "Followers: %d" % count
@@ -46,3 +51,18 @@ func set_followers(count: int, show_caption: bool = false) -> void:
 	if _count_label.text != label_text:
 		_count_label.text = label_text
 	tooltip_text = count_text
+
+func show_loss_flash(started_msec: int) -> void:
+	_loss_flash_started_msec = started_msec
+	_process(0.0)
+
+func _process(_delta: float) -> void:
+	var elapsed := float(Time.get_ticks_msec() - _loss_flash_started_msec) / 1000.0
+	var active := _loss_flash_started_msec >= 0 and elapsed < LOSS_FLASH_SECONDS
+	var color := COUNT_COLOR
+	if active:
+		# Hold red briefly, then fade back; use elapsed time to survive board redraws.
+		var fade := clampf((elapsed - 0.15) / (LOSS_FLASH_SECONDS - 0.15), 0.0, 1.0)
+		color = LOSS_COLOR.lerp(COUNT_COLOR, fade)
+	_count_label.add_theme_color_override("font_color", color)
+	set_process(active)

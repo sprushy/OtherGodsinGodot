@@ -160,6 +160,7 @@ static func combat_gain(bot, target: Card, str_delta: int, res_delta: int = 0, a
 			planned.type = CardAction.Type.ATTACK
 			planned.attacker = attacker
 			planned.target = defender
+			planned.halve_follower_damage = attacker.halves_follower_damage_inflicted()
 			var before: int = bot._score_attack_economy(bot._estimate_attack_economy(planned, null, 0, 0))
 			var after: int = bot._score_attack_economy(bot._estimate_attack_economy(planned, target, str_delta, 0, res_delta))
 			# A buff must create an attack the bot would actually want to take.

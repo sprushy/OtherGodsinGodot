@@ -5,6 +5,8 @@ const FOLLOWER_LOSS := 7
 const ATTACK_LOCK_STATUS := "cannot_attack"
 const STATUS_SOURCE := "Dromi"
 
+var follower_drain_count: int = 0
+
 func _init() -> void:
 	super._init()
 	card_name = "Dromi"
@@ -79,8 +81,21 @@ func on_turn_start(game_manager: GameManager) -> void:
 	var controller := attached_target.get_controller()
 	if controller == null:
 		return
-	controller.lose_followers(FOLLOWER_LOSS)
+	var followers_before := controller.followers
+	controller.lose_followers(FOLLOWER_LOSS, self)
+	if controller.followers < followers_before:
+		follower_drain_count += 1
+		attached_target._emit_visual_state_changed()
 	print("%s drains %d followers from %s." % [card_name, FOLLOWER_LOSS, controller.player_name])
+
+func get_serialized_state() -> Dictionary:
+	var state := super.get_serialized_state()
+	state["follower_drain_count"] = follower_drain_count
+	return state
+
+func apply_serialized_state(state: Dictionary) -> void:
+	super.apply_serialized_state(state)
+	follower_drain_count = int(state.get("follower_drain_count", 0))
 
 func on_any_card_moved(game_manager: GameManager, moved_card: Card, _from_zone: Zone, _to_zone: Zone) -> void:
 	if moved_card != attached_target:

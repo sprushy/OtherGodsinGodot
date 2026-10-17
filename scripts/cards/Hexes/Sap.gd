@@ -38,6 +38,22 @@ func get_priority_targets(game_manager: GameManager, action: CardAction) -> Arra
 func requires_priority_target_selection() -> bool:
 	return false
 
+func get_priority_activation_label(game_manager: GameManager, action: CardAction, viewer: Player) -> String:
+	var valid_targets := get_priority_targets(game_manager, action)
+	if valid_targets.is_empty():
+		return "Activate " + card_name
+	var target := valid_targets[0]
+	var target_name := target.get_target_log_display_name(viewer)
+	if not target.is_hidden_from_viewer(viewer):
+		for field_card in game_manager.get_field_cards():
+			if field_card == target or field_card.is_hidden_from_viewer(viewer):
+				continue
+			if field_card.card_name == target.card_name:
+				var side := "your" if target.get_controller() == viewer else "opponent"
+				target_name += " %s front line %d" % [side, target.current_zone.zone_index + 1]
+				break
+	return "Activate %s on %s" % [card_name, target_name]
+
 func on_activate_action(game_manager: GameManager, action: CardAction) -> void:
 	var target := action.target as Card
 	if not is_valid_target(game_manager, target):

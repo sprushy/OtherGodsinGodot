@@ -31,6 +31,7 @@ const StructureBuildSoundPlayerScript = preload("res://scripts/audio/StructureBu
 const AttackSoundPlayerScript = preload("res://scripts/audio/AttackSoundPlayer.gd")
 const CreatureSacrificeSoundPlayerScript = preload("res://scripts/audio/CreatureSacrificeSoundPlayer.gd")
 const CreatureDeathSoundPlayerScript = preload("res://scripts/audio/CreatureDeathSoundPlayer.gd")
+const MatchStatisticsScript = preload("res://scripts/Other/MatchStatistics.gd")
 
 static func round_down_divide(amount: int, divisor: int) -> int:
 	if divisor == 0:
@@ -47,6 +48,8 @@ var is_game_over: bool = false
 var winning_player: Player = null
 var losing_player: Player = null
 var game_end_reason: String = ""
+var match_statistics = MatchStatisticsScript.new()
+var match_result_stats: Dictionary = {}
 var _game_end_resolution_pending: bool = false
 var _pending_defeated_players: Array[Player] = []
 var turn_number: int = 0
@@ -488,11 +491,11 @@ func note_creature_sacrifice(card: Card) -> void:
 	CreatureSacrificeSoundPlayerScript.play_sound()
 	note_ui_sound_cue("creature_sacrifice")
 
-func note_creature_death(card: Card) -> void:
+func note_creature_death(card: Card, was_aerial: bool) -> void:
 	if card == null or not card.is_creature_card() or card.has_meta("creature_sacrifice_in_progress"):
 		return
-	CreatureDeathSoundPlayerScript.play_sound()
-	note_ui_sound_cue("creature_death")
+	CreatureDeathSoundPlayerScript.play_sound(was_aerial)
+	note_ui_sound_cue("creature_death_aerial" if was_aerial else "creature_death")
 
 func get_game_result_message(winner: Player = winning_player, loser: Player = losing_player, reason: String = "") -> String:
 	var resolved_reason := reason.strip_edges()
@@ -525,10 +528,19 @@ func get_game_result_message(winner: Player = winning_player, loser: Player = lo
 func set_temporary_combat_follower_damage_halved(halved: bool) -> void:
 	_temporary_combat_follower_damage_halved = halved
 
-func _adjust_combat_follower_damage(amount: int) -> int:
+static func combat_halves_follower_damage(attacker: Card, defender: Card = null, partner: Card = null) -> bool:
+	if attacker != null and attacker.halves_follower_damage_inflicted():
+		return true
+	for combatant in [attacker, defender, partner]:
+		if combatant != null and combatant.halves_follower_damage_in_combat():
+			return true
+	return false
+
+func _adjust_combat_follower_damage(amount: int, halved_by_combatant: bool = false) -> int:
 	if amount <= 0:
 		return 0
-	if _temporary_combat_follower_damage_halved:
+	# Card passives and forced-combat effects share one halving, rounded down.
+	if _temporary_combat_follower_damage_halved or halved_by_combatant:
 		return GameManager.round_down_divide(amount, 2)
 	return amount
 
@@ -806,6 +818,10 @@ func is_prepared_charm_ready(charm: CharmCard, _triggering_action: CardAction = 
 	return prepared_turn < turn_number
 
 func setup_game() -> void:
+	match_statistics = MatchStatisticsScript.new()
+	match_result_stats.clear()
+	if not card_summoned.is_connected(_record_match_summon):
+		card_summoned.connect(_record_match_summon)
 	is_game_over = false
 	winning_player = null
 	losing_player = null
@@ -2181,12 +2197,16 @@ func resolve_followers_attack(attackers: Array[Card], defending_player: Player) 
 	for combatant in active_attackers:
 		_notify_attack_declared(combatant)
 
+	var halved_by_combatant := false
+	for combatant in active_attackers:
+		halved_by_combatant = halved_by_combatant or combatant.halves_follower_damage_in_combat()
 	var follower_damage := 0
 	for combatant in active_attackers:
+		var halve_follower_damage := halved_by_combatant or combat_halves_follower_damage(combatant)
 		if _source_converts_combat_follower_damage(combatant):
-			follower_damage += _apply_combat_follower_damage(combatant, defending_player, combatant.get_effective_strength())
+			follower_damage += _apply_combat_follower_damage(combatant, defending_player, combatant.get_effective_strength(), halve_follower_damage)
 		else:
-			follower_damage += _apply_combat_follower_damage(null, defending_player, combatant.get_effective_strength())
+			follower_damage += _apply_combat_follower_damage(null, defending_player, combatant.get_effective_strength(), halve_follower_damage, [combatant])
 		if is_game_over:
 			break
 
@@ -2319,12 +2339,13 @@ func resolve_combat(attacker: Card, defender: Card, continue_callback: Callable 
 	_notify_attack_declared(attacker, defender)
 	if defender.is_god:
 		# Gods cannot be targeted in combat — redirect to follower damage
-		var god_damage := _apply_combat_follower_damage(attacker, defender_controller, attacker.get_effective_strength())
+		var god_damage := _apply_combat_follower_damage(attacker, defender_controller, attacker.get_effective_strength(), combat_halves_follower_damage(attacker, defender))
 		print(attacker.card_name + " attacks " + defender_controller.player_name + "'s followers for " + str(god_damage) + " (via god)!")
 		finish.call()
 		return true
 	if defender.has_method("on_defend") and not defender.abilities_suppressed():
 		defender.on_defend(self, attacker)
+	var halve_follower_damage := combat_halves_follower_damage(attacker, defender)
 	var attacker_str = attacker.get_effective_strength()
 
 	print("=== COMBAT: " + attacker.card_name + " (STR:" + str(attacker_str) + ") vs " + defender.card_name + " ===")
@@ -2347,11 +2368,11 @@ func resolve_combat(attacker: Card, defender: Card, continue_callback: Callable 
 			print("	STR vs STR: " + str(attacker_str) + " vs " + str(defender_str_real) + ((" (disdain→damage as %d)" % defender_str_for_damage) if defender_str_for_damage != defender_str_real else ""))
 
 			if attacker_str > defender_str_real:
-				var diff = _apply_combat_follower_damage(attacker, defender_controller, attacker_str - defender_str_for_damage)
+				var diff = _apply_combat_follower_damage(attacker, defender_controller, attacker_str - defender_str_for_damage, halve_follower_damage)
 				print("	" + defender.card_name + " destroyed! " + defender_controller.player_name + " loses " + str(diff) + " followers")
 				_combat_kill(attacker, defender)
 			elif defender_str_real > attacker_str:
-				var diff = _apply_combat_follower_damage(defender, attacker_controller, defender_str_real - attacker_str_for_damage)
+				var diff = _apply_combat_follower_damage(defender, attacker_controller, defender_str_real - attacker_str_for_damage, halve_follower_damage)
 				print("	" + attacker.card_name + " destroyed! " + attacker_controller.player_name + " loses " + str(diff) + " followers")
 				_combat_kill(defender, attacker)
 			else:	# Tie — pre-compute routing before either card moves zones
@@ -2379,7 +2400,9 @@ func resolve_combat(attacker: Card, defender: Card, continue_callback: Callable 
 				var diff_damage: int = _convert_combat_follower_damage(
 					attacker_controller,
 					defender_controller,
-					maxi(0, defender_res_real - attacker_str_for_conversion)
+					maxi(0, defender_res_real - attacker_str_for_conversion),
+					halve_follower_damage,
+					defender
 				)
 				var diff_gain: int = defender_res_real - attacker_str_vs_res
 				print("	" + str(diff_damage) + " followers convert to " + defender_controller.player_name)
@@ -2427,6 +2450,7 @@ func resolve_united_front_combat(attacker: Card, partner: Card, defender: Card) 
 		_notify_attack_declared(combatant, defender)
 	if defender.has_method("on_defend") and not defender.abilities_suppressed():
 		defender.on_defend(self, primary)
+	var halve_follower_damage := combat_halves_follower_damage(primary, defender, support)
 	var combined_strength := primary.get_effective_strength() + support.get_effective_strength()
 
 	if defender.is_god:
@@ -2435,7 +2459,7 @@ func resolve_united_front_combat(attacker: Card, partner: Card, defender: Card) 
 			if _source_converts_combat_follower_damage(combatant):
 				converting_attacker = combatant
 				break
-		var god_damage := _apply_combat_follower_damage(converting_attacker, defender_controller, combined_strength)
+		var god_damage := _apply_combat_follower_damage(converting_attacker, defender_controller, combined_strength, halve_follower_damage, active_attackers)
 		print("%s and %s attack %s's followers for %d!" % [primary.card_name, support.card_name, defender_controller.player_name, god_damage])
 		finish.call()
 		return
@@ -2463,11 +2487,11 @@ func resolve_united_front_combat(attacker: Card, partner: Card, defender: Card) 
 					if _source_converts_combat_follower_damage(combatant):
 						converting_attacker = combatant
 						break
-				var diff := _apply_combat_follower_damage(converting_attacker, defender_controller, combined_strength - defender_str_for_damage)
+				var diff := _apply_combat_follower_damage(converting_attacker, defender_controller, combined_strength - defender_str_for_damage, halve_follower_damage, active_attackers)
 				print("	%s destroyed! %s loses %d followers" % [defender.card_name, defender_controller.player_name, diff])
 				_combat_kill(primary, defender)
 			elif defender_str_real > combined_strength:
-				var diff := _apply_combat_follower_damage(defender, attacker_controller, defender_str_real - combined_strength_for_damage)
+				var diff := _apply_combat_follower_damage(defender, attacker_controller, defender_str_real - combined_strength_for_damage, halve_follower_damage)
 				print("	United Front loses! %s loses %d followers" % [attacker_controller.player_name, diff])
 				note_player_feedback("United Front loses! Both attackers are destroyed.")
 				_combat_kill(defender, primary)
@@ -2498,7 +2522,9 @@ func resolve_united_front_combat(attacker: Card, partner: Card, defender: Card) 
 				var diff_damage: int = _convert_combat_follower_damage(
 					attacker_controller,
 					defender_controller,
-					maxi(0, defender_res_real - attacker_str_for_conversion)
+					maxi(0, defender_res_real - attacker_str_for_conversion),
+					halve_follower_damage,
+					defender
 				)
 				print("	%d followers convert to %s" % [diff_damage, defender_controller.player_name])
 				if _ferocious_defence_triggers(defender, attacker_str_vs_res):
@@ -2568,7 +2594,7 @@ func resolve_combat_with_continuation(
 	defender.reveal_from_stealth(self)
 	_notify_attack_declared(attacker, defender)
 	if defender.is_god:
-		var god_damage := _apply_combat_follower_damage(attacker, defender_controller, attacker.get_effective_strength())
+		var god_damage := _apply_combat_follower_damage(attacker, defender_controller, attacker.get_effective_strength(), combat_halves_follower_damage(attacker, defender))
 		print(attacker.card_name + " attacks " + defender_controller.player_name + "'s followers for " + str(god_damage) + " (via god)!")
 		_notify_opponent_attacks_followers(attacker, defender_controller)
 		finish.call()
@@ -2576,6 +2602,7 @@ func resolve_combat_with_continuation(
 	var continue_resolution := func() -> bool:
 		if defender.has_method("on_defend") and not defender.abilities_suppressed():
 			defender.on_defend(self, attacker)
+		var halve_follower_damage := combat_halves_follower_damage(attacker, defender)
 		var attacker_str := attacker.get_effective_strength()
 		print("=== COMBAT: " + attacker.card_name + " (STR:" + str(attacker_str) + ") vs " + defender.card_name + " ===")
 		if defender.is_petrified() or defender.card_type == Card.CardType.STRUCTURE:
@@ -2593,11 +2620,11 @@ func resolve_combat_with_continuation(
 				var attacker_str_for_damage: int = _get_giants_disdain_damage_stat(attacker, [defender], attacker_str)
 				print("	STR vs STR: " + str(attacker_str) + " vs " + str(defender_str_real))
 				if attacker_str > defender_str_real:
-					var diff := _apply_combat_follower_damage(attacker, defender_controller, attacker_str - defender_str_for_damage)
+					var diff := _apply_combat_follower_damage(attacker, defender_controller, attacker_str - defender_str_for_damage, halve_follower_damage)
 					print("	" + defender.card_name + " destroyed! " + defender_controller.player_name + " loses " + str(diff) + " followers")
 					return _combat_kill_deferred(attacker, defender, finish)
 				if defender_str_real > attacker_str:
-					var diff := _apply_combat_follower_damage(defender, attacker_controller, defender_str_real - attacker_str_for_damage)
+					var diff := _apply_combat_follower_damage(defender, attacker_controller, defender_str_real - attacker_str_for_damage, halve_follower_damage)
 					print("	" + attacker.card_name + " destroyed! " + attacker_controller.player_name + " loses " + str(diff) + " followers")
 					return _combat_kill_deferred(defender, attacker, finish)
 				print("	Tie! Both creatures destroyed")
@@ -2621,7 +2648,9 @@ func resolve_combat_with_continuation(
 				var diff_damage: int = _convert_combat_follower_damage(
 					attacker_controller,
 					defender_controller,
-					maxi(0, defender_res_real - attacker_str_for_conversion)
+					maxi(0, defender_res_real - attacker_str_for_conversion),
+					halve_follower_damage,
+					defender
 				)
 				print("	" + str(diff_damage) + " followers convert to " + defender_controller.player_name)
 				if _ferocious_defence_triggers(defender, attacker_str_vs_res):
@@ -2673,6 +2702,7 @@ func capture_committed_combat_snapshot(attacker: Card, defender: Card) -> void:
 		"defender_type": defender.card_type,
 		"defender_is_god": defender.is_god,
 		"defender_is_petrified": defender.is_petrified(),
+		"halve_follower_damage": combat_halves_follower_damage(attacker, defender),
 		"ferocious_defence": _ferocious_defence_triggers(defender, attacker_str + vs_defense_bonus),
 	}
 
@@ -2696,6 +2726,7 @@ func _resolve_committed_combat_snapshot(
 		return false
 	var attacker_controller: Player = snapshot.get("attacker_controller", null)
 	var defender_controller: Player = snapshot.get("defender_controller", null)
+	var halve_follower_damage := bool(snapshot.get("halve_follower_damage", false))
 	var finish := func() -> void:
 		_notify_after_combat(attacker, defender)
 		_clear_combat_engagement_state(defender)
@@ -2708,7 +2739,7 @@ func _resolve_committed_combat_snapshot(
 		_combat_kill_deferred(killer, victim, next)
 	var attacker_str := int(snapshot.get("attacker_str", 0))
 	if bool(snapshot.get("defender_is_god", false)):
-		_apply_combat_follower_damage(attacker, defender_controller, attacker_str)
+		_apply_combat_follower_damage(attacker, defender_controller, attacker_str, halve_follower_damage)
 		_notify_opponent_attacks_followers(attacker, defender_controller)
 		finish.call()
 		return true
@@ -2726,7 +2757,8 @@ func _resolve_committed_combat_snapshot(
 				_apply_combat_follower_damage(
 					attacker,
 					defender_controller,
-					attacker_str - int(snapshot.get("defender_str_for_damage", defender_str))
+					attacker_str - int(snapshot.get("defender_str_for_damage", defender_str)),
+					halve_follower_damage
 				)
 				kill_if_present.call(attacker, defender, finish)
 				return true
@@ -2734,7 +2766,8 @@ func _resolve_committed_combat_snapshot(
 				_apply_combat_follower_damage(
 					defender,
 					attacker_controller,
-					defender_str - int(snapshot.get("attacker_str_for_damage", attacker_str))
+					defender_str - int(snapshot.get("attacker_str_for_damage", attacker_str)),
+					halve_follower_damage
 				)
 				kill_if_present.call(defender, attacker, finish)
 				return true
@@ -2754,7 +2787,9 @@ func _resolve_committed_combat_snapshot(
 			_convert_combat_follower_damage(
 				attacker_controller,
 				defender_controller,
-				maxi(0, defender_res - int(snapshot.get("attacker_str_for_conversion", attacker_str_vs_res)))
+				maxi(0, defender_res - int(snapshot.get("attacker_str_for_conversion", attacker_str_vs_res))),
+				halve_follower_damage,
+				defender
 			)
 		if bool(snapshot.get("ferocious_defence", false)):
 			kill_if_present.call(defender, attacker, finish)
@@ -2809,6 +2844,7 @@ func _combat_kill_routed_deferred(
 			continue_callback.call()
 	if do_void:
 		print("Class Rend! " + killer.card_name + " voids " + victim.card_name + "!")
+		var was_aerial := victim.has_type("Aerial")
 		if victim.current_zone and victim.current_zone.is_board_zone():
 			victim.last_board_zone_type  = victim.current_zone.zone_type
 			victim.last_board_zone_index = victim.current_zone.zone_index
@@ -2820,7 +2856,7 @@ func _combat_kill_routed_deferred(
 		for equip in victim.equipment.duplicate():
 			_send_to_abyss_with_hook(equip)
 		victim.card_owner.move_card(victim, victim.card_owner.abyss_zone)
-		note_creature_death(victim)
+		note_creature_death(victim, was_aerial)
 		finish.call()
 		return true
 	return request_send_to_graveyard(victim, finish, true, true, bypass_combat_survival)
@@ -2973,7 +3009,7 @@ func resolve_stack() -> void:
 		var action = action_stack.pop_back()
 		action.resolve()
 		
-func convert_followers(from_player: Player, to_player: Player, amount: int) -> int:
+func convert_followers(from_player: Player, to_player: Player, amount: int, source_card: Card = null) -> int:
 	if from_player == null or to_player == null or amount <= 0:
 		return 0
 	if not can_player_lose_followers_now(from_player):
@@ -2982,15 +3018,15 @@ func convert_followers(from_player: Player, to_player: Player, amount: int) -> i
 	if actual <= 0:
 		return 0
 	followers_converted.emit(from_player, to_player, actual)
-	from_player.lose_followers(actual)
+	from_player.lose_followers(actual, source_card)
 	to_player.gain_followers(actual)
 	print("Convert! " + str(actual) + " followers move from " + from_player.player_name + " to " + to_player.player_name)
 	return actual
 
-func _convert_combat_follower_damage(from_player: Player, to_player: Player, amount: int) -> int:
+func _convert_combat_follower_damage(from_player: Player, to_player: Player, amount: int, halved_by_combatant: bool = false, source_card: Card = null) -> int:
 	if from_player == null or to_player == null or amount <= 0:
 		return 0
-	var adjusted_amount := _adjust_combat_follower_damage(amount)
+	var adjusted_amount := _adjust_combat_follower_damage(amount, halved_by_combatant)
 	if adjusted_amount <= 0:
 		return 0
 	var remaining_amount := from_player.absorb_guard_damage(adjusted_amount)
@@ -3002,7 +3038,11 @@ func _convert_combat_follower_damage(from_player: Player, to_player: Player, amo
 	if actual <= 0:
 		return 0
 	followers_converted.emit(from_player, to_player, actual)
+	var previous_sources: Array[Card] = match_statistics.damage_sources
+	var conversion_sources: Array[Card] = [source_card]
+	match_statistics.damage_sources = conversion_sources
 	from_player.lose_followers(actual)
+	match_statistics.damage_sources = previous_sources
 	to_player.gain_followers(actual)
 	return actual
 
@@ -3018,25 +3058,56 @@ func _get_combat_follower_conversion_amount(source_card: Card, amount: int) -> i
 		return clampi(int(source_card.get_follower_damage_conversion_amount(amount, self)), 0, amount)
 	return amount
 
-func _apply_combat_follower_damage(source_card: Card, damaged_player: Player, amount: int) -> int:
+func _apply_combat_follower_damage(source_card: Card, damaged_player: Player, amount: int, halved_by_combatant: bool = false, attribution_sources: Array[Card] = []) -> int:
 	if damaged_player == null or amount <= 0:
 		return 0
-	var adjusted_amount := _adjust_combat_follower_damage(amount)
+	var adjusted_amount := _adjust_combat_follower_damage(amount, halved_by_combatant)
 	if adjusted_amount <= 0:
 		return 0
 	adjusted_amount = damaged_player.absorb_guard_damage(adjusted_amount)
 	if adjusted_amount <= 0:
 		return 0
 	var source_controller := source_card.get_controller() if source_card != null else null
+	var previous_sources: Array[Card] = match_statistics.damage_sources
+	var combat_sources: Array[Card] = [source_card]
+	if not attribution_sources.is_empty():
+		combat_sources = attribution_sources
+	match_statistics.damage_sources = combat_sources
 	if _source_converts_combat_follower_damage(source_card) \
 			and source_controller != null \
 			and source_controller != damaged_player:
 		var conversion_amount := _get_combat_follower_conversion_amount(source_card, adjusted_amount)
 		if conversion_amount <= 0:
+			match_statistics.damage_sources = previous_sources
 			return 0
-		return convert_followers(damaged_player, source_controller, conversion_amount)
+		var converted := convert_followers(damaged_player, source_controller, conversion_amount)
+		match_statistics.damage_sources = previous_sources
+		return converted
 	damaged_player.lose_followers(adjusted_amount)
+	match_statistics.damage_sources = previous_sources
 	return adjusted_amount
+
+func _record_match_summon(player: Player, _card: Card, _from: Zone, _to: Zone, _source: Card, _face_down: bool, _stealth: bool) -> void:
+	if not is_game_over:
+		match_statistics.record_summon(players.find(player))
+
+func record_match_follower_loss(player: Player, amount: int, source_card: Card = null) -> void:
+	if is_game_over:
+		return
+	var sources: Array[Card] = match_statistics.damage_sources
+	if source_card != null:
+		sources = [source_card]
+	elif sources.is_empty():
+		sources = [get_effect_source_card()]
+	match_statistics.record_loss(player, amount, sources, players)
+
+func record_match_follower_gain(player: Player, amount: int) -> void:
+	if not is_game_over:
+		match_statistics.record_gain(players.find(player), amount)
+
+func _finish_match_statistics() -> void:
+	match_statistics.finish()
+	match_result_stats = match_statistics.summary(players, turn_number, losing_player, game_end_reason)
 
 func apply_attack_restriction(player: Player, turns: int, source: Card = null) -> void:
 	attack_restrictions[player] = {turns = turns, source = source}
@@ -3307,6 +3378,7 @@ func _combat_kill_routed(killer: Card, victim: Card, do_void: bool, suppress_all
 						card.on_ally_kill(self, killer, victim)
 	if do_void:
 		print("Class Rend! " + killer.card_name + " voids " + victim.card_name + "!")
+		var was_aerial := victim.has_type("Aerial")
 		if victim.current_zone and victim.current_zone.is_board_zone():
 			victim.last_board_zone_type  = victim.current_zone.zone_type
 			victim.last_board_zone_index = victim.current_zone.zone_index
@@ -3317,7 +3389,7 @@ func _combat_kill_routed(killer: Card, victim: Card, do_void: bool, suppress_all
 		for equip in victim.equipment.duplicate():
 			_send_to_abyss_with_hook(equip)
 		victim.card_owner.move_card(victim, victim.card_owner.abyss_zone)
-		note_creature_death(victim)
+		note_creature_death(victim, was_aerial)
 		finish.call()
 		return
 	request_send_to_graveyard(victim, finish, true, true, bypass_combat_survival)
@@ -3607,6 +3679,8 @@ func _send_to_graveyard_with_hook_resolved(
 		card.last_board_zone_type  = card.current_zone.zone_type
 		card.last_board_zone_index = card.current_zone.zone_index
 
+	# Capture flight before leave hooks and zone movement clear combat effects.
+	var was_aerial := card.has_type("Aerial")
 	var replacement_zone: Zone = null
 	if not (ignore_self_combat_replacement and combat_death) \
 			and card.has_method("get_self_graveyard_replacement_zone") and not card.abilities_suppressed() \
@@ -3642,8 +3716,8 @@ func _send_to_graveyard_with_hook_resolved(
 		card.card_owner.move_card(card, card.card_owner.abyss_zone)
 	else:
 		card.card_owner.move_card(card, card.card_owner.graveyard_zone)
-	if combat_death or destruction:
-		note_creature_death(card)
+	if combat_death:
+		note_creature_death(card, was_aerial)
 	if continue_callback.is_valid():
 		continue_callback.call()
 	return true
@@ -4467,6 +4541,7 @@ func _finish_game(losing_player_ref: Player, reason: String = GAME_END_REASON_DE
 	is_game_over = true
 	_set_phase(GamePhase.END)
 	print(get_game_result_message(winning_player, losing_player, reason))
+	_finish_match_statistics()
 	game_ended.emit(winning_player, losing_player)
 
 func _on_player_defeated(defeated_player: Player) -> void:
@@ -4496,6 +4571,7 @@ func _resolve_pending_defeats() -> void:
 		is_game_over = true
 		_set_phase(GamePhase.END)
 		print(get_game_result_message())
+		_finish_match_statistics()
 		game_ended.emit(null, null)
 		return
 	if not defeated_players.is_empty():

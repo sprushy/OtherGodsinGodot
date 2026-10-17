@@ -1422,7 +1422,16 @@ func _show_hover_panel() -> void:
 	panel.add_to_group("stealth_fog_clear_ui")
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.top_level = true
-	panel.z_index = _HOVER_PANEL_Z_INDEX
+	# Floating panels leave the card's hierarchy, so retain its overlay's depth.
+	var card_z_index := 0
+	var ancestor: CanvasItem = self
+	while ancestor != null:
+		card_z_index += ancestor.z_index
+		if not ancestor.z_as_relative:
+			break
+		ancestor = ancestor.get_parent_item()
+	panel.z_as_relative = false
+	panel.z_index = mini(RenderingServer.CANVAS_ITEM_Z_MAX, maxi(_HOVER_PANEL_Z_INDEX, card_z_index + 1))
 	panel.visible = false
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.05, 0.05, 0.12, 0.97)

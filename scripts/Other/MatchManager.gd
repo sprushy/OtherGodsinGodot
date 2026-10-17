@@ -64,6 +64,7 @@ var anointing_source: Card = null # AnointingStatue
 var selected_attacker: Card = null
 var pending_attack_target = null # Card or Player
 var selected_interceptor: Card = null
+var _pending_intercept_stack_action: CardAction = null
 var _pending_hunting_tactics_attack_declaration: bool = false
 var _pending_hunting_tactics_attack_attacker: Card = null
 var _pending_hunting_tactics_attack_target = null # Card or Player
@@ -136,6 +137,7 @@ func reset_runtime_state() -> void:
 	selected_attacker = null
 	pending_attack_target = null
 	selected_interceptor = null
+	_pending_intercept_stack_action = null
 	pending_blot_spell = null
 	pending_blot_sacrifice_target = null
 	pending_blot_selected_creatures.clear()
@@ -1295,6 +1297,10 @@ func _prune_invalidated_frontline_entry_event(card: Card) -> void:
 		# Frontline-entry responses are discovered when the card first moves.
 		# Its Impact can then invalidate those responses before card_summoned
 		# fires (for example, Dellingr revealing and locking a prepared Sap).
+		# A queued Impact must resolve first. Response discovery reads the top
+		# action, so checking this entry beneath it would discard valid Sap windows.
+		if game_manager.action_stack.back() != action:
+			return
 		if game_manager._has_priority_responses_for_action(action) \
 				or _action_requires_explicit_priority_window(action):
 			return
@@ -1334,6 +1340,8 @@ func _is_tezcatlipoca_necoc_yaotl_summon(card: Card, summon_source: Card) -> boo
 
 func resolve_action(action: CardAction) -> void:
 	last_resolution_text = ""
+	if _offer_newly_eligible_interceptors(action):
+		return
 	var pushed_effect_source := false
 	var action_completed := true
 	var deferred_completion_command_type := ""
@@ -1564,6 +1572,20 @@ func _get_pending_ui_debug_summary(limit: int = 5) -> String:
 
 func get_pending_ui_interaction_count() -> int:
 	return _pending_ui_interactions.size()
+
+func get_pending_well_of_fire_player_index() -> int:
+	if game_manager == null:
+		return -1
+	for entry in _pending_ui_interactions:
+		if str(entry.get("type", "")) != "nusku_well_of_fire":
+			continue
+		var data: Dictionary = entry.get("data", {})
+		var nusku := game_manager.get_card_by_uid(str(data.get("source_uid", ""))) as NuskuFirebearer
+		# Completion clears this metadata before move_validated broadcasts state,
+		# while the answered prompt is still waiting to be consumed.
+		if nusku != null and nusku.has_meta(NuskuFirebearer.PENDING_CHOICE_UIDS_META):
+			return game_manager.players.find(entry.get("player", null))
+	return -1
 
 func _has_pending_reveal_target_ui_interaction() -> bool:
 	for entry in _pending_ui_interactions:
@@ -3004,8 +3026,38 @@ func _build_pending_attack_action() -> CardAction:
 	action.attack_speed_override = _get_declared_attack_speed(selected_attacker)
 	action.interceptor = selected_interceptor
 	action.target = pending_attack_target
+	for interceptor in _get_possible_interceptors(selected_attacker, pending_attack_target):
+		action.offered_interceptor_uids.append(interceptor.uid)
 	action.halve_follower_damage = selected_attacker != null and selected_attacker.halves_follower_damage_inflicted()
 	return action
+
+func _offer_newly_eligible_interceptors(action: CardAction) -> bool:
+	if action == null or action.type != CardAction.Type.ATTACK or action.interceptor != null:
+		return false
+	if action.attacker == null or action.target == null or not game_manager.action_stack.has(action):
+		return false
+	if _pending_intercept_stack_action == action:
+		return true
+	var possible_interceptors := _get_possible_interceptors(action.attacker, action.target)
+	var has_new_interceptor := false
+	for interceptor in possible_interceptors:
+		if interceptor.uid not in action.offered_interceptor_uids:
+			has_new_interceptor = true
+			break
+	if not has_new_interceptor:
+		return false
+	# Responses can raise a defender's speed (or lower the attacker's). Recheck
+	# before committing combat, keeping the original attack on the stack.
+	for interceptor in possible_interceptors:
+		if interceptor.uid not in action.offered_interceptor_uids:
+			action.offered_interceptor_uids.append(interceptor.uid)
+	_pending_intercept_stack_action = action
+	selected_attacker = action.attacker
+	pending_attack_target = action.target
+	selected_interceptor = null
+	_clear_priority_window_state()
+	_offer_pending_attack_intercept_prompt(possible_interceptors)
+	return true
 
 func _get_priority_response_targets(card: Card, top: CardAction) -> Array:
 	var targets: Array = []
@@ -3075,6 +3127,7 @@ func _build_priority_response_options(responses: Array) -> Array:
 			response_options.append({
 				response_type = "hex",
 				card_uid = hex.uid,
+				activation_label = hex.get_priority_activation_label(game_manager, top, hex.card_owner) if hex.has_method("get_priority_activation_label") else "Use " + hex.card_name,
 				target_uids = hex_target_uids,
 				target_is_attacker = target_is_attacker,
 			})
@@ -3475,6 +3528,7 @@ func _clear_pending_attack_state() -> void:
 	selected_attacker = null
 	selected_interceptor = null
 	pending_attack_target = null
+	_pending_intercept_stack_action = null
 	_clear_pending_hunting_tactics_attack_declaration()
 
 func _clear_pending_hunting_tactics_attack_declaration() -> void:
@@ -3663,6 +3717,9 @@ func _start_authoritative_headless_attack() -> void:
 	if possible_interceptors.is_empty():
 		_resolve_authoritative_headless_attack()
 		return
+	_offer_pending_attack_intercept_prompt(possible_interceptors)
+
+func _offer_pending_attack_intercept_prompt(possible_interceptors: Array[Card]) -> void:
 	var defender: Player = pending_attack_target if pending_attack_target is Player else (pending_attack_target as Card).get_controller()
 	var defender_idx := game_manager.players.find(defender)
 	if defender_idx < 0:
@@ -6508,7 +6565,17 @@ func _process_command_impl(command: Dictionary) -> bool:
 					move_failed.emit("intercept_decision: invalid interceptor")
 					return false
 				selected_interceptor = interceptor
-			_resolve_authoritative_headless_attack()
+			if _pending_intercept_stack_action != null:
+				var attack_action := _pending_intercept_stack_action
+				attack_action.interceptor = selected_interceptor
+				_clear_pending_attack_state()
+				# A newly selected defender may enable different battle responses.
+				attack_action.event_data.erase("priority_window_offered_player_indexes")
+				_clear_priority_window_state()
+				_request_ui_refresh()
+				_advance_authoritative_priority()
+			else:
+				_resolve_authoritative_headless_attack()
 			move_validated.emit(command)
 			return true
 		"combat_retreat_decision":

@@ -244,7 +244,11 @@ static func build_board_popup_body_from_game_state(
 	config: Dictionary = {}
 ) -> Control:
 	var merged_config := config.duplicate(true)
-	var is_hidden_card := (card.is_stealth or card.is_prepared or (card.is_face_down and not _is_public_power(card))) \
+	# Cards in public piles remain inspectable even if they retain hidden flags.
+	var is_public_pile := card.current_zone != null \
+		and card.current_zone.zone_type in [Zone.ZoneType.GRAVEYARD, Zone.ZoneType.ABYSS]
+	var is_hidden_card := not is_public_pile \
+		and (card.is_stealth or card.is_prepared or (card.is_face_down and not _is_public_power(card))) \
 		and card.get_controller() != viewer \
 		and not card.is_revealed_to_all()
 	merged_config["is_hidden_card"] = is_hidden_card

@@ -19,6 +19,8 @@ var attacker: Card
 var united_front_partner: Card = null
 var attack_speed_override: int = -1
 var interceptor: Card   # may be null
+# Authority-only history; do not serialize hidden interception choices to opponents.
+var offered_interceptor_uids: Array[String] = []
 var halve_follower_damage: bool = false
 
 # SPELL / ABILITY / EVENT specific

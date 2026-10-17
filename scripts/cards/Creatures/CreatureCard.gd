@@ -19,6 +19,10 @@ func on_defend(_game_manager: GameManager, _attacker: Card) -> void:
 func changes_visible_stats_when_entering_combat() -> bool:
 	return false
 
+func get_combat_strength_against(_opponent: Card, strength_delta: int = 0) -> int:
+	# Read-only forecast for AI. Overrides must never run combat hooks or add buffs.
+	return maxi(0, get_effective_strength() + strength_delta)
+
 func on_summon(_game_manager: GameManager) -> void:
 	# Called whenever this creature is summoned onto the board.
 	pass

@@ -117,7 +117,7 @@ func activate_with_data(game_manager: GameManager, offering_card: Card, named_ca
 		else:
 			feedback += " The guess was correct, but it could not be drawn."
 	else:
-		card_owner.lose_followers(FOLLOWER_PENALTY)
+		card_owner.lose_followers(FOLLOWER_PENALTY, self)
 		game_manager.send_to_deck_bottom_with_hook(top_card)
 		feedback += " The guess \"%s\" was wrong, so you lose %d followers and shelve it." % [
 			guessed_name,

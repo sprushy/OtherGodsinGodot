@@ -146,10 +146,12 @@ func gain_followers(amount: int) -> void:
 		return
 	if is_defeated:
 		return
+	if game_manager != null:
+		game_manager.record_match_follower_gain(self, amount)
 	followers += amount
 	followers_changed.emit(followers)
 
-func lose_followers(amount: int) -> void:
+func lose_followers(amount: int, source_card: Card = null) -> void:
 	if not followers_enabled:
 		return
 	if is_defeated:
@@ -158,6 +160,8 @@ func lose_followers(amount: int) -> void:
 		return
 	if game_manager != null and not game_manager.can_player_lose_followers_now(self):
 		return
+	if game_manager != null:
+		game_manager.record_match_follower_loss(self, mini(followers, amount), source_card)
 	followers = max(0, followers - amount)
 	followers_changed.emit(followers)
 	if followers <= 0 and not is_defeated:

@@ -790,12 +790,9 @@ func _try_attack() -> bool:
 	if attackers.is_empty():
 		return false
 	var opposing_creatures := _get_board_creatures(opponent)
-	if _can_kill_with_all_attackers(attackers):
-		var direct_attacker := _pick_best_board_creature(attackers)
-		return _submit_attack(direct_attacker, opponent)
-	if opposing_creatures.is_empty():
-		var direct_attacker := _pick_best_board_creature(attackers)
-		return _submit_attack(direct_attacker, opponent)
+	var safe_followers_attack := _get_best_safe_followers_attack(attackers)
+	if not safe_followers_attack.is_empty() and (_can_kill_with_all_attackers(attackers) or opposing_creatures.is_empty()):
+		return _submit_attack(safe_followers_attack.get("attacker", null), opponent)
 	var askelladen_attack := _get_best_askelladen_attack(attackers, opposing_creatures)
 	if not askelladen_attack.is_empty():
 		return _submit_attack(askelladen_attack.get("attacker", null), askelladen_attack.get("target", null))
@@ -805,7 +802,6 @@ func _try_attack() -> bool:
 	var stealth_attack := _get_best_stealth_attack(attackers, opposing_creatures)
 	if not stealth_attack.is_empty():
 		return _submit_attack(stealth_attack.get("attacker", null), stealth_attack.get("target", null))
-	var safe_followers_attack := _get_best_safe_followers_attack(attackers)
 	if not safe_followers_attack.is_empty():
 		return _submit_attack(safe_followers_attack.get("attacker", null), opponent)
 	return false
@@ -1106,6 +1102,8 @@ func _is_board_creature_better(candidate: Card, current_best: Card) -> bool:
 func _get_projected_strength(card: Card) -> int:
 	if card == null:
 		return 0
+	if card.current_zone != null and card.current_zone.is_board_zone():
+		return card.get_effective_strength()
 	var total := card.strength
 	if _would_receive_thor_buff(card):
 		total += 3
@@ -1114,6 +1112,8 @@ func _get_projected_strength(card: Card) -> int:
 func _get_projected_resilience(card: Card) -> int:
 	if card == null:
 		return 0
+	if card.current_zone != null and card.current_zone.is_board_zone():
+		return card.get_effective_resilience()
 	var total := card.resilience
 	if _would_receive_thor_buff(card):
 		total += 3
@@ -1200,10 +1200,17 @@ func _can_attack_creature(attacker: Card, target: Card) -> bool:
 		and target.current_zone.is_board_zone() \
 		and game_manager.can_cards_engage_each_other(attacker, target)
 
-func _get_attack_strength_against_defense(attacker: Card) -> int:
+func _get_combat_strength(card: Card, opposing_card: Card = null, str_delta: int = 0) -> int:
+	if card == null:
+		return 0
+	if card is CreatureCard and CardStrategy.visible(self, card):
+		return card.get_combat_strength_against(opposing_card, str_delta)
+	return maxi(0, card.get_effective_strength() + str_delta)
+
+func _get_attack_strength_against_defense(attacker: Card, defender: Card = null, str_delta: int = 0) -> int:
 	if attacker == null:
 		return 0
-	var total := attacker.get_effective_strength()
+	var total := _get_combat_strength(attacker, defender, str_delta)
 	for equip in attacker.equipment:
 		if equip is EquipmentCard:
 			total += equip.get_bonus_strength_vs_defense(attacker)
@@ -1227,10 +1234,10 @@ func _would_destroy_target_in_battle(attacker: Card, target: Card) -> bool:
 	if _is_stone_monkey(target) and not attacker.can_destroy_combat_protected_creatures(target):
 		return false
 	if target.is_petrified() or target.card_type == Card.CardType.STRUCTURE:
-		return attacker.get_effective_strength() > target.get_effective_resilience()
+		return _get_combat_strength(attacker, target) > target.get_effective_resilience()
 	if target.creature_mode == Card.CreatureMode.AGGRESSIVE:
-		return attacker.get_effective_strength() >= target.get_effective_strength()
-	return _get_attack_strength_against_defense(attacker) > target.get_effective_resilience()
+		return _get_combat_strength(attacker, target) >= _get_combat_strength(target, attacker)
+	return _get_attack_strength_against_defense(attacker, target) > target.get_effective_resilience()
 
 func _would_attacker_survive_battle(attacker: Card, target: Card) -> bool:
 	if attacker == null or target == null:
@@ -1238,8 +1245,18 @@ func _would_attacker_survive_battle(attacker: Card, target: Card) -> bool:
 	if target.is_petrified() or target.card_type == Card.CardType.STRUCTURE:
 		return true
 	if target.creature_mode == Card.CreatureMode.AGGRESSIVE:
-		return attacker.get_effective_strength() > target.get_effective_strength()
-	return not _defender_has_ferocious_defence(target, _get_attack_strength_against_defense(attacker))
+		return _get_combat_strength(attacker, target) > _get_combat_strength(target, attacker)
+	return not _defender_has_ferocious_defence(target, _get_attack_strength_against_defense(attacker, target))
+
+func _is_attack_safe_from_interceptors(attacker: Card, target: Card) -> bool:
+	if match_manager == null:
+		return false
+	for interceptor in match_manager._get_possible_interceptors(attacker, target):
+		if not CardStrategy.visible(self, interceptor):
+			continue
+		if _is_attack_target_tactically_bad(attacker, interceptor) or not _would_attacker_survive_battle(attacker, interceptor):
+			return false
+	return true
 
 func _is_askelladen(card: Card) -> bool:
 	return card is Askelladen
@@ -1270,6 +1287,8 @@ func _is_attack_target_tactically_bad(attacker: Card, target: Card) -> bool:
 func _is_clean_creature_kill(attacker: Card, target: Card) -> bool:
 	if not _can_attack_creature(attacker, target):
 		return false
+	if not _is_attack_safe_from_interceptors(attacker, target):
+		return false
 	if _is_attack_target_tactically_bad(attacker, target):
 		return false
 	if not _would_destroy_target_in_battle(attacker, target):
@@ -1280,6 +1299,8 @@ func _is_clean_creature_kill(attacker: Card, target: Card) -> bool:
 
 func _score_standard_attack_plan(attacker: Card, target: Card) -> int:
 	if not _can_attack_creature(attacker, target):
+		return -1000000
+	if not _is_attack_safe_from_interceptors(attacker, target):
 		return -1000000
 	if _is_attack_target_tactically_bad(attacker, target):
 		return -1000000
@@ -1301,12 +1322,19 @@ func _score_standard_attack_plan(attacker: Card, target: Card) -> int:
 	return score
 
 func _can_kill_with_all_attackers(attackers: Array[Card]) -> bool:
-	if opponent == null:
+	if opponent == null or game_manager == null or game_manager.has_turn_follower_loss_prevention(opponent):
 		return false
-	var total_str := 0
+	var total_damage := 0
 	for attacker in attackers:
-		total_str += attacker.get_effective_strength()
-	return total_str >= opponent.followers
+		if _can_attack_followers_safely(attacker):
+			total_damage += _get_direct_follower_damage(attacker)
+	return total_damage >= opponent.followers + opponent.guard
+
+func _get_direct_follower_damage(attacker: Card) -> int:
+	var damage := _get_combat_strength(attacker)
+	if GameManager.combat_halves_follower_damage(attacker):
+		damage = GameManager.round_down_divide(damage, 2)
+	return damage
 
 func _get_best_stealth_attack(attackers: Array[Card], opposing_creatures: Array[Card]) -> Dictionary:
 	var best_attacker: Card = null
@@ -1316,6 +1344,8 @@ func _get_best_stealth_attack(attackers: Array[Card], opposing_creatures: Array[
 			continue
 		for attacker in attackers:
 			if not _can_attack_creature(attacker, target):
+				continue
+			if not _is_attack_safe_from_interceptors(attacker, target):
 				continue
 			if best_attacker == null or _is_board_creature_better(attacker, best_attacker):
 				best_attacker = attacker
@@ -1350,10 +1380,11 @@ func _can_attack_followers_safely(attacker: Card) -> bool:
 func _score_followers_attack(attacker: Card) -> int:
 	if attacker == null or opponent == null:
 		return -1000000
-	var score := attacker.get_effective_strength() * 140 + attacker.get_effective_speed() * 25
-	if attacker.get_effective_strength() >= opponent.followers:
+	var damage := _get_direct_follower_damage(attacker)
+	var score := damage * 140 + attacker.get_effective_speed() * 25
+	if damage >= opponent.followers + opponent.guard:
 		score += 3000
-	if opponent.followers <= attacker.get_effective_strength() * 2:
+	if opponent.followers + opponent.guard <= damage * 2:
 		score += 1200
 	if attacker.is_stealth:
 		score += 400
@@ -1422,7 +1453,7 @@ func _get_defensive_mode_switch_score(creature: Card, opposing_creatures: Array[
 	for enemy in opposing_creatures:
 		if not _can_attack_creature(enemy, creature):
 			continue
-		if enemy.get_effective_strength() < creature.get_effective_resilience():
+		if _get_combat_strength(enemy, creature) < creature.get_effective_resilience():
 			continue
 		best_threat = maxi(best_threat, _score_projected_card(enemy))
 	if best_threat <= 0:
@@ -1972,7 +2003,6 @@ func _count_clean_attack_targets_for(attacker: Card, opposing_creatures: Array[C
 func _is_projected_creature_strongest_on_board(card: Card, opposing_creatures: Array[Card]) -> bool:
 	if card == null:
 		return false
-	var projected_strength := _get_projected_strength(card)
 	var projected_resilience := _get_projected_resilience(card)
 	var projected_speed := card.get_effective_speed()
 	var strongest_seen := false
@@ -1980,7 +2010,8 @@ func _is_projected_creature_strongest_on_board(card: Card, opposing_creatures: A
 		if enemy == null:
 			continue
 		strongest_seen = true
-		var enemy_strength := enemy.get_effective_strength()
+		var projected_strength := _get_combat_strength(card, enemy) + _get_projected_strength(card) - card.get_effective_strength()
+		var enemy_strength := _get_combat_strength(enemy, card)
 		var enemy_resilience := enemy.get_effective_resilience()
 		var enemy_speed := enemy.get_effective_speed()
 		if projected_strength < enemy_strength:
@@ -2231,12 +2262,20 @@ func _score_vision_economic_swing(vision: VisionOfOdin, action: CardAction, targ
 
 func _estimate_attack_economy(action: CardAction, modified_card: Card, str_delta: int, _speed_delta: int, res_delta: int = 0) -> Dictionary:
 	var result := _estimate_raw_attack_economy(action, modified_card, str_delta, res_delta)
+	var halve_follower_damage := false
+	if action != null:
+		var defender := _get_attack_defender_card(action)
+		# Only forecast passives on cards the bot can identify.
+		var known_attacker: Card = action.attacker if CardStrategy.visible(self, action.attacker) else null
+		var known_defender: Card = defender if CardStrategy.visible(self, defender) else null
+		var known_partner: Card = action.united_front_partner if CardStrategy.visible(self, action.united_front_partner) else null
+		halve_follower_damage = action.halve_follower_damage or GameManager.combat_halves_follower_damage(known_attacker, known_defender, known_partner)
 	for player in [bot_player, opponent]:
 		if player == null:
 			continue
 		var loss_key := "bot_followers_lost" if player == bot_player else "opponent_followers_lost"
 		var amount := int(result[loss_key])
-		if action != null and action.halve_follower_damage:
+		if halve_follower_damage:
 			amount = GameManager.round_down_divide(amount, 2)
 		if game_manager.has_turn_follower_loss_prevention(player):
 			amount = 0
@@ -2258,7 +2297,7 @@ func _estimate_raw_attack_economy(action: CardAction, modified_card: Card, str_d
 		return result
 	var attacker := action.attacker
 	var defender := _get_attack_defender_card(action)
-	var attacker_strength := _get_vision_adjusted_strength(attacker, modified_card, str_delta)
+	var attacker_strength := _get_vision_adjusted_strength(attacker, modified_card, str_delta, defender)
 	if defender == null:
 		_add_follower_loss_to_economy(result, _get_attack_defending_player(action, defender), attacker_strength)
 		return result
@@ -2266,13 +2305,13 @@ func _estimate_raw_attack_economy(action: CardAction, modified_card: Card, str_d
 		_add_follower_loss_to_economy(result, defender.get_controller(), attacker_strength)
 		return result
 	if defender.is_petrified() or defender.card_type == Card.CardType.STRUCTURE:
-		if _get_vision_adjusted_strength_vs_defense(attacker, modified_card, str_delta) > defender.get_effective_resilience() + (res_delta if defender == modified_card else 0):
+		if attacker_strength > defender.get_effective_resilience() + (res_delta if defender == modified_card else 0):
 			_add_destroyed_card_to_economy(result, defender)
 		return result
 	if defender.card_type != Card.CardType.CREATURE:
 		return result
 	if defender.creature_mode == Card.CreatureMode.AGGRESSIVE:
-		var defender_strength := _get_vision_adjusted_strength(defender, modified_card, str_delta)
+		var defender_strength := _get_vision_adjusted_strength(defender, modified_card, str_delta, attacker)
 		if attacker_strength > defender_strength:
 			_add_destroyed_card_to_economy(result, defender)
 			_add_follower_loss_to_economy(result, defender.get_controller(), attacker_strength - defender_strength)
@@ -2284,7 +2323,7 @@ func _estimate_raw_attack_economy(action: CardAction, modified_card: Card, str_d
 			_add_destroyed_card_to_economy(result, defender)
 		return result
 
-	var attack_strength_vs_defense := _get_vision_adjusted_strength_vs_defense(attacker, modified_card, str_delta)
+	var attack_strength_vs_defense := _get_vision_adjusted_strength_vs_defense(attacker, modified_card, str_delta, defender)
 	var defender_resilience := maxi(0, defender.get_effective_resilience() + (res_delta if defender == modified_card else 0))
 	if attack_strength_vs_defense > defender_resilience:
 		_add_destroyed_card_to_economy(result, defender)
@@ -2337,21 +2376,11 @@ func _get_attack_defending_player(action: CardAction, defender: Card) -> Player:
 		return game_manager.get_opponent(action.attacker.get_controller()) if game_manager != null else null
 	return null
 
-func _get_vision_adjusted_strength(card: Card, modified_card: Card, str_delta: int) -> int:
-	if card == null:
-		return 0
-	var strength := card.get_effective_strength()
-	if card == modified_card:
-		strength += str_delta
-	return maxi(0, strength)
+func _get_vision_adjusted_strength(card: Card, modified_card: Card, str_delta: int, opposing_card: Card = null) -> int:
+	return _get_combat_strength(card, opposing_card, str_delta if card == modified_card else 0)
 
-func _get_vision_adjusted_strength_vs_defense(card: Card, modified_card: Card, str_delta: int) -> int:
-	if card == null:
-		return 0
-	var strength := _get_attack_strength_against_defense(card)
-	if card == modified_card:
-		strength += str_delta
-	return maxi(0, strength)
+func _get_vision_adjusted_strength_vs_defense(card: Card, modified_card: Card, str_delta: int, opposing_card: Card = null) -> int:
+	return maxi(0, _get_attack_strength_against_defense(card, opposing_card, str_delta if card == modified_card else 0))
 
 func _get_card_economic_value(card: Card) -> int:
 	if card == null:

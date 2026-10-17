@@ -94,6 +94,7 @@ const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
 const ReinforcementCardTileScript = preload("res://scripts/ui/ReinforcementCardTile.gd")
 const ReinforcementDropAreaScript = preload("res://scripts/ui/ReinforcementDropArea.gd")
 const UITextureCacheScript = preload("res://scripts/ui/UITextureCache.gd")
+const MatchResultScreenScript = preload("res://scripts/ui/MatchResultScreen.gd")
 const AbyssGatewayIconScript = preload("res://scripts/ui/AbyssGatewayIcon.gd")
 const GravesiteTexture = preload("res://images/ui/zones/grave_tumulus_base.png")
 const SnowGravesiteTexture = preload("res://images/ui/zones/grave_tumulus_snow_base.png")
@@ -306,6 +307,7 @@ var _opponent_follower_casualty_sprites: Array = []
 var _opponent_follower_casualty_bubbles: Array = []
 var _follower_casualty_records_by_player_key: Dictionary = {}
 var _follower_casualty_last_followers_by_player_key: Dictionary = {}
+var _follower_loss_flash_started_by_player_key: Dictionary = {}
 var _pending_follower_conversion_out_by_player_key: Dictionary = {}
 var _pending_follower_conversion_in_by_player_key: Dictionary = {}
 var _enemy_hand_overlay: Control = null
@@ -415,6 +417,7 @@ var _card_draw_animations: Dictionary = {}
 var _card_shelve_animations: Dictionary = {}
 var _selection_card_move_sources: Dictionary = {}
 var _card_grave_animations: Dictionary = {}
+var _next_mill_flight_msec: Dictionary = {}
 var _abyss_activity_deadlines: Dictionary = {}
 var _void_effect_generation: int = 0
 var _board_zone_uis: Array = []      # Array[BoardZoneUI]
@@ -848,6 +851,7 @@ var _post_game_board_refresh_locked: bool = false
 var _match_reconnect_waiting: bool = false
 var _match_reconnect_wait_message: String = "Waiting for opponent to reconnect..."
 var _awaiting_initial_full_state: bool = false
+var _network_well_of_fire_choosing_player_index: int = -1
 var _match_launch_loading: bool = false
 var _current_match_info: Dictionary = {}
 var _network_upkeep_prompt_turn: int = -1
@@ -5339,7 +5343,8 @@ func _open_match_replay_overlay() -> void:
 	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(overlay)
-	_promote_transient_ui(overlay, TRANSIENT_UI_Z_INDEX + 115)
+	# Replays opened from the result screen must sit above the recap.
+	_promote_transient_ui(overlay, TRANSIENT_UI_Z_INDEX + 125)
 	_match_replay_overlay = overlay
 
 	var panel := PanelContainer.new()
@@ -6361,6 +6366,7 @@ func _prepare_for_match_launch(status_message: String = "Connecting to match..."
 	_clear_follower_casualty_overlay()
 	_follower_casualty_records_by_player_key.clear()
 	_follower_casualty_last_followers_by_player_key.clear()
+	_follower_loss_flash_started_by_player_key.clear()
 	_pending_follower_conversion_out_by_player_key.clear()
 	_pending_follower_conversion_in_by_player_key.clear()
 	_board_zone_uis.clear()
@@ -9187,6 +9193,11 @@ func _sync_follower_casualties_for_player(player: Player, new_followers: int, _p
 		_follower_casualty_records_by_player_key[player_key] = records
 		return
 	if current_followers < previous_followers:
+		var flash_started_msec := Time.get_ticks_msec()
+		_follower_loss_flash_started_by_player_key[player_key] = flash_started_msec
+		var god_zone_ui := _get_zone_ui_for_zone(player.god_zone)
+		if god_zone_ui != null and is_instance_valid(god_zone_ui):
+			god_zone_ui.follower_loss_flash_started_msec = flash_started_msec
 		var loss_count := previous_followers - current_followers
 		var conversion_loss_count := _consume_pending_follower_conversion_out_count(player_key, loss_count)
 		if conversion_loss_count > 0:
@@ -9293,6 +9304,7 @@ func _update_follower_count_hover() -> void:
 		_follower_count_hover.z_index = HOVER_PREVIEW_Z_INDEX + 6
 		add_child(_follower_count_hover)
 	_follower_count_hover.set_followers(player.followers, true)
+	_follower_count_hover.show_loss_flash(int(_follower_loss_flash_started_by_player_key.get(_get_follower_casualty_player_key(player), -1)))
 	_follower_count_hover.reset_size()
 	var hover_size := _follower_count_hover.get_combined_minimum_size()
 	var mouse_pos := get_local_mouse_position()
@@ -10984,6 +10996,10 @@ func _capture_visible_shelve_sources() -> Array[Dictionary]:
 	return sources
 
 func _get_grave_card_source(card: Card, from_zone: Zone) -> Dictionary:
+	if from_zone != null and from_zone.zone_type == Zone.ZoneType.DECK:
+		var source := _get_hand_arrival_source(from_zone)
+		source["from_deck"] = true
+		return source
 	# Prefer the stack face for resolving spells, then the hand or field.
 	var visual: Control = null
 	for holder in _visual_stack_cards:
@@ -11054,7 +11070,14 @@ func _start_card_grave_animation(card: Card, source: Dictionary) -> void:
 	_promote_transient_ui(animation, HAND_OVERLAY_Z_INDEX + 10)
 	_card_grave_animations[card.uid] = animation
 	animation.tree_exited.connect(_release_card_grave_animation.bind(card.uid, animation), CONNECT_ONE_SHOT)
-	animation.play_grave(card, source, _get_grave_arrival_geometry.bind(owner_index))
+	var delay := 0.0
+	if bool(source.get("from_deck", false)):
+		# Space deck-to-grave cards into a stream, including across snapshots.
+		var now := Time.get_ticks_msec()
+		var launch_at := maxi(now, int(_next_mill_flight_msec.get(owner_index, 0)))
+		delay = float(launch_at - now) / 1000.0
+		_next_mill_flight_msec[owner_index] = launch_at + 220
+	animation.play_grave(card, source, _get_grave_arrival_geometry.bind(owner_index), delay)
 
 func _release_card_grave_animation(card_uid: String, animation: Control) -> void:
 	if _card_grave_animations.get(card_uid, null) == animation:
@@ -11065,6 +11088,7 @@ func _clear_card_grave_animations() -> void:
 		if is_instance_valid(animation):
 			animation.cancel()
 	_card_grave_animations.clear()
+	_next_mill_flight_msec.clear()
 
 func _capture_grave_transition_sources(state: Dictionary) -> Dictionary:
 	var sources: Dictionary = {}
@@ -11091,7 +11115,7 @@ func _capture_grave_transition_sources(state: Dictionary) -> Dictionary:
 				sources[uid] = _get_grave_card_source(card, card.current_zone)
 			else:
 				# A hidden deck has no public card UIDs until a card leaves it.
-				sources[uid] = _get_hand_arrival_source(player.deck_zone)
+				sources[uid] = _get_grave_card_source(null, player.deck_zone)
 	return sources
 
 func _layout_fan() -> void:
@@ -11992,6 +12016,7 @@ func _make_god_cluster(zone: Zone, player: Player, is_enemy: bool) -> Control:
 	cluster.add_child(god_wrapper)
 
 	var god_zone_ui := BoardZoneUI.new()
+	god_zone_ui.follower_loss_flash_started_msec = int(_follower_loss_flash_started_by_player_key.get(_get_follower_casualty_player_key(player), -1))
 	god_zone_ui.show_god_deck_count = false
 	god_zone_ui.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	god_wrapper.add_child(god_zone_ui)
@@ -24356,6 +24381,7 @@ func _broadcast_priority_offered(player: Player, responses: Array) -> void:
 			response_options.append({
 				response_type = "hex",
 				card_uid = hex.uid,
+				activation_label = hex.get_priority_activation_label(game_manager, top, player) if hex.has_method("get_priority_activation_label") else "Use " + hex.card_name,
 				target_uids = _get_priority_response_target_uids(hex, top),
 				target_is_attacker = target_is_attacker,
 			})
@@ -24481,7 +24507,7 @@ func _show_priority_prompt(player: Player) -> void:
 			continue
 		interactive_response_count += 1
 		var btn := Button.new()
-		btn.text = "Use " + response.card_name
+		btn.text = response.get_priority_activation_label(game_manager, game_manager.action_stack.back(), player) if response.has_method("get_priority_activation_label") else "Use " + response.card_name
 		btn.pressed.connect(func() -> void:
 			_set_action_label_text("Selected " + response.card_name + " from priority.")
 			_on_priority_response_chosen(response)
@@ -28198,8 +28224,18 @@ func _on_match_action_resolved(action: CardAction) -> void:
 	update_ui()
 	_schedule_priority_recovery_check()
 
+func _ring_opponent_turn_bell(player_index: int) -> void:
+	if _game_finished or not is_instance_valid(_turn_clocktower) or game_manager == null:
+		return
+	if player_index < 0 or player_index >= game_manager.players.size():
+		return
+	if _is_observer_mode or game_manager.players[player_index] != _get_display_player():
+		_turn_clocktower.ring_bell()
+
 func _on_match_move_validated(move: Dictionary) -> void:
 	var move_type := str(move.get("type", ""))
+	if move_type == "end_turn" and not _is_networked_client:
+		_ring_opponent_turn_bell(game_manager.players.find(game_manager.current_player))
 	if _is_card_play_move_type(move_type):
 		_grant_local_move_timer_bonus(CARD_PLAY_TIME_BONUS_MSEC)
 	if move_type in ["upkeep_choice", "tiamat_upkeep_choice", "skoll_upkeep_summon"]:
@@ -30287,92 +30323,20 @@ func _show_game_result_overlay(result_message: String, winner = null, loser = nu
 	_hide_pause_menu()
 	_close_match_replay_overlay()
 	_hide_game_result_overlay()
-
-	var overlay := ColorRect.new()
-	overlay.name = "GameResultOverlay"
-	overlay.color = Color(0.02, 0.03, 0.05, 0.78)
-	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	var overlay := MatchResultScreenScript.new()
 	add_child(overlay)
 	_promote_transient_ui(overlay, TRANSIENT_UI_Z_INDEX + 120)
 	_game_result_overlay = overlay
-
-	var panel := PanelContainer.new()
-	panel.set_anchors_preset(Control.PRESET_CENTER)
-	panel.custom_minimum_size = Vector2(420, 0)
-	overlay.add_child(panel)
-
-	var panel_style := StyleBoxFlat.new()
-	panel_style.bg_color = Color(0.08, 0.10, 0.14, 0.96)
-	panel_style.border_color = Color(0.86, 0.75, 0.44, 0.95)
-	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		panel_style.set_border_width(side as Side, 2)
-	panel_style.content_margin_left = 24
-	panel_style.content_margin_right = 24
-	panel_style.content_margin_top = 22
-	panel_style.content_margin_bottom = 20
-	panel.add_theme_stylebox_override("panel", panel_style)
-
-	var vbox := VBoxContainer.new()
-	vbox.alignment = BoxContainer.ALIGNMENT_CENTER
-	vbox.add_theme_constant_override("separation", 14)
-	panel.add_child(vbox)
-
-	var title := Label.new()
-	title.text = _get_game_result_title(winner, loser)
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", 28)
-	vbox.add_child(title)
-
-	var resolved_message := result_message.strip_edges()
-	if resolved_message == "":
-		resolved_message = "Game over!"
-	var body := Label.new()
-	body.text = resolved_message
-	body.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	body.add_theme_font_size_override("font_size", 16)
-	vbox.add_child(body)
-
-	var info := Label.new()
-	info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	info.modulate = Color(0.83, 0.86, 0.90, 0.9)
-	info.add_theme_font_size_override("font_size", 13)
-	vbox.add_child(info)
-
-	if auto_return:
-		info.text = "Returning to menu..."
-		return
-
-	var can_offer_rematch := _can_offer_lobby_rematch()
-	info.text = "You can review the final board, offer a rematch, or return to the menu." if can_offer_rematch else "You can review the final board or return to the menu."
-	var buttons := HBoxContainer.new()
-	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
-	buttons.add_theme_constant_override("separation", 12)
-	vbox.add_child(buttons)
-
-	var close_btn := Button.new()
-	close_btn.text = "Stay Here"
-	close_btn.pressed.connect(_on_game_result_stay_here_pressed)
-	buttons.add_child(close_btn)
-
-	var replay_btn := Button.new()
-	replay_btn.text = "View Replay"
-	replay_btn.disabled = _match_replay_entries.is_empty()
-	replay_btn.tooltip_text = "Open the visual replay" if not _match_replay_entries.is_empty() else "Replay history will appear after the first logged action"
-	replay_btn.pressed.connect(_open_match_replay_overlay)
-	buttons.add_child(replay_btn)
-
-	if can_offer_rematch:
-		var rematch_btn := Button.new()
-		rematch_btn.text = "Offer Rematch"
-		rematch_btn.pressed.connect(_on_game_result_rematch_pressed)
-		buttons.add_child(rematch_btn)
-
-	var menu_btn := Button.new()
-	menu_btn.text = "Back to Menu"
-	menu_btn.pressed.connect(_on_game_result_back_to_menu_pressed)
-	buttons.add_child(menu_btn)
+	overlay.review_requested.connect(_on_game_result_stay_here_pressed)
+	overlay.replay_requested.connect(_open_match_replay_overlay)
+	overlay.rematch_requested.connect(_on_game_result_rematch_pressed)
+	overlay.menu_requested.connect(_on_game_result_back_to_menu_pressed)
+	overlay.build(
+		_get_game_result_title(winner, loser), result_message,
+		game_manager.match_result_stats if game_manager != null else {},
+		game_manager.game_end_reason if game_manager != null else "",
+		_can_offer_lobby_rematch(), not _match_replay_entries.is_empty(), auto_return
+	)
 
 func _can_offer_lobby_rematch() -> bool:
 	if _is_observer_mode:
@@ -30550,6 +30514,8 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 			var cp_idx: int = data.get("current_player_index", -1)
 			if cp_idx == _get_authoritative_turn_local_player_index() and not game_manager.has_resolved_turn_upkeep():
 				call_deferred("_open_upkeep_choice_window")
+		"turn_bell_rung":
+			_ring_opponent_turn_bell(int(data.get("player_index", -1)))
 		"turn_started":
 			_reset_transient_priority_auto_mode_for_turn_end()
 			# Turn hooks resolved; update label only â€” upkeep_needed already opened the window
@@ -30626,6 +30592,8 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 			_current_match_info["series"] = _series_snapshot.duplicate(true)
 			_series_between_games_active = false
 		"game_ended":
+			if game_manager != null and data.has("match_result_stats"):
+				game_manager.match_result_stats = (data["match_result_stats"] as Dictionary).duplicate(true)
 			var result_message: String = str(data.get("result_message", "")).strip_edges()
 			if result_message.is_empty():
 				var winner_name: String = data.get("winner_name", "Unknown")
@@ -30648,6 +30616,7 @@ func _should_ignore_local_host_network_event(event_type: String) -> bool:
 	if not _is_real_network_host():
 		return false
 	return event_type in [
+		"turn_bell_rung",
 		"turn_started",
 		"upkeep_needed",
 		"game_ended",
@@ -31116,6 +31085,7 @@ func _debug_log_full_state(context: String, data: Dictionary, state: Dictionary)
 
 func _apply_full_state(data: Dictionary) -> void:
 	_pending_priority_auto_pass_signature.clear()
+	_network_well_of_fire_choosing_player_index = int(data.get("well_of_fire_choosing_player_index", -1))
 	var champions_call_mode := placement_mode
 	var champions_call_hand_selected := _is_champions_call_hand_proxy(selected_card)
 	var state: Dictionary = data.get("state", {})
@@ -31288,6 +31258,8 @@ func _play_network_ui_sound_cues(raw_cues: Variant) -> void:
 				CreatureSacrificeSoundPlayerScript.play_sound()
 			"creature_death":
 				CreatureDeathSoundPlayerScript.play_sound()
+			"creature_death_aerial":
+				CreatureDeathSoundPlayerScript.play_sound(true)
 
 func _restore_network_attack_preview_from_state(preview_data: Dictionary) -> void:
 	if not _is_networked_client or match_manager == null or game_manager == null:
@@ -31491,6 +31463,12 @@ func _update_waiting_overlay() -> void:
 	var local_idx := _get_local_priority_player_index()
 	var current_priority_player := game_manager.priority_player
 	var priority_idx := game_manager.players.find(current_priority_player)
+	var well_of_fire_player_index := _network_well_of_fire_choosing_player_index
+	if not _is_networked_client and match_manager != null:
+		well_of_fire_player_index = match_manager.get_pending_well_of_fire_player_index()
+	if local_idx >= 0 and well_of_fire_player_index >= 0 and well_of_fire_player_index != local_idx:
+		_update_waiting_status(true, "Well of Fire: opponent is choosing a card to return to your hand...")
+		return
 	
 	# Only show this after authority has offered the opponent a real prompt.
 	# Transient priority players may be auto-passed without seeing one.
@@ -31650,7 +31628,7 @@ func _show_remote_priority_prompt(responses: Array, action_message: String = "")
 		interactive_response_count += 1
 		var card_name: String = resp_card.card_name
 		var btn := Button.new()
-		btn.text = "Use " + card_name
+		btn.text = str(response.get("activation_label", "Use " + card_name))
 		btn.pressed.connect(func() -> void:
 			_set_action_label_text("Selected " + card_name + " from priority.")
 			_begin_priority_prompt_command_context()

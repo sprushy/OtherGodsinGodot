@@ -40,6 +40,9 @@ func get_self_graveyard_replacement_zone(
 func halves_follower_damage_inflicted() -> bool:
 	return _passives_are_active()
 
+func halves_follower_damage_in_combat() -> bool:
+	return _passives_are_active()
+
 func converts_follower_damage_to_conversion(_game_manager: GameManager = null) -> bool:
 	return _passives_are_active()
 
