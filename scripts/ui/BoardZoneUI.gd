@@ -5829,6 +5829,14 @@ func _refresh_display() -> void:
 	else:
 		z_index = BASE_BOARD_Z_INDEX
 		_add_empty_zone_slab()
+		# Player resources stay at the god slot when the Active God takes the field.
+		if zone.zone_type == Zone.ZoneType.GOD_SLOT:
+			var god_overlay := Control.new()
+			god_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			god_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			add_child(god_overlay)
+			_add_follower_count_badge(god_overlay)
+			_add_followers_attack_result_label(god_overlay)
 
 	_add_move_indicator_overlay()
 

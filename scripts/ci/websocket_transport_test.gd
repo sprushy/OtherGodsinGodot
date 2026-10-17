@@ -48,6 +48,7 @@ func _run() -> void:
 	await _check_lobby_auth_rejection_cleanup()
 	_check_local_match_transport_cleanup()
 	_check_lobby_restart_recovery()
+	await _check_practice_lobby_suspension()
 	_check_update_deferral()
 	if not _failures.is_empty():
 		_finish()
@@ -271,6 +272,40 @@ func _check_lobby_restart_recovery() -> void:
 	_check(lobby._auto_reconnect_attempt == attempts_before + 1, "one transport failure schedules only one retry")
 	lobby.disconnect_from_server()
 	lobby.free()
+
+func _check_practice_lobby_suspension() -> void:
+	var menu := MainMenuScript.new()
+	var lobby := RecoveryLobbyClient.new()
+	lobby.name = "PracticeBackgroundLobby"
+	root.add_child(lobby)
+	menu.lobby_client = lobby
+	menu._lobby_session_id = "practice-session"
+	menu._lobby_reconnect_token = "practice-token"
+	menu._startup_autologin_pending = true
+	menu._startup_autologin_in_progress = true
+	var completions: Array[String] = []
+	menu._pending_background_lobby_auth_completion = func() -> void: completions.append("auth")
+	lobby.current_session_id = menu._lobby_session_id
+	lobby.current_reconnect_token = menu._lobby_reconnect_token
+	lobby._last_server_address = "wss://game.example.com/lobby"
+	_check(lobby._try_auto_reconnect(), "background lobby schedules recovery before practice")
+	var retry_serial := lobby._auto_reconnect_serial
+	var connect_serial := menu._authenticated_lobby_connect_serial
+	var watchdog_serial := menu._lobby_sign_in_watchdog_serial
+	menu._suspend_lobby_for_practice()
+	_check(menu._lobby_suspended_for_practice and menu.lobby_client == null, "practice detaches the background lobby")
+	_check(not lobby.is_auto_reconnecting() and lobby._ignore_network_events, "practice cancels automatic lobby recovery")
+	_check(menu._authenticated_lobby_connect_serial != connect_serial and menu._lobby_sign_in_watchdog_serial != watchdog_serial, "practice invalidates queued sign-in and its watchdog")
+	_check(not menu._startup_autologin_pending and not menu._startup_autologin_in_progress and not menu._pending_background_lobby_auth_completion.is_valid(), "practice cancels background authentication completion")
+	_check(menu._lobby_session_id == "practice-session" and menu._lobby_reconnect_token == "practice-token", "practice preserves credentials for returning to the menu")
+	lobby._perform_auto_reconnect(retry_serial)
+	# These calls would access uninitialized menu controls if suspension failed.
+	menu._connect_to_browseable_lobby("Must wait for practice to end")
+	menu._maybe_connect_authenticated_lobby()
+	menu._deferred_authenticated_lobby_connect("Stale sign-in", connect_serial)
+	_check(lobby.requests.is_empty() and menu.lobby_client == null and completions.is_empty(), "stale retries and sign-in cannot open a lobby during practice")
+	menu.free()
+	await process_frame
 
 func _check_update_deferral() -> void:
 	var menu := DeferredUpdateMenu.new()

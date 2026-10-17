@@ -242,6 +242,7 @@ var _pending_background_lobby_auth_completion: Callable = Callable()
 var _account_switch_pending: bool = false
 var _account_switch_retry_attempts: int = 0
 var _authenticated_lobby_connect_serial: int = 0
+var _lobby_suspended_for_practice: bool = false
 var _lobby_sign_in_watchdog_serial: int = 0
 var _update_check_request: HTTPRequest = null
 var _update_prompt_overlay: Control = null
@@ -1273,6 +1274,8 @@ func _show_embedded_game(node_name: String) -> Node:
 		_ensure_practice_thor_game()
 	var game = get_node_or_null("GameContainer/" + node_name)
 	if game != null:
+		if node_name == "PracticeThor":
+			_suspend_lobby_for_practice()
 		_fit_embedded_game_to_container(game)
 		game.visible = true
 	return game
@@ -1666,6 +1669,7 @@ func _close_program() -> void:
 	get_tree().quit()
 
 func show_menu() -> void:
+	_lobby_suspended_for_practice = false
 	_finish_match_loading()
 	_set_snowstorm_visible(false)
 	_close_tutorial_coach_overlay()
@@ -1842,6 +1846,18 @@ func _prepare_fresh_lobby_login() -> void:
 
 func _cancel_pending_authenticated_lobby_connects() -> void:
 	_authenticated_lobby_connect_serial += 1
+
+func _suspend_lobby_for_practice() -> void:
+	# Practice runs in-process. Stop lobby handshakes and reconnect timers until
+	# returning to the menu, which restores the saved lobby session as usual.
+	_lobby_suspended_for_practice = true
+	_cancel_pending_authenticated_lobby_connects()
+	_startup_autologin_pending = false
+	_startup_autologin_in_progress = false
+	_background_lobby_auth_error = ""
+	_lobby_auto_reconnect_was_active = false
+	_cleanup_lobby_client()
+	_set_connected_server_version("")
 
 func _should_delay_fresh_lobby_connect() -> bool:
 	return lobby_client != null and is_instance_valid(lobby_client)
@@ -2868,8 +2884,11 @@ func _on_leave_match_pressed() -> void:
 	_queue_room_list_refresh(false)
 
 func _connect_to_browseable_lobby(connect_status: String, connect_serial: int = 0) -> void:
+	if _lobby_suspended_for_practice:
+		return
 	if connect_serial > 0 and connect_serial != _authenticated_lobby_connect_serial:
 		return
+	var expected_connect_serial := _authenticated_lobby_connect_serial
 	var target_error := _validate_multiplayer_target()
 	if not target_error.is_empty():
 		status_label.text = target_error
@@ -2888,7 +2907,9 @@ func _connect_to_browseable_lobby(connect_status: String, connect_serial: int = 
 		status_label.text = "Closing previous lobby session..."
 		await get_tree().process_frame
 		await get_tree().create_timer(FRESH_LOBBY_RECONNECT_DELAY_SECONDS).timeout
-		if connect_serial > 0 and connect_serial != _authenticated_lobby_connect_serial:
+		if _lobby_suspended_for_practice:
+			return
+		if expected_connect_serial != _authenticated_lobby_connect_serial:
 			return
 	status_label.text = connect_status
 
@@ -2920,6 +2941,8 @@ func _connect_to_browseable_lobby(connect_status: String, connect_serial: int = 
 		_begin_lobby_sign_in_watchdog()
 
 func _maybe_connect_authenticated_lobby(connect_status: String = "Connecting to lobby...", connect_serial: int = 0) -> void:
+	if _lobby_suspended_for_practice:
+		return
 	if connect_serial > 0 and connect_serial != _authenticated_lobby_connect_serial:
 		return
 	if _get_selected_auth_mode() not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
@@ -8663,7 +8686,7 @@ func _return_to_menu() -> void:
 		db.queue_free()
 	_refresh_server_version_overlay_visibility()
 	multiplayer_container.visible = false
-	# Keep the authenticated lobby alive across local and multiplayer matches.
+	# Reuse the lobby when available, or restore it after offline practice.
 	if lobby_client != null and lobby_client.is_authenticated():
 		if not _pending_leave_room_id.is_empty():
 			_maybe_leave_pending_room(lobby_client.current_room_snapshot, lobby_client.current_active_match_info)

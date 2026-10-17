@@ -10221,7 +10221,6 @@ func _sync_board_drag_followers_highlight() -> void:
 	if _board_drag_followers_highlight == null or not is_instance_valid(_board_drag_followers_highlight):
 		return
 	_board_drag_followers_highlight.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_board_drag_followers_highlight.size = size
 	_board_drag_followers_highlight.visible = true
 	_board_drag_followers_highlight.queue_redraw()
 
