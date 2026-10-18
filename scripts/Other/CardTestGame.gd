@@ -256,6 +256,15 @@ func load_card_selection_test_scenario() -> void:
 		_add_test_deck_card(player, Berserker.new())
 		_add_test_deck_card(player, HeroicStand.new())
 		_add_test_hand_card(player, HeroicStand.new())
+		_add_test_hand_card(player, FiresOfJudgment.new())
+		_add_test_hand_card(player, DivineLightning.new())
+		_add_test_hand_card(player, OccultSingularity.new())
+		# Prepared magical targets retain normal opponent concealment.
+		_place_test_prepared_card(player, player.reserve_zones[0], HeroicStand.new())
+		_place_test_prepared_card(player, player.frontline_zones[0], HeroicStand.new())
+		# Keep visible targets on both sides for the meteor storm animation.
+		_place_test_board_card(player, player.frontline_zones[2], HariiWarrior.new())
+		_place_test_board_card(player, player.reserve_zones[2], BrownBear.new())
 		player.spend_mana(player.mana)
 		player.gain_mana(40)
 		player.followers = 100
@@ -274,6 +283,9 @@ func load_card_selection_test_scenario() -> void:
 	_open_upkeep_choice_window()
 	action_label.text = (
 		"Card Selection Fan Test. Choose Mana for upkeep, then activate the unlocked Call of the Valkyrie. "
+		+ "Cast Fires of Judgment from either player's hand to test the meteor storm against the opposing board. "
+		+ "Activate Divine Lightning and target a prepared magical card to test the separate lightning strike. "
+		+ "Cast Occult Singularity to lift and swing all four magical cards into its pink aura, then send the spell to grave before they tumble after it. "
 		+ "Each player has 18 Norse Warrior targets in their graveyard and 40 starting mana. "
 		+ "Choose a card and pass priority to prime it; reopen the power to test smaller fans as targets leave. "
 		+ "Open the graveyard to compare the pile viewer, including the two ineligible cards."

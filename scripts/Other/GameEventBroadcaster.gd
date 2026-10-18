@@ -35,11 +35,48 @@ func _connect_signals() -> void:
 	game_manager.turn_upkeep_started.connect(_on_turn_upkeep_started)
 	game_manager.turn_started.connect(_on_turn_started)
 	game_manager.game_ended.connect(_on_game_ended)
+	game_manager.board_effect_requested.connect(_on_board_effect_requested)
+	game_manager.card_effect_requested.connect(_on_card_effect_requested)
+	game_manager.field_effect_requested.connect(_on_field_effect_requested)
 	match_manager.request_ui_interaction.connect(_on_ui_interaction_requested)
 
 # ---------------------------------------------------------------------------
 # Signal handlers — each triggers a full broadcast
 # ---------------------------------------------------------------------------
+
+func _on_board_effect_requested(effect_name: String, target_player: Player) -> void:
+	if network_manager == null or game_manager == null:
+		return
+	var target_index := game_manager.players.find(target_player)
+	if target_index < 0:
+		return
+	# Cosmetic event only: no card identities or hidden board information.
+	network_manager.broadcast_event_to_all("board_effect", {
+		"effect_name": effect_name,
+		"target_player_index": target_index,
+	})
+
+func _on_card_effect_requested(effect_name: String, target_card: Card) -> void:
+	if network_manager == null or game_manager == null or target_card == null:
+		return
+	var target_zone := CardAction._zone_to_dict(target_card.current_zone, game_manager)
+	if target_zone.is_empty():
+		return
+	# Send only the struck slot; hidden card identities stay private.
+	network_manager.broadcast_event_to_all("card_effect", {
+		"effect_name": effect_name,
+		"target_zone": target_zone,
+	})
+
+func _on_field_effect_requested(effect_name: String, source_card: Card) -> void:
+	if network_manager == null or source_card == null:
+		return
+	# The resolving spell is public. Targets are adopted from each viewer's
+	# personalized state transitions, so hidden identities are never broadcast.
+	network_manager.broadcast_event_to_all("field_effect", {
+		"effect_name": effect_name,
+		"source_uid": source_card.uid,
+	})
 
 func _on_move_validated(move: Dictionary) -> void:
 	if game_manager != null and game_manager.is_game_over:
@@ -241,6 +278,12 @@ func shutdown() -> void:
 			game_manager.turn_started.disconnect(_on_turn_started)
 		if game_manager.game_ended.is_connected(_on_game_ended):
 			game_manager.game_ended.disconnect(_on_game_ended)
+		if game_manager.board_effect_requested.is_connected(_on_board_effect_requested):
+			game_manager.board_effect_requested.disconnect(_on_board_effect_requested)
+		if game_manager.card_effect_requested.is_connected(_on_card_effect_requested):
+			game_manager.card_effect_requested.disconnect(_on_card_effect_requested)
+		if game_manager.field_effect_requested.is_connected(_on_field_effect_requested):
+			game_manager.field_effect_requested.disconnect(_on_field_effect_requested)
 
 func _on_ui_interaction_requested(player_index: int, type: String, data: Dictionary) -> void:
 	_sync_remote_prompt_player_state(player_index)

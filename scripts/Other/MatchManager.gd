@@ -406,7 +406,13 @@ func _on_game_manager_decision_requested(player: Player, type: String, data: Dic
 func _present_pre_priority_choice_interaction(player: Player, type: String, data: Dictionary) -> void:
 	var parent_action := _get_current_resolving_action()
 	if parent_action != null:
-		_queue_ui_interaction(player, type, data, parent_action)
+		if parent_action == pending_combat_reveal_linger_action and _is_reveal_interaction_type(type):
+			# Combat is waiting for this Reveal choice. Release it after the reveal
+			# setup finishes, rather than waiting for the attack to finish first.
+			_queue_ui_interaction(player, type, data)
+			call_deferred("_release_next_queued_ui_interaction")
+		else:
+			_queue_ui_interaction(player, type, data, parent_action)
 		return
 	if not _active_command_type.is_empty():
 		_queue_ui_interaction(player, type, data)
@@ -2184,7 +2190,8 @@ func _has_pending_combat_reveal_interaction(action: CardAction) -> bool:
 			continue
 		if typed_action.card != null and typed_action.card.uid in combatant_uids:
 			return true
-	for entry in _pending_ui_interactions:
+	# A queued target choice blocks combat just like a prompt already on screen.
+	for entry in _pending_ui_interactions + _queued_ui_interactions:
 		var interaction_type := str(entry.get("type", ""))
 		if not _is_reveal_interaction_type(interaction_type):
 			continue
@@ -2198,6 +2205,8 @@ func _is_reveal_event_name(event_name: String) -> bool:
 
 func _resume_pending_combat_reveal(action: CardAction, target: Card) -> void:
 	if action == null or target == null or pending_combat_reveal_linger_action != action:
+		return
+	if _has_pending_combat_reveal_interaction(action):
 		return
 	pending_combat_reveal_linger_action = null
 	_combat_reveal_wait_generation += 1

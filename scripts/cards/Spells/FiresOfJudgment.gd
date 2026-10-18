@@ -24,6 +24,7 @@ func resolve(game_manager: GameManager, _target = null) -> void:
 	if doomed_cards.is_empty():
 		print(card_name + " found no face-up enemy permanents to destroy.")
 		return
+	game_manager.board_effect_requested.emit("meteor_storm", game_manager.get_opponent(card_owner))
 	var on_destroy_complete := func(destroyed_count) -> void:
 		var feedback := "%s destroyed %d face-up enemy permanent(s)." % [card_name, destroyed_count]
 		game_manager.note_player_feedback(feedback)

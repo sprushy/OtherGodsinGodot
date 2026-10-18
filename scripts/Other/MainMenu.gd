@@ -42,6 +42,7 @@ const STARTUP_MUSIC_TRACK_RELAXING_TIME := "relaxing_time"
 const DEFAULT_STARTUP_MUSIC_TRACK := STARTUP_MUSIC_TRACK_IF_THEY_HAD_HEARTS
 const PRACTICE_THOR_SCENE_PATH := "res://scenes/practice_thor_game.tscn"
 const STORY_STEP_ONE_SCENE_PATH := "res://scenes/story_step_one.tscn"
+const POPUP_BOOK_SCENE_PATH := "res://scenes/popup_book_board.tscn"
 const DEDICATED_LOBBY_ENTRY_SCRIPT_PATH := "res://scripts/server/DedicatedLobbyServerMain.gd"
 const DEDICATED_SERVER_EXPORT_RELATIVE_PATH := "res://.exports/server/OtherGodsServer.exe"
 const DEFAULT_LOBBY_HOST_SETTING := "application/config/default_lobby_host"
@@ -396,6 +397,14 @@ func _ready() -> void:
 		tutorial_btn.pressed.connect(_open_tutorial_overlay)
 	if story_button:
 		story_button.pressed.connect(_on_story_pressed)
+	var popup_book_button := Button.new()
+	popup_book_button.name = "PopUpBookButton"
+	popup_book_button.text = "Pop-up Book"
+	popup_book_button.tooltip_text = "Explore the field as an interactive paper diorama."
+	popup_book_button.pressed.connect(_on_popup_book_pressed)
+	menu_container.add_child(popup_book_button)
+	if story_button != null:
+		menu_container.move_child(popup_book_button, story_button.get_index() + 1)
 	if card_test_btn:
 		if OS.is_debug_build():
 			card_test_btn.pressed.connect(_on_card_test_pressed)
@@ -6288,6 +6297,9 @@ func _on_story_pressed() -> void:
 	await story_game.story_board_ready
 	_set_startup_loading_progress(1.0)
 	_remove_startup_loading_overlay()
+
+func _on_popup_book_pressed() -> void:
+	get_tree().change_scene_to_file(POPUP_BOOK_SCENE_PATH)
 
 func _open_tutorial_overlay() -> void:
 	if _rules_overlay != null and is_instance_valid(_rules_overlay):
@@ -12187,7 +12199,8 @@ func _run_card_test_occult_singularity_smoke() -> void:
 		return
 	show_game()
 	await card_test.start_game()
-	card_test.load_n_o_card_scenario()
+	# Use the featured visual-test board, which supplies magical targets on both
+	# sides and Occult Singularity in hand.
 	await get_tree().process_frame
 	await get_tree().process_frame
 
@@ -12225,6 +12238,9 @@ func _run_card_test_occult_singularity_smoke() -> void:
 		return
 	if not card_test.game_input.submit_action({type = "cast_spell", spell_uid = occult.uid}):
 		_fail_smoke_if_enabled("card_test_occult_singularity_cast_failed")
+		return
+	if not await _settle_card_test_turn2_smoke_priority(card_test, 240):
+		_fail_smoke_if_enabled("card_test_occult_singularity_response_priority_timeout")
 		return
 	if not await _wait_for_card_test_turn2_smoke_condition(
 		func() -> bool:

@@ -37,6 +37,10 @@ var _drag_rot_tween: Tween = null
 var _drag_ghost_pivot: Vector2 = Vector2.ZERO
 var _drag_target_rotation: float = 0.0
 var _drag_stealth: bool = false
+var _hand_drag_targeting_enabled: bool = false
+var _hand_drag_drop_position_resolver: Callable
+var _drag_hand_placeholder: bool = false
+var _drag_hand_modulate: Color = Color.WHITE
 const _DRAG_PREPARE_OVERLAY_NAME := "DragPrepareOverlay"
 const _SUMMON_ACTION_ICON_ROW_NAME := "SummonActionCostIcons"
 const _LEVEL_TAG_NAME := "LevelTag"
@@ -877,7 +881,7 @@ func set_hand_hover_hit_rect(rect: Rect2) -> void:
 	_hand_hover_hit_rect = rect
 
 func _refresh_mouse_filter() -> void:
-	mouse_filter = Control.MOUSE_FILTER_STOP if (not _disabled or _hover_preview_when_disabled) else Control.MOUSE_FILTER_IGNORE
+	mouse_filter = Control.MOUSE_FILTER_STOP if not _drag_hand_placeholder and (not _disabled or _hover_preview_when_disabled) else Control.MOUSE_FILTER_IGNORE
 
 func _set_locked_power_cursor_active(active: bool) -> void:
 	if _locked_power_cursor_active == active:
@@ -922,6 +926,32 @@ func proxy_mouse_button_press(button_index: MouseButton, global_mouse_pos: Vecto
 func is_hand_interacting() -> bool:
 	return _picked_up or _dragging
 
+func set_hand_drag_targeting_enabled(enabled: bool, drop_position_resolver: Callable = Callable()) -> void:
+	_hand_drag_targeting_enabled = enabled
+	_hand_drag_drop_position_resolver = drop_position_resolver
+
+func is_drag_targeting() -> bool:
+	return _dragging and _hand_drag_targeting_enabled and not _drag_stealth
+
+func get_drag_preview_global_rect() -> Rect2:
+	if not _dragging or not is_instance_valid(_drag_ghost):
+		return Rect2()
+	# Retain the card footprint even while only its targeting cursor is visible.
+	_update_ghost_position()
+	return _get_drag_ghost_bounds(_drag_ghost.global_position, _drag_ghost.size)
+
+func set_drag_target_cursor_active(active: bool) -> void:
+	if _dragging and is_instance_valid(_drag_ghost):
+		_drag_ghost.visible = not active
+
+func _restore_drag_hand_placeholder() -> bool:
+	if not _drag_hand_placeholder:
+		return false
+	_drag_hand_placeholder = false
+	modulate = _drag_hand_modulate
+	_refresh_mouse_filter()
+	return get_parent() != null and not get_parent().is_queued_for_deletion()
+
 func set_highlighted(value: bool) -> void:
 	modulate = Color(1.2, 1.2, 0.65) if value else Color.WHITE
 	_picked_up = false
@@ -949,7 +979,7 @@ func _cancel_drag() -> void:
 	if _dragging:
 		_dragging = false
 		set_process(false)
-		var restored := false
+		var restored := _restore_drag_hand_placeholder()
 		if _drag_parent and is_instance_valid(_drag_parent) and not _drag_parent.is_queued_for_deletion():
 			var current_parent := get_parent()
 			if current_parent != null:
@@ -1278,13 +1308,19 @@ func _start_drag() -> void:
 		return
 	set_process(true)
 	_drag_target_rotation = _drag_ghost.rotation_degrees  # already at correct angle
-	# Reparent to scene root so the hand HBox collapses the gap,
-	# but the node stays in the tree so _input() keeps firing.
-	_drag_parent = get_parent()
-	_drag_index = get_index()
-	_drag_parent.remove_child(self)
-	floating_parent.add_child(self)
-	visible = false
+	if _hand_drag_targeting_enabled:
+		# Keep the source in the fan as a faded, non-interactive placeholder.
+		_drag_hand_placeholder = true
+		_drag_hand_modulate = modulate
+		modulate.a *= 0.35
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+	else:
+		# Keep receiving _input() after leaving the hand container.
+		_drag_parent = get_parent()
+		_drag_index = get_index()
+		_drag_parent.remove_child(self)
+		floating_parent.add_child(self)
+		visible = false
 	if _drag_ghost != null and is_instance_valid(_drag_ghost):
 		floating_parent.add_child(_drag_ghost)
 		_drag_ghost.move_to_front()
@@ -1384,9 +1420,12 @@ func _remove_drag_ghost_rules_text(node: Node) -> void:
 		_remove_drag_ghost_rules_text(child)
 
 func _finish_drag() -> void:
+	var drop_pos := get_global_mouse_position()
+	if is_drag_targeting() and _hand_drag_drop_position_resolver.is_valid():
+		drop_pos = _hand_drag_drop_position_resolver.call(self)
 	_dragging = false
 	set_process(false)
-	var restored := false
+	var restored := _restore_drag_hand_placeholder()
 	if _drag_parent and is_instance_valid(_drag_parent) and not _drag_parent.is_queued_for_deletion():
 		var current_parent := get_parent()
 		if current_parent != null:
@@ -1397,7 +1436,6 @@ func _finish_drag() -> void:
 	visible = restored
 	_drag_parent = null
 	_drag_index = -1
-	var drop_pos := get_global_mouse_position()
 	if _drag_ghost and is_instance_valid(_drag_ghost):
 		_drag_ghost.queue_free()
 		_drag_ghost = null
@@ -1516,6 +1554,14 @@ func _notification(what: int) -> void:
 		NOTIFICATION_EXIT_TREE:
 			_set_locked_power_cursor_active(false)
 			_unbind_visual_state()
+			if _drag_hand_placeholder:
+				_restore_drag_hand_placeholder()
+				if is_instance_valid(_drag_ghost):
+					_drag_ghost.queue_free()
+				_drag_ghost = null
+				_dragging = false
+				_picked_up = false
+				set_process(false)
 		NOTIFICATION_RESIZED:
 			# Safe: setting _inner.pivot_offset only notifies self (outer),
 			# not the HBoxContainer, so no re-sort cascade.

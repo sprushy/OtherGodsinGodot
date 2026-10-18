@@ -28,6 +28,7 @@ func resolve(game_manager: GameManager, _target = null) -> void:
 		game_manager.note_player_feedback(no_targets_feedback)
 		print(no_targets_feedback)
 		return
+	game_manager.field_effect_requested.emit("occult_singularity", self)
 	var on_destroy_complete := func(_destroyed_count) -> void:
 		var destroyed_names: Array[String] = []
 		for doomed_card in doomed_cards:

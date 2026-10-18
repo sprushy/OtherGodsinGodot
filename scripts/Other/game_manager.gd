@@ -17,6 +17,9 @@ signal phase_changed(old_phase: int, new_phase: int, turn_number: int, player: P
 signal god_power_activated(turn_number: int, player: Player, god: Card, target: Card)
 signal card_summoned(player: Player, card: Card, from_zone: Zone, to_zone: Zone, summon_source: Card, face_down: bool, stealth: bool)
 signal followers_converted(from_player: Player, to_player: Player, amount: int)
+signal board_effect_requested(effect_name: String, target_player: Player)
+signal card_effect_requested(effect_name: String, target_card: Card)
+signal field_effect_requested(effect_name: String, source_card: Card)
 
 enum GamePhase { MULLIGAN, MAIN, COMBAT, END }
 const GAME_END_REASON_DEFEAT := "defeat"

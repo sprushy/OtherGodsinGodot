@@ -4971,14 +4971,16 @@ func _clear_incorporeal_attack_fade() -> void:
 	_incorporeal_fade_card_uid = ""
 	modulate.a = _incorporeal_fade_base_alpha
 
-func get_visual_anchor_global() -> Vector2:
+func get_card_visual_global_rect() -> Rect2:
 	var anchor_control: Control = _raised_overlay
 	if anchor_control == null or not is_instance_valid(anchor_control):
 		anchor_control = _defense_overlay
 	if anchor_control == null or not is_instance_valid(anchor_control):
 		anchor_control = self
-	var rect: Rect2 = anchor_control.get_global_rect()
-	return rect.position + rect.size * 0.5
+	return anchor_control.get_global_transform() * Rect2(Vector2.ZERO, anchor_control.size)
+
+func get_visual_anchor_global() -> Vector2:
+	return get_card_visual_global_rect().get_center()
 
 func _get_minimum_size() -> Vector2:
 	return get_zone_size()
@@ -6575,6 +6577,39 @@ func _hide_ability_popup() -> void:
 		_popup.queue_free()
 	_popup = null
 	_update_hover_polling()
+
+func is_valid_hand_drag_target(card: Card) -> bool:
+	if card == null or zone == null or game_manager == null:
+		return false
+	# Preview target compatibility independently of costs and priority timing.
+	# A stack preview can occupy a display slot without belonging to its zone.
+	var candidates: Array[Card] = []
+	if _preview_card != null:
+		candidates.append(_preview_card)
+	else:
+		candidates.append_array(zone.cards)
+	if card is EquipmentCard:
+		if zone.zone_owner != card.card_owner:
+			return false
+		for target in candidates:
+			if card.can_equip_to(target):
+				return true
+		return false
+	if card is Absence:
+		for target in candidates:
+			if target is PowerCard or target.is_god:
+				return true
+		return false
+	var valid_targets: Array = []
+	if card is CharmCard:
+		var source_action: CardAction = game_manager.action_stack.back() if not game_manager.action_stack.is_empty() else null
+		valid_targets = card.get_priority_targets(game_manager, source_action) if source_action != null else card.get_valid_targets(game_manager)
+	elif card is SpellCard and card.targets and card.has_method("get_valid_targets"):
+		valid_targets = card.get_valid_targets(game_manager)
+	for target in candidates:
+		if target in valid_targets:
+			return true
+	return false
 
 func can_accept_card(card: Card) -> bool:
 	if card is SpellCard and card.targets and not (card is Absence) and not zone.cards.is_empty():

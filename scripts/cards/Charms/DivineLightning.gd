@@ -45,6 +45,7 @@ func resolve(game_manager: GameManager, target = null) -> void:
 		return
 	if game_manager == null:
 		return
+	game_manager.card_effect_requested.emit("divine_lightning", target)
 	var viewer := game_manager.get_feedback_viewer()
 	var target_name = target.get_target_log_display_name(viewer)
 	print(card_name + " destroys " + target.card_name + "!")
