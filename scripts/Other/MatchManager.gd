@@ -1579,6 +1579,40 @@ func _get_pending_ui_debug_summary(limit: int = 5) -> String:
 func get_pending_ui_interaction_count() -> int:
 	return _pending_ui_interactions.size()
 
+func get_action_clock_context() -> Dictionary:
+	if game_manager == null or game_manager.current_player == null:
+		return {}
+	# Only emitted prompts transfer the clock; queued decisions and automatic
+	# priority passes do not give either player an opportunity to act yet.
+	for entry in _pending_ui_interactions:
+		if _is_stale_ui_interaction_for_current_turn(entry, game_manager.turn_number):
+			continue
+		if int(entry.get("prompt_id", -1)) == _active_command_pending_prompt_id:
+			continue
+		var player_index := game_manager.players.find(entry.get("player", null))
+		if player_index >= 0:
+			return {
+				"player_index": player_index,
+				"interaction_type": str(entry.get("type", "")),
+				"prompt_id": int(entry.get("prompt_id", -1)),
+			}
+	if is_targeting_active():
+		for source in [pending_click_selection_source, spell_waiting_for_target, god_ability_source,
+				stupefy_source, pyre_source, anointing_source]:
+			if source is Card and source.get_controller() != null:
+				return {
+					"player_index": game_manager.players.find(source.get_controller()),
+					"interaction_type": "target",
+					"prompt_id": -1,
+				}
+	if _has_unresolved_stack_action_window() or not _queued_ui_interactions.is_empty():
+		return {}
+	return {
+		"player_index": game_manager.players.find(game_manager.current_player),
+		"interaction_type": "turn",
+		"prompt_id": -1,
+	}
+
 func get_pending_well_of_fire_player_index() -> int:
 	if game_manager == null:
 		return -1

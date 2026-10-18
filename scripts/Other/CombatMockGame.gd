@@ -866,6 +866,8 @@ var _match_reconnect_waiting: bool = false
 var _match_reconnect_wait_message: String = "Waiting for opponent to reconnect..."
 var _awaiting_initial_full_state: bool = false
 var _network_well_of_fire_choosing_player_index: int = -1
+var _network_action_clock_context: Dictionary = {}
+var _well_of_fire_timeout_choice: Dictionary = {}
 var _match_launch_loading: bool = false
 var _current_match_info: Dictionary = {}
 var _network_upkeep_prompt_turn: int = -1
@@ -885,6 +887,9 @@ var _move_timer_running: bool = false
 var _move_timer_warning_stage: int = 0
 var _move_timer_timeout_pending: bool = false
 var _move_timer_last_display_seconds: int = -1
+var _move_timer_budget_turn_number: int = -1
+var _move_timer_player_budgets: Dictionary = {}
+var _move_timer_context: Dictionary = {}
 var _pending_ranked_timeout_turn_pass: bool = false
 var _pending_ranked_timeout_upkeep_skip_turn: int = -1
 var _pending_ranked_timeout_priority_pass_turn: int = -1
@@ -4406,6 +4411,11 @@ func _now_msec() -> int:
 	return Time.get_ticks_msec()
 
 func _reset_turn_activity_timers() -> void:
+	_move_timer_budget_turn_number = -1
+	_move_timer_player_budgets.clear()
+	_move_timer_context.clear()
+	_network_action_clock_context.clear()
+	_well_of_fire_timeout_choice.clear()
 	_priority_prompt_idle_deadline_msec = 0
 	_priority_prompt_timeout_pending = false
 	_move_timer_turn_number = -1
@@ -4476,50 +4486,46 @@ func _sync_priority_prompt_timeout() -> void:
 	update_ui()
 	_queue_deferred_priority_pass()
 
-func _get_local_move_timer_context() -> Dictionary:
+func _get_well_of_fire_choosing_player_index() -> int:
+	if not _is_networked_client and match_manager != null:
+		return match_manager.get_pending_well_of_fire_player_index()
+	return _network_well_of_fire_choosing_player_index
+
+func _get_move_timer_context() -> Dictionary:
 	if game_manager == null or _game_finished:
 		return {}
-	var current_player := game_manager.current_player
-	if current_player == null or not _is_player_local(current_player):
+	var context := _network_action_clock_context.duplicate()
+	if not _is_networked_client and match_manager != null:
+		context = match_manager.get_action_clock_context()
+	# Some local resolution/priority paths still present their choices directly.
+	if context.is_empty() and _is_priority_prompt_visible() and game_manager.priority_player != null:
+		context = {
+			"player_index": game_manager.players.find(game_manager.priority_player),
+			"interaction_type": "priority",
+			"prompt_id": -1,
+		}
+	if context.is_empty() and _stack_resolution_paused \
+			and (_has_pending_target_selection() or _is_card_selection_overlay_visible()):
+		context = {
+			"player_index": _get_local_interaction_player_index(_pending_post_execute_source_player),
+			"interaction_type": "target",
+			"prompt_id": -1,
+		}
+	var player_index := int(context.get("player_index", -1))
+	if player_index < 0 or player_index >= game_manager.players.size():
 		return {}
-	var player_index := game_manager.players.find(current_player)
-	if player_index < 0:
-		return {}
-	return {
-		"turn_number": game_manager.turn_number,
-		"player_index": player_index,
-	}
+	context["turn_number"] = game_manager.turn_number
+	return context
 
-func _should_run_local_move_timer() -> bool:
-	var context := _get_local_move_timer_context()
-	if context.is_empty():
-		return false
-	if _match_reconnect_waiting or _awaiting_initial_full_state:
-		return false
-	if game_manager == null or game_manager.current_player == null:
-		return false
-	return not _should_pause_local_move_timer_for_nonlocal_window()
+func _get_local_move_timer_context() -> Dictionary:
+	var context := _get_move_timer_context()
+	if not context.is_empty() and _is_player_local(game_manager.players[int(context["player_index"])]):
+		return context
+	return {}
 
-func _should_pause_local_move_timer_for_nonlocal_window() -> bool:
-	_prune_stale_deferred_priority_events()
-	if _executing_stack_action:
-		return true
-	if _is_intercept_prompt_visible():
-		return true
-	if _is_priority_prompt_visible():
-		return game_manager == null \
-			or game_manager.current_player == null \
-			or game_manager.priority_player == null \
-			or game_manager.priority_player != game_manager.current_player
-	var has_deferred_priority_events := not _pending_summon_priority_events.is_empty() \
-		or not _pending_hand_play_events.is_empty()
-	if has_deferred_priority_events:
-		return true
-	if game_manager == null or game_manager.current_player == null:
-		return false
-	if _stack_resolution_paused or game_manager.action_stack.is_empty():
-		return false
-	return game_manager.priority_player == null or game_manager.priority_player != game_manager.current_player
+func _should_run_move_timer() -> bool:
+	return not _get_move_timer_context().is_empty() \
+		and not _match_reconnect_waiting and not _awaiting_initial_full_state
 
 func _get_move_timer_remaining_msec(now_msec: int = -1) -> int:
 	if _move_timer_turn_number < 0 or _move_timer_player_index < 0:
@@ -4554,7 +4560,7 @@ func _reset_local_move_timer_budget(now_msec: int = -1) -> void:
 	_move_timer_warning_stage = 0
 	_move_timer_timeout_pending = false
 	_move_timer_last_display_seconds = -1
-	if _should_run_local_move_timer():
+	if _should_run_move_timer():
 		_move_timer_running = true
 		_move_timer_active_started_msec = current_now
 	else:
@@ -4562,14 +4568,14 @@ func _reset_local_move_timer_budget(now_msec: int = -1) -> void:
 		_move_timer_active_started_msec = 0
 
 func _grant_local_move_timer_bonus(bonus_msec: int, now_msec: int = -1) -> void:
-	if bonus_msec <= 0:
+	if bonus_msec <= 0 or game_manager == null:
 		return
-	var context := _get_local_move_timer_context()
-	if context.is_empty():
+	# Validation may already have queued resolution or transferred priority.
+	# Credit the player whose clock was active when the card was played.
+	if _move_timer_turn_number != game_manager.turn_number \
+			or _move_timer_player_index < 0 or _move_timer_player_index >= game_manager.players.size():
 		return
-	var current_turn := int(context.get("turn_number", -1))
-	var current_player_index := int(context.get("player_index", -1))
-	if current_turn != _move_timer_turn_number or current_player_index != _move_timer_player_index:
+	if not _is_player_local(game_manager.players[_move_timer_player_index]):
 		return
 	var current_now := now_msec if now_msec >= 0 else _now_msec()
 	var remaining_msec := _get_move_timer_remaining_msec(current_now)
@@ -4600,11 +4606,11 @@ func _is_card_play_move_type(move_type: String) -> bool:
 	]
 
 func _maybe_warn_about_move_timer(remaining_msec: int) -> void:
-	if not _move_timer_running or remaining_msec < 0:
+	if not _move_timer_running or remaining_msec < 0 or _get_local_move_timer_context().is_empty():
 		return
 	if remaining_msec <= MOVE_TIMEOUT_CRITICAL_WARNING_MSEC and _move_timer_warning_stage < 2:
 		_move_timer_warning_stage = 2
-		_set_action_label_text("10 seconds left to act or your turn will end.")
+		_set_action_label_text("10 seconds left to act.")
 		update_ui()
 		return
 	if remaining_msec <= MOVE_TIMEOUT_WARNING_MSEC and _move_timer_warning_stage < 1:
@@ -4632,7 +4638,7 @@ func _refresh_turn_label() -> void:
 		return
 	turn_label.text = "Turn " + str(game_manager.turn_number) + " - " + current.player_name + "'s Turn"
 	turn_label.modulate = Color(1, 1, 1, 1)
-	var context := _get_local_move_timer_context()
+	var context := _get_move_timer_context()
 	if context.is_empty():
 		return
 	var remaining_msec := _get_move_timer_remaining_msec()
@@ -4645,41 +4651,46 @@ func _refresh_turn_label() -> void:
 	elif remaining_msec <= MOVE_TIMEOUT_WARNING_MSEC:
 		turn_label.modulate = Color(1.0, 0.82, 0.36, 1.0)
 
+func _save_move_timer_budget(now_msec: int) -> void:
+	_pause_move_timer(now_msec)
+	if _move_timer_turn_number < 0 or _move_timer_player_index < 0:
+		return
+	if _move_timer_turn_number != _move_timer_budget_turn_number:
+		_move_timer_player_budgets.clear()
+		_move_timer_budget_turn_number = _move_timer_turn_number
+	_move_timer_player_budgets[_move_timer_player_index] = {
+		"remaining_msec": _move_timer_remaining_msec,
+		"warning_stage": _move_timer_warning_stage,
+	}
+
 func _sync_turn_activity_timers() -> void:
 	_sync_priority_prompt_timeout()
-	var now_msec := _now_msec()
-	var context := _get_local_move_timer_context()
-	if context.is_empty():
-		_pending_ranked_timeout_turn_pass = false
-		_pending_ranked_timeout_upkeep_skip_turn = -1
-		_pending_ranked_timeout_priority_pass_turn = -1
-		if _move_timer_running:
-			_pause_move_timer(now_msec)
-		if _move_timer_turn_number != -1 or _move_timer_last_display_seconds != -1:
-			_move_timer_turn_number = -1
-			_move_timer_player_index = -1
-			_move_timer_remaining_msec = MOVE_TIMEOUT_MSEC
-			_move_timer_active_started_msec = 0
-			_move_timer_running = false
-			_move_timer_warning_stage = 0
-			_move_timer_timeout_pending = false
-			_move_timer_last_display_seconds = -1
-			_refresh_turn_label()
-			_refresh_visible_mana_globes()
-		return
 	_continue_pending_ranked_timeout_turn_pass()
+	var now_msec := _now_msec()
+	var context := _get_move_timer_context()
+	if context.is_empty():
+		_save_move_timer_budget(now_msec)
+		_move_timer_context.clear()
+		return
 	var turn_number := int(context.get("turn_number", -1))
 	var player_index := int(context.get("player_index", -1))
-	if turn_number != _move_timer_turn_number or player_index != _move_timer_player_index:
+	if context != _move_timer_context:
+		# Each player keeps their budget when a response or choice transfers action.
+		_save_move_timer_budget(now_msec)
+		if turn_number != _move_timer_budget_turn_number:
+			_move_timer_player_budgets.clear()
+			_move_timer_budget_turn_number = turn_number
+		var budget: Dictionary = _move_timer_player_budgets.get(player_index, {})
 		_move_timer_turn_number = turn_number
 		_move_timer_player_index = player_index
-		_move_timer_remaining_msec = MOVE_TIMEOUT_MSEC
+		_move_timer_remaining_msec = int(budget.get("remaining_msec", MOVE_TIMEOUT_MSEC))
 		_move_timer_active_started_msec = 0
 		_move_timer_running = false
-		_move_timer_warning_stage = 0
+		_move_timer_warning_stage = int(budget.get("warning_stage", 0))
 		_move_timer_timeout_pending = false
 		_move_timer_last_display_seconds = -1
-	if _should_run_local_move_timer():
+		_move_timer_context = context.duplicate()
+	if _should_run_move_timer():
 		_resume_move_timer(now_msec)
 	else:
 		_pause_move_timer(now_msec)
@@ -4690,12 +4701,30 @@ func _sync_turn_activity_timers() -> void:
 		_move_timer_last_display_seconds = remaining_seconds
 		_refresh_turn_label()
 		_refresh_visible_mana_globes()
-	if _move_timer_running and remaining_msec <= 0 and not _move_timer_timeout_pending:
+	if _move_timer_running and remaining_msec <= 0 and not _move_timer_timeout_pending \
+			and not _get_local_move_timer_context().is_empty():
 		_move_timer_timeout_pending = true
 		_pause_move_timer(now_msec)
-		_set_action_label_text("Move timer expired. Ending turn.")
-		update_ui()
-		call_deferred("_auto_end_turn_after_move_timeout")
+		call_deferred("_auto_act_after_move_timeout", context.duplicate())
+
+func _auto_act_after_move_timeout(expected_context: Dictionary) -> void:
+	if expected_context != _get_local_move_timer_context():
+		return
+	match str(expected_context.get("interaction_type", "turn")):
+		"priority":
+			_set_action_label_text("Move timer expired. Passing priority.")
+			_queue_deferred_priority_pass()
+		"intercept":
+			_set_action_label_text("Move timer expired. Declining intercept.")
+			_submit_visible_intercept_choice("")
+		"nusku_well_of_fire":
+			_set_action_label_text("Move timer expired. Choosing a card for Well of Fire.")
+			_auto_choose_well_of_fire_after_timeout()
+		_:
+			if game_manager.players[int(expected_context["player_index"])] == game_manager.current_player:
+				_set_action_label_text("Move timer expired. Ending turn.")
+				_auto_end_turn_after_move_timeout()
+	update_ui()
 
 func _sync_local_priority_recovery() -> void:
 	if _is_networked_client or match_manager == null:
@@ -4761,7 +4790,7 @@ func _continue_pending_ranked_timeout_turn_pass() -> void:
 		_pending_ranked_timeout_upkeep_skip_turn = -1
 		_pending_ranked_timeout_priority_pass_turn = -1
 		return
-	if _get_local_move_timer_context().is_empty():
+	if game_manager.current_player == null or not _is_player_local(game_manager.current_player):
 		_pending_ranked_timeout_turn_pass = false
 		_pending_ranked_timeout_upkeep_skip_turn = -1
 		_pending_ranked_timeout_priority_pass_turn = -1
@@ -7388,7 +7417,6 @@ func _on_board_layout_resized() -> void:
 		call_deferred("_layout_enemy_hand_overlay")
 	call_deferred("_apply_board_horizontal_offset")
 	call_deferred("_update_center_action_panel_layout")
-	call_deferred("_layout_priority_seal")
 	call_deferred("_layout_hermes_priority_toggle")
 	call_deferred("_layout_all_card_priority_toggles")
 	call_deferred("_sync_visual_stack_overlay")
@@ -11276,9 +11304,10 @@ func _flush_pending_grave_flights() -> void:
 		var effect_active := false
 		var victims_blocked := false
 		if is_instance_valid(controlled_animation):
-			var controller = controlled_animation.get_meta("grave_sequence_controller", null)
-			if is_instance_valid(controller) and not controller.is_queued_for_deletion():
-				continue
+			if controlled_animation.has_meta("grave_sequence_controller"):
+				var controller = controlled_animation.get_meta("grave_sequence_controller")
+				if is_instance_valid(controller) and not controller.is_queued_for_deletion():
+					continue
 			for effect in _active_board_effects:
 				if is_instance_valid(effect) and not effect.is_queued_for_deletion() \
 						and effect.get_instance_id() == int(controlled_animation.get_meta("grave_effect_id", 0)):
@@ -11902,7 +11931,7 @@ func _make_match_abyss_slot(zone: Zone, is_opponent: bool) -> Control:
 func _sync_turn_clocktower() -> void:
 	if not is_instance_valid(_turn_clocktower):
 		return
-	var remaining := -1 if _get_local_move_timer_context().is_empty() else _get_move_timer_remaining_msec()
+	var remaining := _get_move_timer_remaining_msec()
 	var available: bool = end_turn_button != null and end_turn_button.visible and not end_turn_button.disabled
 	var status := "End Turn" if available else "Waiting"
 	if _game_finished:
@@ -11910,10 +11939,20 @@ func _sync_turn_clocktower() -> void:
 	elif _is_observer_mode:
 		status = "Spectating"
 	elif remaining >= 0 and not available:
-		status = "Paused" if not _move_timer_running else "Your Turn"
+		status = "Paused" if not _move_timer_running else "Your Action"
 	var active_player: Player = null
 	if game_manager != null:
 		active_player = game_manager.turn_player if game_manager.turn_player != null else game_manager.current_player
+		if _move_timer_player_index >= 0 and _move_timer_player_index < game_manager.players.size():
+			active_player = game_manager.players[_move_timer_player_index]
+		if _move_timer_running and not _game_finished and not _is_observer_mode:
+			match str(_move_timer_context.get("interaction_type", "turn")):
+				"priority": status = "Priority"
+				"intercept": status = "Intercept"
+				"turn": status = "End Turn" if available else "Your Action"
+				_: status = "Choose"
+			if active_player != _get_display_player() and status == "Your Action":
+				status = "Opponent Action"
 	var player_name := _get_player_display_name_for_index(game_manager.players.find(active_player)) if active_player != null else "Waiting"
 	var opponent_turn := active_player != null and active_player != _get_display_player()
 	var turn_number := game_manager.turn_number if game_manager != null else 0
@@ -24728,7 +24767,8 @@ func _show_priority_seal(priority_text: String, action_message: String, has_resp
 		seal.name = "PriorityPromptPanel"
 		seal.pressed.connect(_on_priority_pass_pressed)
 		right_panel.add_child(seal)
-		right_panel.move_child(seal, end_turn_button.get_index() + 1)
+		# End Turn is reparented into the clocktower; use a right-panel sibling.
+		right_panel.move_child(seal, right_bottom_spacer.get_index())
 		seal.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		seal.z_index = TRANSIENT_UI_Z_INDEX
 	seal.has_responses = has_responses
@@ -28135,6 +28175,7 @@ func _dismiss_transient_prompts(clear_required_prompts: bool = true) -> void:
 	_pending_freyja_active_prompt_data.clear()
 	_pending_nergal_lion_prompt_data.clear()
 	_pending_nusku_well_of_fire_prompt_data.clear()
+	_well_of_fire_timeout_choice.clear()
 	_pending_freyja_active_source_uid = ""
 	_pending_freyja_active_selected_uids.clear()
 	_pending_freyja_active_prompt_targets.clear()
@@ -28530,7 +28571,9 @@ func _on_singularity_departure_requested(card_uid: String, tumble_turns: float, 
 	var animation := _card_grave_animations.get(card_uid) as Control
 	if not is_instance_valid(animation) or not _pending_grave_flights.has(card_uid):
 		return
-	if animation.get_meta("grave_sequence_controller", null) != effect:
+	if not animation.has_meta("grave_sequence_controller"):
+		return
+	if animation.get_meta("grave_sequence_controller") != effect:
 		return
 	_pending_grave_flights.erase(card_uid)
 	animation.remove_meta("grave_sequence_controller")
@@ -28914,6 +28957,8 @@ func _on_match_move_validated(move: Dictionary) -> void:
 func _submit_prompt_choice_command(command: Dictionary) -> bool:
 	var submitted := bool(game_input.submit_action(command))
 	if submitted:
+		if str(command.get("type", "")) == "nusku_well_of_fire_choice":
+			_well_of_fire_timeout_choice.clear()
 		_apply_client_prompt_submission_followup(command)
 		# The server drives authoritative resolution for networked clients and
 		# authoritative hosts, so the client must clear its own stack-paused
@@ -31592,7 +31637,10 @@ func _debug_log_full_state(context: String, data: Dictionary, state: Dictionary)
 
 func _apply_full_state(data: Dictionary) -> void:
 	_pending_priority_auto_pass_signature.clear()
+	_network_action_clock_context = data.get("action_clock_context", {}).duplicate()
 	_network_well_of_fire_choosing_player_index = int(data.get("well_of_fire_choosing_player_index", -1))
+	if _network_well_of_fire_choosing_player_index < 0:
+		_well_of_fire_timeout_choice.clear()
 	var champions_call_mode := placement_mode
 	var champions_call_hand_selected := _is_champions_call_hand_proxy(selected_card)
 	var state: Dictionary = data.get("state", {})
@@ -31971,9 +32019,7 @@ func _update_waiting_overlay() -> void:
 	var local_idx := _get_local_priority_player_index()
 	var current_priority_player := game_manager.priority_player
 	var priority_idx := game_manager.players.find(current_priority_player)
-	var well_of_fire_player_index := _network_well_of_fire_choosing_player_index
-	if not _is_networked_client and match_manager != null:
-		well_of_fire_player_index = match_manager.get_pending_well_of_fire_player_index()
+	var well_of_fire_player_index := _get_well_of_fire_choosing_player_index()
 	if local_idx >= 0 and well_of_fire_player_index >= 0 and well_of_fire_player_index != local_idx:
 		_update_waiting_status(true, "Well of Fire: opponent is choosing a card to return to your hand...")
 		return
@@ -32454,6 +32500,12 @@ func _open_upkeep_choice_window() -> void:
 func _show_nusku_well_of_fire_prompt(nusku: NuskuFirebearer, choices: Array[Card], mill_count: int) -> void:
 	if nusku == null or choices.is_empty() or game_manager == null:
 		return
+	_well_of_fire_timeout_choice = {
+		"type": "nusku_well_of_fire_choice",
+		"source_uid": nusku.uid,
+		"target_uid": nusku.choose_opponent_pick(choices).uid,
+		"mill_count": mill_count,
+	}
 	if _executing_stack_action and not _stack_resolution_paused:
 		_pause_stack_resolution(nusku.card_owner)
 	var opponent: Player = game_manager.get_opponent(nusku.card_owner)
@@ -32476,6 +32528,18 @@ func _show_nusku_well_of_fire_prompt(nusku: NuskuFirebearer, choices: Array[Card
 				return
 			_resume_after_deferred_resolution("Well of Fire choice could not be submitted.")
 	)
+
+func _auto_choose_well_of_fire_after_timeout() -> void:
+	if _game_finished or _well_of_fire_timeout_choice.is_empty():
+		return
+	var context := _get_local_move_timer_context()
+	if context.is_empty() or _get_well_of_fire_choosing_player_index() != int(context.get("player_index", -1)):
+		return
+	var choice_overlay := _zone_overlay
+	if _submit_prompt_choice_command(_well_of_fire_timeout_choice.duplicate(true)):
+		if _zone_overlay == choice_overlay:
+			_dismiss_zone_overlay()
+		update_ui()
 
 func _show_nusku_well_of_fire_prompt_from_data(data: Dictionary) -> void:
 	if game_manager == null:

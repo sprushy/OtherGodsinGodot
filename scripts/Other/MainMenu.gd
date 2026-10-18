@@ -11416,6 +11416,26 @@ func _run_practice_thor_intercept_smoke() -> void:
 		])
 		return
 	_write_smoke_trace("practice_thor_intercept:prompt_visible")
+	practice_game._sync_turn_activity_timers()
+	if practice_game._move_timer_player_index != practice_game.game_manager.players.find(practice_game.player1) \
+			or not practice_game._move_timer_running:
+		_fail_smoke_if_enabled("practice_thor_intercept_defender_clock_not_running")
+		return
+	var attacker_index: int = practice_game.game_manager.players.find(practice_game.player2)
+	var attacker_budget: Dictionary = practice_game._move_timer_player_budgets.get(attacker_index, {})
+	if attacker_budget.is_empty():
+		_fail_smoke_if_enabled("practice_thor_intercept_attacker_clock_not_saved")
+		return
+	var attacker_remaining := int(attacker_budget.get("remaining_msec", -1))
+	var defender_remaining: int = practice_game._get_move_timer_remaining_msec()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	practice_game._sync_turn_activity_timers()
+	if practice_game._get_move_timer_remaining_msec() >= defender_remaining \
+			or int(practice_game._move_timer_player_budgets[attacker_index]["remaining_msec"]) != attacker_remaining:
+		_fail_smoke_if_enabled("practice_thor_intercept_clock_charged_wrong_player")
+		return
+	_write_smoke_trace("practice_thor_intercept:defender_clock_running attacker_clock_preserved")
 	var pending_intercept_prompt: Dictionary = {}
 	for idx in range(practice_game.match_manager._pending_ui_interactions.size() - 1, -1, -1):
 		var entry: Dictionary = practice_game.match_manager._pending_ui_interactions[idx]
@@ -11531,6 +11551,11 @@ func _run_practice_thor_intercept_smoke() -> void:
 		str(attacker.creature_major_action_used),
 		interceptor.current_zone.zone_index,
 	])
+	practice_game._sync_turn_activity_timers()
+	if practice_game._move_timer_player_index != attacker_index or not practice_game._move_timer_running \
+			or practice_game._get_move_timer_remaining_msec() > attacker_remaining:
+		_fail_smoke_if_enabled("practice_thor_intercept_attacker_clock_not_resumed")
+		return
 
 	_finish_smoke_if_enabled("PASS:practice_thor_intercept")
 
