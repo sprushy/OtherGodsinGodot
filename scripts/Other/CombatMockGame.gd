@@ -12,6 +12,7 @@ const ClayEatersScript = preload("res://scripts/cards/Creatures/ClayEaters.gd")
 const SacrificeCursorSource = preload("res://images/ui/cursors/BloodySacrificeCursor.png")
 const DevourCursorSource = preload("res://images/ui/cursors/BloodyWolfJawsPGN.png")
 const SilenceCursorSource = preload("res://images/SilenceCursorPGN.png")
+const EquipmentCursorSource = preload("res://images/ui/cursors/EquipmentCursor.png")
 const JeweledHornsCursorSource = preload("res://images/ui/cursors/JeweledHornsCursor.png")
 const TonalExtractionCursorSource = preload("res://images/ui/cursors/ExtractionCursor.png")
 const GiantMasterArchitectCursorSource = preload("res://images/ui/cursors/GiantMasterArchitectHammerCursor.png")
@@ -600,10 +601,6 @@ var _pending_freyja_active_selected_uids: Array[String] = []
 var _pending_freyja_active_prompt_targets: Array[String] = []
 var _pending_turn_start_priority_feedback: String = ""
 var _breidablik_panel: Control = null
-var _breidablik_post_upkeep_active: bool = false
-var _pending_breidablik_post_upkeep_feedback: String = ""
-var _pending_breidablik_post_upkeep_finish: Callable = Callable()
-var _breidablik_authoritative_turn_start_prompt_active: bool = false
 var _e2_abzu_panel: Control = null
 var _divine_caprice_panel: Control = null
 var _pending_divine_caprice_power: DivineCaprice = null
@@ -806,6 +803,7 @@ var _deucalions_infants_cursor_texture: Texture2D = null
 var _aphrodite_cursor_texture: Texture2D = null
 var _gambanteinn_cursor_texture: Texture2D = null
 var _divine_lightning_cursor_texture: Texture2D = null
+var _equipment_cursor_texture: Texture2D = null
 var _snowball_cursor_texture: Texture2D = null
 var _nimue_entomb_cursor_texture: Texture2D = null
 var _void_cursor_texture: Texture2D = null
@@ -846,6 +844,7 @@ var _deucalions_infants_cursor_target_height: int = 0
 var _aphrodite_cursor_target_height: int = 0
 var _gambanteinn_cursor_target_height: int = 0
 var _divine_lightning_cursor_target_height: int = 0
+var _equipment_cursor_target_height: int = 0
 var _snowball_cursor_target_height: int = 0
 var _nimue_entomb_cursor_target_height: int = 0
 var _void_cursor_target_height: int = 0
@@ -875,10 +874,6 @@ var _match_launch_loading: bool = false
 var _current_match_info: Dictionary = {}
 var _network_upkeep_prompt_turn: int = -1
 var _network_upkeep_prompt_player_index: int = -1
-var _network_breidablik_return_pending: bool = false
-var _network_breidablik_return_power_uid: String = ""
-var _network_breidablik_return_priest_uid: String = ""
-var _network_breidablik_return_priest_index: int = -1
 var _local_match_result_recorded: bool = false
 var _priority_prompt_idle_deadline_msec: int = 0
 var _priority_prompt_timeout_pending: bool = false
@@ -1034,6 +1029,8 @@ const GAMBANTEINN_CURSOR_TARGET_HEIGHT := 108
 const GAMBANTEINN_CURSOR_HOTSPOT_RATIO := Vector2(0.10, 0.88)
 const DIVINE_LIGHTNING_CURSOR_TARGET_HEIGHT := 108
 const DIVINE_LIGHTNING_CURSOR_HOTSPOT_RATIO := Vector2(0.53, 0.55)
+const EQUIPMENT_CURSOR_TARGET_HEIGHT := 108
+const EQUIPMENT_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.50)
 const SNOWBALL_CURSOR_TARGET_HEIGHT := 96
 const SNOWBALL_CURSOR_HOTSPOT_RATIO := Vector2(0.5, 0.5)
 const NIMUE_ENTOMB_CURSOR_TARGET_HEIGHT := 108
@@ -1099,21 +1096,7 @@ const CENTER_ACTION_FONT_SIZE := 12
 func _is_turn_choice_pending() -> bool:
 	return choice_container.visible
 
-func _can_activate_before_turn_choice(card: Card) -> bool:
-	if _is_network_breidablik_return_pending():
-		return false
-	if card == null:
-		return false
-	if card.get_controller() != game_manager.current_player:
-		return false
-	if card is Breidablik:
-		return (card as Breidablik).can_return_priest(game_manager)
-	return false
-
 func _reject_pre_turn_action() -> void:
-	if _is_network_breidablik_return_pending():
-		_reject_pending_network_breidablik_return_choice()
-		return
 	_set_action_label_text("Finish resolving upkeep before taking other actions.")
 
 func _has_active_modal_prompt() -> bool:
@@ -2546,16 +2529,11 @@ func _continue_after_upkeep_choice(feedback: String) -> void:
 		return
 	_continue_after_turn_start_optional_windows(feedback)
 
-func _continue_after_turn_start_optional_windows(feedback: String, finish_callback: Callable = Callable()) -> void:
-	var resolved_finish := finish_callback
-	if not resolved_finish.is_valid():
-		resolved_finish = func(final_feedback: String) -> void:
-			_queue_standard_turn_start_priority(final_feedback)
-	if _begin_breidablik_post_upkeep_sequence(feedback, resolved_finish):
-		update_ui()
-		return
-	_close_breidablik_turn_start_windows()
-	resolved_finish.call(feedback)
+func _continue_after_turn_start_optional_windows(feedback: String) -> void:
+	# MatchManager owns the next optional prompt and turn-start priority.
+	if not feedback.strip_edges().is_empty():
+		_set_action_label_text(feedback)
+	update_ui()
 
 func _build_upkeep_resolution_feedback(default_feedback: String) -> String:
 	var resolved_feedback := _consume_resolution_feedback()
@@ -3149,7 +3127,10 @@ func _get_hand_drag_selection_cursor_mode() -> String:
 			continue
 		var target_ui := _get_hand_drag_target_zone_ui(vc)
 		if target_ui != null:
-			cursor_mode = _get_selection_cursor_mode_for_source(vc.card_data)
+			if vc.card_data.card_type == Card.CardType.EQUIPMENT:
+				cursor_mode = "equipment"
+			else:
+				cursor_mode = _get_selection_cursor_mode_for_source(vc.card_data)
 			if cursor_mode.is_empty():
 				cursor_mode = "divine_lightning"
 		vc.set_drag_target_cursor_active(target_ui != null)
@@ -3238,6 +3219,8 @@ func _get_cursor_mode_target_height(cursor_mode: String) -> int:
 			PREFERRED_BOARD_ZONE_EXTENT
 		)
 	match cursor_mode:
+		"equipment":
+			return UIArtScalerScript.get_board_cursor_target_height(EQUIPMENT_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"sacrifice":
 			return UIArtScalerScript.get_board_cursor_target_height(SACRIFICE_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"devour":
@@ -3676,6 +3659,19 @@ func _apply_gambanteinn_cursor() -> bool:
 		Input.set_custom_mouse_cursor(_gambanteinn_cursor_texture, cursor_shape, hotspot)
 	return true
 
+func _apply_equipment_cursor() -> bool:
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(EQUIPMENT_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	if _equipment_cursor_texture == null or _equipment_cursor_target_height != target_height:
+		_equipment_cursor_texture = UIArtScalerScript.build_cursor_texture(EquipmentCursorSource, target_height)
+		_equipment_cursor_target_height = target_height
+	if _equipment_cursor_texture == null:
+		return false
+
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(_equipment_cursor_texture, EQUIPMENT_CURSOR_HOTSPOT_RATIO)
+	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
+		Input.set_custom_mouse_cursor(_equipment_cursor_texture, cursor_shape, hotspot)
+	return true
+
 func _apply_divine_lightning_cursor() -> bool:
 	var target_height := UIArtScalerScript.get_board_cursor_target_height(DIVINE_LIGHTNING_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 	if _divine_lightning_cursor_texture == null or _divine_lightning_cursor_target_height != target_height:
@@ -3990,6 +3986,14 @@ func _sync_sacrifice_cursor() -> void:
 	if cursor_mode == "gambanteinn":
 		if _apply_gambanteinn_cursor():
 			_active_selection_cursor_mode = "gambanteinn"
+			_active_selection_cursor_target_height = target_height
+		else:
+			_restore_default_selection_cursor()
+		return
+
+	if cursor_mode == "equipment":
+		if _apply_equipment_cursor():
+			_active_selection_cursor_mode = "equipment"
 			_active_selection_cursor_target_height = target_height
 		else:
 			_restore_default_selection_cursor()
@@ -6742,8 +6746,6 @@ func _refresh_turn_choice_options() -> void:
 		_matriarch_rule_button.text = "Matriarch Rule"
 		_matriarch_rule_button.visible = not available_tiamat_cards.is_empty()
 		_matriarch_rule_button.disabled = available_tiamat_cards.is_empty()
-	if _is_network_breidablik_return_pending():
-		_set_turn_choice_controls_disabled(true)
 	_sync_turn_start_props()
 
 func _can_choose_turn_start_option() -> bool:
@@ -6753,7 +6755,6 @@ func _can_choose_turn_start_option() -> bool:
 		and game_manager.players.find(game_manager.current_player) == _get_authoritative_turn_local_player_index() \
 		and game_manager.is_player_in_upkeep_window(game_manager.current_player) \
 		and game_manager.action_stack.is_empty() \
-		and not _is_network_breidablik_return_pending() \
 		and _skoll_prompt_panel == null and _pending_skoll_summon == null
 
 func _turn_start_props_are_ready() -> bool:
@@ -6908,9 +6909,6 @@ func _set_turn_choice_controls_disabled(disabled: bool) -> void:
 	if _matriarch_rule_button != null and _matriarch_rule_button.visible:
 		_matriarch_rule_button.disabled = disabled
 
-func _is_network_breidablik_return_pending() -> bool:
-	return _is_networked_client and _network_breidablik_return_pending
-
 func _is_local_authoritative_upkeep_pending() -> bool:
 	if game_manager == null or game_manager.has_resolved_turn_upkeep():
 		return false
@@ -6919,45 +6917,6 @@ func _is_local_authoritative_upkeep_pending() -> bool:
 			return false
 		return game_manager.players.find(game_manager.current_player) == network_manager.local_player_index
 	return true
-
-func _begin_network_breidablik_return_pending(power: Breidablik, priest: Card) -> void:
-	if not _is_networked_client:
-		return
-	_network_breidablik_return_pending = true
-	_network_breidablik_return_power_uid = power.uid if power != null else ""
-	_network_breidablik_return_priest_uid = priest.uid if priest != null else ""
-	_network_breidablik_return_priest_index = power.get_stored_priest_index(priest) if power != null and priest != null else -1
-	_set_turn_choice_controls_disabled(true)
-
-func _clear_network_breidablik_return_pending(refresh_options: bool = true) -> void:
-	var was_pending := _network_breidablik_return_pending
-	_network_breidablik_return_pending = false
-	_network_breidablik_return_power_uid = ""
-	_network_breidablik_return_priest_uid = ""
-	_network_breidablik_return_priest_index = -1
-	if refresh_options and was_pending and choice_container != null and choice_container.visible:
-		_refresh_turn_choice_options()
-
-func _sync_network_breidablik_return_pending_from_state() -> void:
-	if not _is_network_breidablik_return_pending():
-		return
-	if game_manager == null or game_manager.has_resolved_turn_upkeep():
-		_clear_network_breidablik_return_pending(false)
-		return
-	var power := game_manager.get_card_by_uid(_network_breidablik_return_power_uid) as Breidablik
-	if power == null or not power.can_return_priest(game_manager):
-		_clear_network_breidablik_return_pending(false)
-		return
-	var priest := power.get_stored_priest_by_uid_or_index(
-		_network_breidablik_return_priest_uid,
-		_network_breidablik_return_priest_index
-	)
-	if priest == null:
-		_clear_network_breidablik_return_pending(false)
-
-func _reject_pending_network_breidablik_return_choice() -> void:
-	_set_action_label_text("Finish resolving Breidablik before choosing your upkeep option.")
-	update_ui()
 
 func _lock_turn_choice_for_sun_hunt() -> void:
 	choice_intro_label.text = "Choose one"
@@ -6974,14 +6933,12 @@ func _restore_turn_choice_after_skoll_prompt() -> void:
 	if _is_turn_choice_pending():
 		_set_action_label_text("Choose an upkeep option.")
 
-func _can_interact_with_board_during_turn_choice(card: Card = null) -> bool:
+func _can_interact_with_board_during_turn_choice(_card: Card = null) -> bool:
 	if _pending_hati_summon != null:
 		return true
 	if _pending_skoll_summon != null:
 		return true
 	if _awaiting_creature_sacrifice or _awaiting_altar_void_payment or _awaiting_drag_sacrifice_zone:
-		return true
-	if card != null and _can_activate_before_turn_choice(card):
 		return true
 	return false
 
@@ -13020,7 +12977,7 @@ func _on_power_pressed(power: PowerCard) -> void:
 		return
 	if _try_queue_god_targeted_ability(power):
 		return
-	if _is_turn_choice_pending() and not _can_activate_before_turn_choice(power):
+	if _is_turn_choice_pending():
 		_reject_pre_turn_action()
 		return
 	if selected_card is Absence:
@@ -13258,10 +13215,7 @@ func _show_breidablik_prompt(power: Breidablik) -> void:
 		update_ui()
 		return
 	var on_choose_return_priest := func(selected_priest: Card) -> void:
-		if _breidablik_authoritative_turn_start_prompt_active:
-			_submit_breidablik_turn_start_choice(power, selected_priest)
-			return
-		_handle_breidablik_return_choice(power, selected_priest)
+		_submit_breidablik_turn_start_choice(power, selected_priest)
 
 	var panel := PanelContainer.new()
 	panel.name = "BreidablikPromptPanel"
@@ -13298,15 +13252,7 @@ func _show_breidablik_prompt(power: Breidablik) -> void:
 				power.get_stored_priests(),
 				on_choose_return_priest,
 				func() -> void:
-					if _breidablik_authoritative_turn_start_prompt_active:
-						_submit_breidablik_turn_start_choice(power)
-						return
-					if _breidablik_post_upkeep_active:
-						_finish_breidablik_post_upkeep_sequence()
-						return
-					_hide_breidablik_prompt()
-					_set_action_label_text("Declined " + power.card_name + ".")
-					update_ui(),
+					_submit_breidablik_turn_start_choice(power),
 				"breidablik",
 				"Decline"
 			)
@@ -13316,15 +13262,7 @@ func _show_breidablik_prompt(power: Breidablik) -> void:
 	var cancel_btn := Button.new()
 	cancel_btn.text = "Decline"
 	cancel_btn.pressed.connect(func() -> void:
-		if _breidablik_authoritative_turn_start_prompt_active:
-			_submit_breidablik_turn_start_choice(power)
-			return
-		if _breidablik_post_upkeep_active:
-			_finish_breidablik_post_upkeep_sequence()
-			return
-		_hide_breidablik_prompt()
-		_set_action_label_text("Declined " + power.card_name + ".")
-		update_ui()
+		_submit_breidablik_turn_start_choice(power)
 	)
 	vbox.add_child(cancel_btn)
 
@@ -13340,10 +13278,6 @@ func _show_breidablik_prompt(power: Breidablik) -> void:
 	panel.offset_bottom = 90
 	_breidablik_panel = panel
 
-func _show_authoritative_breidablik_turn_start_prompt(power: Breidablik) -> void:
-	_breidablik_authoritative_turn_start_prompt_active = true
-	_show_breidablik_prompt(power)
-
 func _submit_breidablik_turn_start_choice(power: Breidablik, selected_priest: Card = null) -> void:
 	if power == null or game_input == null:
 		return
@@ -13355,9 +13289,9 @@ func _submit_breidablik_turn_start_choice(power: Breidablik, selected_priest: Ca
 	if selected_priest != null:
 		command["target_uid"] = selected_priest.uid
 		command["stored_priest_index"] = power.get_stored_priest_index(selected_priest)
-	_breidablik_authoritative_turn_start_prompt_active = false
 	_hide_breidablik_prompt()
-	game_input.submit_action(command)
+	if not game_input.submit_action(command):
+		_show_breidablik_prompt(power)
 	update_ui()
 
 func _handle_breidablik_store_choice(power: Breidablik, selected_priest: Card) -> void:
@@ -13368,51 +13302,6 @@ func _handle_breidablik_store_choice(power: Breidablik, selected_priest: Card) -
 		command["target_zone"] = MatchManager.zone_to_dict(selected_priest.current_zone, game_manager)
 		command["target_zone_card_index"] = selected_priest.current_zone.cards.find(selected_priest)
 	game_input.submit_action(command)
-
-func _handle_breidablik_return_choice(power: Breidablik, selected_priest: Card) -> void:
-	if power == null or selected_priest == null:
-		return
-	var command := {
-		type = "activate_power",
-		power_uid = power.uid,
-		target_uid = selected_priest.uid,
-		mode = "return_priest",
-		stored_priest_index = power.get_stored_priest_index(selected_priest),
-	}
-	if game_input.submit_action(command) and game_manager.is_player_in_upkeep_window(game_manager.current_player):
-		_begin_network_breidablik_return_pending(power, selected_priest)
-		_set_action_label_text(power.card_name + " is returning " + selected_priest.card_name + ".")
-		update_ui()
-
-func _resolve_breidablik_return_choice(power: Breidablik, selected_priest: Card) -> void:
-	if power == null or selected_priest == null or game_manager == null:
-		return
-	var keep_upkeep_choice_open := game_manager.is_player_in_upkeep_window(game_manager.current_player) \
-		and game_manager.current_player == power.card_owner
-	game_manager.push_effect_source_card(power)
-	var returned := power.return_priest(game_manager, selected_priest)
-	game_manager.pop_effect_source_card()
-	if not returned:
-		_set_action_label_text(_consume_resolution_feedback(power.card_name + " could not return " + selected_priest.card_name + "."))
-		update_ui()
-		return
-	var feedback := _consume_resolution_feedback(power.card_name + " returned " + selected_priest.card_name + ".")
-	if _breidablik_post_upkeep_active:
-		if power.can_return_priest(game_manager):
-			_append_breidablik_post_upkeep_feedback(feedback)
-			_set_action_label_text(feedback)
-			_show_breidablik_prompt(power)
-			update_ui()
-			return
-		_finish_breidablik_post_upkeep_sequence(feedback)
-		return
-	if keep_upkeep_choice_open:
-		_set_action_label_text(feedback + " Choose your upkeep option.")
-		show_turn_choice()
-		update_ui()
-		return
-	_set_action_label_text(feedback)
-	update_ui()
 
 func _get_divine_caprice_zone_title(zone: Zone) -> String:
 	if zone == null:
@@ -13640,45 +13529,6 @@ func _hide_breidablik_prompt() -> void:
 		_breidablik_panel.queue_free()
 	_breidablik_panel = null
 
-func _begin_breidablik_post_upkeep_sequence(feedback: String, finish_callback: Callable) -> bool:
-	var power := _get_available_breidablik_return_power()
-	if power == null:
-		return false
-	_breidablik_post_upkeep_active = true
-	_pending_breidablik_post_upkeep_feedback = feedback
-	_pending_breidablik_post_upkeep_finish = finish_callback
-	_show_breidablik_prompt(power)
-	return true
-
-func _append_breidablik_post_upkeep_feedback(feedback: String) -> void:
-	var cleaned_feedback := feedback.strip_edges()
-	if cleaned_feedback == "":
-		return
-	var pending_feedback := _pending_breidablik_post_upkeep_feedback.strip_edges()
-	if pending_feedback == "":
-		_pending_breidablik_post_upkeep_feedback = cleaned_feedback
-	elif pending_feedback != cleaned_feedback:
-		_pending_breidablik_post_upkeep_feedback = "%s %s" % [pending_feedback, cleaned_feedback]
-
-func _finish_breidablik_post_upkeep_sequence(feedback: String = "") -> void:
-	var pending_feedback := _pending_breidablik_post_upkeep_feedback
-	var finish_callback := _pending_breidablik_post_upkeep_finish
-	_breidablik_post_upkeep_active = false
-	_pending_breidablik_post_upkeep_feedback = ""
-	_pending_breidablik_post_upkeep_finish = Callable()
-	_hide_breidablik_prompt()
-	_close_breidablik_turn_start_windows()
-	var final_feedback := feedback.strip_edges()
-	if final_feedback == "":
-		final_feedback = pending_feedback
-	elif pending_feedback.strip_edges() != "" and final_feedback != pending_feedback:
-		final_feedback = "%s %s" % [pending_feedback, final_feedback]
-	if finish_callback.is_valid():
-		finish_callback.call(final_feedback)
-	else:
-		_queue_standard_turn_start_priority(final_feedback)
-	update_ui()
-
 func _show_e2_abzu_prompt(structure: E2Abzu) -> void:
 	_hide_e2_abzu_prompt()
 	if structure == null:
@@ -13784,7 +13634,6 @@ func _maybe_prompt_turn_start_windows() -> void:
 	_hide_skoll_prompt()
 	_pending_skoll_prompts.clear()
 	_refresh_turn_choice_options()
-	_maybe_prompt_breidablik_on_turn_start()
 
 func _maybe_prompt_skoll_on_turn_start() -> bool:
 	_hide_skoll_prompt()
@@ -14110,23 +13959,6 @@ func _hide_hati_prompt() -> void:
 	_hati_prompt_panel = null
 	_active_hati_prompt = null
 
-func _queue_standard_turn_start_priority(feedback_text: String = "") -> void:
-	if game_manager == null:
-		return
-	var resolve_turn_start := func() -> void:
-		if feedback_text.strip_edges() != "":
-			_set_action_label_text(feedback_text)
-			update_ui()
-	_queue_priority_event(
-		"start_turn",
-		null,
-		0,
-		resolve_turn_start,
-		game_manager.current_player,
-		null,
-		feedback_text
-	)
-
 func _clear_queued_skoll_turn_start_summon() -> void:
 	_queued_skoll_turn_start_summon = null
 	_queued_skoll_turn_start_zone = null
@@ -14139,9 +13971,6 @@ func _hide_skoll_prompt() -> void:
 
 func _on_sun_hunt_button_pressed() -> void:
 	if _game_finished:
-		return
-	if _is_network_breidablik_return_pending():
-		_reject_pending_network_breidablik_return_choice()
 		return
 	if game_manager == null or not game_manager.is_player_in_upkeep_window(game_manager.current_player):
 		_set_action_label_text("Upkeep has already been resolved.")
@@ -14167,9 +13996,6 @@ func _on_sun_hunt_button_pressed() -> void:
 func _submit_tiamat_upkeep_choice(chosen_card: Card) -> void:
 	if chosen_card == null:
 		return
-	if _is_network_breidablik_return_pending():
-		_reject_pending_network_breidablik_return_choice()
-		return
 	game_input.submit_action({type = "tiamat_upkeep_choice", card_uid = chosen_card.uid})
 	_close_turn_start_windows(false)
 	update_ui()
@@ -14190,9 +14016,6 @@ func _try_submit_tiamat_upkeep_card_from_board(card: Card) -> bool:
 
 func _on_matriarch_rule_button_pressed() -> void:
 	if _game_finished:
-		return
-	if _is_network_breidablik_return_pending():
-		_reject_pending_network_breidablik_return_choice()
 		return
 	if _skoll_prompt_panel != null or _pending_skoll_summon != null:
 		_set_action_label_text("Finish resolving Sun Hunt or cancel it before choosing another upkeep option.")
@@ -14216,39 +14039,6 @@ func _on_matriarch_rule_button_pressed() -> void:
 	)
 	_set_action_label_text("Matriarch Rule: choose a creature from your power slots to return to hand.")
 	update_ui()
-
-func _get_available_breidablik_return_power() -> Breidablik:
-	if game_manager == null or game_manager.current_player == null:
-		return null
-	for zone in game_manager.current_player.power_zones:
-		for card in zone.cards:
-			if not (card is Breidablik):
-				continue
-			var power := card as Breidablik
-			if power.is_face_down or power.is_muted:
-				continue
-			if not power.can_return_priest(game_manager):
-				continue
-			return power
-	return null
-
-func _maybe_prompt_breidablik_on_turn_start() -> bool:
-	var power := _get_available_breidablik_return_power()
-	if power == null:
-		return false
-	_show_breidablik_prompt(power)
-	return true
-
-func _close_breidablik_turn_start_windows() -> void:
-	if game_manager == null:
-		return
-	for player in game_manager.players:
-		if player == null:
-			continue
-		for zone in player.power_zones:
-			for card in zone.cards:
-				if card is Breidablik and card.has_method("close_turn_start_window"):
-					card.close_turn_start_window()
 
 func _get_absence_targets() -> Array[Card]:
 	var targets: Array[Card] = []
@@ -28216,7 +28006,6 @@ func _dismiss_transient_prompts(clear_required_prompts: bool = true) -> void:
 	_pending_reveal_auto_submit_keys.clear()
 	_clear_mopsus_hand_selection()
 	_clear_paid_hand_card_preview()
-	_clear_network_breidablik_return_pending(false)
 	_pending_end_turn_discard_uids.clear()
 	_network_upkeep_prompt_turn = -1
 	_network_upkeep_prompt_player_index = -1
@@ -28292,10 +28081,6 @@ func _dismiss_transient_prompts(clear_required_prompts: bool = true) -> void:
 	_pending_wolf_adolescent_prompts.clear()
 	_active_wolf_adolescent_prompt = null
 	_pending_turn_start_priority_feedback = ""
-	_breidablik_post_upkeep_active = false
-	_pending_breidablik_post_upkeep_feedback = ""
-	_pending_breidablik_post_upkeep_finish = Callable()
-	_breidablik_authoritative_turn_start_prompt_active = false
 	_pending_hati_prompts.clear()
 	_clear_hati_moon_hunt_state()
 	_pending_skoll_prompts.clear()
@@ -28840,7 +28625,6 @@ func _on_match_move_validated(move: Dictionary) -> void:
 				if not _show_next_wheel_of_fire_turn_start_prompt():
 					_finish_wheel_of_fire_turn_start_sequence()
 		"breidablik_turn_start_choice":
-			_breidablik_authoritative_turn_start_prompt_active = false
 			_hide_breidablik_prompt()
 			var feedback := str(move.get("public_log_message", "")).strip_edges()
 			if feedback != "":
@@ -28918,22 +28702,11 @@ func _on_match_move_validated(move: Dictionary) -> void:
 				_schedule_priority_recovery_check()
 		"activate_power", "activate_divine_caprice":
 			if move_type == "activate_power" and str(move.get("mode", "")) == "return_priest":
-				_clear_network_breidablik_return_pending(false)
 				var feedback := str(move.get("public_log_message", "")).strip_edges()
 				if feedback == "":
 					feedback = _consume_resolution_feedback()
 				if feedback.strip_edges() == "":
 					feedback = "Breidablik returned a priest."
-				if _breidablik_post_upkeep_active:
-					var return_power := game_manager.get_card_by_uid(str(move.get("power_uid", ""))) as Breidablik
-					if return_power != null and return_power.can_return_priest(game_manager):
-						_append_breidablik_post_upkeep_feedback(feedback)
-						_set_action_label_text(feedback)
-						_show_breidablik_prompt(return_power)
-						update_ui()
-						return
-					_finish_breidablik_post_upkeep_sequence(feedback)
-					return
 				if game_manager != null and game_manager.is_player_in_upkeep_window(game_manager.current_player):
 					_set_action_label_text(feedback + " Choose your upkeep option.")
 					show_turn_choice()
@@ -29437,7 +29210,7 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 		"breidablik_turn_start":
 			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as Breidablik
 			if card != null:
-				_show_authoritative_breidablik_turn_start_prompt(card)
+				_show_breidablik_prompt(card)
 		"en_hedu_anna_exaltation":
 			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as EnHeduAnna
 			if card != null:
@@ -29482,9 +29255,6 @@ func _on_draw_button_pressed() -> void:
 		return
 	if _is_priority_prompt_visible():
 		_hide_priority_prompt()
-	if _is_network_breidablik_return_pending():
-		_reject_pending_network_breidablik_return_choice()
-		return
 	if game_manager == null or not game_manager.is_player_in_upkeep_window(game_manager.current_player):
 		_set_action_label_text("Upkeep has already been resolved.")
 		update_ui()
@@ -29513,9 +29283,6 @@ func _on_mana_button_pressed() -> void:
 		return
 	if _is_priority_prompt_visible():
 		_hide_priority_prompt()
-	if _is_network_breidablik_return_pending():
-		_reject_pending_network_breidablik_return_choice()
-		return
 	if game_manager == null or not game_manager.is_player_in_upkeep_window(game_manager.current_player):
 		_set_action_label_text("Upkeep has already been resolved.")
 		update_ui()
@@ -31133,8 +30900,6 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 				forfeit_button.disabled = false
 				_refresh_forfeit_match_button_visibility()
 			_clear_pending_priority_response_submission()
-			_clear_network_breidablik_return_pending()
-			_breidablik_authoritative_turn_start_prompt_active = false
 			var rejection_reason := str(data.get("reason", "That move was rejected by the server."))
 			if _should_suppress_stale_priority_rejection(rejection_reason):
 				_pending_priority_auto_pass_signature.clear()
@@ -31611,7 +31376,7 @@ func _apply_ui_interaction(event_data: Dictionary) -> void:
 		"breidablik_turn_start":
 			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as Breidablik
 			if card != null:
-				_show_authoritative_breidablik_turn_start_prompt(card)
+				_show_breidablik_prompt(card)
 		"en_hedu_anna_exaltation":
 			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as EnHeduAnna
 			if card != null:
@@ -31754,7 +31519,6 @@ func _apply_full_state(data: Dictionary) -> void:
 				"set_remote_authoritative_visual_linger_pending",
 				bool(data.get("authoritative_visual_linger_pending", false))
 			)
-		_sync_network_breidablik_return_pending_from_state()
 		# Set feedback_viewer so client sees their own perspective
 		if network_manager != null and network_manager.local_player_index >= 0:
 			var local_idx: int = network_manager.local_player_index

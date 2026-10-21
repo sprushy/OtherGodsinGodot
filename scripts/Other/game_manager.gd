@@ -3316,12 +3316,13 @@ func notify_creature_shapeshifted(creature: Card, source_card: Card = null) -> v
 
 
 # --- New Helper Function for Card Removal ---
-# Returns true if the given player has Asag on the board (Class Rend active).
-func _class_rend_active(player: Player) -> bool:
+# Returns true if the player has an active Asag that can affect this victim.
+func _class_rend_active(player: Player, victim: Card) -> bool:
 	for zone in player.frontline_zones + player.reserve_zones:
 		for card in zone.cards:
 			if card is AsagTheDestroyer and not card.abilities_suppressed():
-				return true
+				if not is_immune_to_source(victim, card):
+					return true
 	return false
 
 # Returns true if target is shielded by Guardian (Asaruludu's passive).
@@ -3354,7 +3355,7 @@ func _should_class_rend(killer: Card, victim: Card) -> bool:
 		and killer_controller != null \
 		and victim_controller != null \
 		and killer_controller != victim_controller \
-		and _class_rend_active(killer_controller)
+		and _class_rend_active(killer_controller, victim)
 
 # Executes a combat kill with a pre-determined void flag (avoids mid-sequence zone-state drift).
 func _combat_kill_routed(killer: Card, victim: Card, do_void: bool, suppress_ally_kill_sources: Array = []) -> void:

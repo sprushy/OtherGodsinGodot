@@ -15,7 +15,7 @@ func _init() -> void:
 	resilience = 22
 	strength = 18
 	incorporeal = true
-	ability_text = "[b]Incorporeal[/b] ([b]Passive[/b]): Only Spirits or faster Mages can [b]Engage[/b] this card. This card can only [b]Engage[/b] Spirits or slower Mages.\nGuardian ([b]Passive[/b]): Creatures that attack your followers sleep until the end of their controller's next turn. This card cannot attack."
+	ability_text = "[b]Incorporeal[/b] ([b]Passive[/b]): Only Spirits or Mages can [b]Engage[/b] this card. This card can only [b]Engage[/b] Spirits or Mages.\nGuardian ([b]Passive[/b]): Creatures that attack your followers sleep until the end of their controller's next turn. This card cannot attack."
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricarrdo Zoppello"
@@ -43,7 +43,9 @@ func on_opponent_attacks_followers(game_manager: GameManager, attacker: Card) ->
 	# Only trigger for opponents attacking this card's controller's followers.
 	if attacker.get_controller() == get_controller():
 		return
-	attacker.remove_status_effects_by_name("sleep")
+	if game_manager.is_immune_to_source(attacker, self):
+		return
+	attacker.remove_status_effects_from_source_card(self, "sleep")
 	attacker.add_status_effect(
 		"sleep",
 		GUARDIAN_SLEEP_SOURCE,

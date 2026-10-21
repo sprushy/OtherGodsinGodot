@@ -79,6 +79,7 @@ func on_removed(game_manager: GameManager) -> void:
 	for player in game_manager.players:
 		for zone in player.frontline_zones + player.reserve_zones:
 			for card in zone.cards:
-				if card.sleeping_from == self:
-					card.remove_status_effects_from_source_card(self, "sleep")
+				var was_sleeping := card.is_sleeping
+				card.remove_status_effects_from_source_card(self, "sleep")
+				if was_sleeping and not card.is_sleeping:
 					print(card.card_name + " wakes up - " + card_name + " left the field.")

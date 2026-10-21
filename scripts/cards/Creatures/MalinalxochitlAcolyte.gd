@@ -104,12 +104,16 @@ static func _apply_persistent_poison_tick(game_manager: GameManager, target: Car
 	var viewer := game_manager.get_feedback_viewer()
 	var target_name := target.get_target_log_display_name(viewer)
 	var lethal_source: Card = null
+	var applied_poison_tick := false
 	for source_key in counts.keys():
 		var entry: Dictionary = counts[source_key]
 		var stack_count := int(entry.get("count", 0))
 		if stack_count <= 0:
 			continue
 		var poison_source_card := entry.get("source_card", null) as Card
+		if game_manager.is_immune_to_source(target, poison_source_card):
+			continue
+		applied_poison_tick = true
 		var resilience_before_tick := target.get_effective_resilience()
 		var source_owner := poison_source_card.card_owner if poison_source_card != null else null
 		for _i in range(stack_count):
@@ -134,7 +138,7 @@ static func _apply_persistent_poison_tick(game_manager: GameManager, target: Car
 				_get_player_turn_label(target.get_controller())
 			]
 		)
-	if target.get_effective_resilience() < 0:
+	if applied_poison_tick and target.get_effective_resilience() < 0:
 		game_manager.request_send_to_graveyard(target, func() -> void:
 			if game_manager.reached_public_destroyed_destination(target):
 				var destroyed_name := game_manager.get_resolved_destruction_log_name(target, viewer, target_name)

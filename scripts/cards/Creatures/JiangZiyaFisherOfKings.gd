@@ -158,7 +158,8 @@ func _can_counter_threat(action: CardAction, game_manager: GameManager, require_
 	if action.type == CardAction.Type.ATTACK:
 		return action.attacker != null \
 			and (action.target == self or action.interceptor == self) \
-			and action.attacker.get_controller() != controller
+			and action.attacker.get_controller() != controller \
+			and not game_manager.is_immune_to_source(action.attacker, self)
 
 	if action.card == null or action.card == self:
 		return false
@@ -184,8 +185,9 @@ func _resolve_counterstroke(game_manager: GameManager, threat: CardAction) -> vo
 	var destroyed := false
 	if source_card != null \
 			and source_card.current_zone != null \
-			and source_card.current_zone.zone_type not in [Zone.ZoneType.GRAVEYARD, Zone.ZoneType.ABYSS]:
-		destroyed = game_manager.request_send_to_graveyard(source_card, Callable(), false, true)
+			and source_card.current_zone.zone_type not in [Zone.ZoneType.GRAVEYARD, Zone.ZoneType.ABYSS] \
+			and not game_manager.is_immune_to_source(source_card, self):
+		destroyed = game_manager.request_send_to_graveyard(source_card, Callable(), false, true, false, self)
 
 	_emit_visual_state_changed()
 	var result := "%s removes %d tactic counters and negates %s." % [

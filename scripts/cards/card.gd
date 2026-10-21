@@ -1185,10 +1185,12 @@ func remove_effects_from_player(player: Player) -> void:
 func apply_sleep(source_card: Card) -> void:
 	if card_type == CardType.CREATURE and current_zone != null and current_zone.is_board_zone():
 		creature_mode = CreatureMode.DEFENSIVE
-	remove_status_effects_by_name("sleep")
+	# Refresh this source without replacing sleeps with independent durations.
+	remove_status_effects_from_source_card(source_card, "sleep")
 	add_status_effect("sleep", source_card.card_name if source_card != null else "Sleep", source_card, source_card.card_owner if source_card != null else null)
 
 func wake_up() -> void:
+	# Explicit Wake effects clear all sleep; expiry must remove only its own source.
 	remove_status_effects_by_name("sleep")
 
 func clear_all_effects() -> void:
@@ -1576,7 +1578,7 @@ func can_be_engaged_by_incorporeal_rules(source: Card) -> bool:
 		return false
 	if source.has_type("Spirit"):
 		return true
-	return source.has_type("Mage") and source.get_effective_speed() > get_effective_speed()
+	return source.has_type("Mage")
 
 # Returns false when this card is incorporeal and `target` is not a permitted engage target.
 func can_engage(target: Card) -> bool:
@@ -1589,7 +1591,7 @@ func can_engage_by_incorporeal_rules(target: Card) -> bool:
 		return false
 	if target.has_type("Spirit"):
 		return true
-	return target.has_type("Mage") and target.get_effective_speed() < get_effective_speed()
+	return target.has_type("Mage")
 
 func can_ignore_attack_targeting_restrictions(target: Card = null) -> bool:
 	for equip in equipment:

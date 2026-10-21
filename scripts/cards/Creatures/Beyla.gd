@@ -71,4 +71,6 @@ func _wake_matching_creatures(game_manager: GameManager, matcher: Callable) -> v
 					continue
 				if not matcher.call(card):
 					continue
+				if game_manager.is_immune_to_source(card, self):
+					continue
 				card.wake_up()

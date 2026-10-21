@@ -43,12 +43,18 @@ func apply_celestial_charge(game_manager: GameManager, target: Card) -> void:
 		return
 
 	if target != null and _is_valid_target(target):
+		if game_manager.is_immune_to_source(target, self):
+			game_manager.note_player_feedback("Celestial Charge: %s is immune to creature abilities." % target.card_name)
+			return
 		# Allow attack hexes to trigger with Gugalanna as the "attacker".
 		game_manager.check_and_trigger_hexes(self, target)
 
 		# Destroy target if still on the board.
 		if target.current_zone != null and target.current_zone.is_board_zone():
-			game_manager.request_send_to_graveyard(target, Callable(), false, true)
+			if game_manager.is_immune_to_source(target, self):
+				game_manager.note_player_feedback("Celestial Charge: %s is immune to creature abilities." % target.card_name)
+				return
+			game_manager.request_send_to_graveyard(target, Callable(), false, true, false, self)
 			game_manager.note_player_feedback(
 				"Celestial Charge: %s destroys %s." % [card_name, target.card_name]
 			)

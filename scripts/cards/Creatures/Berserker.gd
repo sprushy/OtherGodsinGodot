@@ -75,7 +75,8 @@ func on_turn_end(_game_manager: GameManager) -> void:
 
 func on_turn_start(game_manager: GameManager) -> void:
 	if game_manager != null and get_controller() == game_manager.current_player and is_sleeping and not rage_active_this_turn:
-		wake_up()
+		# Only Rage's own sleep ends here; other sources keep their normal duration.
+		remove_status_effects_from_source_card(self, "sleep")
 
 func on_after_combat(_game_manager: GameManager, _opposing_card: Card) -> void:
 	if not rage_active_this_turn:

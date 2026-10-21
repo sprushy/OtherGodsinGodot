@@ -202,6 +202,8 @@ func get_tree_of_life_destroy_candidates(gm: GameManager) -> Array[Card]:
 	for zone in card_owner.frontline_zones + card_owner.reserve_zones:
 		for card: Card in zone.cards:
 			if card != null and card.card_type == Card.CardType.CREATURE:
+				if gm.is_immune_to_source(card, self):
+					continue
 				friendly.append(card)
 	return friendly
 
@@ -217,7 +219,7 @@ func resolve_tree_of_life_destroy_selection(gm: GameManager, selected_cards: Arr
 	for card: Card in chosen_cards:
 		if destroyed_names.size() >= required:
 			break
-		if gm != null and gm._send_to_graveyard_with_hook(card, false, true):
+		if gm != null and gm._send_to_graveyard_with_hook(card, false, true, self):
 			destroyed_names.append(card.card_name)
 	var remaining := maxi(0, required - destroyed_names.size())
 	var feedback_parts: Array[String] = []
@@ -269,7 +271,7 @@ func _apply_destruction_cost(gm: GameManager, count: int) -> void:
 		gm.note_player_feedback(
 			"Tree of Life costs %s — %s is destroyed." % [card_name, card.card_name]
 		)
-		gm._send_to_graveyard_with_hook(card, false, true)
+		gm._send_to_graveyard_with_hook(card, false, true, self)
 		remaining -= 1
 	if remaining > 0:
 		gm.note_player_feedback(

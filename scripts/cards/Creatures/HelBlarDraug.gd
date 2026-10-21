@@ -34,6 +34,8 @@ func on_impact(game_manager: GameManager) -> void:
 				var creature := card as Card
 				if creature == null or creature.card_type != Card.CardType.CREATURE:
 					continue
+				if game_manager.is_immune_to_source(creature, self):
+					continue
 				var was_aerial := creature.has_type(AERIAL_TYPE)
 				_apply_groundbound(creature)
 				if was_aerial:

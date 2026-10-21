@@ -73,7 +73,7 @@ func on_turn_end(_game_manager: GameManager) -> void:
 		else:
 			var sleep_started_turn := int(entry.get("sleep_started_turn", -1))
 			if _game_manager != null and _game_manager.turn_number > sleep_started_turn:
-				creature.wake_up()
+				creature.remove_status_effects_from_source_card(self, "sleep")
 				affected_creatures.remove_at(i)
 
 func on_creature_after_combat(game_manager: GameManager, attacker: Card, defender: Card) -> void:

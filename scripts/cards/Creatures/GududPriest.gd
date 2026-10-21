@@ -54,6 +54,9 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 		if game_manager != null:
 			game_manager.note_player_feedback("Creature Ward fizzles: invalid target.")
 		return
+	if game_manager.is_immune_to_source(target, self):
+		game_manager.note_player_feedback("Creature Ward fizzles: %s is immune to creature abilities." % target.card_name)
+		return
 
 	_clear_creature_applied_effects(target)
 	target.remove_status_effects_from_source_card(self, WARD_STATUS)

@@ -153,7 +153,8 @@ func _resolve_mode_for_target(bearer: Card, target: Card) -> String:
 
 func _track_pending_effect(game_manager: GameManager, target: Card, mode: String) -> void:
 	_pending_end_turn_effects = _pending_end_turn_effects.filter(func(entry: Dictionary) -> bool:
-		return entry.get("target") != target
+		# Changing stance must not discard an existing sleep's end-of-turn cleanup.
+		return entry.get("target") != target or entry.get("mode") != mode
 	)
 	_pending_end_turn_effects.append({
 		"target": target,
