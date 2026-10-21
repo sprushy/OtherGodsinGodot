@@ -6,6 +6,7 @@ const AccountStoreScript = preload("res://scripts/server/AccountStore.gd")
 const LobbyClientScript = preload("res://scripts/client/LobbyClient.gd")
 const AppReleaseInfoScript = preload("res://scripts/client/AppReleaseInfo.gd")
 const MacOSSelfUpdaterScript = preload("res://scripts/client/MacOSSelfUpdater.gd")
+const AndroidSelfUpdaterScript = preload("res://scripts/client/AndroidSelfUpdater.gd")
 const DeckCatalogUtilsScript = preload("res://scripts/core/DeckCatalogUtils.gd")
 const LocalProfileStoreScript = preload("res://scripts/core/LocalProfileStore.gd")
 const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
@@ -265,6 +266,8 @@ var _update_support_button: Button = null
 var _update_button_row: HBoxContainer = null
 var _update_download_status_label: Label = null
 var _is_auto_updating: bool = false
+var _android_updater = AndroidSelfUpdaterScript.new()
+var _android_install_permission_pending: bool = false
 var _deferred_required_update: Dictionary = {}
 var _automatic_update_required: bool = false
 var _update_uses_startup_loading_bar: bool = false
@@ -3067,6 +3070,19 @@ func _is_server_runtime_launch() -> bool:
 
 func _begin_startup_prompts() -> void:
 	_startup_prompt_gate_open = true
+	if OS.get_name() == "Android" and _release_updates_enabled():
+		_android_updater.cleanup_completed_update(AppReleaseInfoScript.get_current_version())
+		var pending: Dictionary = _android_updater.pending_update()
+		if not pending.is_empty():
+			_begin_required_update(
+				str(pending.version),
+				AppReleaseInfoScript.get_release_page_url_for_version(str(pending.version)),
+				AppReleaseInfoScript.get_download_url_for_version(str(pending.version), AppReleaseInfoScript.ANDROID_ASSET_NAME),
+				_get_file_size(AndroidSelfUpdaterScript.DOWNLOAD_PATH),
+				str(pending.sha256)
+			)
+			_complete_startup_prompts()
+			return
 	if _should_check_for_updates():
 		# Run the update check alongside sign-in instead of in front of it;
 		# its completion handlers still funnel through _complete_startup_prompts.
@@ -3144,7 +3160,7 @@ func _maybe_check_for_server_required_update(server_version: String) -> void:
 	_server_version_update_check_requested = true
 	if status_label != null:
 		status_label.text = "Server is running %s. Checking for update..." % server_version
-	if OS.get_name() in ["Windows", "macOS"]:
+	if OS.get_name() in ["Windows", "macOS", "Android"]:
 		_begin_required_update(
 			server_version,
 			AppReleaseInfoScript.get_release_page_url_for_version(server_version),
@@ -3303,6 +3319,11 @@ func _on_update_check_request_completed(
 			break
 		if not download_url.is_empty():
 			break
+	# Desktop releases can be published without Android signing configured.
+	# Keep the current Android client usable until its APK is available.
+	if OS.get_name() == "Android" and download_url.is_empty():
+		_finish_update_check_without_update()
+		return
 	_update_check_no_update_status = ""
 	_update_check_failure_status = ""
 	_begin_required_update(
@@ -3376,7 +3397,7 @@ func _begin_required_update(
 		"update_required current=%s latest=%s download_bytes=%d"
 		% [AppReleaseInfoScript.get_current_version(), latest_version, download_size]
 	)
-	if not download_url.is_empty() and OS.get_name() in ["Windows", "macOS"]:
+	if not download_url.is_empty() and OS.get_name() in ["Windows", "macOS", "Android"]:
 		if _consume_pending_update_failure(latest_version, release_url, download_url, download_size, download_sha256, download_sha256_url):
 			_complete_startup_prompts()
 			return
@@ -3388,7 +3409,7 @@ func _begin_required_update(
 			download_size,
 			download_sha256,
 			download_sha256_url,
-			OS.get_name() != "macOS"
+			OS.get_name() not in ["macOS", "Android"]
 		)
 		call_deferred("_on_update_prompt_auto_update_pressed")
 		return
@@ -3494,9 +3515,11 @@ func _show_update_prompt(
 		var size_message := ""
 		if download_size > 0:
 			size_message = " The download is %.1f MB." % (float(download_size) / BYTES_PER_MIB)
+		var install_instructions := "Keep Other Gods open; it will restart automatically."
+		if OS.get_name() == "Android":
+			install_instructions = "Android will ask you to confirm installation after the download."
 		body_label.text = (
-			"You're running %s. Installing %s now.%s\n"
-			+ "Keep Other Gods open; it will restart automatically."
+			"You're running %s. Installing %s now.%s\n" + install_instructions
 		) % [current_version, latest_version, size_message]
 	else:
 		body_label.text = "You're running %s, and the latest release is %s." % [current_version, latest_version]
@@ -3532,7 +3555,7 @@ func _show_update_prompt(
 	button_row.add_child(support_button)
 	_update_support_button = support_button
 
-	if (not download_url.is_empty() and OS.get_name() in ["Windows", "macOS"]) or auto_update:
+	if (not download_url.is_empty() and OS.get_name() in ["Windows", "macOS", "Android"]) or auto_update:
 		if not download_url.is_empty():
 			var auto_button := Button.new()
 			auto_button.text = "Retry Update" if auto_update else "Update Now"
@@ -3571,6 +3594,7 @@ func _dismiss_update_prompt() -> void:
 	_update_curl_download_path = ""
 	_update_curl_fallback_started = false
 	_is_auto_updating = false
+	_android_install_permission_pending = false
 	_update_uses_startup_loading_bar = false
 	_update_now_button = null
 	_update_open_button = null
@@ -3625,6 +3649,9 @@ func _on_update_prompt_auto_update_pressed() -> void:
 	if _is_auto_updating:
 		return
 	_is_auto_updating = true
+	if OS.get_name() == "Android" and _android_updater.has_cached_update(_pending_update_release_version, _pending_update_download_sha256):
+		_apply_update_and_restart(AndroidSelfUpdaterScript.DOWNLOAD_PATH)
+		return
 	_update_download_attempt = 0
 	_update_curl_process_id = 0
 	_update_curl_download_path = ""
@@ -3640,9 +3667,12 @@ func _on_update_prompt_auto_update_pressed() -> void:
 			float(_pending_update_download_size) / BYTES_PER_MIB
 		)
 	_set_update_download_progress(0.0)
+	var download_instructions := "Keep Other Gods open until it restarts."
+	if OS.get_name() == "Android":
+		download_instructions = "Keep Other Gods open. Android will ask you to confirm the update."
 	_set_update_download_status(
-		"Starting %s%s download...\nKeep Other Gods open until it restarts."
-		% [_pending_update_release_version, size_message]
+		"Starting %s%s download...\n%s"
+		% [_pending_update_release_version, size_message, download_instructions]
 	)
 
 	var preflight_failure := _check_update_download_preflight()
@@ -3786,6 +3816,8 @@ func _begin_auto_update_download() -> void:
 	_update_download_request = null
 	_update_download_attempt += 1
 	var zip_path := OS.get_user_data_dir() + "/update_download.zip"
+	if OS.get_name() == "Android":
+		zip_path = AndroidSelfUpdaterScript.DOWNLOAD_PATH
 	if FileAccess.file_exists(zip_path):
 		DirAccess.remove_absolute(zip_path)
 	_set_update_download_progress(0.0)
@@ -4077,6 +4109,14 @@ func _apply_update_and_restart(zip_path: String) -> void:
 		_is_auto_updating = false
 		_dismiss_update_prompt()
 		_complete_startup_prompts()
+		return
+	if OS.get_name() == "Android":
+		_set_update_download_progress(1.0)
+		_set_update_download_status("Verifying Android update and opening the installer...")
+		await get_tree().process_frame
+		_present_android_install_result(_android_updater.install(
+			_pending_update_release_version, _pending_update_download_sha256
+		))
 		return
 	_set_update_download_progress(1.0)
 	_set_update_download_status(
@@ -4553,12 +4593,48 @@ func _parse_sha256_text(raw_text: String) -> String:
 			return parsed
 	return ""
 
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_FOCUS_IN and _android_install_permission_pending:
+		call_deferred("_resume_android_install_permission")
+
+func _resume_android_install_permission() -> void:
+	if not _android_install_permission_pending:
+		return
+	_android_install_permission_pending = false
+	_present_android_install_result(_android_updater.install(
+		_pending_update_release_version, _pending_update_download_sha256, false
+	))
+
+func _present_android_install_result(result: Dictionary) -> void:
+	var install_status := str(result.get("status", "error"))
+	if install_status == "error":
+		_on_auto_update_failed(str(result.get("message", "Android could not install the update.")))
+		return
+	_is_auto_updating = false
+	_android_install_permission_pending = install_status == "permission_required"
+	_write_update_log("android_install status=%s version=%s" % [install_status, _pending_update_release_version])
+	if _update_button_row != null:
+		_update_button_row.visible = true
+	if _update_now_button != null:
+		_update_now_button.disabled = false
+		_update_now_button.text = "Install update"
+	_set_update_download_status(str(result.message))
+
 func _on_auto_update_failed(message: String) -> void:
 	_is_auto_updating = false
 	_write_update_log(
 		"update_failed version=%s message=%s"
 		% [_pending_update_release_version, message]
 	)
+	if OS.get_name() == "Android":
+		_android_install_permission_pending = false
+		if _update_button_row != null:
+			_update_button_row.visible = true
+		if _update_now_button != null:
+			_update_now_button.disabled = false
+			_update_now_button.text = "Retry update"
+		_set_update_download_status(message)
+		return
 	if _automatic_update_required:
 		# Keep the reason visible in the app. Opening a browser silently leaves
 		# players on the old build with no explanation of what went wrong.

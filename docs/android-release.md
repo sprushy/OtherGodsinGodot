@@ -9,6 +9,10 @@ installation.
 
 ## First test build
 
+For an Android-only build, enable `android_only` in **Desktop Release** and
+leave `include_android` checked. `android_version` can specify a numeric
+version for a manual build; tagged releases always use the release tag.
+
 Manually run **Desktop Release**, leaving `include_android` checked. Without
 Android signing secrets, the `export-android` job uploads
 `OtherGods-android-preview.apk` and its SHA-256 checksum as workflow artifacts.
@@ -97,11 +101,31 @@ card details as well as mouse/trackpad input; the current game has desktop
 hover interactions and a 1920x1080 layout, so phone usability is unverified.
 No visual QA or device UI automation is part of the build workflow.
 
-This first pipeline builds APKs for direct testing/distribution. Google Play
-publication is a separate step requiring an Android App Bundle (AAB), a Gradle
-export and the Play Console listing/testing requirements. The APK workflow
-does not publish to Google Play or implement Android self-installing updates;
-the existing update check opens the GitHub release page.
+## Automatic updates
+
+Release APKs check GitHub releases at startup and when the lobby requires a
+newer client. They download `OtherGods-android.apk` inside the app with progress,
+verify its size and SHA-256 checksum, then open Android's installer. A desktop
+release without an Android APK does not trigger an Android update download.
+
+On Android 8 and later, the first update asks the player to enable **Allow from
+this source** for Other Gods. Returning from Settings continues installation;
+Android still requires the player to confirm **Update**. Reopen Other Gods
+after installation. Cancelling or denying permission keeps the verified APK
+for **Install update** to retry without downloading it again. Cached APKs are
+reverified before use and removed once the installed version reaches the update.
+Local decks/settings survive an update using the same app ID and signing key.
+
+This uses Godot's built-in Android runtime and FileProvider; no custom Android
+plugin, Gradle build or broad storage permission is required. The APK declares
+`REQUEST_INSTALL_PACKAGES` for this GitHub distribution flow. CI must use the
+same permanent signing key as previously installed release APKs. An old APK
+without the updater needs one manual/USB update to gain this feature.
+
+Google Play publication remains a separate step requiring an Android App
+Bundle (AAB), a Gradle export and the Play Console listing/testing requirements.
+A future Play build should use Play's update mechanism instead of this
+sideload updater and omit `REQUEST_INSTALL_PACKAGES`.
 
 References: [Godot Android export](https://docs.godotengine.org/en/stable/tutorials/export/exporting_for_android.html),
 [ChromeOS Android apps](https://developer.android.com/chrome-os),

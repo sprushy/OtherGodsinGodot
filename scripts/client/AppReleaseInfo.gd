@@ -10,6 +10,7 @@ const RELEASE_DOWNLOAD_URL_TEMPLATE := "https://github.com/sprushy/OtherGodsinGo
 const WINDOWS_ASSET_NAME := "OtherGods-windows.zip"
 const LEGACY_WINDOWS_ASSET_NAME := "ClaudeOtherGods-windows.zip"
 const MACOS_ASSET_NAME := "OtherGods-macos.zip"
+const ANDROID_ASSET_NAME := "OtherGods-android.apk"
 const MACOS_APPCAST_ASSET_NAME := "appcast.xml"
 const WINDOWS_ASSET_NAMES = [
 	WINDOWS_ASSET_NAME,
@@ -78,6 +79,8 @@ static func get_asset_names_for_platform(platform_name: String) -> Array:
 			return WINDOWS_ASSET_NAMES
 		"macOS":
 			return MACOS_ASSET_NAMES
+		"Android":
+			return [ANDROID_ASSET_NAME]
 		_:
 			return []
 
