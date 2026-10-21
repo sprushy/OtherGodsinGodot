@@ -8,6 +8,11 @@ on:
         type: boolean
         required: false
         default: false
+      include_android:
+        description: "Build Android APK (preview signing when release secrets are absent)"
+        type: boolean
+        required: false
+        default: true
   push:
     tags:
       - "v*"
@@ -515,6 +520,123 @@ jobs:
           name: OtherGods-ios
           path: dist/ios/*
 
+  export-android:
+    if: ${{ github.event_name == 'push' || inputs.include_android == true }}
+    runs-on: ubuntu-latest
+    outputs:
+      release_signed: ${{ steps.signing.outputs.release_signed }}
+    env:
+      GODOT_MCP_DISABLED: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Load Godot version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(tr -d '\r\n' < .godot-version)"
+          test -n "$version"
+          if [[ "$version" =~ ^[0-9]+\.[0-9]+$ ]]; then version="${version}.0"; fi
+          echo "GODOT_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android build tools
+        run: sdkmanager "platform-tools" "build-tools;36.1.0"
+
+      - name: Setup Godot
+        uses: chickensoft-games/setup-godot@v2
+        with:
+          version: ${{ env.GODOT_VERSION }}
+          use-dotnet: false
+          include-templates: true
+
+      - name: Configure signing and Android version
+        id: signing
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          BUILD_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: |
+          set -euo pipefail
+          key_path="$RUNNER_TEMP/othergods-android.keystore"
+          args=(--editor-settings "$HOME/.config/godot/editor_settings-4.7.tres"
+                --java-sdk "$JAVA_HOME" --android-sdk "$ANDROID_HOME")
+          if [ -n "$BUILD_VERSION" ]; then args+=(--version "$BUILD_VERSION"); fi
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ] && [ -n "$ANDROID_KEY_ALIAS" ] && [ -n "$ANDROID_KEYSTORE_PASSWORD" ]; then
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$key_path"
+            chmod 600 "$key_path"
+            keytool -list -keystore "$key_path" -storepass:env ANDROID_KEYSTORE_PASSWORD -alias "$ANDROID_KEY_ALIAS" > /dev/null
+            echo "GODOT_ANDROID_KEYSTORE_RELEASE_PATH=$key_path" >> "$GITHUB_ENV"
+            echo "GODOT_ANDROID_KEYSTORE_RELEASE_USER=$ANDROID_KEY_ALIAS" >> "$GITHUB_ENV"
+            echo "GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD=$ANDROID_KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+            echo "ANDROID_EXPORT_MODE=--export-release" >> "$GITHUB_ENV"
+            echo "ANDROID_APK_NAME=OtherGods-android.apk" >> "$GITHUB_ENV"
+            echo "release_signed=true" >> "$GITHUB_OUTPUT"
+          elif [ -n "$ANDROID_KEYSTORE_BASE64$ANDROID_KEY_ALIAS$ANDROID_KEYSTORE_PASSWORD" ]; then
+            echo "::error::Configure all three Android signing secrets, or remove the partial configuration."
+            exit 1
+          else
+            keytool -genkeypair -noprompt -keystore "$key_path" -storepass android -keypass android \
+              -alias androiddebugkey -dname "CN=Android Debug,O=Android,C=US" \
+              -keyalg RSA -keysize 2048 -validity 10000
+            echo "GODOT_ANDROID_KEYSTORE_DEBUG_PATH=$key_path" >> "$GITHUB_ENV"
+            echo "GODOT_ANDROID_KEYSTORE_DEBUG_USER=androiddebugkey" >> "$GITHUB_ENV"
+            echo "GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD=android" >> "$GITHUB_ENV"
+            echo "ANDROID_EXPORT_MODE=--export-debug" >> "$GITHUB_ENV"
+            echo "ANDROID_APK_NAME=OtherGods-android-preview.apk" >> "$GITHUB_ENV"
+            echo "release_signed=false" >> "$GITHUB_OUTPUT"
+            args+=(--preview)
+            echo "::warning::Android release signing is not configured. Building a preview artifact only."
+            echo "Android preview APK is available under workflow artifacts. Configure ANDROID_KEYSTORE_BASE64, ANDROID_KEY_ALIAS and ANDROID_KEYSTORE_PASSWORD to publish an Android release." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          python3 scripts/ci/prepare_android_export.py "${args[@]}"
+
+      - name: Test Android export configuration
+        run: python3 -m unittest discover -s scripts/tests -p android_export_test.py
+
+      - name: Export Android APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .exports/android dist/android
+          godot --headless --path . --editor --import
+          godot --headless --path . "$ANDROID_EXPORT_MODE" "Android" ".exports/android/$ANDROID_APK_NAME"
+          "$ANDROID_HOME/build-tools/36.1.0/apksigner" verify --verbose ".exports/android/$ANDROID_APK_NAME"
+          "$ANDROID_HOME/build-tools/36.1.0/zipalign" -c -P 16 -v 4 ".exports/android/$ANDROID_APK_NAME"
+          badging="$("$ANDROID_HOME/build-tools/36.1.0/aapt" dump badging ".exports/android/$ANDROID_APK_NAME")"
+          grep -q "native-code: 'arm64-v8a' 'x86_64'" <<< "$badging"
+          grep -q "uses-permission: name='android.permission.INTERNET'" <<< "$badging"
+          if grep -q 'android.hardware.vulkan' <<< "$badging"; then
+            echo "::error::The Compatibility build must not require Vulkan."
+            exit 1
+          fi
+          cp ".exports/android/$ANDROID_APK_NAME" dist/android/
+          cd dist/android
+          sha256sum "$ANDROID_APK_NAME" > "$ANDROID_APK_NAME.sha256"
+
+      - name: Upload Android workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OtherGods-android
+          path: dist/android/*
+          if-no-files-found: error
+
+      - name: Remove signing keystore
+        if: ${{ always() }}
+        run: rm -f "$RUNNER_TEMP/othergods-android.keystore"
+
   publish-release:
     if: ${{ startsWith(github.ref, 'refs/tags/') && always() && needs.export-windows.result == 'success' && needs.export-macos.result == 'success' }}
     runs-on: ubuntu-latest
@@ -522,6 +644,7 @@ jobs:
       - export-windows
       - export-macos
       - export-ios
+      - export-android
 
     steps:
       - name: Checkout
@@ -584,6 +707,19 @@ jobs:
           test -s dist/ios/OtherGods-ios-unsigned.ipa
           test -s dist/ios/OtherGods-ios-unsigned.ipa.sha256
 
+      - name: Download signed Android artifact
+        if: ${{ needs.export-android.result == 'success' && needs.export-android.outputs.release_signed == 'true' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: OtherGods-android
+          path: dist/android
+
+      - name: Report unavailable Android release
+        if: ${{ needs.export-android.result != 'skipped' && (needs.export-android.result != 'success' || needs.export-android.outputs.release_signed != 'true') }}
+        run: |
+          echo "::warning::No release-signed Android APK was produced; Android assets will not be published. Check export-android for a preview artifact or build errors."
+          echo "No signed Android release APK was produced. See export-android for signing setup or build errors." >> "$GITHUB_STEP_SUMMARY"
+
       - name: Publish GitHub release assets
         uses: softprops/action-gh-release@v2
         with:
@@ -595,6 +731,7 @@ jobs:
             dist/windows/OtherGodsServer-windows.zip.sha256
             dist/macos/*
             dist/ios/*
+            dist/android/*
 
       - name: Sync tagged version back to default branch
         shell: pwsh

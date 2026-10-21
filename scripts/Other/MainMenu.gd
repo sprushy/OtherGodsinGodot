@@ -1002,6 +1002,8 @@ func _set_settings_menu_value(section: String, key: String, value: bool) -> void
 	_save_bool_setting(section, key, value)
 	if section == GameSettingsTabsScript.COMBAT_SETTINGS_SECTION and key == GameSettingsTabsScript.SHOW_FOLLOWERS_KEY:
 		get_tree().call_group("combat_mock_game", "_apply_show_followers", value)
+	if section == GameSettingsTabsScript.COMBAT_SETTINGS_SECTION and key == GameSettingsTabsScript.PHONE_CONTROLS_ON_DESKTOP_KEY:
+		get_tree().call_group("combat_mock_game", "_apply_phone_controls_on_desktop", value)
 
 func _get_settings_menu_text_value(section: String, key: String, default_value: String) -> String:
 	if section == AUDIO_SETTINGS_SECTION and key == STARTUP_MUSIC_TRACK_KEY:

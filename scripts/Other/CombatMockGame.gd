@@ -100,6 +100,8 @@ const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
 const ReinforcementCardTileScript = preload("res://scripts/ui/ReinforcementCardTile.gd")
 const ReinforcementDropAreaScript = preload("res://scripts/ui/ReinforcementDropArea.gd")
 const UITextureCacheScript = preload("res://scripts/ui/UITextureCache.gd")
+const SmallScreenPlayViewScript = preload("res://scripts/ui/SmallScreenPlayView.gd")
+var _small_screen_play_view: SmallScreenPlayViewScript = null
 const MatchResultScreenScript = preload("res://scripts/ui/MatchResultScreen.gd")
 const AbyssGatewayIconScript = preload("res://scripts/ui/AbyssGatewayIcon.gd")
 const GravesiteTexture = preload("res://images/ui/zones/grave_tumulus_base.png")
@@ -758,6 +760,7 @@ var _auto_select_spell_prepare_zones: bool = true
 var _auto_select_hex_prepare_zones: bool = true
 var _auto_select_charm_play_zones: bool = true
 var _auto_select_charm_prepare_zones: bool = true
+var _phone_controls_on_desktop: bool = false
 var _use_splash_board_background: bool = false
 var _show_followers: bool = true
 var _hover_show_card_options: bool = true
@@ -1194,6 +1197,7 @@ func _load_user_settings() -> void:
 	_auto_select_hex_prepare_zones = _read_config_bool(config, COMBAT_SETTINGS_SECTION, AUTO_SELECT_HEX_PREPARE_ZONES_KEY, _auto_select_hex_prepare_zones)
 	_auto_select_charm_play_zones = _read_config_bool(config, COMBAT_SETTINGS_SECTION, AUTO_SELECT_CHARM_PLAY_ZONES_KEY, _auto_select_charm_play_zones)
 	_auto_select_charm_prepare_zones = _read_config_bool(config, COMBAT_SETTINGS_SECTION, AUTO_SELECT_CHARM_PREPARE_ZONES_KEY, _auto_select_charm_prepare_zones)
+	_phone_controls_on_desktop = _read_config_bool(config, COMBAT_SETTINGS_SECTION, GameSettingsTabsScript.PHONE_CONTROLS_ON_DESKTOP_KEY, false)
 	_use_splash_board_background = _read_config_bool(config, COMBAT_SETTINGS_SECTION, USE_SPLASH_BOARD_BACKGROUND_KEY, _use_splash_board_background)
 	_show_followers = _read_config_bool(config, COMBAT_SETTINGS_SECTION, SHOW_FOLLOWERS_KEY, true)
 	_board_style = _get_saved_string_setting(COMBAT_SETTINGS_SECTION, BOARD_STYLE_KEY, BOARD_STYLE_NORMAL)
@@ -1260,6 +1264,19 @@ func _set_auto_select_charm_play_zones(pressed: bool) -> void:
 func _set_auto_select_charm_prepare_zones(pressed: bool) -> void:
 	_auto_select_charm_prepare_zones = pressed
 	_save_combat_bool_setting(AUTO_SELECT_CHARM_PREPARE_ZONES_KEY, pressed)
+
+func _set_phone_controls_on_desktop(pressed: bool) -> void:
+	_save_combat_bool_setting(GameSettingsTabsScript.PHONE_CONTROLS_ON_DESKTOP_KEY, pressed)
+	get_tree().call_group("combat_mock_game", "_apply_phone_controls_on_desktop", pressed)
+
+func _apply_phone_controls_on_desktop(pressed: bool) -> void:
+	_phone_controls_on_desktop = pressed
+	var tap_controls := _uses_small_screen_play_controls()
+	for vc in _hand_visual_cards:
+		if is_instance_valid(vc):
+			vc.set_tap_to_play(tap_controls)
+	if not tap_controls and _small_screen_play_view != null:
+		_small_screen_play_view.exit_focus()
 
 func _set_use_splash_board_background(pressed: bool) -> void:
 	_use_splash_board_background = pressed
@@ -1615,6 +1632,8 @@ func _get_settings_menu_value(section: String, key: String, default_value: bool)
 			return _auto_select_charm_play_zones
 		[COMBAT_SETTINGS_SECTION, AUTO_SELECT_CHARM_PREPARE_ZONES_KEY]:
 			return _auto_select_charm_prepare_zones
+		[COMBAT_SETTINGS_SECTION, GameSettingsTabsScript.PHONE_CONTROLS_ON_DESKTOP_KEY]:
+			return _phone_controls_on_desktop
 		[COMBAT_SETTINGS_SECTION, USE_SPLASH_BOARD_BACKGROUND_KEY]:
 			return _use_splash_board_background
 		[COMBAT_SETTINGS_SECTION, SHOW_FOLLOWERS_KEY]:
@@ -1651,6 +1670,8 @@ func _set_settings_menu_value(section: String, key: String, value: bool) -> void
 			_set_auto_select_charm_play_zones(value)
 		[COMBAT_SETTINGS_SECTION, AUTO_SELECT_CHARM_PREPARE_ZONES_KEY]:
 			_set_auto_select_charm_prepare_zones(value)
+		[COMBAT_SETTINGS_SECTION, GameSettingsTabsScript.PHONE_CONTROLS_ON_DESKTOP_KEY]:
+			_set_phone_controls_on_desktop(value)
 		[COMBAT_SETTINGS_SECTION, USE_SPLASH_BOARD_BACKGROUND_KEY]:
 			_set_use_splash_board_background(value)
 		[COMBAT_SETTINGS_SECTION, SHOW_FOLLOWERS_KEY]:
@@ -2749,6 +2770,9 @@ func _ready() -> void:
 	call_deferred("_apply_board_horizontal_offset")
 
 	_restore_default_selection_cursor()
+	_small_screen_play_view = SmallScreenPlayViewScript.new()
+	add_child(_small_screen_play_view)
+	_small_screen_play_view.setup(self)
 
 func _exit_tree() -> void:
 	_clear_resolution_effects()
@@ -10772,6 +10796,7 @@ func _refresh_hand_visual_states(
 		if card == null or vc == null or not is_instance_valid(vc):
 			continue
 		vc.set_hover_viewer(viewer)
+		vc.set_tap_to_play(_uses_small_screen_play_controls())
 		if bool(entry.get("is_proxy", false)):
 			continue
 		vc.set_waiting_on_priority(_is_card_waiting_on_priority(card))
@@ -10828,6 +10853,7 @@ func draw_hand() -> void:
 			continue
 		var vc := VisualCard.new()
 		vc.set_hand_mode(true)
+		vc.set_tap_to_play(_uses_small_screen_play_controls())
 		vc.set_hand_drag_targeting_enabled(
 			(card.targets and (card is SpellCard or card is CharmCard)) or card is EquipmentCard,
 			Callable(self, "_get_hand_drag_drop_position")
@@ -10856,7 +10882,7 @@ func draw_hand() -> void:
 				vc.set_disabled(true)
 		vc.hand_hovered.connect(_on_hand_card_hover_started)
 		vc.hand_unhovered.connect(_on_hand_card_hover_ended)
-		vc.card_clicked.connect(_on_hand_card_pressed)
+		vc.card_clicked.connect(_on_hand_card_tapped)
 		vc.card_right_clicked.connect(_on_hand_card_right_clicked)
 		vc.card_drag_released.connect(_on_card_drag_released)
 		next_fan.add_child(vc)
@@ -11612,6 +11638,9 @@ func _on_hand_hover_preview_gui_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 
 func _update_hand_hover_preview() -> void:
+	if _small_screen_play_view != null and _small_screen_play_view.active:
+		_hide_hand_hover_preview()
+		return
 	if _is_match_replay_open():
 		_hide_hand_hover_preview()
 		return
@@ -11716,8 +11745,8 @@ func _update_hand_context_menu_dismissal() -> void:
 	if _is_hand_context_menu_stale(hand_player):
 		_close_context_menu()
 		return
-	# Touch menus stay open between taps; there is no persistent hover on iOS.
-	if not OS.has_feature("ios") and not _is_hand_context_menu_keepalive_point(get_global_mouse_position()):
+	# Tap menus stay open until an option or an outside tap is selected.
+	if not _uses_small_screen_play_controls() and not _is_hand_context_menu_keepalive_point(get_global_mouse_position()):
 		_close_context_menu()
 
 func _extract_card_keywords(card: Card) -> Array[String]:
@@ -17046,6 +17075,17 @@ func _select_hand_card(card: Card) -> void:
 	selected_card = card
 	for vc in _hand_visual_cards:
 		vc.set_highlighted(vc.card_data == card)
+	if _small_screen_play_view != null:
+		_small_screen_play_view.call_deferred("focus_card", card)
+
+func _uses_small_screen_play_controls() -> bool:
+	return SmallScreenPlayViewScript.uses_tap_controls(get_viewport(), _phone_controls_on_desktop)
+
+func _on_hand_card_tapped(card: Card) -> void:
+	_on_hand_card_pressed(card)
+	# Priority responses can enter targeting without selecting a placement card.
+	if _small_screen_play_view != null:
+		_small_screen_play_view.call_deferred("focus_card", card)
 
 func _finalize_prepare_submission(success_text: String, zone: Zone) -> void:
 	_set_action_label_text(success_text)
@@ -17132,6 +17172,8 @@ func _begin_manual_hex_prepare_from_menu(card: Card) -> void:
 		placement_container.visible = false
 	_set_action_label_text("Selected hex: " + card.card_name + " - click an empty friendly zone to prepare it.")
 	update_ui()
+	if _small_screen_play_view != null:
+		_small_screen_play_view.call_deferred("focus_friendly")
 
 func _begin_manual_charm_prepare_from_menu(card: Card) -> void:
 	_pending_spell_display_zone = null
@@ -17289,12 +17331,6 @@ func _on_hand_card_pressed(card: Card) -> void:
 		_set_action_label_text(card.card_name + " is not playable from this hand right now.")
 		update_ui()
 		return
-	# Keep prompt/priority handling above; ordinary iOS hand taps open play options.
-	if OS.has_feature("ios") and (card.card_type == Card.CardType.SPELL \
-			or card.card_type == Card.CardType.HEX or card is CharmCard \
-			or (card.card_type == Card.CardType.CREATURE and not card.is_god)):
-		_on_hand_card_right_clicked(card)
-		return
 	if card is PermanentHexCard:
 		_select_hand_card(card)
 		placement_mode = ""
@@ -17322,9 +17358,13 @@ func _on_hand_card_pressed(card: Card) -> void:
 	elif card.card_type == Card.CardType.HEX:
 		placement_mode = ""
 		_set_action_label_text("Selected hex: " + card.card_name + " - click an empty friendly zone to prepare it.")
-	elif fenrir_hand_ability_available:
+	elif fenrir_hand_ability_available and not _uses_small_screen_play_controls():
 		_set_action_label_text(card.card_name + " selected - right-click for placement options or Wolf Master, or drag to place (S while dragging = stealth)")
 	elif card.card_type == Card.CardType.CREATURE and not card.is_god:
+		if _uses_small_screen_play_controls():
+			placement_mode = "aggressive"
+			_set_action_label_text(card.card_name + " selected - tap an empty friendly zone, or use Play Options to choose a stance.")
+			return
 		_set_action_label_text(card.card_name + " selected ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â right-click for placement options, or drag to place (S while dragging = stealth)")
 	elif card.is_god:
 		_set_action_label_text(card.card_name + " ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â God card, place in your God slot")
@@ -17522,10 +17562,15 @@ func _show_hand_context_menu_panel(panel: Control, card: Card) -> void:
 	add_child(panel)
 	_promote_transient_ui(panel, CONTEXT_MENU_Z_INDEX)
 	panel.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+	if _small_screen_play_view != null and _small_screen_play_view.active:
+		_small_screen_play_view.prepare_options(panel)
 	call_deferred("_position_hand_context_menu_panel", panel, card)
 
 func _position_hand_context_menu_panel(panel: Control, card: Card) -> void:
 	if panel == null or not is_instance_valid(panel):
+		return
+	if _small_screen_play_view != null and _small_screen_play_view.active:
+		_small_screen_play_view.position_options(panel)
 		return
 	var viewport_size := get_viewport_rect().size
 	var anchor_pos := get_global_mouse_position()
@@ -22813,7 +22858,7 @@ func _input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 	# Dismiss before GUI dispatch so the same outside tap can select another card.
-	if OS.has_feature("ios") and _is_hand_context_menu_active() \
+	if _uses_small_screen_play_controls() and _is_hand_context_menu_active() \
 			and event is InputEventMouseButton and event.pressed \
 			and event.button_index == MOUSE_BUTTON_LEFT:
 		var tap_position := get_global_mouse_position()
@@ -23104,6 +23149,10 @@ func _try_handle_escape_key(event: InputEvent) -> bool:
 	if _is_pause_menu_open():
 		_hide_pause_menu()
 		_on_forfeit_button_pressed()
+		get_viewport().set_input_as_handled()
+		return true
+	if _small_screen_play_view != null and _small_screen_play_view.active:
+		_small_screen_play_view.exit_focus()
 		get_viewport().set_input_as_handled()
 		return true
 	if not _game_finished and (_game_result_overlay == null or not is_instance_valid(_game_result_overlay)):

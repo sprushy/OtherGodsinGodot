@@ -36,6 +36,7 @@ window/size/viewport_height=1080
 window/size/mode=2
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
+window/handheld/orientation.android=4
 
 [editor_plugins]
 
@@ -45,3 +46,4 @@ enabled=PackedStringArray("res://addons/godot_mcp/plugin.cfg")
 
 rendering_device/driver.windows="d3d12"
 textures/vram_compression/import_etc2_astc=true
+renderer/rendering_method.android="gl_compatibility"

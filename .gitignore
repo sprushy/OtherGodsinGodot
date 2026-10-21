@@ -9,6 +9,11 @@ nul
 .release/
 server_upload/
 addons/macos_sparkle/bin/
+android/
+*.keystore
+*.jks
+export_credentials.cfg
+__pycache__/
 
 # Claude Code
 .claude/

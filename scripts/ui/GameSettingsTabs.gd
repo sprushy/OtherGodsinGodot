@@ -20,6 +20,7 @@ const AUTO_SELECT_SPELL_PREPARE_ZONES_KEY := "auto_select_spell_prepare_zones"
 const AUTO_SELECT_HEX_PREPARE_ZONES_KEY := "auto_select_hex_prepare_zones"
 const AUTO_SELECT_CHARM_PLAY_ZONES_KEY := "auto_select_charm_play_zones"
 const AUTO_SELECT_CHARM_PREPARE_ZONES_KEY := "auto_select_charm_prepare_zones"
+const PHONE_CONTROLS_ON_DESKTOP_KEY := "phone_controls_on_desktop"
 const BOARD_STYLE_KEY := "board_style"
 const BOARD_STYLE_NORMAL := "normal"
 const BOARD_STYLE_SNOW := "snow"
@@ -64,6 +65,9 @@ static func build_general_tab(get_value: Callable, set_value: Callable, created_
 	settings_info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	settings_info.add_theme_color_override("font_color", Color(0.80, 0.85, 0.92))
 	settings.add_child(settings_info)
+
+	settings.add_child(_make_section_label("Controls"))
+	_add_setting_toggle(settings, "Use phone controls on desktop", COMBAT_SETTINGS_SECTION, PHONE_CONTROLS_ON_DESKTOP_KEY, false, get_value, set_value, created_toggles)
 
 	settings.add_child(_make_section_label("Placement"))
 	_add_setting_toggle(settings, "Auto-select spell play zones", COMBAT_SETTINGS_SECTION, AUTO_SELECT_SPELL_PLAY_ZONES_KEY, true, get_value, set_value, created_toggles)

@@ -68,6 +68,7 @@ var _display_cost_adjustment_lines: Array[String] = []
 var _ghostly_hand_proxy: bool = false
 var _selection_glow: bool = false
 var _click_only: bool = false
+var _tap_to_play: bool = false
 var _dim_when_disabled: bool = true
 var _hand_mode: bool = false
 var _show_rules_text: bool = true
@@ -851,6 +852,9 @@ func set_hand_proxy_visual(enabled: bool, click_only: bool = true) -> void:
 	_click_only = click_only
 	_apply_card_style()
 
+func set_tap_to_play(enabled: bool) -> void:
+	_tap_to_play = enabled
+
 func set_hover_viewer(viewer: Player) -> void:
 	_hover_viewer = viewer
 
@@ -1151,7 +1155,7 @@ func _input(event: InputEvent) -> void:
 	if not _picked_up:
 		return
 	if event is InputEventMouseMotion:
-		if _click_only:
+		if _click_only or (_hand_mode and _tap_to_play):
 			return
 		if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 			if not _dragging:
