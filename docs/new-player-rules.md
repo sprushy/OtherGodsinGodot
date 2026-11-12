@@ -107,6 +107,16 @@ In Bo1, a single game decides the match. In Bo3, the first player to win two gam
 
 After game 1 and, if needed, game 2, both players may move cards between their main deck and Reinforcements. The registered card pool stays the same, but the main deck does not need to stay the same size. The submitted main deck and remaining Reinforcements must still satisfy every normal deck construction rule before the next game can begin.
 
+### Ranked Progression
+
+Both players must sign in to separate accounts for a rated match on the dedicated server to count toward rank. Bo1 and Bo3 each have their own rank, stars, and win streak. A Bo3 counts once, when the series ends. Unrated games, practice games, and matches abandoned by the server leave rank unchanged. A completed forfeit counts as a loss.
+
+Iron, Bronze, Silver, Gold, Platinum, Diamond, and Ascendant each have five divisions, from V to I. Every division takes three stars to advance. Once you reach Mythic, you can keep earning stars.
+
+Win a match to earn one star. Starting with your third consecutive win, wins through Platinum earn two stars. A loss or draw ends the streak. You keep all your stars in Iron and Bronze. Starting in Silver, a loss costs one star, with rank floors at Divisions V and III and a Mythic floor at zero stars. Draws leave your stars unchanged.
+
+Seasons turn over on the first day of each month at midnight UTC. Each ladder starts at Division V one league below your season peak for that format, with one additional league of decay per month away and Iron V as the minimum. Check your current rank, season peak, and last star change in the multiplayer profile panel.
+
 ## 6. Understand The Battlefield
 
 Each player has these zones:

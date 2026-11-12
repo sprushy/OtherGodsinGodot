@@ -6,9 +6,12 @@ const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
 const DefaultMatchSetupScript = preload("res://scripts/server/DefaultMatchSetup.gd")
 const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
 const MatchCommandRegistryScript = preload("res://scripts/Other/MatchCommandRegistry.gd")
+const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const MatchSupervisorScript = preload("res://scripts/server/MatchSupervisor.gd")
 const NetworkManagerScript = preload("res://scripts/Other/NetworkManager.gd")
+const RankedProgressionScript = preload("res://scripts/server/RankedProgression.gd")
+const ServerPathsScript = preload("res://scripts/server/ServerPaths.gd")
 
 const MIN_CATALOG_CARDS := 200
 const RESULT_ARG_PREFIX := "preflight_result_file="
@@ -33,6 +36,8 @@ func run() -> bool:
 	_check_game_state_privacy(failures)
 	_check_json_store_round_trip(failures)
 	_check_match_supervisor_launch_config(failures)
+	_check_ranked_progression(failures)
+	_check_dedicated_ranked_history(failures)
 
 	if not failures.is_empty():
 		for failure in failures:
@@ -161,6 +166,14 @@ func _extract_match_manager_command_types(failures: PackedStringArray) -> Array[
 		var command_type := match_result.get_string(1)
 		if command_type not in commands:
 			commands.append(command_type)
+	# Cosmetic commands can return from process_command before rules dispatch.
+	var entry_idx := source.find("func process_command(")
+	var early_dispatch := RegEx.new()
+	if entry_idx >= 0 and early_dispatch.compile("(?m)^\\tif str\\(command\\.get\\(\"type\", \"\"\\)\\) == \"([a-z0-9_]+)\":\\r?\\n\\t\\treturn _process_[a-z0-9_]+\\(command, sender_info\\)") == OK:
+		for match_result in early_dispatch.search_all(source.substr(entry_idx, start_idx - entry_idx)):
+			var command_type := match_result.get_string(1)
+			if command_type not in commands:
+				commands.append(command_type)
 	commands.sort()
 	return commands
 
@@ -456,6 +469,139 @@ func _check_match_supervisor_launch_config(failures: PackedStringArray) -> void:
 			or FileAccess.file_exists("%s.bak" % config_path):
 		failures.append("MatchSupervisor did not clean launch config artifacts")
 	supervisor.free()
+
+func _check_ranked_progression(failures: PackedStringArray) -> void:
+	var progress := {}
+	var season := RankedProgressionScript.season_for_time(1767225600.0)
+	RankedProgressionScript.apply_result(progress, "loss", season)
+	var summary := RankedProgressionScript.summarize(progress, season)
+	if summary["rank_name"] != "Iron V" or summary["last_delta"] != 0:
+		failures.append("Ranked progression did not protect the entry rank")
+	for _win in range(3):
+		RankedProgressionScript.apply_result(progress, "win", season)
+	summary = RankedProgressionScript.summarize(progress, season)
+	if summary["rank_name"] != "Iron IV" or summary["stars"] != 1 or summary["last_delta"] != 2:
+		failures.append("Ranked progression did not apply the third-win bonus and promotion")
+	RankedProgressionScript.apply_result(progress, "loss", season)
+	summary = RankedProgressionScript.summarize(progress, season)
+	if summary["stars"] != 1 or summary["last_delta"] != 0 or summary["win_streak"] != 0 or not summary["at_floor"]:
+		failures.append("Ranked progression did not protect earned Iron stars and clear the win streak")
+	for _win in range(2):
+		RankedProgressionScript.apply_result(progress, "win", season)
+	RankedProgressionScript.apply_result(progress, "draw", season)
+	summary = RankedProgressionScript.summarize(progress, season)
+	if summary["rank_name"] != "Iron III" or summary["last_delta"] != 0 or summary["win_streak"] != 0:
+		failures.append("Ranked progression did not preserve stars and clear the streak on a draw")
+	for _win in range(8):
+		RankedProgressionScript.apply_result(progress, "win", season)
+	RankedProgressionScript.apply_result(progress, "loss", season)
+	summary = RankedProgressionScript.summarize(progress, season)
+	if summary["rank_name"] != "Bronze IV" or summary["stars"] != 2 or summary["last_delta"] != 0 or not summary["at_floor"]:
+		failures.append("Ranked progression did not protect earned Bronze stars")
+	for _win in range(6):
+		RankedProgressionScript.apply_result(progress, "win", season)
+	RankedProgressionScript.apply_result(progress, "loss", season)
+	summary = RankedProgressionScript.summarize(progress, season)
+	if summary["rank_name"] != "Silver V" or summary["last_delta"] != 0 or not summary["at_floor"]:
+		failures.append("Ranked progression did not protect the Silver entry floor")
+	RankedProgressionScript.apply_result(progress, "win", season)
+	RankedProgressionScript.apply_result(progress, "loss", season)
+	summary = RankedProgressionScript.summarize(progress, season)
+	if summary["rank_name"] != "Silver V" or summary["stars"] != 0 or summary["last_delta"] != -1:
+		failures.append("Ranked progression did not deduct a star above the Silver floor")
+
+	while summary["rank_name"] != "Mythic" and int(progress["matches"]) < 130:
+		if summary["stars_required"] != 3:
+			failures.append("Ranked progression did not require three stars per division")
+			break
+		var rank_before: String = summary["rank_name"]
+		RankedProgressionScript.apply_result(progress, "win", season)
+		summary = RankedProgressionScript.summarize(progress, season)
+		if rank_before.begins_with("Diamond") and int(progress["last_delta"]) != 1:
+			failures.append("Ranked progression applied a streak bonus in Diamond")
+			break
+	RankedProgressionScript.apply_result(progress, "loss", season)
+	RankedProgressionScript.apply_result(progress, "draw", season)
+	summary = RankedProgressionScript.summarize(progress, season)
+	if summary["rank_name"] != "Mythic" or summary["stars"] != 0 or summary["last_delta"] != 0:
+		failures.append("Ranked progression did not reach or protect Mythic")
+	summary = RankedProgressionScript.summarize(progress, season + 2)
+	if summary["rank_name"] != "Diamond V" or summary["season"] != "2026-03" or summary["matches"] != 0:
+		failures.append("Ranked progression did not reset using the peak and elapsed seasons")
+
+func _check_dedicated_ranked_history(failures: PackedStringArray) -> void:
+	var storage_file := "preflight_ranked_%d.json" % OS.get_process_id()
+	var storage_path := ServerPathsScript.get_server_data_file_path(storage_file)
+	var result_dir := storage_path.get_basename() + "_results"
+	var legacy_store := MatchHistoryStoreScript.new(storage_file)
+	var writer_a := MatchHistoryStoreScript.new(storage_file, true)
+	var writer_b := MatchHistoryStoreScript.new(storage_file, true)
+	var reader := MatchHistoryStoreScript.new(storage_file, true)
+	var session := MatchSessionScript.new("legacy", "preflight_room", "127.0.0.1", 12345, ["session_a", "session_b"], {}, {
+		"session_a": {"profile_id": "profile_a", "account_id": "account_a"},
+		"session_b": {"profile_id": "profile_b", "account_id": "account_b"},
+	})
+	legacy_store.record_completed_match(session, 0, 1, "Thor", "Odin")
+	var initial_summary := reader.get_profile_summary("profile_a", 5, "account_a")
+	if initial_summary["total_wins"] != 1 or initial_summary["ranked_progress"]["matches"] != 0 \
+			or initial_summary["ranked_bo3_progress"]["matches"] != 0:
+		failures.append("Ranked progression did not preserve legacy records without awarding stars")
+
+	session.match_id = "ranked_a"
+	var first_match := writer_a.record_completed_match(session, 0, 1, "Thor", "Odin")
+	var old_entry: Dictionary = first_match["entry"]
+	old_entry.erase("best_of")
+	var old_result_path := result_dir.path_join("%s.json" % session.match_id.sha256_text())
+	if not JsonStoreScript.save_json(old_result_path, old_entry, "preflight_probe"):
+		failures.append("Could not prepare a ranked result without a stored format")
+	session.match_id = "ranked_b"
+	session.configure_series_format(3)
+	var bo3_match := writer_b.record_completed_match(session, 0, 1, "Thor", "Odin")
+	writer_a.record_completed_match(session, 1, 0, "Odin", "Thor")
+	session.configure_series_format(1)
+	session.match_id = "ranked_c"
+	writer_a.record_completed_match(session, 0, 1, "Thor", "Odin")
+	session.match_id = "ranked_d"
+	var promotion_match := writer_b.record_completed_match(session, 0, 1, "Thor", "Odin")
+	session.match_id = "guest"
+	session.configure_series_format(3)
+	session.player_identity_by_session["session_b"]["account_id"] = ""
+	var guest_match := writer_b.record_completed_match(session, 0, 1, "Thor", "Odin")
+	var winner_summary := reader.get_profile_summary("profile_a", 5, "account_a")
+	var loser_summary := reader.get_profile_summary("profile_b", 5, "account_b")
+	if winner_summary["total_wins"] != 6 or winner_summary["ranked_progress"]["matches"] != 3 \
+			or winner_summary["ranked_progress"]["rank_name"] != "Iron IV" or winner_summary["ranked_progress"]["stars"] != 1 \
+			or loser_summary["ranked_progress"]["matches"] != 3 or loser_summary["ranked_progress"]["stars"] != 0:
+		failures.append("Dedicated ranked history lost, duplicated, or miscounted match results")
+	var bo3_progress: Dictionary = winner_summary["ranked_bo3_progress"]
+	if bo3_progress["matches"] != 1 or bo3_progress["win_streak"] != 1 \
+			or bo3_progress["rank_name"] != "Iron V" or bo3_progress["stars"] != 1:
+		failures.append("Bo3 ranked progression did not stay independent of Bo1")
+	var first_results := reader.get_ranked_match_results(first_match["entry"])
+	var first_win: Dictionary = first_results.get(0, {})
+	var first_loss: Dictionary = first_results.get(1, {})
+	if first_win.get("best_of") != 1 or first_win.get("star_delta") != 1 or first_win.get("stars") != 1 or first_win.get("rank_name") != "Iron V" \
+			or first_loss.get("star_delta") != 0 or first_loss.get("stars") != 0 or first_loss.get("loss_protected") != true:
+		failures.append("Ranked recap did not return each player's exact result after later matches")
+	var bo3_result: Dictionary = reader.get_ranked_match_results(bo3_match["entry"]).get(0, {})
+	if bo3_result.get("best_of") != 3 or bo3_result.get("previous_stars") != 0 or bo3_result.get("stars") != 1:
+		failures.append("Bo3 ranked recap used progress from a different format")
+	var promotion: Dictionary = reader.get_ranked_match_results(promotion_match["entry"]).get(0, {})
+	if promotion.get("previous_rank_name") != "Iron V" or promotion.get("previous_stars") != 2 \
+			or promotion.get("rank_name") != "Iron IV" or promotion.get("stars") != 1 or promotion.get("star_delta") != 2:
+		failures.append("Ranked recap did not report both sides of a promotion with carryover stars")
+	if not reader.get_ranked_match_results(guest_match["entry"]).is_empty():
+		failures.append("Ranked recap awarded stars for an ineligible match")
+	var reopened := MatchHistoryStoreScript.new(storage_file, true)
+	var reopened_summary := reopened.get_profile_summary("profile_a", 5, "account_a")
+	if reopened_summary["ranked_progress"] != winner_summary["ranked_progress"] \
+			or reopened_summary["ranked_bo3_progress"] != bo3_progress:
+		failures.append("Dedicated ranked history did not restore progress after reopening the store")
+	DirAccess.remove_absolute(old_result_path + ".bak")
+	for match_id in ["ranked_a", "ranked_b", "ranked_c", "ranked_d", "guest"]:
+		DirAccess.remove_absolute(result_dir.path_join("%s.json" % match_id.sha256_text()))
+	DirAccess.remove_absolute(result_dir)
+	DirAccess.remove_absolute(storage_path)
 
 func _script_path(card: Card) -> String:
 	if card == null or card.get_script() == null:

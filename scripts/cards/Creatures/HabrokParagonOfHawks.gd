@@ -47,11 +47,11 @@ func can_trigger_breakout(game_manager: GameManager, ending_player: Player) -> b
 
 	return _is_only_friendly_board_creature(controller)
 
-func get_breakout_prompt_text(game_manager: GameManager) -> String:
+func get_breakout_prompt_text(game_manager: GameManager, viewer: Player) -> String:
 	var target: Card = _get_weakest_enemy_creature(game_manager)
 	if target == null:
 		return "Return %s to your hand?" % card_name
-	return "Return %s to your hand and destroy %s?" % [card_name, target.card_name]
+	return "Return %s to your hand and destroy %s?" % [card_name, target.get_target_log_display_name(viewer)]
 
 func resolve_breakout_choice(game_manager: GameManager, do_breakout: bool) -> void:
 	if game_manager == null:

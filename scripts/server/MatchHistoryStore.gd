@@ -3,14 +3,19 @@ class_name MatchHistoryStore
 
 const ServerPathsScript = preload("res://scripts/server/ServerPaths.gd")
 const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
+const RankedProgressionScript = preload("res://scripts/server/RankedProgression.gd")
 const DEFAULT_STORAGE_FILE_NAME := "match_history.json"
 
 var _storage_file_name: String = DEFAULT_STORAGE_FILE_NAME
+var _uses_dedicated_results: bool
 var _matches_by_id: Dictionary = {}
 var _history_ids_by_profile_id: Dictionary = {}
+var _ranked_history_ids_by_account_id: Dictionary = {}
+var _dedicated_result_files_loaded: Dictionary = {}
 var _loaded: bool = false
 
-func _init(storage_file_name: String = DEFAULT_STORAGE_FILE_NAME) -> void:
+func _init(storage_file_name: String = DEFAULT_STORAGE_FILE_NAME, uses_dedicated_results: bool = false) -> void:
+	_uses_dedicated_results = uses_dedicated_results
 	_storage_file_name = storage_file_name.strip_edges()
 	if _storage_file_name.is_empty():
 		_storage_file_name = DEFAULT_STORAGE_FILE_NAME
@@ -22,19 +27,12 @@ func record_completed_match(
 	winner_god_name: String,
 	loser_god_name: String
 ) -> Dictionary:
-	_ensure_loaded()
 	if match_session == null:
 		return {"success": false, "message": "Missing match session.", "entry": {}}
 
 	var match_id: String = str(match_session.match_id).strip_edges()
 	if match_id.is_empty():
 		return {"success": false, "message": "Missing match id.", "entry": {}}
-
-	if _matches_by_id.has(match_id):
-		var existing = _matches_by_id.get(match_id, {})
-		if existing is Dictionary:
-			return {"success": true, "message": "", "entry": (existing as Dictionary).duplicate(true)}
-		return {"success": true, "message": "", "entry": {}}
 
 	var player_entries: Array[Dictionary] = []
 	var session_ids: Array[String] = match_session.player_session_ids
@@ -47,27 +45,34 @@ func record_completed_match(
 	if player_entries.is_empty():
 		return {"success": false, "message": "The match had no player entries to record.", "entry": {}}
 
-	var previous_matches_by_id := _matches_by_id.duplicate(true)
-	var previous_history_ids_by_profile_id := _history_ids_by_profile_id.duplicate(true)
-	var now_unix: int = int(Time.get_unix_time_from_system())
 	var entry := {
 		"match_id": match_id,
 		"room_id": str(match_session.room_id),
-		"played_unix": now_unix,
+		"best_of": int(match_session.series_best_of),
+		"played_unix": Time.get_unix_time_from_system(),
 		"status": "finished",
 		"players": player_entries,
 	}
-	_matches_by_id[match_id] = entry
+	if _uses_dedicated_results:
+		# Each match subprocess writes its own file. Both players' results are
+		# committed together and no subprocess rewrites another match's history.
+		entry["advances_rank"] = _is_ranked_ladder_match(match_session, player_entries)
+		var result_path := _get_dedicated_results_dir().path_join("%s.json" % match_id.sha256_text())
+		if FileAccess.file_exists(result_path):
+			var existing := JsonStoreScript.load_dictionary(result_path, {}, "MatchHistoryStore")
+			if not existing.is_empty():
+				return {"success": true, "message": "", "entry": existing}
+		if not JsonStoreScript.save_json(result_path, entry, "MatchHistoryStore"):
+			return {"success": false, "message": "Could not save dedicated match result.", "entry": {}}
+		return {"success": true, "message": "", "entry": entry}
 
-	for player_entry in player_entries:
-		var profile_id: String = str(player_entry.get("profile_id", "")).strip_edges()
-		if profile_id.is_empty():
-			continue
-		var history_ids: Array = _history_ids_by_profile_id.get(profile_id, [])
-		if history_ids is Array and not (history_ids as Array).has(match_id):
-			var updated_history_ids: Array = (history_ids as Array).duplicate()
-			updated_history_ids.append(match_id)
-			_history_ids_by_profile_id[profile_id] = updated_history_ids
+	_ensure_loaded()
+	if _matches_by_id.has(match_id):
+		return {"success": true, "message": "", "entry": _get_match_entry(match_id)}
+	var previous_matches_by_id := _matches_by_id.duplicate(true)
+	var previous_history_ids_by_profile_id := _history_ids_by_profile_id.duplicate(true)
+	_matches_by_id[match_id] = entry
+	_index_result(entry)
 
 	if not _save():
 		_matches_by_id = previous_matches_by_id
@@ -75,8 +80,10 @@ func record_completed_match(
 		return {"success": false, "message": "Could not save match history.", "entry": {}}
 	return {"success": true, "message": "", "entry": entry.duplicate(true)}
 
-func get_profile_summary(profile_id: String, recent_limit: int = 5) -> Dictionary:
+func get_profile_summary(profile_id: String, recent_limit: int = 5, account_id: String = "") -> Dictionary:
 	_ensure_loaded()
+	if _uses_dedicated_results:
+		_load_dedicated_results()
 	var resolved_profile_id: String = profile_id.strip_edges()
 	if resolved_profile_id.is_empty():
 		return _make_empty_summary("")
@@ -171,6 +178,7 @@ func get_profile_summary(profile_id: String, recent_limit: int = 5) -> Dictionar
 			deck_records.append((record as Dictionary).duplicate(true))
 	deck_records.sort_custom(_sort_deck_records)
 
+	var season := RankedProgressionScript.season_for_time(Time.get_unix_time_from_system())
 	return {
 		"profile_id": resolved_profile_id,
 		"total_wins": total_wins,
@@ -180,7 +188,87 @@ func get_profile_summary(profile_id: String, recent_limit: int = 5) -> Dictionar
 		"god_records": god_records,
 		"deck_records": deck_records,
 		"recent_matches": recent_matches,
+		"ranked_progress": _get_ranked_progress(account_id, 1, season),
+		"ranked_bo3_progress": _get_ranked_progress(account_id, 3, season),
 	}
+
+func _is_ranked_ladder_match(match_session, player_entries: Array[Dictionary]) -> bool:
+	if not match_session.is_ranked or player_entries.size() != 2:
+		return false
+	var account_ids: Array[String] = []
+	for player_entry in player_entries:
+		var account_id := str(player_entry["account_id"]).strip_edges()
+		if account_id.is_empty() or account_ids.has(account_id) or match_session.is_bot_session(player_entry["session_id"]):
+			return false
+		account_ids.append(account_id)
+	return true
+
+func _get_ranked_progress(account_id: String, best_of: int, season: int) -> Dictionary:
+	if account_id.is_empty():
+		return {}
+	return RankedProgressionScript.summarize(_replay_ranked_history(account_id, best_of), season)
+
+func get_ranked_match_results(entry: Dictionary) -> Dictionary:
+	if not bool(entry.get("advances_rank", false)):
+		return {}
+	_ensure_loaded()
+	_load_dedicated_results()
+	var match_id := str(entry["match_id"])
+	var stored_entry := _get_match_entry(match_id)
+	if not bool(stored_entry.get("advances_rank", false)):
+		return {}
+	var best_of := int(stored_entry.get("best_of", 1))
+	var season := RankedProgressionScript.season_for_time(float(stored_entry["played_unix"]))
+	var results := {}
+	for player_entry in stored_entry["players"]:
+		var progress := _replay_ranked_history(str(player_entry["account_id"]), best_of, match_id)
+		var before := RankedProgressionScript.summarize(progress, season)
+		var outcome := str(player_entry["result"])
+		RankedProgressionScript.apply_result(progress, outcome, season)
+		var after := RankedProgressionScript.summarize(progress, season)
+		results[int(player_entry["player_index"])] = {
+			"best_of": best_of,
+			"previous_rank_name": before["rank_name"],
+			"previous_stars": before["stars"],
+			"previous_stars_required": before["stars_required"],
+			"rank_name": after["rank_name"],
+			"stars": after["stars"],
+			"stars_required": after["stars_required"],
+			"star_delta": after["last_delta"],
+			"loss_protected": outcome == "loss" and int(after["last_delta"]) == 0,
+		}
+	return results
+
+func _replay_ranked_history(account_id: String, best_of: int, stop_before_match_id: String = "") -> Dictionary:
+	var progress := {}
+	var match_ids := _get_sorted_match_ids(_ranked_history_ids_by_account_id.get(account_id, []))
+	for match_id in match_ids:
+		if match_id == stop_before_match_id:
+			break
+		var entry: Dictionary = _matches_by_id[match_id]
+		# Keep older results without a format on the original Bo1 ladder.
+		if int(entry.get("best_of", 1)) != best_of:
+			continue
+		var season := RankedProgressionScript.season_for_time(float(entry["played_unix"]))
+		for player_entry in entry["players"]:
+			if str(player_entry["account_id"]) == account_id:
+				RankedProgressionScript.apply_result(progress, str(player_entry["result"]), season)
+				break
+	return progress
+
+func _index_result(entry: Dictionary) -> void:
+	var match_id := str(entry["match_id"])
+	for player_entry in entry["players"]:
+		_add_history_id(_history_ids_by_profile_id, str(player_entry["profile_id"]), match_id)
+		if bool(entry.get("advances_rank", false)):
+			_add_history_id(_ranked_history_ids_by_account_id, str(player_entry["account_id"]), match_id)
+
+func _add_history_id(history_index: Dictionary, owner_id: String, match_id: String) -> void:
+	if owner_id.is_empty():
+		return
+	var history_ids: Array = history_index.get_or_add(owner_id, [])
+	if not history_ids.has(match_id):
+		history_ids.append(match_id)
 
 func _build_player_entry(
 	match_session,
@@ -230,13 +318,21 @@ func _build_player_entry(
 	}
 
 func _get_profile_history_ids(profile_id: String) -> Array[String]:
+	return _get_sorted_match_ids(_history_ids_by_profile_id.get(profile_id, []))
+
+func _get_sorted_match_ids(raw_history_ids) -> Array[String]:
 	var history_ids: Array[String] = []
-	var raw_history_ids = _history_ids_by_profile_id.get(profile_id, [])
 	if not (raw_history_ids is Array):
 		return history_ids
 	for raw_match_id in raw_history_ids:
 		history_ids.append(str(raw_match_id))
+	history_ids.sort_custom(_match_finished_before)
 	return history_ids
+
+func _match_finished_before(left_id: String, right_id: String) -> bool:
+	var left_time := float(_matches_by_id.get(left_id, {}).get("played_unix", 0))
+	var right_time := float(_matches_by_id.get(right_id, {}).get("played_unix", 0))
+	return left_time < right_time if left_time != right_time else left_id < right_id
 
 func _get_match_entry(match_id: String) -> Dictionary:
 	var entry = _matches_by_id.get(match_id, {})
@@ -302,6 +398,26 @@ func _save() -> bool:
 
 func _get_storage_path() -> String:
 	return ServerPathsScript.get_server_data_file_path(_storage_file_name)
+
+func _get_dedicated_results_dir() -> String:
+	return _get_storage_path().get_basename() + "_results"
+
+func _load_dedicated_results() -> void:
+	var results_dir := _get_dedicated_results_dir()
+	if not DirAccess.dir_exists_absolute(results_dir):
+		return
+	for file_name in DirAccess.get_files_at(results_dir):
+		if not file_name.ends_with(".json") or _dedicated_result_files_loaded.has(file_name):
+			continue
+		var entry := JsonStoreScript.load_dictionary(results_dir.path_join(file_name), {}, "MatchHistoryStore")
+		var match_id := str(entry.get("match_id", ""))
+		if match_id.is_empty() or not (entry.get("players") is Array):
+			continue
+		_dedicated_result_files_loaded[file_name] = true
+		if _matches_by_id.has(match_id):
+			continue
+		_matches_by_id[match_id] = entry
+		_index_result(entry)
 
 func _sort_god_records(a: Dictionary, b: Dictionary) -> bool:
 	var a_games: int = int(a.get("games", 0))

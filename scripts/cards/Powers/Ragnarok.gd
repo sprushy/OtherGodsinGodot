@@ -18,7 +18,7 @@ func _init() -> void:
 	is_legendary = true
 	card_types = ["Power", "Legendary Destruction", "Universal"]
 	targets = false
-	ability_text = "[b]Unlock[/b] (%d): This activates only when you unlock it. Destroy all creatures on the field; then each player with more than %d cards discards down to %d. You cannot attack this turn. After %d of your opponent's turns, [b]Relock[/b] this." % [UNLOCK_COST, HAND_LIMIT, HAND_LIMIT, RELOCK_TURNS]
+	ability_text = "[b]Unlock[/b] (%d): This activates only when you unlock it. Destroy all cards on the field; then each player with more than %d cards in hand discards down to %d. You cannot attack this turn. After %d of your opponent's turns, [b]Relock[/b] this." % [UNLOCK_COST, HAND_LIMIT, HAND_LIMIT, RELOCK_TURNS]
 	artist = "Riccardo Zoppello"
 	art_path = ART_PATH
 
@@ -80,6 +80,7 @@ func _resolve_ragnarok(game_manager: GameManager) -> void:
 	if game_manager == null:
 		return
 
+	game_manager.field_effect_requested.emit("ragnarok", self)
 	var doomed_cards := _get_field_cards(game_manager)
 	var destroyed_count := 0
 	for doomed_card in doomed_cards:
@@ -158,7 +159,8 @@ func resolve_discard_choice(game_manager: GameManager, chosen_card: Card) -> voi
 	var player := get_pending_discard_player(game_manager)
 	if player == null or player.hand_zone == null or chosen_card == null or chosen_card.current_zone != player.hand_zone:
 		return
-	player.discard_card(chosen_card)
+	# Discards happen in later commands, outside on_unlock's effect-source scope.
+	game_manager.run_with_effect_source(self, func() -> void: player.discard_card(chosen_card))
 	set_meta(
 		"ragnarok_pending_discarded_count",
 		int(get_meta("ragnarok_pending_discarded_count", 0)) + 1
@@ -199,6 +201,7 @@ func _clear_pending_discards() -> void:
 func _finish_resolution(game_manager: GameManager, destroyed_count: int, discarded_count: int) -> void:
 	if game_manager == null:
 		return
+	game_manager.field_effect_requested.emit("ragnarok_return", self)
 	if card_owner != null:
 		game_manager.apply_attack_restriction(card_owner, 1)
 

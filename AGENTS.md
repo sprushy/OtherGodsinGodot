@@ -92,4 +92,5 @@ CI export presets are `Windows Desktop`, `Windows Dedicated Server`, `macOS`, `i
 - Do not hand-edit `.godot/` cache files. Treat `scripts/tmp` as smoke/scratch territory and avoid adding new probe scripts or committing new logs unless the user asked for evidence artifacts.
 - If touching networking, remember the server sends personalized full-state snapshots for privacy. Do not replace that with a shared snapshot unless hand privacy/hidden board privacy is handled.
 - If touching prompts or priority, inspect both `GameManager` and `MatchManager`; many UI prompts are now serialized through `PromptRouter`/`GameEventBroadcaster`, but older UI paths still exist in `CombatMockGame.gd`.
+- If the active player attempts a normal turn action during their own priority, including a drag-to-attack, queue the intended action and pass their priority. Resume it once the opponent passes and the stack clears, if the action is still legal. An opponent response cancels the queued action. Legal at-speed responses use the current priority window.
 - If touching deck/card availability, update both catalog/deck validation paths and any relevant deck-builder UI assumptions.

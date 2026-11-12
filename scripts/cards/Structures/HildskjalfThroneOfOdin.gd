@@ -150,6 +150,15 @@ func resolve_high_seat_choice(game_manager: GameManager, chosen_card: Card) -> S
 func on_turn_upkeep(_game_manager: GameManager) -> void:
 	uses_this_turn = 0
 
+func get_serialized_state() -> Dictionary:
+	var state := super.get_serialized_state()
+	state["uses_this_turn"] = uses_this_turn
+	return state
+
+func apply_serialized_state(state: Dictionary) -> void:
+	super.apply_serialized_state(state)
+	uses_this_turn = int(state.get("uses_this_turn", 0))
+
 func _parse_target(game_manager: GameManager, target) -> Card:
 	if target is Card:
 		return target

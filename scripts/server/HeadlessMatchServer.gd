@@ -27,12 +27,14 @@ var game_event_broadcaster: GameEventBroadcaster = null
 var match_session = null
 
 var _default_match_setup = DefaultMatchSetupScript.new()
-var _match_history_store = MatchHistoryStoreScript.new()
+var _match_history_store = MatchHistoryStoreScript.new(MatchHistoryStoreScript.DEFAULT_STORAGE_FILE_NAME, true)
 var _deck_validator = DeckValidatorScript.new()
 var _match_started: bool = false
 var _initial_join_deadline_unix: int = 0
 var _abandoned_shutdown_started: bool = false
 var _finished_shutdown_pending: bool = false
+var _series_end_payload: Dictionary = {}
+var _ranked_results_by_player: Dictionary = {}
 var _status_heartbeat_elapsed: float = 0.0
 var _reinforcement_phase_active: bool = false
 var _server_bot_entries: Array[Dictionary] = []
@@ -137,6 +139,7 @@ func _on_match_player_authenticated(_player_index: int, _session_id: String, was
 		_send_reinforcement_phase_to_player(_player_index, {}, winner_index)
 		return
 	if _finished_shutdown_pending:
+		_send_series_end_to_player(_player_index)
 		_write_status_file(MatchSessionScript.STATUS_FINISHED)
 		if match_session == null or not match_session.is_waiting_for_reconnect():
 			_schedule_finished_match_shutdown(GAME_END_SHUTDOWN_DELAY_SECONDS)
@@ -258,6 +261,8 @@ func _validate_config(config: Dictionary) -> String:
 	return ""
 
 func _on_game_ended(_winner: Player, _loser: Player) -> void:
+	if _finished_shutdown_pending:
+		return
 	var winner_index := game_manager.players.find(_winner) if game_manager != null else -1
 	var result_message := _get_current_game_result_message()
 	var series_snapshot: Dictionary = {}
@@ -270,7 +275,7 @@ func _on_game_ended(_winner: Player, _loser: Player) -> void:
 		var winner_session_id := str(match_session.player_session_ids[winner_index]).strip_edges()
 		match_session.series_wins_by_session[winner_session_id] = match_session.games_to_win
 		series_snapshot = match_session.get_series_snapshot()
-	if match_session != null and not match_session.is_series_complete():
+	if match_session != null and match_session.series_best_of > 1 and not match_session.is_series_complete():
 		_mark_bot_reinforcements_ready()
 		if game_event_broadcaster != null:
 			game_event_broadcaster.suppress_next_game_end = true
@@ -283,19 +288,36 @@ func _on_game_ended(_winner: Player, _loser: Player) -> void:
 	_finished_shutdown_pending = true
 	if match_session != null:
 		match_session.mark_finished()
+		series_snapshot = match_session.get_series_snapshot()
 	_detach_server_bots()
+	_ranked_results_by_player = _record_match_result(_winner, _loser)
+	_series_end_payload = {
+		"winner_index": winner_index,
+		"series": series_snapshot,
+		"result_message": result_message,
+	}
 	_write_status_file(MatchSessionScript.STATUS_FINISHED)
-	_record_match_result(_winner, _loser)
+	# Send each player's recap before the terminal state triggers their result screen.
 	if network_manager != null:
-		network_manager.broadcast_event_to_all("series_ended", {
-			"winner_index": winner_index,
-			"series": series_snapshot,
-			"result_message": result_message,
-		})
+		for player_index in network_manager.player_peer_ids:
+			_send_series_end_to_player(int(player_index))
+		for peer_id in network_manager.spectator_peer_ids:
+			network_manager.broadcast_event_to_peer(int(peer_id), "series_ended", _series_end_payload)
 	var tree := get_tree()
 	if tree == null:
 		return
 	_schedule_finished_match_shutdown(_get_finished_match_shutdown_delay_seconds())
+
+func _send_series_end_to_player(player_index: int) -> void:
+	if network_manager == null:
+		return
+	var peer_id := int(network_manager.player_peer_ids.get(player_index, -1))
+	if peer_id <= 0:
+		return
+	var payload := _series_end_payload.duplicate()
+	if _ranked_results_by_player.has(player_index):
+		payload["ranked_result"] = _ranked_results_by_player[player_index]
+	network_manager.broadcast_event_to_peer(peer_id, "series_ended", payload)
 
 func _get_finished_match_shutdown_delay_seconds() -> float:
 	var shutdown_delay := GAME_END_SHUTDOWN_DELAY_SECONDS
@@ -502,11 +524,9 @@ func _shutdown_abandoned_match(reason: String) -> void:
 	var shutdown_timer := tree.create_timer(ABANDONED_MATCH_SHUTDOWN_DELAY_SECONDS)
 	shutdown_timer.timeout.connect(Callable(tree, "quit"))
 
-func _record_match_result(winner: Player, loser: Player) -> void:
-	if match_session == null or game_manager == null:
-		return
-	if not match_session.is_ranked:
-		return
+func _record_match_result(winner: Player, loser: Player) -> Dictionary:
+	if match_session == null or game_manager == null or not match_session.is_ranked:
+		return {}
 	var winner_index: int = game_manager.players.find(winner)
 	var loser_index: int = game_manager.players.find(loser)
 	var record_result: Dictionary = _match_history_store.record_completed_match(
@@ -518,6 +538,8 @@ func _record_match_result(winner: Player, loser: Player) -> void:
 	)
 	if not bool(record_result.get("success", false)):
 		push_warning("HeadlessMatchServer: failed to record match result: %s" % str(record_result.get("message", "Unknown error.")))
+		return {}
+	return _match_history_store.get_ranked_match_results(record_result["entry"])
 
 func _write_status_file(status_override: String = "", reason: String = "") -> void:
 	if match_session == null:

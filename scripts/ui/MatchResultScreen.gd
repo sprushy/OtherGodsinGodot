@@ -7,6 +7,7 @@ signal rematch_requested
 signal menu_requested
 
 const TextureCache = preload("res://scripts/ui/UITextureCache.gd")
+const RankedResultPanelScript = preload("res://scripts/ui/RankedResultPanel.gd")
 const TITLE_FONT = preload("res://fonts/custom_ui/Norsebold.otf")
 const VICTORY_SOUND: AudioStream = preload("res://audio/victory_at_last.mp3")
 const GOLD := Color("eac67d")
@@ -26,7 +27,11 @@ var _button_background := Color("1c293d")
 var _primary_hover := Color("f7da9f")
 var _primary_pressed := Color("c2a268")
 
-func build(result_title: String, message: String, stats: Dictionary, reason: String, can_rematch: bool, can_replay: bool, auto_return: bool, animate: bool = true) -> void:
+func build(
+	result_title: String, message: String, stats: Dictionary, reason: String,
+	can_rematch: bool, can_replay: bool, auto_return: bool, animate: bool = true,
+	ranked_result: Dictionary = {}
+) -> void:
 	name = "GameResultOverlay"
 	_is_defeat = result_title == "Defeat"
 	if _is_defeat:
@@ -56,6 +61,10 @@ func build(result_title: String, message: String, stats: Dictionary, reason: Str
 	title.add_theme_color_override("font_shadow_color", Color(_accent, 0.25))
 	title.add_theme_constant_override("shadow_offset_y", 4)
 	_label(body, message, 16, WHITE)
+	if not ranked_result.is_empty():
+		var rank_panel := RankedResultPanelScript.new()
+		body.add_child(rank_panel)
+		rank_panel.build(ranked_result, animate)
 	var turns := int(stats.get("turns", 0))
 	var seconds := int(stats.get("duration_seconds", 0))
 	_label(body, "%d TURNS   /   %d:%02d   /   THE FINAL CHRONICLE" % [turns, seconds / 60, seconds % 60], 13, _accent)

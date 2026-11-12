@@ -5,9 +5,24 @@ const SharurTheFlyingMaceScript := preload("res://scripts/cards/Equipment/Sharur
 
 var _test_turn_owner: Player = null
 var _test_turn_opponent: Player = null
+var _test_discard_bot: ThorPracticeBot = null
 
 func _ready() -> void:
 	super._ready()
+
+func _detach_test_discard_bot() -> void:
+	if _test_discard_bot != null:
+		_test_discard_bot.detach()
+	_test_discard_bot = null
+
+func _exit_tree() -> void:
+	_detach_test_discard_bot()
+	super._exit_tree()
+
+func _show_ragnarok_discard_prompt(power: Ragnarok, player: Player, hand_limit: int, prompt_cards: Array[Card] = []) -> void:
+	if _test_discard_bot != null and player == _test_discard_bot.bot_player:
+		return
+	super._show_ragnarok_discard_prompt(power, player, hand_limit, prompt_cards)
 
 # Override start_game to set up a focused test board while preserving
 # the CombatMockGame interface.
@@ -19,6 +34,7 @@ func start_game(
 	match_info: Dictionary = {},
 	server_match_session = null
 ) -> void:
+	_detach_test_discard_bot()
 	await super.start_game(is_host, is_client, server_ip, server_port, match_info, server_match_session)
 	load_featured_card_test_scenario()
 
@@ -201,6 +217,7 @@ func _reset_player_test_state(player: Player) -> void:
 		_clear_zone(zone)
 
 func _reset_test_match_state() -> void:
+	_detach_test_discard_bot()
 	_reset_player_test_state(player1)
 	_reset_player_test_state(player2)
 	game_manager.prepared_hexes.clear()
@@ -232,7 +249,62 @@ func _setup_test_board() -> void:
 	load_featured_card_test_scenario()
 
 func load_featured_card_test_scenario() -> void:
-	load_card_selection_test_scenario()
+	load_ragnarok_animation_test_scenario()
+
+func load_ragnarok_animation_test_scenario() -> void:
+	_reset_test_match_state()
+	_add_test_god(player1, Odin.new())
+	_add_test_god(player2, Thor.new())
+	for player in [player1, player2]:
+		_add_test_power(player, 0, Ragnarok.new(), false)
+		# Fill every lane with non-token cards so each departure has artwork.
+		var frontline: Array[Card] = [BrownBear.new(), HariiWarrior.new(), MinotaurFootsoldier.new(), Pegasus.new(), Berserker.new()]
+		for lane in range(frontline.size()):
+			_place_test_board_card(player, player.frontline_zones[lane], frontline[lane])
+		# Non-creatures exercise Ragnarok's full field wipe as well as the hunt.
+		_place_test_board_permanent(player, player.reserve_zones[0], Watchtower.new())
+		_place_test_board_permanent(player, player.reserve_zones[1], HildskjalfThroneOfOdin.new())
+		_place_test_board_permanent(player, player.reserve_zones[2], AnointingStatue.new())
+		_place_test_prepared_card(player, player.reserve_zones[3], HeroicStand.new())
+		_place_test_prepared_card(player, player.reserve_zones[4], HeroicStand.new())
+		var hand: Array[Card] = [
+			BrownBear.new(), HariiWarrior.new(), HeroicStand.new(),
+			DivineLightning.new(), OccultSingularity.new(), FiresOfJudgment.new(),
+		]
+		for card in hand:
+			_add_test_hand_card(player, card)
+		# Leave follow-up draws available without an empty-deck interruption.
+		for _copy in range(3):
+			_add_test_deck_card(player, BrownBear.new())
+			_add_test_deck_card(player, HariiWarrior.new())
+			_add_test_deck_card(player, HeroicStand.new())
+		player.spend_mana(player.mana)
+		player.gain_mana(40)
+		player.followers = 100
+		player.followers_changed.emit(player.followers)
+		player.has_summoned_this_turn = false
+		player.has_summoned_structure_this_turn = false
+
+	game_manager.current_player = player1
+	game_manager.other_player = player2
+	game_manager.feedback_viewer = player1
+	player1.is_turn_player = true
+	player2.is_turn_player = false
+	_test_turn_owner = player1
+	_test_turn_opponent = player2
+	game_manager.turn_number = 1
+	game_manager.start_turn()
+	_test_discard_bot = ThorPracticeBot.new()
+	_test_discard_bot.prompt_types_only = ["ragnarok_discard"]
+	_test_discard_bot.attach(game_manager, match_manager, BotGameInput.new(match_manager, 1), 1)
+	_open_upkeep_choice_window()
+	action_label.text = (
+		"Ragnarok Animation Test. Choose Mana for upkeep, then unlock Ragnarok (12 mana). "
+		+ "Both fields are full: 20 cards across all frontline and reserve slots, including structures and prepared magic. "
+		+ "Both players start with 6 cards in hand. Choose your one discard; the opponent bot discards automatically. "
+		+ "Gods and powers survive. Reopen Card Test to reset the scene."
+	)
+	update_ui()
 
 func load_card_selection_test_scenario() -> void:
 	_reset_test_match_state()
@@ -633,7 +705,7 @@ func load_tiamat_ragnarok_scenario() -> void:
 		"Tiamat vs Thor / Ragnarok Scenario. Choose an upkeep option first.  |  "
 		+ "Tiamat - your three power slots are filled with face-up Ancient Demons and Dragons. The slot chains should remain over each stack until that slot is emptied into your hand.  |  "
 		+ "Matriarch Rule - choose it on upkeep to add one slotted creature to hand instead of drawing, then repeat on later turns until a slot is empty and its chain disappears.  |  "
-		+ "Thor - Ragnarok is locked on the opposing side, with creatures on both fields so you can unlock it and confirm only creatures are destroyed.  |  "
+		+ "Thor - Ragnarok is locked on the opposing side; unlock it to destroy all cards in the frontline and reserve.  |  "
 		+ "Board - Gudud Priest and Brown Bear give Tiamat simple bodies to preserve or sacrifice, while Thor starts with Berserker and Minotaur Footsoldier so the wipe has obvious results."
 	)
 	update_ui()
@@ -1321,7 +1393,7 @@ func load_sap_ragnarok_scenario() -> void:
 		"Sap / Sap Strength / Ragnarok Scenario. Choose an upkeep option first.  |  "
 		+ "Sap - already prepared in your reserve; summon Rabid Wolf or Berserker from hand to the frontline to watch Sap destroy it on entry. Pass to P2 and let them summon their Brown Bear to test that it fires on the opponent's summons too.  |  "
 		+ "Sap Strength - play it from hand and target any creature on the board to reduce its Str by 10 for the rest of the turn; useful for weakening a strong attacker before combat.  |  "
-		+ "Ragnarok - unlock it to wipe all frontline and reserve creatures; Odin, Thor, and the Ragnarok power itself should all survive untouched."
+		+ "Ragnarok - unlock it to wipe all frontline and reserve cards; Odin, Thor, and the Ragnarok power itself should all survive untouched."
 	)
 	update_ui()
 

@@ -22,6 +22,7 @@ const GameSettingsTabsScript = preload("res://scripts/ui/GameSettingsTabs.gd")
 const AudioSettingsScript = preload("res://scripts/core/AudioSettings.gd")
 const UIHoverSfxScript = preload("res://scripts/core/UIHoverSfx.gd")
 const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
+const RankedLadderViewScript = preload("res://scripts/ui/RankedLadderView.gd")
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const LobbyRoomScript = preload("res://scripts/server/LobbyRoom.gd")
 const HostReachabilityProbeScript = preload("res://scripts/network/HostReachabilityProbe.gd")
@@ -182,6 +183,8 @@ var _profile_summary_panel: PanelContainer = null
 var _profile_summary_label: Label = null
 var _current_profile_summary: Dictionary = {}
 var _profile_summary_expanded: bool = false
+var _ranked_ladder_button: Button = null
+var _ranked_ladder_view: RankedLadderViewScript = null
 var _account_decks_cache: Array[Dictionary] = []
 var _auth_onboarding_overlay: Control = null
 var _auth_onboarding_selected_mode: String = AUTH_MODE_LOGIN
@@ -375,8 +378,11 @@ func _ready() -> void:
 	_ensure_startup_music()
 	_prepare_startup_menu_fade()
 	_fit_to_viewport()
-	_build_server_version_overlay()
+	if OS.is_debug_build():
+		_build_server_version_overlay()
 	_build_sound_mute_button()
+	if not OS.is_debug_build() and multiplayer_container != null:
+		multiplayer_container.visibility_changed.connect(_refresh_sound_mute_button)
 	get_viewport().size_changed.connect(_fit_to_viewport)
 	if ip_line_edit != null:
 		ip_line_edit.visible = true
@@ -388,37 +394,9 @@ func _ready() -> void:
 	_bind_game_signals()
 
 	var deck_btn = $MenuContainer/DeckBuilderButton
-	var rules_btn = $MenuContainer/RulesButton
-	var tutorial_btn = $MenuContainer/TutorialButton
-	var card_test_btn = $MenuContainer/CardTestButton
-
 	if deck_btn:
 		deck_btn.pressed.connect(_on_deck_builder_pressed)
-	if rules_btn:
-		rules_btn.pressed.connect(_open_rules_overlay)
-	if tutorial_btn:
-		tutorial_btn.pressed.connect(_open_tutorial_overlay)
-	if story_button:
-		story_button.pressed.connect(_on_story_pressed)
-	var popup_book_button := Button.new()
-	popup_book_button.name = "PopUpBookButton"
-	popup_book_button.text = "Pop-up Book"
-	popup_book_button.tooltip_text = "Explore the field as an interactive paper diorama."
-	popup_book_button.pressed.connect(_on_popup_book_pressed)
-	menu_container.add_child(popup_book_button)
-	if story_button != null:
-		menu_container.move_child(popup_book_button, story_button.get_index() + 1)
-	if card_test_btn:
-		if OS.is_debug_build():
-			card_test_btn.pressed.connect(_on_card_test_pressed)
-			var environment_test_btn := Button.new()
-			environment_test_btn.name = "EnvironmentTestButton"
-			environment_test_btn.text = "Environment Test"
-			environment_test_btn.pressed.connect(_on_environment_test_pressed)
-			menu_container.add_child(environment_test_btn)
-			menu_container.move_child(environment_test_btn, card_test_btn.get_index() + 1)
-		else:
-			card_test_btn.visible = false
+	_configure_debug_menu_entries()
 	if multiplayer_button:
 		multiplayer_button.pressed.connect(_on_multiplayer_pressed)
 	if multiplayer_back_button:
@@ -448,6 +426,7 @@ func _ready() -> void:
 	_restore_auth_preferences()
 	_startup_trace("_ready: auth prefs restored")
 	_build_profile_summary_controls()
+	_build_ranked_ladder_controls()
 	_build_account_identity_controls()
 	_build_friends_controls()
 	_build_resume_controls()
@@ -472,6 +451,36 @@ func _ready() -> void:
 		call_deferred("_start_smoke_mode")
 	else:
 		call_deferred("_begin_startup_sequence")
+
+func _configure_debug_menu_entries() -> void:
+	var card_test_btn = $MenuContainer/CardTestButton
+	if not OS.is_debug_build():
+		for control in [title_label, rules_button, tutorial_button, story_button, card_test_btn]:
+			if control != null:
+				control.hide()
+		return
+	if rules_button:
+		rules_button.pressed.connect(_open_rules_overlay)
+	if tutorial_button:
+		tutorial_button.pressed.connect(_open_tutorial_overlay)
+	if story_button:
+		story_button.pressed.connect(_on_story_pressed)
+	var popup_book_button := Button.new()
+	popup_book_button.name = "PopUpBookButton"
+	popup_book_button.text = "Pop-up Book"
+	popup_book_button.tooltip_text = "Explore the field as an interactive paper diorama."
+	popup_book_button.pressed.connect(_on_popup_book_pressed)
+	menu_container.add_child(popup_book_button)
+	if story_button != null:
+		menu_container.move_child(popup_book_button, story_button.get_index() + 1)
+	if card_test_btn:
+		card_test_btn.pressed.connect(_on_card_test_pressed)
+		var environment_test_btn := Button.new()
+		environment_test_btn.name = "EnvironmentTestButton"
+		environment_test_btn.text = "Environment Test"
+		environment_test_btn.pressed.connect(_on_environment_test_pressed)
+		menu_container.add_child(environment_test_btn)
+		menu_container.move_child(environment_test_btn, card_test_btn.get_index() + 1)
 
 func _startup_trace(message: String) -> void:
 	print("[STARTUP] t=%dms %s" % [Time.get_ticks_msec(), message])
@@ -1094,7 +1103,8 @@ func _refresh_sound_mute_button() -> void:
 	_sound_mute_button.text = String.chr(0x1F507) if _all_sound_muted else String.chr(0x1F50A)
 	_sound_mute_button.tooltip_text = "Unmute all sound" if _all_sound_muted else "Mute all sound"
 	_sound_mute_button.modulate = Color(0.72, 0.76, 0.84, 0.96) if _all_sound_muted else Color(1, 1, 1, 0.96)
-	_sound_mute_button.visible = not _is_deck_builder_open()
+	var main_menu_visible: bool = menu_container != null and menu_container.visible and not _is_multiplayer_screen_active()
+	_sound_mute_button.visible = not _is_deck_builder_open() and (OS.is_debug_build() or not main_menu_visible)
 
 func _apply_main_menu_text_sizing() -> void:
 	if menu_container != null:
@@ -1568,6 +1578,9 @@ func _input(event: InputEvent) -> void:
 func _handle_escape_navigation() -> bool:
 	if _close_confirm_overlay != null and is_instance_valid(_close_confirm_overlay):
 		_close_program()
+		return true
+	if is_instance_valid(_ranked_ladder_view):
+		_close_ranked_ladder()
 		return true
 	if _rules_overlay != null and is_instance_valid(_rules_overlay):
 		var return_to_menu_after_rules = menu_container != null and menu_container.visible
@@ -8594,6 +8607,7 @@ func _on_lobby_connection_failed(message: String) -> void:
 
 func _on_lobby_disconnected() -> void:
 	_finish_match_loading()
+	_refresh_ranked_ladder()
 	_write_smoke_trace("lobby_disconnected")
 	_cancel_lobby_sign_in_watchdog()
 	var restore_auth_prompt := _startup_autologin_in_progress
@@ -8629,6 +8643,7 @@ func _is_lobby_auto_reconnecting() -> bool:
 
 func _on_lobby_auto_reconnect_started(attempt: int, max_attempts: int) -> void:
 	_write_smoke_trace("lobby_auto_reconnect_started %d/%d" % [attempt, max_attempts])
+	_refresh_ranked_ladder()
 	_lobby_auto_reconnect_was_active = true
 	if status_label != null:
 		status_label.text = "Connection lost. Reconnecting to the lobby... (attempt %d of %d)" % [attempt, max_attempts]
@@ -9511,6 +9526,60 @@ func _build_profile_summary_controls() -> void:
 	if seek_list != null:
 		multiplayer_container.move_child(panel, seek_list.get_index())
 
+func _build_ranked_ladder_controls() -> void:
+	if not OS.is_debug_build() or multiplayer_container == null or is_instance_valid(_ranked_ladder_button):
+		return
+	_ranked_ladder_button = Button.new()
+	_ranked_ladder_button.name = "RankedLadderButton"
+	_ranked_ladder_button.text = "Ranked Ladder"
+	_ranked_ladder_button.pressed.connect(_open_ranked_ladder)
+	multiplayer_container.add_child(_ranked_ladder_button)
+	if _profile_summary_panel != null:
+		multiplayer_container.move_child(_ranked_ladder_button, _profile_summary_panel.get_index() + 1)
+	multiplayer_container.visibility_changed.connect(_on_ranked_ladder_lobby_visibility_changed)
+
+func _open_ranked_ladder() -> void:
+	if not OS.is_debug_build() or not multiplayer_container.is_visible_in_tree() or is_instance_valid(_ranked_ladder_view):
+		return
+	_hide_multiplayer_deck_popup()
+	_ranked_ladder_view = RankedLadderViewScript.new()
+	_ranked_ladder_view.close_requested.connect(_close_ranked_ladder)
+	add_child(_ranked_ladder_view)
+	_refresh_ranked_ladder()
+	if _has_active_lobby_connection() and _uses_server_account_storage():
+		_maybe_request_profile_summary()
+
+func _refresh_ranked_ladder() -> void:
+	if not is_instance_valid(_ranked_ladder_view):
+		return
+	var summary: Dictionary = {}
+	var empty_message: String
+	if not _has_active_lobby_connection():
+		empty_message = "Connect to the lobby to see your rank."
+	elif not _uses_server_account_storage():
+		empty_message = "Sign in to see your rank."
+	elif _current_profile_summary.get("profile_id", "") != lobby_client.current_profile_id:
+		empty_message = "Loading your rank…"
+	else:
+		summary = _current_profile_summary
+		empty_message = "Rank unavailable from this lobby."
+	_ranked_ladder_view.update_progress(
+		summary.get("ranked_progress", {}), summary.get("ranked_bo3_progress", {}), empty_message
+	)
+
+func _close_ranked_ladder() -> void:
+	if not is_instance_valid(_ranked_ladder_view):
+		return
+	_ranked_ladder_view.hide()
+	_ranked_ladder_view.queue_free()
+	_ranked_ladder_view = null
+	if is_instance_valid(_ranked_ladder_button) and _ranked_ladder_button.is_visible_in_tree():
+		_ranked_ladder_button.grab_focus()
+
+func _on_ranked_ladder_lobby_visibility_changed() -> void:
+	if not multiplayer_container.is_visible_in_tree():
+		_close_ranked_ladder()
+
 func _build_account_identity_controls() -> void:
 	if menu_container == null:
 		return
@@ -10248,7 +10317,7 @@ func _refresh_account_identity_label() -> void:
 	if not active_account_username.is_empty():
 		_account_identity_label.text = "Signed in: %s" % active_account_username
 		if not _is_multiplayer_screen_active():
-			_account_identity_label.visible = true
+			_account_identity_label.visible = OS.is_debug_build()
 		_refresh_auth_controls()
 		return
 	if _is_guest_session_active():
@@ -10257,7 +10326,7 @@ func _refresh_account_identity_label() -> void:
 			guest_display_name = _get_preferred_guest_display_name("Guest")
 		_account_identity_label.text = "Guest: %s" % guest_display_name
 		if not _is_multiplayer_screen_active():
-			_account_identity_label.visible = true
+			_account_identity_label.visible = OS.is_debug_build()
 		_refresh_auth_controls()
 		return
 	var selected_account_username := _get_selected_account_username()
@@ -10271,6 +10340,7 @@ func _refresh_account_identity_label() -> void:
 	_refresh_auth_controls()
 
 func _refresh_profile_summary_label() -> void:
+	_refresh_ranked_ladder()
 	if _profile_summary_label == null:
 		return
 	var panel := _profile_summary_panel if _profile_summary_panel != null else _profile_summary_label.get_parent()
@@ -10283,17 +10353,59 @@ func _refresh_profile_summary_label() -> void:
 	var total_losses: int = int(_current_profile_summary.get("total_losses", 0))
 	var summary_line := "Match Record: %d-%d" % [total_wins, total_losses]
 	var lines: Array[String] = [summary_line]
+	var ranked_by_format: Dictionary = {
+		1: _current_profile_summary.get("ranked_progress", {}),
+		3: _current_profile_summary.get("ranked_bo3_progress", {}),
+	}
+	var has_separate_ladders := _current_profile_summary.has("ranked_bo3_progress")
+	var has_ranked_progress := false
+	if panel != null:
+		panel.tooltip_text = ""
+	for best_of in ranked_by_format:
+		var ranked_progress: Dictionary = ranked_by_format[best_of]
+		if ranked_progress.is_empty():
+			continue
+		has_ranked_progress = true
+		var rank_name := str(ranked_progress["rank_name"])
+		var stars := int(ranked_progress["stars"])
+		var stars_required := int(ranked_progress["stars_required"])
+		var rank_line := "%s  •  %d stars" % [rank_name, stars]
+		if stars_required > 0:
+			rank_line = "%s  %s%s  %d/%d" % [rank_name, "★".repeat(stars), "☆".repeat(stars_required - stars), stars, stars_required]
+			if bool(ranked_progress["at_floor"]):
+				rank_line += "  •  Protected"
+		if has_separate_ladders:
+			rank_line = "Bo%d  •  %s" % [best_of, rank_line]
+		lines.insert(lines.size() - 1, rank_line)
+	if has_ranked_progress:
+		if panel != null:
+			panel.tooltip_text = "Both players must sign in for a rated match to count. Each division takes three stars. A win earns one star. From your third consecutive win through Platinum, wins earn two stars. Losses cost one star starting in Silver, with floors at Divisions V and III. Ranks reset monthly based on your season peak."
+	elif _current_profile_summary.has("ranked_progress"):
+		lines.insert(0, "Sign in to earn ranked stars")
 
 	var god_records = _current_profile_summary.get("god_records", [])
 	var deck_records = _current_profile_summary.get("deck_records", [])
 	var recent_matches = _current_profile_summary.get("recent_matches", [])
 	var has_details := (
-		(god_records is Array and not (god_records as Array).is_empty())
+		has_ranked_progress
+		or (god_records is Array and not (god_records as Array).is_empty())
 		or (deck_records is Array and not (deck_records as Array).is_empty())
 		or (recent_matches is Array and not (recent_matches as Array).is_empty())
 	)
 
 	if _profile_summary_expanded and has_details:
+		for best_of in ranked_by_format:
+			var ranked_progress: Dictionary = ranked_by_format[best_of]
+			if ranked_progress.is_empty():
+				continue
+			var season_label := "Bo%d season" % best_of if has_separate_ladders else "Season"
+			lines.append("%s %s  •  Peak %s (%d★)" % [season_label, ranked_progress["season"], ranked_progress["peak_rank_name"], ranked_progress["peak_stars"]])
+			lines.append("Ranked matches %d  •  Win streak %d" % [ranked_progress["matches"], ranked_progress["win_streak"]])
+			if int(ranked_progress["matches"]) > 0:
+				var delta := int(ranked_progress["last_delta"])
+				var delta_text := "+%d" % delta if delta > 0 else str(delta)
+				lines.append("Last ranked match  %s★" % delta_text)
+
 		if god_records is Array and not (god_records as Array).is_empty():
 			lines.append("")
 			lines.append("By God:")
@@ -10336,7 +10448,7 @@ func _refresh_profile_summary_label() -> void:
 				if not (raw_match is Dictionary):
 					continue
 				var recent_match: Dictionary = raw_match as Dictionary
-				var result_text: String = "W" if str(recent_match.get("result", "")).to_lower() == "win" else "L"
+				var result_text := str(recent_match.get("result", "")).left(1).to_upper()
 				lines.append("%s as %s vs %s" % [
 					result_text,
 					_get_profile_summary_loadout(
@@ -10376,8 +10488,12 @@ func _on_profile_summary_panel_gui_input(event: InputEvent) -> void:
 	var god_records = _current_profile_summary.get("god_records", [])
 	var deck_records = _current_profile_summary.get("deck_records", [])
 	var recent_matches = _current_profile_summary.get("recent_matches", [])
+	var ranked_progress: Dictionary = _current_profile_summary.get("ranked_progress", {})
+	var ranked_bo3_progress: Dictionary = _current_profile_summary.get("ranked_bo3_progress", {})
 	var has_details := (
-		(god_records is Array and not (god_records as Array).is_empty())
+		not ranked_progress.is_empty()
+		or not ranked_bo3_progress.is_empty()
+		or (god_records is Array and not (god_records as Array).is_empty())
 		or (deck_records is Array and not (deck_records as Array).is_empty())
 		or (recent_matches is Array and not (recent_matches as Array).is_empty())
 	)
@@ -10982,6 +11098,10 @@ func _start_smoke_mode() -> void:
 		call_deferred("_run_practice_thor_smoke")
 		return
 
+	if role in ["habrok_network_host", "habrok_network_client"]:
+		call_deferred("_run_habrok_network_smoke", role == "habrok_network_host")
+		return
+
 	if role == "practice_thor_summon":
 		call_deferred("_run_practice_thor_summon_smoke")
 		return
@@ -11038,6 +11158,92 @@ func _join_smoke_room(room_code: String) -> void:
 	room_code_line_edit.text = room_code
 	_pending_join_room_code = room_code
 	_on_connect_pressed()
+
+func _run_habrok_network_smoke(is_host: bool) -> void:
+	var port := int(_smoke_config.get("match_port", 12345))
+	var confirm := not bool(_smoke_config.get("habrok_decline", false))
+	var match_id := "habrok-network-smoke"
+	var human_session := "habrok-smoke-player"
+	var human_token := "habrok-smoke-token"
+	if is_host:
+		var bot_session := "habrok-smoke-bot"
+		var server := HeadlessMatchServer.new()
+		get_tree().root.add_child(server)
+		if server.start_from_config({
+			"match_id": match_id,
+			"match_port": port,
+			"server_mode": MatchSessionScript.SERVER_MODE_DEDICATED_HEADLESS,
+			"is_ranked": false,
+			"player_session_ids": [bot_session, human_session],
+			"player_identity_by_session": {bot_session: {"is_bot": true}},
+			"player_match_tokens": {human_session: human_token},
+			"player_decks_by_session": {
+				bot_session: {"cards": {"Thor": 1, "Brown Bear": 12}, "is_purpose_deck": true},
+				human_session: {"cards": {"Thor": 1, "Brown Bear": 12}, "is_purpose_deck": true},
+			},
+		}) != OK:
+			_fail_smoke_if_enabled("habrok_network_server_start_failed")
+			return
+		var rules := server.game_manager
+		var bot_player := rules.players[0]
+		var human_player := rules.players[1]
+		rules.current_player = bot_player
+		rules.other_player = human_player
+		bot_player.is_turn_player = true
+		human_player.is_turn_player = false
+		var bear := BrownBear.new()
+		bear.card_owner = bot_player
+		var bear_zone := bot_player.frontline_zones[0]
+		bear_zone.add_card(bear)
+		var habrok := HabrokParagonOfHawks.new()
+		habrok.card_owner = human_player
+		var habrok_zone := human_player.reserve_zones[0]
+		habrok_zone.add_card(habrok)
+		_write_smoke_trace("habrok_network:server_ready")
+		if not await _wait_for_practice_thor_smoke_condition_seconds(func() -> bool:
+			return rules.current_player == human_player and rules.turn_number >= 2 \
+				and habrok.current_zone == (human_player.hand_zone if confirm else habrok_zone) \
+				and bear.current_zone == (bot_player.graveyard_zone if confirm else bear_zone)
+		, 45.0):
+			_fail_smoke_if_enabled("habrok_network_server_did_not_resolve turn=%d feedback=%s" % [
+				rules.turn_number, server.match_manager.last_move_failed_reason,
+			])
+			return
+		_write_smoke_trace("habrok_network:server_resolved_breakout_and_advanced")
+		await get_tree().create_timer(1.0).timeout
+		_finish_smoke_if_enabled("PASS:habrok_network_host")
+		return
+
+	var client = _show_embedded_game("MockGame")
+	show_game()
+	await client.start_game(false, true, "127.0.0.1", port, {
+		"match_id": match_id, "session_id": human_session, "match_token": human_token,
+		"server_mode": MatchSessionScript.SERVER_MODE_DEDICATED_HEADLESS,
+	})
+	if not await _wait_for_practice_thor_smoke_condition_seconds(func() -> bool:
+		return client.game_input is NetworkedGameInput \
+			and client.get("_pending_habrok_breakout") is HabrokParagonOfHawks \
+			and is_instance_valid(client.get("_habrok_breakout_prompt_panel"))
+	, 20.0):
+		_fail_smoke_if_enabled("habrok_network_client_prompt_missing")
+		return
+	_write_smoke_trace("habrok_network:client_received_breakout_prompt")
+	client._resolve_habrok_breakout_prompt(confirm)
+	if not await _wait_for_practice_thor_smoke_condition_seconds(func() -> bool:
+		var rules: GameManager = client.game_manager
+		var human_player := rules.players[1]
+		if rules.current_player != human_player or rules.turn_number < 2:
+			return false
+		if confirm:
+			return _find_smoke_hand_card_by_name(human_player, "Habrok, Paragon of Hawks") != null \
+				and not rules.players[0].graveyard_zone.cards.is_empty()
+		return not human_player.reserve_zones[0].cards.is_empty() \
+			and human_player.reserve_zones[0].cards[0] is HabrokParagonOfHawks \
+			and rules.players[0].graveyard_zone.cards.is_empty()
+	, 10.0):
+		_fail_smoke_if_enabled("habrok_network_client_did_not_receive_resolved_state")
+		return
+	_finish_smoke_if_enabled("PASS:habrok_network_client")
 
 func _run_practice_thor_smoke() -> void:
 	var practice_game = _show_embedded_game("PracticeThor")
@@ -11207,7 +11413,10 @@ func _resolve_practice_thor_smoke_player_prompts(practice_game) -> void:
 		return
 	var pending_card = practice_game.get("_pending_resurrection_card")
 	if pending_card != null:
-		practice_game._on_resurrection_no()
+		practice_game._submit_resurrection_choice(pending_card, false)
+		return
+	if practice_game.get("_pending_blessed_knights") != null:
+		practice_game._resolve_blessed_knights_impact("creature_abilities")
 		return
 	practice_game._submit_visible_intercept_choice("")
 
@@ -11312,13 +11521,12 @@ func _run_practice_thor_summon_smoke() -> void:
 	])
 
 	var summon_zone := _find_first_open_smoke_summon_zone(practice_game.player1)
-	var summon_card := _find_first_playable_smoke_creature(practice_game.game_manager, practice_game.player1, summon_zone)
+	var summon_card := _find_smoke_hand_card_by_name(practice_game.player1, "Blessed Knights") as BlessedKnights
 	if summon_zone != null and summon_card == null:
-		var seeded_card := BrownBear.new()
-		seeded_card.card_owner = practice_game.player1
-		practice_game.player1.hand_zone.add_card(seeded_card)
-		summon_card = _find_first_playable_smoke_creature(practice_game.game_manager, practice_game.player1, summon_zone)
-	if summon_zone == null or summon_card == null:
+		summon_card = BlessedKnights.new()
+		summon_card.card_owner = practice_game.player1
+		practice_game.player1.hand_zone.add_card(summon_card)
+	if summon_zone == null or not practice_game.game_manager.can_play_card(practice_game.player1, summon_card, summon_zone):
 		_fail_smoke_if_enabled("practice_thor_summon_no_playable_creature hand=%s mana=%d" % [
 			_describe_smoke_hand(practice_game.player1),
 			practice_game.player1.mana,
@@ -11354,6 +11562,7 @@ func _run_practice_thor_summon_smoke() -> void:
 
 	if not await _wait_for_practice_thor_smoke_condition_seconds(
 		func() -> bool:
+			_resolve_practice_thor_smoke_player_prompts(practice_game)
 			return summon_card.current_zone == summon_zone \
 				and practice_game.game_manager.current_player == practice_game.player1 \
 				and practice_game.game_manager.action_stack.is_empty() \
@@ -11375,6 +11584,12 @@ func _run_practice_thor_summon_smoke() -> void:
 			str(practice_game.action_label.text).replace("\n", " "),
 		])
 		return
+
+	var ward := summon_card.get_status_effect(BlessedKnights.BLESSED_WARD_STATUS)
+	if ward.get("ward_kind") != "creature_abilities":
+		_fail_smoke_if_enabled("practice_thor_summon_blessed_ward_missing")
+		return
+	_write_smoke_trace("practice_thor_summon:blessed_ward_applied")
 
 	if not practice_game.game_input.submit_action({type = "end_turn", discard_uids = []}):
 		_fail_smoke_if_enabled("practice_thor_summon_auto_pass_end_turn_failed")
@@ -12125,16 +12340,6 @@ func _find_first_open_smoke_summon_zone(player: Player) -> Zone:
 			return zone
 	return null
 
-func _find_first_playable_smoke_creature(game_manager: GameManager, player: Player, zone: Zone) -> Card:
-	if game_manager == null or player == null or zone == null:
-		return null
-	for card in player.hand_zone.cards:
-		if card != null \
-				and card.card_type == Card.CardType.CREATURE \
-				and game_manager.can_play_card(player, card, zone):
-			return card
-	return null
-
 func _find_smoke_hand_card_by_name(player: Player, expected_name: String) -> Card:
 	if player == null or player.hand_zone == null:
 		return null
@@ -12192,6 +12397,8 @@ func _run_card_test_turn2_smoke() -> void:
 		return
 	show_game()
 	await card_test.start_game()
+	# Keep the turn-flow fixture independent of the featured manual sandbox.
+	card_test.load_card_selection_test_scenario()
 	await get_tree().process_frame
 	await get_tree().process_frame
 
@@ -12302,8 +12509,8 @@ func _run_card_test_occult_singularity_smoke() -> void:
 		return
 	show_game()
 	await card_test.start_game()
-	# Use the featured visual-test board, which supplies magical targets on both
-	# sides and Occult Singularity in hand.
+	# This fixture supplies magical targets on both sides and the spell in hand.
+	card_test.load_card_selection_test_scenario()
 	await get_tree().process_frame
 	await get_tree().process_frame
 
@@ -12435,6 +12642,7 @@ func _parse_smoke_config(args: Array) -> Dictionary:
 
 	return {
 		"role": str(config.get("smoke_role", "")),
+		"habrok_decline": str(config.get("smoke_habrok_decline", "")) == "true",
 		"ip": str(config.get("smoke_ip", "127.0.0.1")),
 		"player_name": str(config.get("smoke_name", "")),
 		"email": str(config.get("smoke_email", "")),

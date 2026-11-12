@@ -16,6 +16,7 @@ signal turn_upkeep_resolved(turn_number: int, player: Player)
 signal phase_changed(old_phase: int, new_phase: int, turn_number: int, player: Player)
 signal god_power_activated(turn_number: int, player: Player, god: Card, target: Card)
 signal card_summoned(player: Player, card: Card, from_zone: Zone, to_zone: Zone, summon_source: Card, face_down: bool, stealth: bool)
+signal hand_card_entered_play(player: Player, card: Card)
 signal followers_converted(from_player: Player, to_player: Player, amount: int)
 signal board_effect_requested(effect_name: String, target_player: Player)
 signal card_effect_requested(effect_name: String, target_card: Card)
@@ -215,6 +216,13 @@ func _action_is_stale(action: CardAction) -> bool:
 			return action.card.current_zone == action.card.card_owner.graveyard_zone \
 				or action.card.current_zone == action.card.card_owner.abyss_zone
 	return false
+
+func get_top_live_stack_action() -> CardAction:
+	for index in range(action_stack.size() - 1, -1, -1):
+		var action := action_stack[index]
+		if action != null and (action in resolving_stack_actions or not _action_is_stale(action)):
+			return action
+	return null
 
 func prune_stale_stack_actions() -> void:
 	_prune_stale_stack_actions()
@@ -3981,6 +3989,8 @@ func _on_player_card_moved(card: Card, from_zone: Zone, to_zone: Zone) -> void:
 	_notify_board_cards_of_movement(card, from_zone, to_zone)
 	if to_zone != null and to_zone.zone_type == Zone.ZoneType.FRONTLINE:
 		_push_frontline_entry_event(card)
+	if from_zone != null and from_zone.zone_type == Zone.ZoneType.HAND and _is_zone_in_play(to_zone):
+		hand_card_entered_play.emit(from_zone.zone_owner, card)
 
 func _push_frontline_entry_event(card: Card) -> void:
 	if card == null or card.card_owner == null:

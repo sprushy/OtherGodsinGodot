@@ -19,6 +19,7 @@ var match_manager: MatchManager
 var network_manager: Node  # NetworkManager
 var prompt_router = null
 var _action_log_event_id: int = 0
+var _ragnarok_grave_sources: Dictionary = {}
 var suppress_next_game_end: bool = false
 
 func _init(gm: GameManager, mm: MatchManager, nm: Node, p_prompt_router = null) -> void:
@@ -29,6 +30,7 @@ func _init(gm: GameManager, mm: MatchManager, nm: Node, p_prompt_router = null) 
 	_connect_signals()
 
 func _connect_signals() -> void:
+	match_manager.god_dialogue_sent.connect(_on_god_dialogue_sent)
 	match_manager.move_validated.connect(_on_move_validated)
 	match_manager.action_resolved.connect(_on_action_resolved)
 	match_manager.ui_refresh_requested.connect(_on_ui_refresh_requested)
@@ -38,11 +40,20 @@ func _connect_signals() -> void:
 	game_manager.board_effect_requested.connect(_on_board_effect_requested)
 	game_manager.card_effect_requested.connect(_on_card_effect_requested)
 	game_manager.field_effect_requested.connect(_on_field_effect_requested)
+	for player in game_manager.players:
+		player.card_moved.connect(_on_ragnarok_card_moved)
 	match_manager.request_ui_interaction.connect(_on_ui_interaction_requested)
 
 # ---------------------------------------------------------------------------
 # Signal handlers — each triggers a full broadcast
 # ---------------------------------------------------------------------------
+
+func _on_god_dialogue_sent(player_index: int, phrase_id: String) -> void:
+	# Only public, fixed dialogue IDs travel in this cosmetic event.
+	network_manager.broadcast_event_to_all("god_dialogue", {
+		"player_index": player_index,
+		"phrase_id": phrase_id,
+	})
 
 func _on_board_effect_requested(effect_name: String, target_player: Player) -> void:
 	if network_manager == null or game_manager == null:
@@ -77,6 +88,14 @@ func _on_field_effect_requested(effect_name: String, source_card: Card) -> void:
 		"effect_name": effect_name,
 		"source_uid": source_card.uid,
 	})
+
+func _on_ragnarok_card_moved(card: Card, _from_zone: Zone, to_zone: Zone) -> void:
+	if card == null:
+		return
+	_ragnarok_grave_sources.erase(card.uid)
+	var source := game_manager.get_effect_source_card()
+	if source is Ragnarok and to_zone != null and to_zone.zone_type == Zone.ZoneType.GRAVEYARD:
+		_ragnarok_grave_sources[card.uid] = source.uid
 
 func _on_move_validated(move: Dictionary) -> void:
 	if game_manager != null and game_manager.is_game_over:
@@ -272,6 +291,9 @@ func shutdown() -> void:
 		if match_manager.request_ui_interaction.is_connected(_on_ui_interaction_requested):
 			match_manager.request_ui_interaction.disconnect(_on_ui_interaction_requested)
 	if game_manager != null:
+		for player in game_manager.players:
+			if player.card_moved.is_connected(_on_ragnarok_card_moved):
+				player.card_moved.disconnect(_on_ragnarok_card_moved)
 		if game_manager.turn_upkeep_started.is_connected(_on_turn_upkeep_started):
 			game_manager.turn_upkeep_started.disconnect(_on_turn_upkeep_started)
 		if game_manager.turn_started.is_connected(_on_turn_started):
@@ -371,6 +393,7 @@ func _broadcast_full_state_for_move(move: Dictionary) -> void:
 		return
 	_action_log_event_id += 1
 	var ui_sound_cues := _consume_pending_ui_sound_cues(_ui_sound_cues_for_move(move))
+	var priority_response := MatchCommandRegistryScript.is_priority_response(str(move.get("type", "")))
 	for player_index in network_manager.player_peer_ids:
 		var peer_id: int = network_manager.player_peer_ids[player_index]
 		var event_data := _build_full_state_event_data(
@@ -379,6 +402,8 @@ func _broadcast_full_state_for_move(move: Dictionary) -> void:
 			[],
 			ui_sound_cues
 		)
+		if priority_response:
+			event_data["priority_response"] = true
 		if peer_id == 1:
 			network_manager.game_event_received.emit("full_state", event_data)
 		else:
@@ -491,8 +516,17 @@ func _build_full_state_event_data(
 	ui_sound_cues: Array[String] = []
 ) -> Dictionary:
 	var serialized_state := GameState.serialize(game_manager, player_index, visible_player_indices)
+	# Unlocks and later discard choices have no resolving stack card on clients.
+	# Send cosmetic provenance only for cards already visible in the graveyard.
+	var ragnarok_sources: Dictionary = {}
+	for player_data in serialized_state.get("players", []):
+		for card_data in player_data.get("graveyard", []):
+			var card_uid := str(card_data.get("uid", ""))
+			if _ragnarok_grave_sources.has(card_uid):
+				ragnarok_sources[card_uid] = _ragnarok_grave_sources[card_uid]
 	var event_data := {
 		state = serialized_state,
+		ragnarok_grave_sources = ragnarok_sources,
 		action_message = action_message,
 		action_log_event_id = _action_log_event_id,
 		authoritative_stack_window_locked = match_manager != null \

@@ -114,7 +114,6 @@ const GIDIM_ENSI_CARD_NAME := "Gidim Ensi"
 const GIDIM_ENSI_SLEEP_SOURCE := "Gidim Ensi Guardian"
 const LEVEL_BADGE_TOP := -12.0
 const LEVEL_BADGE_BOTTOM := 12.0
-const POPUP_VIEWPORT_MARGIN := 4.0
 const BADGE_ROW_GAP := 6.0
 const BADGE_ROW_TOP := LEVEL_BADGE_BOTTOM + BADGE_ROW_GAP + 31.0
 const GOD_ABILITY_BADGE_TOP_OFFSET := -22.0
@@ -594,6 +593,7 @@ var _incorporeal_fade_tween: Tween = null
 var _incorporeal_fade_card_uid: String = ""
 var _incorporeal_fade_base_alpha: float = 1.0
 var _badge_hover_popup: Control = null
+var _clickable_badges: Array[Control] = []
 var _stealth_fog_overlay: Control = null
 var _dromi_drain_visual_states: Dictionary = {}
 
@@ -799,6 +799,7 @@ func _connect_badge_click_action(badge_control: Control, action_name: String, ca
 	elif badge_control.has_meta("badge_click_extra"):
 		badge_control.remove_meta("badge_click_extra")
 	badge_control.gui_input.connect(Callable(self, "_on_badge_gui_input"))
+	_clickable_badges.append(badge_control)
 
 func _on_badge_gui_input(event: InputEvent) -> void:
 	if not (event is InputEventMouseButton) or event.button_index != MOUSE_BUTTON_LEFT or not event.pressed:
@@ -2817,34 +2818,10 @@ func _show_badge_hover_popup(anchor: Control, text: String, preview_card: Card =
 	var popup_size := popup.get_combined_minimum_size()
 	popup.size = popup_size
 	popup_root.size = popup_size
-	var anchor_rect := anchor.get_global_rect()
-	var viewport_size := get_viewport_rect().size
-	var popup_scale := minf(
-		1.0,
-		minf(
-			maxf(0.35, (viewport_size.x - POPUP_VIEWPORT_MARGIN * 2.0) / maxf(popup_size.x, 1.0)),
-			maxf(0.35, (viewport_size.y - POPUP_VIEWPORT_MARGIN * 2.0) / maxf(popup_size.y, 1.0))
-		)
+	var anchor_rect := anchor.get_global_transform() * Rect2(Vector2.ZERO, anchor.size)
+	CardDetailContentBuilderScript.place_hover_panel(
+		popup_root, anchor_rect, _get_card_hover_avoid_rect().merge(anchor_rect)
 	)
-	popup_root.scale = Vector2(popup_scale, popup_scale)
-	var scaled_popup_size := popup_size * popup_scale
-	var popup_pos := Vector2(
-		anchor_rect.position.x + (anchor_rect.size.x - scaled_popup_size.x) * 0.5,
-		anchor_rect.position.y - scaled_popup_size.y - 6.0
-	)
-	if popup_pos.y < 4.0:
-		popup_pos.y = anchor_rect.end.y + 6.0
-	popup_pos.x = clampf(
-		popup_pos.x,
-		POPUP_VIEWPORT_MARGIN,
-		maxf(POPUP_VIEWPORT_MARGIN, viewport_size.x - scaled_popup_size.x - POPUP_VIEWPORT_MARGIN)
-	)
-	popup_pos.y = clampf(
-		popup_pos.y,
-		POPUP_VIEWPORT_MARGIN,
-		maxf(POPUP_VIEWPORT_MARGIN, viewport_size.y - scaled_popup_size.y - POPUP_VIEWPORT_MARGIN)
-	)
-	popup_root.global_position = popup_pos
 
 func _hide_badge_hover_popup() -> void:
 	if _badge_hover_popup != null and is_instance_valid(_badge_hover_popup):
@@ -4979,6 +4956,13 @@ func get_card_visual_global_rect() -> Rect2:
 		anchor_control = self
 	return anchor_control.get_global_transform() * Rect2(Vector2.ZERO, anchor_control.size)
 
+func _get_card_hover_avoid_rect() -> Rect2:
+	var avoid_rect := get_card_visual_global_rect().merge(get_global_rect())
+	for badge in _clickable_badges:
+		if is_instance_valid(badge) and badge.is_visible_in_tree() and not badge.is_queued_for_deletion():
+			avoid_rect = avoid_rect.merge(badge.get_global_transform() * Rect2(Vector2.ZERO, badge.size))
+	return avoid_rect
+
 func get_visual_anchor_global() -> Vector2:
 	return get_card_visual_global_rect().get_center()
 
@@ -5249,6 +5233,7 @@ func _refresh_display() -> void:
 	var preserved_stealth_fog_overlay := _take_stealth_fog_overlay_for_refresh(card)
 	_hide_ability_popup()
 	_hide_badge_hover_popup()
+	_clickable_badges.clear()
 	_stop_prepared_magical_hover_shake()
 	_defense_overlay = null
 	_raised_overlay = null
@@ -6068,6 +6053,11 @@ func _gui_input(event: InputEvent) -> void:
 		else:
 			zone_clicked.emit(zone)
 	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
+		if not _is_enemy and zone.zone_type == Zone.ZoneType.GOD_SLOT and zone.zone_owner == _get_viewer_player():
+			# The slot remains usable when an Active God has left it empty, on either turn.
+			accept_event()
+			god_right_clicked.emit(zone.cards[0] if not zone.cards.is_empty() else null)
+			return
 		if zone.cards.size() > 0:
 			var card := zone.cards[0]
 			if not _is_enemy and card.card_type == Card.CardType.CREATURE and card.get_controller() == game_manager.current_player:
@@ -6478,98 +6468,10 @@ func _show_ability_popup() -> void:
 		maxf(popup_size.y, keyword_size.y)
 	)
 	popup_root.size = popup_root_size
-	var popup_root_scale := minf(
-		1.0,
-		minf(
-			maxf(0.35, (popup_vp_size_shared.x - POPUP_VIEWPORT_MARGIN * 2.0) / maxf(popup_root_size.x, 1.0)),
-			maxf(0.35, (popup_vp_size_shared.y - POPUP_VIEWPORT_MARGIN * 2.0) / maxf(popup_root_size.y, 1.0))
-		)
+	var card_rect := get_card_visual_global_rect()
+	CardDetailContentBuilderScript.place_hover_panel(
+		popup_root, card_rect, _get_card_hover_avoid_rect(), active_god_preview != null
 	)
-	var card_rect := get_global_rect()
-	var preview_side_gap := 8.0
-	var preview_on_right := true
-	var preview_side_space := 0.0
-	if active_god_preview != null:
-		# Reserve the whole card's width before fitting the details and keywords.
-		# Clamping a viewport-sized popup can otherwise push it back over the art.
-		var right_space := maxf(0.0, popup_vp_size_shared.x - card_rect.end.x - preview_side_gap - POPUP_VIEWPORT_MARGIN)
-		var left_space := maxf(0.0, card_rect.position.x - preview_side_gap - POPUP_VIEWPORT_MARGIN)
-		preview_on_right = right_space >= left_space
-		preview_side_space = maxf(right_space, left_space)
-		if preview_side_space > 0.0:
-			popup_root_scale = minf(popup_root_scale, preview_side_space / maxf(popup_root_size.x, 1.0))
-	popup_root.scale = Vector2(popup_root_scale, popup_root_scale)
-	var scaled_popup_root_size := popup_root_size * popup_root_scale
-
-	var desired_x := global_position.x - ((keyword_size.x + KEYWORD_PANEL_GAP) * popup_root_scale if keywords_on_left else 0.0)
-	popup_root.global_position = _get_card_hover_popup_position(
-		card_rect,
-		Vector2(desired_x, global_position.y),
-		scaled_popup_root_size,
-		popup_vp_size_shared
-	)
-	if active_god_preview != null and preview_side_space > 0.0:
-		var preview_x := card_rect.end.x + preview_side_gap if preview_on_right else card_rect.position.x - scaled_popup_root_size.x - preview_side_gap
-		var preview_y := card_rect.position.y + (card_rect.size.y - scaled_popup_root_size.y) * 0.5
-		popup_root.global_position = _clamp_hover_popup_position(Vector2(preview_x, preview_y), scaled_popup_root_size, popup_vp_size_shared)
-	popup_root.visible = true
-
-func _get_card_hover_popup_position(
-	anchor_rect: Rect2,
-	preferred_origin: Vector2,
-	scaled_popup_size: Vector2,
-	viewport_size: Vector2
-) -> Vector2:
-	var gap := 6.0
-	var vertical_x := clampf(
-		preferred_origin.x,
-		POPUP_VIEWPORT_MARGIN,
-		maxf(POPUP_VIEWPORT_MARGIN, viewport_size.x - scaled_popup_size.x - POPUP_VIEWPORT_MARGIN)
-	)
-	var horizontal_y := anchor_rect.position.y + (anchor_rect.size.y - scaled_popup_size.y) * 0.5
-	var candidates: Array[Vector2] = [
-		Vector2(vertical_x, anchor_rect.position.y - scaled_popup_size.y - gap),
-		Vector2(vertical_x, anchor_rect.end.y + gap),
-		Vector2(anchor_rect.end.x + gap, horizontal_y),
-		Vector2(anchor_rect.position.x - scaled_popup_size.x - gap, horizontal_y),
-	]
-	var avoid_rect := anchor_rect.grow(2.0)
-	var best_position := _clamp_hover_popup_position(candidates[0], scaled_popup_size, viewport_size)
-	var best_overlap := INF
-	var best_distance := INF
-	for candidate in candidates:
-		var clamped := _clamp_hover_popup_position(candidate, scaled_popup_size, viewport_size)
-		var popup_rect := Rect2(clamped, scaled_popup_size)
-		var overlap := _get_rect_overlap_area(popup_rect, avoid_rect)
-		var distance := clamped.distance_squared_to(candidate)
-		if overlap < best_overlap or (is_equal_approx(overlap, best_overlap) and distance < best_distance):
-			best_position = clamped
-			best_overlap = overlap
-			best_distance = distance
-	return best_position
-
-func _clamp_hover_popup_position(position: Vector2, scaled_popup_size: Vector2, viewport_size: Vector2) -> Vector2:
-	return Vector2(
-		clampf(
-			position.x,
-			POPUP_VIEWPORT_MARGIN,
-			maxf(POPUP_VIEWPORT_MARGIN, viewport_size.x - scaled_popup_size.x - POPUP_VIEWPORT_MARGIN)
-		),
-		clampf(
-			position.y,
-			POPUP_VIEWPORT_MARGIN,
-			maxf(POPUP_VIEWPORT_MARGIN, viewport_size.y - scaled_popup_size.y - POPUP_VIEWPORT_MARGIN)
-		)
-	)
-
-func _get_rect_overlap_area(a: Rect2, b: Rect2) -> float:
-	var overlap_left := maxf(a.position.x, b.position.x)
-	var overlap_right := minf(a.end.x, b.end.x)
-	var overlap_top := maxf(a.position.y, b.position.y)
-	var overlap_bottom := minf(a.end.y, b.end.y)
-	if overlap_right <= overlap_left or overlap_bottom <= overlap_top:
-		return 0.0
-	return (overlap_right - overlap_left) * (overlap_bottom - overlap_top)
 
 func _hide_ability_popup() -> void:
 	if _popup and is_instance_valid(_popup):

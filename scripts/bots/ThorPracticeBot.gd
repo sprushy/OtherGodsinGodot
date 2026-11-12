@@ -10,6 +10,8 @@ var game_input: GameInput = null
 var player_index: int = -1
 var bot_player: Player = null
 var opponent: Player = null
+# An optional selector responder for manual sandboxes; empty means full play.
+var prompt_types_only: Array[String] = []
 
 const STEP_DELAY_SECONDS := 0.35
 const RETRY_POLL_DELAY_SECONDS := 0.15
@@ -124,6 +126,8 @@ func _on_match_ui_refresh_requested() -> void:
 func _on_match_ui_interaction(prompt_player_index: int, type: String, data: Dictionary) -> void:
 	if prompt_player_index != player_index:
 		return
+	if not prompt_types_only.is_empty() and type not in prompt_types_only:
+		return
 	if type == "priority":
 		_queue_step()
 		return
@@ -184,6 +188,8 @@ func _queue_step() -> void:
 	tree.create_timer(STEP_DELAY_SECONDS).timeout.connect(_run_step, CONNECT_ONE_SHOT)
 
 func _should_retry_poll_later() -> bool:
+	if not prompt_types_only.is_empty():
+		return false
 	if not _active or game_manager == null or match_manager == null or game_input == null:
 		return false
 	if bot_player == null or game_manager.is_game_over:
@@ -212,6 +218,8 @@ func _get_retry_tree() -> SceneTree:
 	return Engine.get_main_loop() as SceneTree
 
 func _should_queue_step() -> bool:
+	if not prompt_types_only.is_empty():
+		return false
 	if not _active or game_manager == null or match_manager == null or game_input == null:
 		return false
 	if bot_player == null or opponent == null or game_manager.is_game_over:

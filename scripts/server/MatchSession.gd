@@ -166,6 +166,8 @@ func record_series_game_win(winner_index: int) -> Dictionary:
 	return get_series_snapshot()
 
 func is_series_complete() -> bool:
+	if status == STATUS_FINISHED:
+		return true
 	for session_id in player_session_ids:
 		if int(series_wins_by_session.get(session_id, 0)) >= games_to_win:
 			return true

@@ -210,6 +210,8 @@ static func build_command(bot, type: String, data: Dictionary) -> Dictionary:
 			command.merge({"type": "aphrodite_enslave_choice", "confirm": false})
 		"habrok_breakout":
 			command.merge({"type": "habrok_breakout_choice", "do_breakout": true})
+		"hati_moon_hunt":
+			command.merge({"type": "hati_moon_hunt", "decline": true})
 		"en_hedu_anna_exaltation":
 			if not (source is EnHeduAnna):
 				return {}

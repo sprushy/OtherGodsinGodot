@@ -8,6 +8,7 @@ const BUFF_SOURCE := "Fifa the Magical Arrow"
 var _buyback_archer: Card = null
 var _buyback_turn_number: int = -1
 var _buyback_event_start_index: int = -1
+var _earned_buyback_turn_from_snapshot: int = -1
 
 func _init() -> void:
 	super._init()
@@ -91,11 +92,6 @@ func get_buyback_mana_cost() -> int:
 func get_buyback_prompt_text() -> String:
 	return "Pay %d mana to return %s from the graveyard to your hand?" % [BUYBACK_COST, card_name]
 
-func resolve_buyback_choice(game_manager: GameManager, pay_cost: bool) -> String:
-	if not pay_cost:
-		return card_name + " stays in the graveyard."
-	return activate_from_graveyard(game_manager)
-
 func can_show_graveyard_hand_proxy(game_manager: GameManager) -> bool:
 	return can_activate_from_graveyard(game_manager)
 
@@ -133,6 +129,18 @@ func on_global_turn_end(game_manager: GameManager, _ending_player: Player) -> vo
 	if _buyback_turn_number == game_manager.turn_number:
 		_clear_buyback_state()
 
+func get_serialized_state() -> Dictionary:
+	var state := super.get_serialized_state()
+	var game_manager := card_owner.game_manager if card_owner != null else null
+	# The client only needs to know whether the Archer earned the return.
+	if _buyback_condition_met(game_manager):
+		state["earned_buyback_turn"] = game_manager.turn_number
+	return state
+
+func apply_serialized_state(state: Dictionary) -> void:
+	super.apply_serialized_state(state)
+	_earned_buyback_turn_from_snapshot = int(state.get("earned_buyback_turn", -1))
+
 func _arm_buyback(target: Card, game_manager: GameManager) -> void:
 	if game_manager == null or target == null:
 		return
@@ -144,15 +152,18 @@ func _clear_buyback_state() -> void:
 	_buyback_archer = null
 	_buyback_turn_number = -1
 	_buyback_event_start_index = -1
+	_earned_buyback_turn_from_snapshot = -1
 
 func _has_buyback_window(game_manager: GameManager) -> bool:
 	return game_manager != null \
+		and not game_manager.is_game_over \
 		and card_owner != null \
 		and current_zone == card_owner.graveyard_zone \
-		and _buyback_archer != null \
-		and _buyback_turn_number == game_manager.turn_number
+		and (_earned_buyback_turn_from_snapshot == game_manager.turn_number \
+			or (_buyback_archer != null and _buyback_turn_number == game_manager.turn_number))
 
 func _buyback_condition_met(game_manager: GameManager) -> bool:
 	if not _has_buyback_window(game_manager):
 		return false
-	return game_manager.card_destroyed_attack_target_since(_buyback_archer, _buyback_event_start_index)
+	return _earned_buyback_turn_from_snapshot == game_manager.turn_number \
+		or game_manager.card_destroyed_attack_target_since(_buyback_archer, _buyback_event_start_index)

@@ -908,7 +908,9 @@ func _handle_request_profile_summary(peer_id: int) -> void:
 	if match_history_store == null:
 		_send_error_to_peer(peer_id, "Match history storage is unavailable.")
 		return
-	_send_to_peer(peer_id, LobbyProtocolScript.PROFILE_SUMMARY, match_history_store.get_profile_summary(profile_id))
+	var account_id := str(session.get("account_id", "")).strip_edges()
+	var summary: Dictionary = match_history_store.get_profile_summary(profile_id, 5, account_id)
+	_send_to_peer(peer_id, LobbyProtocolScript.PROFILE_SUMMARY, summary)
 
 func _handle_request_friends(peer_id: int) -> void:
 	var session: Dictionary = _get_session_for_peer(peer_id)
@@ -2554,7 +2556,7 @@ func _ensure_deck_validator() -> void:
 func _ensure_match_history_store() -> void:
 	if match_history_store != null:
 		return
-	match_history_store = MatchHistoryStoreScript.new()
+	match_history_store = MatchHistoryStoreScript.new(MatchHistoryStoreScript.DEFAULT_STORAGE_FILE_NAME, true)
 
 func _ensure_multiplayer_api() -> MultiplayerAPI:
 	if use_default_multiplayer:

@@ -16,11 +16,18 @@ const PRIORITY_STOP_KEYS := ["start", "main", "combat", "end"]
 const PRIORITY_AUTO_MODE_NONE := "none"
 const PRIORITY_AUTO_MODE_PLAY := "play"
 const PRIORITY_AUTO_MODE_FAST_FORWARD := "fast_forward"
+const GOD_DIALOGUE_PHRASES := {
+	"good_game": "Good Game",
+	"well_played": "Well Played",
+	"you_there": "You There?",
+}
+const GOD_DIALOGUE_COOLDOWN_MSEC := 2500
 
 signal targeting_started(source: Card, target_type: String)
 signal targeting_ended()
 signal move_validated(move: Dictionary)
 signal move_failed(reason: String)
+signal god_dialogue_sent(player_index: int, phrase_id: String)
 
 var game_manager: GameManager
 var game_state: GameState
@@ -90,7 +97,8 @@ var pending_humbaba_prompt_uids: Array[String] = []
 var pending_combat_reveal_linger_action: CardAction = null
 var _combat_reveal_wait_generation: int = 0
 var _board_leaving_activation_linger_pending: bool = false
-var _pending_end_turn_after_resurrection: bool = false
+var _pending_end_turn_player: Player = null
+var _declined_moon_hunt_uids: Array[String] = []
 var _active_command_sender_info: Dictionary = {}
 var _active_command_type: String = ""
 var _active_command_pending_prompt_id: int = -1
@@ -99,8 +107,11 @@ var _pending_ui_interactions: Array[Dictionary] = []
 var _queued_ui_interactions: Array[Dictionary] = []
 var _next_ui_interaction_id: int = 1
 var _priority_preferences_by_player: Dictionary = {}
+var _last_god_dialogue_msec_by_player: Dictionary = {}
 var _pending_turn_action_after_opponent_priority_command: Dictionary = {}
 var _pending_turn_action_after_opponent_priority_sender_info: Dictionary = {}
+var _pending_turn_action_after_opponent_priority_actor: Player = null
+var _pending_turn_action_after_opponent_priority_turn: int = -1
 var _replaying_turn_action_after_opponent_priority: bool = false
 var _active_turn_start_sequence_turn: int = -1
 var _turn_start_sequence_feedback: String = ""
@@ -113,10 +124,13 @@ func _init(p_game_manager: GameManager) -> void:
 		game_manager.decision_requested.connect(_on_game_manager_decision_requested)
 	if game_manager != null and not game_manager.card_summoned.is_connected(_on_game_manager_card_summoned):
 		game_manager.card_summoned.connect(_on_game_manager_card_summoned)
+	if game_manager != null:
+		game_manager.hand_card_entered_play.connect(_on_hand_card_entered_play)
 	if game_manager != null and not game_manager.doorway_choice_requested.is_connected(_on_doorway_choice_requested):
 		game_manager.doorway_choice_requested.connect(_on_doorway_choice_requested)
 
 func reset_runtime_state() -> void:
+	_last_god_dialogue_msec_by_player.clear()
 	_clear_targeting_state()
 	pending_paid_hand_card = null
 	pending_paid_hand_display_zone = null
@@ -156,7 +170,8 @@ func reset_runtime_state() -> void:
 	pending_combat_reveal_linger_action = null
 	_combat_reveal_wait_generation = 0
 	_board_leaving_activation_linger_pending = false
-	_pending_end_turn_after_resurrection = false
+	_pending_end_turn_player = null
+	_declined_moon_hunt_uids.clear()
 	_active_command_sender_info.clear()
 	_active_command_type = ""
 	_active_command_pending_prompt_id = -1
@@ -164,8 +179,7 @@ func reset_runtime_state() -> void:
 	_pending_ui_interactions.clear()
 	_queued_ui_interactions.clear()
 	_next_ui_interaction_id = 1
-	_pending_turn_action_after_opponent_priority_command.clear()
-	_pending_turn_action_after_opponent_priority_sender_info.clear()
+	_clear_pending_turn_action_after_opponent_priority()
 	_replaying_turn_action_after_opponent_priority = false
 	_clear_pending_hunting_tactics_attack_declaration()
 	_active_turn_start_sequence_turn = -1
@@ -844,6 +858,8 @@ func _resume_authoritative_flow_after_prompt_command() -> void:
 	if _continue_active_authoritative_turn_start_sequence():
 		return
 	if game_manager.action_stack.is_empty():
+		if _continue_pending_end_turn():
+			return
 		_try_process_pending_turn_action_after_opponent_priority()
 		return
 	_advance_authoritative_priority()
@@ -973,6 +989,8 @@ func _get_command_uid_for_prompt_key(command: Dictionary, key: String) -> String
 		"card_uid":
 			return str(command.get("card_uid", "")).strip_edges()
 		"source_uid":
+			if command.get("type") == "hati_moon_hunt":
+				return str(command.get("source_uid", command.get("hati_uid", ""))).strip_edges()
 			return str(command.get("source_uid", "")).strip_edges()
 		"attacker_uid":
 			return str(command.get("attacker_uid", "")).strip_edges()
@@ -1238,6 +1256,26 @@ func _execute_queued_priority_choice_command(command: Dictionary, action: CardAc
 	_active_command_type = previous_command_type
 	_active_command_pending_prompt_id = previous_pending_prompt_id
 
+func _on_hand_card_entered_play(player: Player, card: Card) -> void:
+	if player == null or card == null or not game_manager._is_zone_in_play(card.current_zone):
+		return
+	if card.is_face_down or card.is_prepared or card.is_stealth or card is CharmCard or card.goes_to_graveyard_after_use():
+		return
+	if card.current_zone.is_board_zone() and card.card_type in [Card.CardType.CREATURE, Card.CardType.STRUCTURE]:
+		return
+	if _has_pending_event_priority_action(card, "hand_play"):
+		return
+	var action := CardAction.new()
+	action.type = CardAction.Type.EVENT
+	action.event_name = "hand_play"
+	action.source_player = player
+	action.card = card
+	action.event_speed = card.get_effective_speed()
+	action.resolution_text = "%s was played from hand." % card.card_name
+	game_manager.push_to_stack(action)
+	if _active_command_type.is_empty() and game_manager.resolving_stack_actions.is_empty():
+		call_deferred("_resume_authoritative_flow_after_prompt_command")
+
 func _on_game_manager_card_summoned(
 	player: Player,
 	card: Card,
@@ -1442,6 +1480,19 @@ func _finalize_resolved_action(action: CardAction) -> void:
 	if _pending_ui_interactions.is_empty() and not _queued_ui_interactions.is_empty():
 		_release_next_queued_ui_interaction()
 	_continue_authoritative_stack_after_resolution()
+	if action != null and action.type == CardAction.Type.ATTACK:
+		_offer_aphrodite_after_combat()
+
+func _offer_aphrodite_after_combat() -> void:
+	if game_manager == null or game_manager.is_game_over \
+			or not _pending_ui_interactions.is_empty() or not _queued_ui_interactions.is_empty():
+		return
+	var player := game_manager.current_player
+	if player == null or player.god_zone.cards.is_empty():
+		return
+	var god := player.god_zone.cards[0] as AphroditeAreia
+	if god != null and god.can_activate(game_manager):
+		_emit_ui_interaction_for_player(player, "aphrodite_enslave", {"source_uid": god.uid})
 
 func _continue_authoritative_stack_after_resolution() -> void:
 	# Keep continuation centralized so direct and deferred resolution paths both drain the stack.
@@ -1454,6 +1505,8 @@ func _continue_authoritative_stack_after_resolution() -> void:
 	if game_manager.action_stack.is_empty():
 		_clear_priority_window_state()
 		if _continue_active_authoritative_turn_start_sequence():
+			return
+		if _continue_pending_end_turn():
 			return
 		_try_process_pending_turn_action_after_opponent_priority()
 		if game_manager.action_stack.is_empty() \
@@ -3462,7 +3515,7 @@ func _emit_next_breidablik_turn_start_choice() -> bool:
 	})
 	return true
 
-func _close_breidablik_turn_start_windows() -> void:
+func _close_card_turn_start_windows() -> void:
 	if game_manager == null:
 		return
 	for player in game_manager.players:
@@ -3472,6 +3525,10 @@ func _close_breidablik_turn_start_windows() -> void:
 			for card in zone.cards:
 				if card is Breidablik:
 					(card as Breidablik).close_turn_start_window()
+		for zone in player.frontline_zones + player.reserve_zones:
+			for card in zone.cards:
+				if card is WheelOfFire:
+					(card as WheelOfFire).close_turn_start_window()
 
 func _begin_or_continue_authoritative_turn_start_sequence(feedback: String = "") -> void:
 	if game_manager == null:
@@ -3504,7 +3561,7 @@ func _continue_active_authoritative_turn_start_sequence() -> bool:
 		return true
 	if _emit_next_breidablik_turn_start_choice():
 		return true
-	_close_breidablik_turn_start_windows()
+	_close_card_turn_start_windows()
 	game_manager.prune_stale_stack_actions()
 	if not game_manager.action_stack.is_empty() or not game_manager.resolving_stack_actions.is_empty():
 		_advance_authoritative_priority()
@@ -3585,7 +3642,6 @@ func _clear_pending_hunting_tactics_attack_declaration() -> void:
 func _has_unresolved_stack_action_window() -> bool:
 	if game_manager == null:
 		return false
-	game_manager.prune_stale_stack_actions()
 	return remote_authoritative_stack_window_locked \
 		or _board_leaving_activation_linger_pending \
 		or _authoritative_stack_resolution_pending \
@@ -3593,7 +3649,7 @@ func _has_unresolved_stack_action_window() -> bool:
 		or pending_combat_reveal_linger_action != null \
 		or pending_humbaba_action != null \
 		or pending_retreat_action != null \
-		or not game_manager.action_stack.is_empty() \
+		or game_manager.get_top_live_stack_action() != null \
 		or not game_manager.resolving_stack_actions.is_empty()
 
 func _defer_board_leaving_activation(
@@ -4368,12 +4424,16 @@ func _validate_upkeep_choice_window(actor: Player) -> String:
 func _clear_pending_turn_action_after_opponent_priority() -> void:
 	_pending_turn_action_after_opponent_priority_command.clear()
 	_pending_turn_action_after_opponent_priority_sender_info.clear()
+	_pending_turn_action_after_opponent_priority_actor = null
+	_pending_turn_action_after_opponent_priority_turn = -1
 
 func _remember_turn_action_after_priority(command: Dictionary, sender_info: Dictionary) -> void:
 	if _replaying_turn_action_after_opponent_priority:
 		return
 	_pending_turn_action_after_opponent_priority_command = command.duplicate(true)
 	_pending_turn_action_after_opponent_priority_sender_info = sender_info.duplicate(true)
+	_pending_turn_action_after_opponent_priority_actor = _get_command_actor(sender_info)
+	_pending_turn_action_after_opponent_priority_turn = game_manager.turn_number
 
 func _has_pending_turn_action_after_opponent_priority() -> bool:
 	return not _pending_turn_action_after_opponent_priority_command.is_empty()
@@ -4381,7 +4441,7 @@ func _has_pending_turn_action_after_opponent_priority() -> bool:
 func _clear_pending_turn_action_after_priority_response(responding_player: Player) -> void:
 	if not _has_pending_turn_action_after_opponent_priority():
 		return
-	var pending_actor := _get_pending_turn_action_after_opponent_priority_actor()
+	var pending_actor := _pending_turn_action_after_opponent_priority_actor
 	if pending_actor == null or responding_player == null or pending_actor != responding_player:
 		_clear_pending_turn_action_after_opponent_priority()
 
@@ -4413,20 +4473,24 @@ func _defer_turn_action_until_opponent_priority_declines(command: Dictionary, se
 	_request_ui_refresh()
 	return true
 
-func _get_pending_turn_action_after_opponent_priority_actor() -> Player:
-	if not _has_pending_turn_action_after_opponent_priority():
-		return null
-	var sender_player := _resolve_sender_player(_pending_turn_action_after_opponent_priority_sender_info)
-	return sender_player if sender_player != null else game_manager.current_player
+func _pending_turn_action_belongs_to_current_turn() -> bool:
+	return game_manager != null \
+		and not game_manager.is_game_over \
+		and game_manager.turn_number == _pending_turn_action_after_opponent_priority_turn \
+		and game_manager.current_player == _pending_turn_action_after_opponent_priority_actor
 
 func _try_pass_pending_turn_action_actor_priority() -> bool:
 	if game_manager == null or not _has_pending_turn_action_after_opponent_priority():
 		return false
 	if game_manager.action_stack.is_empty() or _authoritative_stack_resolution_pending:
 		return false
-	var actor := _get_pending_turn_action_after_opponent_priority_actor()
-	if actor == null or actor != game_manager.current_player or actor != game_manager.priority_player:
+	if not _pending_turn_action_belongs_to_current_turn():
+		_clear_pending_turn_action_after_opponent_priority()
 		return false
+	var actor := _pending_turn_action_after_opponent_priority_actor
+	if actor != game_manager.priority_player:
+		return false
+	_consume_pending_ui_interaction_for_player(actor, "priority")
 	game_manager.pass_priority()
 	move_validated.emit({type = "priority_pass"})
 	if game_manager.both_passed():
@@ -4442,7 +4506,7 @@ func _try_pass_pending_turn_action_actor_priority() -> bool:
 func _try_process_pending_turn_action_after_opponent_priority() -> void:
 	if _replaying_turn_action_after_opponent_priority or not _has_pending_turn_action_after_opponent_priority():
 		return
-	if game_manager == null:
+	if not _pending_turn_action_belongs_to_current_turn():
 		_clear_pending_turn_action_after_opponent_priority()
 		return
 	if _has_unresolved_stack_action_window():
@@ -4505,6 +4569,9 @@ func _get_move_cost_payment_failure_reason(card: Card, prepared: bool = false, p
 ## Commands are Dictionaries containing "type" and relevant IDs.
 ## Returns true on success, false on failure (failure also emits move_failed).
 func process_command(command: Dictionary, sender_info: Dictionary = {}) -> bool:
+	# Dialogue is cosmetic: it must not consume prompts, pass priority, or resume rules flow.
+	if str(command.get("type", "")) == "god_dialogue":
+		return _process_god_dialogue_command(command, sender_info)
 	_active_command_sender_info = sender_info.duplicate(true)
 	_active_command_type = str(command.get("type", ""))
 	_active_command_pending_prompt_id = -1
@@ -4596,6 +4663,25 @@ func process_command(command: Dictionary, sender_info: Dictionary = {}) -> bool:
 	elif result:
 		call_deferred("_resume_authoritative_flow_after_prompt_command")
 	return result
+
+func _process_god_dialogue_command(command: Dictionary, sender_info: Dictionary) -> bool:
+	if game_manager == null:
+		return false
+	var authority_error := _validate_sender_authority(command, sender_info)
+	if not authority_error.is_empty():
+		_send_rejection_to_sender(sender_info, authority_error)
+		return false
+	var player_index := int(command.get("player_index", -1))
+	var phrase_id := str(command.get("phrase_id", ""))
+	if player_index < 0 or player_index >= game_manager.players.size() or not GOD_DIALOGUE_PHRASES.has(phrase_id):
+		return false
+	var now := Time.get_ticks_msec()
+	var last_sent := int(_last_god_dialogue_msec_by_player.get(player_index, -GOD_DIALOGUE_COOLDOWN_MSEC))
+	if now - last_sent < GOD_DIALOGUE_COOLDOWN_MSEC:
+		return false
+	_last_god_dialogue_msec_by_player[player_index] = now
+	god_dialogue_sent.emit(player_index, phrase_id)
+	return true
 
 func _accept_redundant_priority_pass(command: Dictionary, sender_info: Dictionary) -> bool:
 	if str(command.get("type", "")) != "priority_pass":
@@ -4777,10 +4863,9 @@ func _process_command_impl(command: Dictionary) -> bool:
 			for et_card in et_discard_validation.get("cards", []):
 				acting_player.discard_card(et_card)
 			move_validated.emit(command)
-			if _check_for_next_resurrection():
-				_pending_end_turn_after_resurrection = true
-				return true
-			_finalize_pending_end_turn(acting_player)
+			_declined_moon_hunt_uids.clear()
+			_pending_end_turn_player = acting_player
+			_continue_pending_end_turn()
 			return true
 		"upkeep_choice":
 			var upkeep_window_error := _validate_upkeep_choice_window(acting_player)
@@ -5336,12 +5421,14 @@ func _process_command_impl(command: Dictionary) -> bool:
 			_begin_or_continue_authoritative_turn_start_sequence("Skoll summoned via Sun Hunt.")
 			return true
 		"hati_moon_hunt":
-			var hati_uid: String = command.get("hati_uid", "")
-			var hati_card := game_manager.get_card_by_uid(hati_uid)
-			if hati_card == null or not (hati_card is Hati):
+			var hati_uid := _get_command_uid_for_prompt_key(command, "source_uid")
+			var hati := game_manager.get_card_by_uid(hati_uid) as Hati
+			if hati == null:
 				move_failed.emit("hati_moon_hunt: Hati card not found")
 				return false
-			var hati := hati_card as Hati
+			if bool(command.get("decline", false)):
+				_declined_moon_hunt_uids.append(hati_uid)
+				return true
 			if not hati.can_use_moon_hunt_summon(game_manager):
 				move_failed.emit("Hati cannot use Moon Hunt right now.")
 				return false
@@ -6428,6 +6515,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 				"%s activates Breakout." % habrok.card_name,
 				func() -> void:
 					habrok.resolve_breakout_choice(game_manager, true)
+					call_deferred("_resume_authoritative_flow_after_prompt_command")
 			):
 				move_validated.emit(command)
 				return true
@@ -6447,7 +6535,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var target: Card = game_manager.get_card_by_uid(target_uid) if target_uid != "" else null
 			var valid_targets: Array[Card] = []
 			valid_targets.assign(wolf.get_valid_maturation_targets())
-			if target != null and target not in valid_targets:
+			if target_uid != "" and target not in valid_targets:
 				move_failed.emit("wolf_adolescent_maturation_choice: invalid Lupine target")
 				return false
 			var feedback: String = wolf.resolve_maturation_choice(game_manager, target)
@@ -6471,12 +6559,9 @@ func _process_command_impl(command: Dictionary) -> bool:
 					move_failed.emit("humbaba_augury_choice: that augury prompt is no longer active")
 					return false
 			var valid_targets := humbaba.get_augury_cards(game_manager)
-			if valid_targets.is_empty():
-				move_failed.emit("humbaba_augury_choice: no cards available to prime")
-				return false
 			var target_uid: String = command.get("target_uid", "")
 			var target: Card = game_manager.get_card_by_uid(target_uid) if target_uid != "" else null
-			if target != null and target not in valid_targets:
+			if target_uid != "" and target not in valid_targets:
 				move_failed.emit("humbaba_augury_choice: invalid card choice")
 				return false
 			var feedback := humbaba.resolve_augury_reading(game_manager, target)
@@ -6536,13 +6621,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if not wm_fenrir.can_use_hand_ability(game_manager):
 				move_failed.emit("Wolf Master cannot be used right now.")
 				return false
-			if not wm_fenrir.perform_wolf_master_shuffle():
-				move_failed.emit("Wolf Master shuffle failed.")
-				return false
 			var wm_lupine_uid: String = command.get("lupine_uid", "")
 			var wm_lupine := game_manager.get_card_by_uid(wm_lupine_uid)
-			if wm_lupine == null:
-				move_failed.emit("wolf_master_summon: lupine not found")
+			if wm_lupine not in wm_fenrir.get_valid_wolf_master_summons_after_shuffle(game_manager):
+				move_failed.emit("Wolf Master: that Lupine is no longer a valid summon choice.")
 				return false
 			var wm_zone := resolve_zone(command)
 			if wm_zone == null or wm_zone.zone_owner != game_manager.current_player \
@@ -6555,6 +6637,9 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if wm_mode_str == "aggressive":
 				wm_mode = Card.CreatureMode.AGGRESSIVE
 			var wm_stealth := wm_mode_str == "stealth"
+			if not wm_fenrir.perform_wolf_master_shuffle():
+				move_failed.emit("Wolf Master shuffle failed.")
+				return false
 			if not game_manager.summon_creature_by_effect(
 				game_manager.current_player, wm_lupine, wm_zone,
 				wm_mode, wm_stealth, wm_stealth,
@@ -6626,6 +6711,14 @@ func _process_command_impl(command: Dictionary) -> bool:
 			return true
 		"combat_retreat_decision":
 			return _process_combat_retreat_decision(command)
+		"fifa_graveyard_buyback":
+			var fifa := game_manager.get_card_by_uid(str(command.get("card_uid", ""))) as FifaTheMagicalArrow
+			if fifa == null or not fifa.can_activate_from_graveyard(game_manager):
+				move_failed.emit("Fifa the Magical Arrow cannot return from the graveyard right now.")
+				return false
+			command["public_log_message"] = fifa.activate_from_graveyard(game_manager)
+			move_validated.emit(command)
+			return true
 		"play_charm_response":
 			var pcr_charm_uid: String = command.get("charm_uid", "")
 			var pcr_charm := game_manager.get_card_by_uid(pcr_charm_uid)
@@ -6791,11 +6884,6 @@ func _process_command_impl(command: Dictionary) -> bool:
 					game_manager.note_player_feedback("%s cannot resurrect: no empty reserve zone." % card.card_name)
 					game_manager.pending_resurrections.erase(card)
 					move_validated.emit(command)
-					if _pending_end_turn_after_resurrection:
-						if _check_for_next_resurrection():
-							return true
-						_pending_end_turn_after_resurrection = false
-						_finalize_pending_end_turn(player)
 					return true
 
 				player.spend_mana(AgainWalker.RESURRECTION_COST)
@@ -6816,22 +6904,12 @@ func _process_command_impl(command: Dictionary) -> bool:
 					game_manager.note_player_feedback("%s could not resurrect." % card.card_name)
 					game_manager.pending_resurrections.erase(card)
 					move_validated.emit(command)
-					if _pending_end_turn_after_resurrection:
-						if _check_for_next_resurrection():
-							return true
-						_pending_end_turn_after_resurrection = false
-						_finalize_pending_end_turn(player)
 					return true
 			
 			# Remove from pending list regardless of choice (or if failed)
 			game_manager.pending_resurrections.erase(card)
 			move_validated.emit(command)
 			_advance_authoritative_priority_for_pending_card_events(card)
-			if _pending_end_turn_after_resurrection:
-				if _check_for_next_resurrection():
-					return true
-				_pending_end_turn_after_resurrection = false
-				_finalize_pending_end_turn(card.card_owner if card != null else null)
 			return true
 		"return_to_hand_choice":
 			var card_uid := str(command.get("card_uid", "")).strip_edges()
@@ -7035,10 +7113,25 @@ func _clear_pending_retreat_state() -> void:
 	pending_retreat_prompt_uids.clear()
 	pending_retreat_guardian_blocked_uids.clear()
 
-func _finalize_pending_end_turn(acting_player: Player) -> void:
-	var end_turn_player := acting_player if acting_player != null else game_manager.current_player
+func _continue_pending_end_turn() -> bool:
+	var end_turn_player := _pending_end_turn_player
 	if end_turn_player == null:
-		return
+		return false
+	if game_manager.is_game_over or game_manager.current_player != end_turn_player:
+		_pending_end_turn_player = null
+		return false
+	if not _pending_ui_interactions.is_empty() or not _queued_ui_interactions.is_empty() \
+			or _has_unresolved_stack_action_window():
+		return true
+	for card in end_turn_player.hand_zone.cards:
+		var hati := card as Hati
+		if hati != null and hati.uid not in _declined_moon_hunt_uids \
+				and hati.can_use_moon_hunt_summon(game_manager):
+			_emit_ui_interaction_for_player(end_turn_player, "hati_moon_hunt", {"source_uid": hati.uid})
+			return true
+	if _offer_habrok_breakout(end_turn_player) or _check_for_next_resurrection():
+		return true
+	_pending_end_turn_player = null
 	_queue_authoritative_priority_event(
 		"end_turn",
 		func() -> void:
@@ -7047,6 +7140,23 @@ func _finalize_pending_end_turn(acting_player: Player) -> void:
 		end_turn_player,
 		"End-turn window closed."
 	)
+	return true
+
+func _offer_habrok_breakout(ending_player: Player) -> bool:
+	var opponent := game_manager.get_opponent(ending_player)
+	if opponent == null:
+		return false
+	for zone in opponent.frontline_zones + opponent.reserve_zones:
+		for card in zone.cards:
+			var habrok := card as HabrokParagonOfHawks
+			if habrok == null or not habrok.can_trigger_breakout(game_manager, ending_player):
+				continue
+			_emit_ui_interaction_for_player(opponent, "habrok_breakout", {
+				"source_uid": habrok.uid,
+				"prompt_text": habrok.get_breakout_prompt_text(game_manager, opponent),
+			})
+			return true
+	return false
 
 func _check_for_next_resurrection() -> bool:
 	# Only relevant if we have pending resurrections

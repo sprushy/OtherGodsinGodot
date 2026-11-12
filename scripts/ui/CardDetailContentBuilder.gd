@@ -148,6 +148,41 @@ static func set_hover_mouse_passthrough(node: Node) -> void:
 	for child in node.get_children():
 		set_hover_mouse_passthrough(child)
 
+static func place_hover_panel(panel: Control, anchor_rect: Rect2, avoid_rect: Rect2, prefer_sides: bool = false) -> void:
+	var viewport := panel.get_viewport_rect().grow(-4.0)
+	var reserved := avoid_rect.grow(6.0)
+	var left_edge := clampf(reserved.position.x, viewport.position.x, viewport.end.x)
+	var right_edge := clampf(reserved.end.x, viewport.position.x, viewport.end.x)
+	var top_edge := clampf(reserved.position.y, viewport.position.y, viewport.end.y)
+	var bottom_edge := clampf(reserved.end.y, viewport.position.y, viewport.end.y)
+	var above := Rect2(viewport.position, Vector2(viewport.size.x, top_edge - viewport.position.y))
+	var below := Rect2(viewport.position.x, bottom_edge, viewport.size.x, viewport.end.y - bottom_edge)
+	var right := Rect2(right_edge, viewport.position.y, viewport.end.x - right_edge, viewport.size.y)
+	var left := Rect2(viewport.position, Vector2(left_edge - viewport.position.x, viewport.size.y))
+	var areas: Array[Rect2] = [right, left, above, below] if prefer_sides else [above, below, right, left]
+
+	# Fit the entire panel in one of the spaces beside the card and its controls.
+	var best_area := Rect2()
+	var best_scale := 0.0
+	for area in areas:
+		if not area.has_area():
+			continue
+		var fit_scale := minf(1.0, minf(area.size.x / panel.size.x, area.size.y / panel.size.y))
+		if fit_scale > best_scale:
+			best_area = area
+			best_scale = fit_scale
+		if best_scale == 1.0:
+			break
+	if best_scale <= 0.0:
+		panel.hide()
+		return
+
+	var scaled_size := panel.size * best_scale
+	var desired_origin := anchor_rect.get_center() - scaled_size * 0.5
+	panel.scale = Vector2.ONE * best_scale
+	panel.global_position = desired_origin.clamp(best_area.position, best_area.end - scaled_size)
+	panel.show()
+
 static func wrap_hover_body(content: Control, max_height: float) -> ScrollContainer:
 	var scroll := ScrollContainer.new()
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED

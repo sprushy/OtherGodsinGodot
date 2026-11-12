@@ -54,6 +54,7 @@ var _base_z_index: int = 0
 const _HOVER_PANEL_Z_INDEX := 2000
 const _HOVER_PANEL_WIDTH := 320.0
 const _HOVER_PANEL_MAX_HEIGHT := 420.0
+const _HOVER_SCALE := Vector2(1.08, 1.08)
 var _hover_panel: Control = null
 var _hover_viewer: Player = null
 var _hover_use_board_popup: bool = false
@@ -1357,7 +1358,9 @@ func _build_drag_ghost() -> Control:
 			sz = ghost.size
 	_drag_ghost_pivot = sz / 2.0
 	_drag_ghost = ghost
-	_set_drag_prepare_preview(_drag_stealth and _can_toggle_drag_prepare())
+	# Hexes always prepare on drop; spells and charms opt in while dragging.
+	var prepare_preview := card_data != null and (card_data.card_type == Card.CardType.HEX or (_drag_stealth and _can_toggle_drag_prepare()))
+	_set_drag_prepare_preview(prepare_preview)
 	_refresh_drag_summon_preview()
 	_refresh_drag_ghost_level_preview()
 	_drag_ghost = null
@@ -1531,14 +1534,10 @@ func _show_hover_panel() -> void:
 	else:
 		panel.size = Vector2(_HOVER_PANEL_WIDTH, minf(_HOVER_PANEL_MAX_HEIGHT, vp_size.y - 8.0))
 
-	# Position: prefer right of card, flip left if off-screen
-	var panel_size := panel.size
-	var card_right := global_position.x + size.x + 8
-	var px := card_right if card_right + panel_size.x < vp_size.x else global_position.x - panel_size.x - 8
-	px = clampf(px, 4.0, max(4.0, vp_size.x - panel_size.x - 4.0))
-	var py := clampf(global_position.y, 4.0, max(4.0, vp_size.y - panel_size.y - 4.0))
-	panel.global_position = Vector2(px, py)
-	panel.visible = true
+	# Reserve the full hover size while the card is still scaling up.
+	var hover_size := size * (_HOVER_SCALE / scale).max(Vector2.ONE)
+	var card_rect := get_global_transform() * Rect2((size - hover_size) * 0.5, hover_size)
+	CardDetailContentBuilderScript.place_hover_panel(panel, card_rect, card_rect, true)
 
 func _apply_hover_scrollbar_style(scroll: ScrollContainer) -> void:
 	if scroll == null or not is_instance_valid(scroll):
@@ -1583,7 +1582,7 @@ func _notification(what: int) -> void:
 				pivot_offset = size / 2.0
 				z_index = _base_z_index + 50
 				var tw := create_tween()
-				tw.tween_property(self, "scale", Vector2(1.08, 1.08), 0.08)
+				tw.tween_property(self, "scale", _HOVER_SCALE, 0.08)
 				_show_hover_panel()
 		NOTIFICATION_MOUSE_EXIT:
 			_mouse_hovered = false
