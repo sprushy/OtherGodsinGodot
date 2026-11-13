@@ -11098,8 +11098,8 @@ func _start_smoke_mode() -> void:
 		call_deferred("_run_practice_thor_smoke")
 		return
 
-	if role in ["habrok_network_host", "habrok_network_client"]:
-		call_deferred("_run_habrok_network_smoke", role == "habrok_network_host")
+	if role in ["habrok_network_host", "habrok_network_client", "hringhorni_network_host", "hringhorni_network_client"]:
+		call_deferred("_run_card_network_smoke", role)
 		return
 
 	if role == "practice_thor_summon":
@@ -11159,7 +11159,9 @@ func _join_smoke_room(room_code: String) -> void:
 	_pending_join_room_code = room_code
 	_on_connect_pressed()
 
-func _run_habrok_network_smoke(is_host: bool) -> void:
+func _run_card_network_smoke(role: String) -> void:
+	var is_host := role.ends_with("_host")
+	var test_hringhorni := role.begins_with("hringhorni_")
 	var port := int(_smoke_config.get("match_port", 12345))
 	var confirm := not bool(_smoke_config.get("habrok_decline", false))
 	var match_id := "habrok-network-smoke"
@@ -11195,6 +11197,9 @@ func _run_habrok_network_smoke(is_host: bool) -> void:
 		bear.card_owner = bot_player
 		var bear_zone := bot_player.frontline_zones[0]
 		bear_zone.add_card(bear)
+		if test_hringhorni:
+			await _run_hringhorni_network_host(server, human_player, bear)
+			return
 		var habrok := HabrokParagonOfHawks.new()
 		habrok.card_owner = human_player
 		var habrok_zone := human_player.reserve_zones[0]
@@ -11220,6 +11225,9 @@ func _run_habrok_network_smoke(is_host: bool) -> void:
 		"match_id": match_id, "session_id": human_session, "match_token": human_token,
 		"server_mode": MatchSessionScript.SERVER_MODE_DEDICATED_HEADLESS,
 	})
+	if test_hringhorni:
+		await _run_hringhorni_network_client(client)
+		return
 	if not await _wait_for_practice_thor_smoke_condition_seconds(func() -> bool:
 		return client.game_input is NetworkedGameInput \
 			and client.get("_pending_habrok_breakout") is HabrokParagonOfHawks \
@@ -11244,6 +11252,73 @@ func _run_habrok_network_smoke(is_host: bool) -> void:
 		_fail_smoke_if_enabled("habrok_network_client_did_not_receive_resolved_state")
 		return
 	_finish_smoke_if_enabled("PASS:habrok_network_client")
+
+func _run_hringhorni_network_host(server: HeadlessMatchServer, player: Player, attacker: Card) -> void:
+	var rules := server.game_manager
+	rules.turn_number = 1
+	attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
+	var warrior := HariiWarrior.new()
+	warrior.card_owner = player
+	warrior.creature_mode = Card.CreatureMode.DEFENSIVE
+	player.frontline_zones[0].add_card(warrior)
+	var charm := Hringhorni.new()
+	charm.card_owner = player
+	charm.is_prepared = true
+	charm.is_face_down = true
+	player.reserve_zones[0].add_card(charm)
+	rules.prepared_charms[charm] = rules.turn_number
+	var recruit := Berserker.new()
+	recruit.card_owner = player
+	player.deck_zone.add_card(recruit)
+	_write_smoke_trace("hringhorni_network:server_ready")
+	if not await _wait_for_practice_thor_smoke_condition_seconds(func() -> bool:
+		return warrior.current_zone == player.graveyard_zone \
+			and charm.current_zone == player.graveyard_zone \
+			and recruit.current_zone != null and recruit.current_zone.is_board_zone()
+	, 55.0):
+		_fail_smoke_if_enabled("hringhorni_network_server_unresolved turn=%d warrior=%s charm=%s feedback=%s" % [
+			rules.turn_number, warrior.current_zone.zone_type, charm.current_zone.zone_type,
+			server.match_manager.last_move_failed_reason,
+		])
+		return
+	_write_smoke_trace("hringhorni_network:server_recruited_berserker")
+	await get_tree().create_timer(1.0).timeout
+	_finish_smoke_if_enabled("PASS:hringhorni_network_host")
+
+func _run_hringhorni_network_client(client) -> void:
+	client._set_priority_auto_mode("play", true, true)
+	if not await _wait_for_practice_thor_smoke_condition_seconds(func() -> bool:
+		var rules: GameManager = client.game_manager
+		var action := rules.get_top_live_stack_action()
+		var cards := rules.players[1].reserve_zones[0].cards
+		return client._is_priority_prompt_visible() and action != null \
+			and action.event_name == "destroyed" and action.card is HariiWarrior \
+			and not cards.is_empty() and cards[0] is Hringhorni \
+			and client._is_card_usable_for_priority(cards[0])
+	, 25.0):
+		_fail_smoke_if_enabled("hringhorni_network_client_priority_missing")
+		return
+	var player: Player = client.game_manager.players[1]
+	_write_smoke_trace("hringhorni_network:client_received_destruction_priority")
+	client._on_board_card_pressed(player.reserve_zones[0].cards[0])
+	var select_card: Callable = client.get("_overlay_card_selected")
+	var recruit: Card = null
+	for card in player.deck_zone.cards:
+		if card is Berserker:
+			recruit = card
+			break
+	if not select_card.is_valid() or recruit == null:
+		_fail_smoke_if_enabled("hringhorni_network_client_picker_missing")
+		return
+	_write_smoke_trace("hringhorni_network:client_opened_deck_picker")
+	select_card.call(recruit)
+	if not await _wait_for_practice_thor_smoke_condition_seconds(func() -> bool:
+		var resolved := client.game_manager.get_card_by_uid(recruit.uid) as Card
+		return resolved != null and resolved.current_zone != null and resolved.current_zone.is_board_zone()
+	, 12.0):
+		_fail_smoke_if_enabled("hringhorni_network_client_recruit_missing")
+		return
+	_finish_smoke_if_enabled("PASS:hringhorni_network_client")
 
 func _run_practice_thor_smoke() -> void:
 	var practice_game = _show_embedded_game("PracticeThor")

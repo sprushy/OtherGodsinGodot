@@ -159,7 +159,8 @@ static func place_hover_panel(panel: Control, anchor_rect: Rect2, avoid_rect: Re
 	var below := Rect2(viewport.position.x, bottom_edge, viewport.size.x, viewport.end.y - bottom_edge)
 	var right := Rect2(right_edge, viewport.position.y, viewport.end.x - right_edge, viewport.size.y)
 	var left := Rect2(viewport.position, Vector2(left_edge - viewport.position.x, viewport.size.y))
-	var areas: Array[Rect2] = [right, left, above, below] if prefer_sides else [above, below, right, left]
+	var areas: Array[Rect2] = []
+	areas.assign([right, left, above, below] if prefer_sides else [above, below, right, left])
 
 	# Fit the entire panel in one of the spaces beside the card and its controls.
 	var best_area := Rect2()

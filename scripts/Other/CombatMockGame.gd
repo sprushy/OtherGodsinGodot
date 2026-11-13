@@ -7471,7 +7471,8 @@ func _action_targets_card_for_destruction(action: CardAction) -> bool:
 func _play_mode_should_hold_priority_for_action(action: CardAction) -> bool:
 	if action == null:
 		return false
-	if _get_priority_stop_key_for_action(action) == "combat":
+	if _get_priority_stop_key_for_action(action) == "combat" \
+			or (action.type == CardAction.Type.EVENT and action.event_name == "destroyed"):
 		if game_manager == null:
 			return false
 		var local_priority_index := _get_local_priority_player_index()

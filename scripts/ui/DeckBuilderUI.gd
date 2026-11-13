@@ -4205,7 +4205,8 @@ func _queue_saved_deck_actions_visibility_update(cover: Control, actions: Contro
 func _update_saved_deck_actions_visibility(cover_id: int, actions_id: int) -> void:
 	var cover := instance_from_id(cover_id) as Control
 	var actions := instance_from_id(actions_id) as Control
-	if cover == null or actions == null:
+	# A grid rebuild can detach the cover before the deferred call runs.
+	if cover == null or actions == null or cover.get_viewport() == null:
 		return
 	var mouse_position := cover.get_global_mouse_position()
 	var cover_rect := Rect2(cover.global_position, cover.size)

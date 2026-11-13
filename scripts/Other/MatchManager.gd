@@ -2741,7 +2741,8 @@ func _action_targets_card_for_destruction(action: CardAction) -> bool:
 func _play_mode_requires_priority_window(action: CardAction, player: Player) -> bool:
 	if action == null or player == null or game_manager == null:
 		return false
-	if get_priority_stop_key(action) == "combat":
+	if get_priority_stop_key(action) == "combat" \
+			or (action.type == CardAction.Type.EVENT and action.event_name == "destroyed"):
 		return _player_has_priority_prompt_responses(player)
 	if not _action_targets_card_for_destruction(action):
 		return false
