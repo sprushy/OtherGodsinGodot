@@ -11267,6 +11267,13 @@ func _run_hringhorni_network_host(server: HeadlessMatchServer, player: Player, a
 	charm.is_face_down = true
 	player.reserve_zones[0].add_card(charm)
 	rules.prepared_charms[charm] = rules.turn_number
+	var sap := Sap.new()
+	sap.card_owner = player
+	sap.is_prepared = true
+	sap.is_face_down = true
+	player.reserve_zones[1].add_card(sap)
+	rules.prepared_hexes[sap] = rules.turn_number
+	player.gain_mana(sap.mana_cost, false)
 	var recruit := Berserker.new()
 	recruit.card_owner = player
 	player.deck_zone.add_card(recruit)
@@ -11274,7 +11281,8 @@ func _run_hringhorni_network_host(server: HeadlessMatchServer, player: Player, a
 	if not await _wait_for_practice_thor_smoke_condition_seconds(func() -> bool:
 		return warrior.current_zone == player.graveyard_zone \
 			and charm.current_zone == player.graveyard_zone \
-			and recruit.current_zone != null and recruit.current_zone.is_board_zone()
+			and recruit.current_zone != null and recruit.current_zone.is_board_zone() \
+			and rules.action_stack.is_empty()
 	, 55.0):
 		_fail_smoke_if_enabled("hringhorni_network_server_unresolved turn=%d warrior=%s charm=%s feedback=%s" % [
 			rules.turn_number, warrior.current_zone.zone_type, charm.current_zone.zone_type,
@@ -11291,8 +11299,12 @@ func _run_hringhorni_network_client(client) -> void:
 		var rules: GameManager = client.game_manager
 		var action := rules.get_top_live_stack_action()
 		var cards := rules.players[1].reserve_zones[0].cards
-		return client._is_priority_prompt_visible() and action != null \
-			and action.event_name == "destroyed" and action.card is HariiWarrior \
+		if not client._is_priority_prompt_visible() or action == null:
+			return false
+		if action.event_name == "frontline_entry":
+			client._on_priority_pass_pressed()
+			return false
+		return action.event_name == "destroyed" and action.card is HariiWarrior \
 			and not cards.is_empty() and cards[0] is Hringhorni \
 			and client._is_card_usable_for_priority(cards[0])
 	, 25.0):
@@ -11313,11 +11325,35 @@ func _run_hringhorni_network_client(client) -> void:
 	_write_smoke_trace("hringhorni_network:client_opened_deck_picker")
 	select_card.call(recruit)
 	if not await _wait_for_practice_thor_smoke_condition_seconds(func() -> bool:
-		var resolved := client.game_manager.get_card_by_uid(recruit.uid) as Card
-		return resolved != null and resolved.current_zone != null and resolved.current_zone.is_board_zone()
+		var rules: GameManager = client.game_manager
+		var action := rules.get_top_live_stack_action()
+		var cards := rules.players[1].reserve_zones[1].cards
+		if not client._is_priority_prompt_visible() or action == null:
+			return false
+		if action.event_name == "summon":
+			client._on_priority_pass_pressed()
+			return false
+		return action.event_name == "frontline_entry" and action.card != null and action.card.uid == recruit.uid \
+			and not cards.is_empty() and cards[0] is Sap and client._is_card_usable_for_priority(cards[0])
 	, 12.0):
-		_fail_smoke_if_enabled("hringhorni_network_client_recruit_missing")
+		_fail_smoke_if_enabled("hringhorni_network_client_sap_priority_missing")
 		return
+	client._set_priority_auto_mode("play", true, true)
+	await get_tree().process_frame
+	if not client._is_priority_prompt_visible() or client.get("_priority_prompt_idle_deadline_msec") != 0:
+		_fail_smoke_if_enabled("hringhorni_network_client_play_passed_sap_priority")
+		return
+	_write_smoke_trace("hringhorni_network:play_kept_sap_priority")
+	client._set_priority_auto_mode("fast_forward", true, true)
+	if not await _wait_for_practice_thor_smoke_condition_seconds(func() -> bool:
+		var rules: GameManager = client.game_manager
+		var resolved := rules.get_card_by_uid(recruit.uid)
+		return resolved != null and resolved.current_zone != null and resolved.current_zone.is_board_zone() \
+			and rules.action_stack.is_empty()
+	, 12.0):
+		_fail_smoke_if_enabled("hringhorni_network_client_fast_forward_did_not_pass")
+		return
+	_write_smoke_trace("hringhorni_network:fast_forward_passed_sap_priority")
 	_finish_smoke_if_enabled("PASS:hringhorni_network_client")
 
 func _run_practice_thor_smoke() -> void:

@@ -296,6 +296,8 @@ var _full_control_chord_latched: bool = false
 var _last_priority_preferences_signature: String = ""
 var _pending_local_priority_prompt_signature: Dictionary = {}
 var _visible_priority_prompt_signature: Dictionary = {}
+var _visible_priority_prompt_has_responses: bool = false
+var _network_priority_prompt_data: Dictionary = {}
 var _pending_priority_prompt_command_signature: Dictionary = {}
 var _handled_priority_prompt_keys: Dictionary = {}
 var _pending_priority_response_submission: Dictionary = {}
@@ -4188,7 +4190,7 @@ func _setup_priority_controls() -> void:
 	_auto_priority_button = Button.new()
 	_auto_priority_button.name = "PlayPriorityButton"
 	_auto_priority_button.text = ">"
-	_auto_priority_button.tooltip_text = "Pass priority automatically except for combat-stack options or when a card targeted for destruction can respond. Shift-click to keep this on across turns."
+	_auto_priority_button.tooltip_text = "Pass automatically when you have no offered responses. Shift-click to keep this on across turns."
 	_auto_priority_button.toggle_mode = true
 	_auto_priority_button.button_pressed = _priority_auto_mode == PRIORITY_AUTO_MODE_PLAY and _priority_auto_mode_visual_active
 	_auto_priority_button.custom_minimum_size = PRIORITY_CONTROL_BUTTON_SIZE
@@ -4387,7 +4389,7 @@ func _sync_priority_prompt_timeout() -> void:
 	_priority_prompt_timeout_pending = true
 	_set_action_label_text("Priority timed out. Passing.")
 	update_ui()
-	_queue_deferred_priority_pass()
+	_queue_deferred_priority_pass(true)
 
 func _get_well_of_fire_choosing_player_index() -> int:
 	if not _is_networked_client and match_manager != null:
@@ -6374,6 +6376,7 @@ func _prepare_for_match_launch(status_message: String = "Connecting to match..."
 		_hermes_priority_toggle_button.visible = false
 	_clear_all_card_priority_toggle_buttons()
 	_pending_priority_auto_pass_signature.clear()
+	_network_priority_prompt_data.clear()
 	_priority_prompt_idle_deadline_msec = 0
 	_priority_prompt_timeout_pending = false
 	_last_priority_preferences_signature = ""
@@ -7317,7 +7320,7 @@ func _on_priority_pause_button_pressed() -> void:
 			and _is_priority_prompt_visible() \
 			and not _should_hold_current_priority_window():
 		_pending_priority_auto_pass_signature.clear()
-		_queue_deferred_priority_pass()
+		_queue_deferred_priority_pass(true)
 
 func _set_priority_auto_mode(mode: String, permanent: bool = false, force_sync: bool = false, visual_active: bool = true) -> void:
 	if mode not in [PRIORITY_AUTO_MODE_PLAY, PRIORITY_AUTO_MODE_FAST_FORWARD]:
@@ -7344,7 +7347,7 @@ func _set_priority_auto_mode(mode: String, permanent: bool = false, force_sync: 
 			and _is_priority_prompt_visible() \
 			and not _should_hold_current_priority_window():
 		_pending_priority_auto_pass_signature.clear()
-		_queue_deferred_priority_pass()
+		_queue_deferred_priority_pass(true)
 	else:
 		if not auto_priority:
 			_pending_priority_auto_pass_signature.clear()
@@ -7444,69 +7447,22 @@ func _get_priority_stop_key_for_action(action: CardAction) -> String:
 			return "end"
 	return "main"
 
-func _get_action_target_card(action: CardAction) -> Card:
-	if action == null or not (action.target is Card):
-		return null
-	return action.target as Card
-
-func _action_targets_card_for_destruction(action: CardAction) -> bool:
-	if action == null or _get_action_target_card(action) == null:
-		return false
-	if action.event_data.has("destruction"):
-		return bool(action.event_data.get("destruction", false))
-	if action.event_data.has("destroy"):
-		return bool(action.event_data.get("destroy", false))
-	if action.card != null:
-		if action.card.has_type("Destruction") or action.card.has_type("Magic Destruction"):
-			return true
-		for type_name in action.card.card_types:
-			if str(type_name).findn("destruction") >= 0:
-				return true
-		if str(action.card.ability_text).findn("destroy") >= 0:
-			return true
-	if action.event_name.findn("destroy") >= 0:
-		return true
-	return false
-
-func _play_mode_should_hold_priority_for_action(action: CardAction) -> bool:
-	if action == null:
-		return false
-	if _get_priority_stop_key_for_action(action) == "combat" \
-			or (action.type == CardAction.Type.EVENT and action.event_name == "destroyed"):
-		if game_manager == null:
-			return false
-		var local_priority_index := _get_local_priority_player_index()
-		if local_priority_index < 0 or local_priority_index >= game_manager.players.size():
-			return false
-		var local_player := game_manager.players[local_priority_index]
-		if match_manager != null:
-			return match_manager._player_has_priority_prompt_responses(local_player)
-		return not game_manager.get_priority_responses(local_player).is_empty()
-	if not _action_targets_card_for_destruction(action):
-		return false
-	var target_card := _get_action_target_card(action)
-	if target_card == null or game_manager == null:
-		return false
-	var local_priority_index := _get_local_priority_player_index()
-	if local_priority_index < 0 or local_priority_index >= game_manager.players.size():
-		return false
-	var local_player := game_manager.players[local_priority_index]
-	return target_card.card_owner == local_player \
-		and game_manager.can_card_respond_to_priority(target_card, local_player)
-
-func _should_hold_priority_for_action(action: CardAction) -> bool:
+func _should_hold_priority_for_action(action: CardAction, has_offered_responses: bool) -> bool:
 	if _is_full_control_active():
 		return true
 	if _priority_auto_mode == PRIORITY_AUTO_MODE_FAST_FORWARD:
 		return false
-	if _priority_auto_mode == PRIORITY_AUTO_MODE_PLAY:
-		return _play_mode_should_hold_priority_for_action(action)
-	return bool(priority_stops.get(_get_priority_stop_key_for_action(action), false))
+	return has_offered_responses or (
+		_priority_auto_mode != PRIORITY_AUTO_MODE_PLAY
+		and action != null
+		and bool(priority_stops.get(_get_priority_stop_key_for_action(action), false))
+	)
 
 func _should_hold_current_priority_window() -> bool:
-	if game_manager == null or game_manager.action_stack.is_empty():
-		return _is_full_control_active()
-	return _should_hold_priority_for_action(game_manager.action_stack.back())
+	var action: CardAction = null
+	if game_manager != null and not game_manager.action_stack.is_empty():
+		action = game_manager.action_stack.back()
+	return _should_hold_priority_for_action(action, _visible_priority_prompt_has_responses)
 
 func _get_card_priority_offer_overrides_signature() -> String:
 	if not _add_priority_toggles_to_all_cards:
@@ -8242,7 +8198,7 @@ func should_suppress_priority_response_visuals() -> bool:
 	var top_action: CardAction = game_manager.action_stack.back()
 	if match_manager != null and match_manager.player_requires_priority_window(top_action, priority_player):
 		return false
-	return not _should_hold_priority_for_action(top_action)
+	return not _should_hold_current_priority_window()
 
 func _get_visible_hand_player() -> Player:
 	return _get_display_player()
@@ -23436,14 +23392,8 @@ func _auto_pass_priority_prompt(player_index: int, data: Dictionary) -> bool:
 		return false
 	var responses = data.get("responses", [])
 	var has_payload_responses := responses is Array and not (responses as Array).is_empty()
-	if game_manager.action_stack.is_empty():
-		if _priority_auto_mode != PRIORITY_AUTO_MODE_FAST_FORWARD and has_payload_responses:
-			return false
-	elif _should_hold_current_priority_window():
-		return false
-	elif _priority_auto_mode != PRIORITY_AUTO_MODE_FAST_FORWARD \
-			and has_payload_responses \
-			and not (_priority_auto_mode == PRIORITY_AUTO_MODE_PLAY and _priority_auto_mode_visual_active):
+	var action: CardAction = game_manager.action_stack.back() if not game_manager.action_stack.is_empty() else null
+	if _should_hold_priority_for_action(action, has_payload_responses):
 		return false
 	var priority_player := game_manager.players[player_index]
 	if _is_networked_client and game_manager.priority_player != priority_player:
@@ -23455,7 +23405,7 @@ func _auto_pass_priority_prompt(player_index: int, data: Dictionary) -> bool:
 	_begin_priority_prompt_command_context()
 	_hide_priority_prompt()
 	_update_waiting_overlay()
-	_queue_deferred_priority_pass()
+	_queue_deferred_priority_pass(true)
 	return true
 
 func _clear_pending_priority_response_submission() -> void:
@@ -23714,31 +23664,6 @@ func _broadcast_priority_offered(player: Player, responses: Array) -> void:
 	elif peer_id > 0:
 		network_manager.broadcast_event_to_peer(peer_id, "priority_offered", event_data)
 
-func _get_priority_prompt_action_message(viewer: Player = null) -> String:
-	if match_manager == null:
-		return ""
-	var resolved_viewer := viewer
-	if resolved_viewer == null and game_manager != null:
-		resolved_viewer = game_manager.priority_player
-	if resolved_viewer == null:
-		return ""
-	var prompt_data: Dictionary = match_manager.build_priority_prompt_data(resolved_viewer)
-	return str(prompt_data.get("action_message", "")).strip_edges()
-
-func _show_priority_prompt(player: Player) -> void:
-	if game_manager != null and player != null:
-		var player_index := game_manager.players.find(player)
-		var prompt_data: Dictionary = match_manager.build_priority_prompt_data(player) if match_manager != null else {}
-		if _auto_pass_priority_prompt(player_index, prompt_data):
-			return
-	if game_manager != null and not game_manager.action_stack.is_empty():
-		var prompted_action: CardAction = game_manager.action_stack.back()
-		if prompted_action != null and match_manager != null:
-			match_manager.mark_priority_window_offered(prompted_action, player)
-	var prompt_responses := match_manager.get_priority_prompt_offering_responses(player) \
-		if match_manager != null else game_manager.get_priority_responses(player)
-	_show_priority_seal(player.player_name + " has priority", _get_priority_prompt_action_message(player), not prompt_responses.is_empty())
-
 func _get_priority_seal() -> Control:
 	return get_node_or_null("PriorityPromptPanel") as Control
 
@@ -23754,6 +23679,7 @@ func _layout_priority_seal() -> void:
 	seal.position = get_global_transform().affine_inverse() * board_center - seal.size * 0.5
 
 func _show_priority_seal(priority_text: String, action_message: String, has_responses: bool) -> void:
+	_visible_priority_prompt_has_responses = has_responses
 	var seal = _get_priority_seal()
 	if seal == null:
 		seal = PrioritySealButtonScript.new()
@@ -23784,6 +23710,7 @@ func _show_priority_seal(priority_text: String, action_message: String, has_resp
 func _hide_priority_prompt() -> void:
 	_pending_local_priority_prompt_signature.clear()
 	_visible_priority_prompt_signature.clear()
+	_visible_priority_prompt_has_responses = false
 	_priority_prompt_idle_deadline_msec = 0
 	_priority_prompt_timeout_pending = false
 	var panel = _get_priority_seal()
@@ -23826,15 +23753,16 @@ func _get_priority_pass_state_signature() -> Dictionary:
 			signature["top_source_index"] = game_manager.players.find(top_action.source_player)
 	return signature
 
-func _queue_deferred_priority_pass() -> void:
+func _queue_deferred_priority_pass(respect_auto_pass_policy: bool = false) -> void:
 	var expected_state := _get_priority_pass_state_signature()
 	if expected_state.is_empty():
 		return
 	var prompt_signature := _pending_priority_prompt_command_signature.duplicate(true)
-	call_deferred("_run_deferred_priority_pass", expected_state, prompt_signature)
+	call_deferred("_run_deferred_priority_pass", expected_state, prompt_signature, respect_auto_pass_policy)
 
-func _run_deferred_priority_pass(expected_state: Dictionary, prompt_signature: Dictionary = {}) -> void:
-	if expected_state != _get_priority_pass_state_signature():
+func _run_deferred_priority_pass(expected_state: Dictionary, prompt_signature: Dictionary, respect_auto_pass_policy: bool) -> void:
+	if expected_state != _get_priority_pass_state_signature() \
+			or (respect_auto_pass_policy and (not auto_priority or _should_hold_current_priority_window())):
 		if prompt_signature == _pending_priority_prompt_command_signature:
 			_clear_priority_prompt_command_context()
 		if prompt_signature == _pending_priority_auto_pass_signature:
@@ -30350,6 +30278,8 @@ func _apply_full_state(data: Dictionary) -> void:
 	var pending_priority_value = data.get("pending_priority_prompt", {})
 	if pending_priority_value is Dictionary:
 		pending_priority_prompt = (pending_priority_value as Dictionary).duplicate(true)
+	if _is_networked_client:
+		_network_priority_prompt_data = pending_priority_prompt
 	var previous_turn_number := game_manager.turn_number if game_manager != null else -1
 	if _is_networked_client:
 		# Client: clear stale card refs and rebuild ghost game_manager from server state
@@ -30576,10 +30506,9 @@ func _restore_priority_prompt_from_authoritative_state() -> void:
 		return
 	if _is_priority_prompt_visible() or _is_intercept_prompt_visible():
 		return
-	var prompt_data: Dictionary = match_manager.build_priority_prompt_data(local_player)
+	var prompt_data := _network_priority_prompt_data if _is_networked_client \
+		else match_manager.get_pending_priority_prompt_data(local_player)
 	if prompt_data.is_empty():
-		return
-	if _auto_pass_priority_prompt(local_idx, prompt_data):
 		return
 	_apply_priority_prompt_for_player(local_idx, prompt_data)
 
@@ -30793,11 +30722,17 @@ func _apply_priority_offered(data: Dictionary) -> void:
 	_apply_priority_prompt_for_player(priority_idx, data)
 
 func _apply_priority_prompt_for_player(player_index: int, data: Dictionary) -> void:
+	if game_manager == null or player_index < 0 or player_index >= game_manager.players.size():
+		return
+	if player_index != _get_local_priority_player_index():
+		return
 	if _is_local_authoritative_upkeep_pending():
 		if _is_priority_prompt_visible():
 			_hide_priority_prompt()
 		_update_waiting_overlay()
 		return
+	if _is_networked_client:
+		_network_priority_prompt_data = data
 	var prompt_signature := _build_priority_prompt_payload_signature(player_index, data)
 	if _should_ignore_handled_priority_prompt(player_index, data):
 		_update_waiting_overlay()
@@ -30807,24 +30742,25 @@ func _apply_priority_prompt_for_player(player_index: int, data: Dictionary) -> v
 			_hide_priority_prompt()
 		_update_waiting_overlay()
 		return
-	if _is_priority_prompt_visible() and prompt_signature == _visible_priority_prompt_signature:
+	var responses: Array = data.get("responses", [])
+	var has_responses := not responses.is_empty()
+	if _is_priority_prompt_visible() and prompt_signature == _visible_priority_prompt_signature \
+			and has_responses == _visible_priority_prompt_has_responses:
 		return
 	_visible_priority_prompt_signature = prompt_signature
 	var msg: String = data.get("action_message", "")
 	if msg != "":
 		_set_action_label_text(msg)
-	if _is_networked_client and game_manager != null and player_index >= 0 and player_index < game_manager.players.size():
+	if _is_networked_client:
 		game_manager.priority_player = game_manager.players[player_index]
 	_remember_local_priority_prompt_signature()
 	_update_waiting_status(false)
-	if _is_networked_client or (match_manager != null and network_manager != null):
-		var responses: Array = data.get("responses", [])
-		if _auto_pass_priority_prompt(player_index, data):
-			return
+	if _auto_pass_priority_prompt(player_index, data):
+		return
+	if _is_networked_client or network_manager != null:
 		_show_remote_priority_prompt(responses, msg)
 		return
-	if game_manager != null and player_index >= 0 and player_index < game_manager.players.size():
-		_show_priority_prompt(game_manager.players[player_index])
+	_show_priority_seal(game_manager.players[player_index].player_name + " has priority", msg, has_responses)
 
 func _show_remote_priority_prompt(responses: Array, action_message: String = "") -> void:
 	_show_priority_seal("You have priority", action_message, not responses.is_empty())
