@@ -1,7 +1,6 @@
 extends Node2D
 
 const LobbyServerScript = preload("res://scripts/server/LobbyServer.gd")
-const HeadlessMatchServerScript = preload("res://scripts/server/HeadlessMatchServer.gd")
 const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
 const LobbyProtocolScript = preload("res://scripts/network/LobbyProtocol.gd")
 const DEFAULT_LOBBY_HOST_SETTING := "application/config/default_lobby_host"
@@ -89,7 +88,13 @@ func _boot_match_runtime(launch_args: Dictionary) -> void:
 	config["_launch_config_path"] = config_path
 	_cleanup_launch_config_path(config_path)
 
-	var match_server = HeadlessMatchServerScript.new()
+	# Match setup loads gameplay resources that the lobby doesn't need to keep in memory.
+	var match_server_script := load("res://scripts/server/HeadlessMatchServer.gd") as Script
+	if match_server_script == null:
+		push_error("ServerRuntimeBootstrap: could not load dedicated match runtime.")
+		get_tree().quit(1)
+		return
+	var match_server = match_server_script.new()
 	match_server.name = "HeadlessMatchServer"
 	add_child(match_server)
 	_server_node = match_server

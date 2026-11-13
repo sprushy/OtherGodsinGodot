@@ -11,8 +11,8 @@ extends Node
 
 const AudioSettingsScript := preload("res://scripts/core/AudioSettings.gd")
 
-const HOVER_SFX_STREAM := preload("res://audio/ui_hover.mp3")
-const CLICK_SFX_STREAM := preload("res://audio/ui_click.mp3")
+const HOVER_SFX_PATH := "res://audio/ui_hover.mp3"
+const CLICK_SFX_PATH := "res://audio/ui_click.mp3"
 const HOVER_VOLUME_DB := -12.0
 const CLICK_VOLUME_DB := -3.0
 const SFX_BUS_NAME := "SFX"
@@ -24,14 +24,16 @@ var _player: AudioStreamPlayer
 var _click_player: AudioStreamPlayer
 
 func _ready() -> void:
+	if DisplayServer.get_name() == "headless":
+		return
 	AudioSettingsScript.apply_saved_volumes()
 	_player = AudioStreamPlayer.new()
-	_player.stream = HOVER_SFX_STREAM
+	_player.stream = load(HOVER_SFX_PATH) as AudioStream
 	_player.volume_db = HOVER_VOLUME_DB
 	_player.bus = SFX_BUS_NAME
 	add_child(_player)
 	_click_player = AudioStreamPlayer.new()
-	_click_player.stream = CLICK_SFX_STREAM
+	_click_player.stream = load(CLICK_SFX_PATH) as AudioStream
 	_click_player.volume_db = CLICK_VOLUME_DB
 	_click_player.bus = SFX_BUS_NAME
 	add_child(_click_player)
@@ -66,7 +68,9 @@ func _has_grouped_ancestor(node: Node, group: String) -> bool:
 	return false
 
 func _play_hover() -> void:
-	_player.play()
+	if _player != null:
+		_player.play()
 
 func _play_click() -> void:
-	_click_player.play()
+	if _click_player != null:
+		_click_player.play()

@@ -2,7 +2,7 @@ extends AudioStreamPlayer
 class_name MatchStartSoundPlayer
 
 # User-provided rlxmusic24-relaxing-music-original-viking-attacking-battle-horn-116623.mp3.
-const SOUND: AudioStream = preload("res://audio/match_start_horn.mp3")
+const SOUND_PATH := "res://audio/match_start_horn.mp3"
 const PLAYBACK_DURATION_SECONDS := 4.2
 
 static func play_sound() -> void:
@@ -15,7 +15,7 @@ static func play_sound() -> void:
 	player.bus = "SFX"
 	player.finished.connect(player.queue_free)
 	tree.root.add_child(player)
-	player.stream = SOUND
+	player.stream = load(SOUND_PATH) as AudioStream
 	player.play()
 	var cutoff := Timer.new()
 	cutoff.one_shot = true

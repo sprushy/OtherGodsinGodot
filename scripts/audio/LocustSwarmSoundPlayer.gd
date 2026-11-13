@@ -1,7 +1,7 @@
 extends AudioStreamPlayer
 class_name LocustSwarmSoundPlayer
 
-const SOUND: AudioStream = preload("res://audio/locust_swarm.wav")
+const SOUND_PATH := "res://audio/locust_swarm.wav"
 
 static func play_sound() -> void:
 	if DisplayServer.get_name() == "headless":
@@ -18,5 +18,5 @@ func _ready() -> void:
 	finished.connect(queue_free)
 
 func play_once() -> void:
-	stream = SOUND
+	stream = load(SOUND_PATH) as AudioStream
 	play()
