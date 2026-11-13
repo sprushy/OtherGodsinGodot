@@ -28,6 +28,9 @@ const DELETE_ACCOUNT_DECK := "delete_account_deck"
 const SET_ACCOUNT_PREFERRED_DECK := "set_account_preferred_deck"
 const SET_OBSERVER_FRIEND_CARD_VISIBILITY := "set_observer_friend_card_visibility"
 const REQUEST_PROFILE_SUMMARY := "request_profile_summary"
+const REQUEST_BOT_LADDER := "request_bot_ladder"
+const REQUEST_BOT_DECK := "request_bot_deck"
+const REQUEST_BOT_MATCH_HISTORY := "request_bot_match_history"
 const REQUEST_FRIENDS := "request_friends"
 const SEND_FRIEND_REQUEST := "send_friend_request"
 const RESPOND_FRIEND_REQUEST := "respond_friend_request"
@@ -46,6 +49,9 @@ const ACCOUNT_DECK_LIST := "account_deck_list"
 const ACCOUNT_DECK_SAVED := "account_deck_saved"
 const ACCOUNT_DECK_DELETED := "account_deck_deleted"
 const PROFILE_SUMMARY := "profile_summary"
+const BOT_LADDER := "bot_ladder"
+const BOT_DECK := "bot_deck"
+const BOT_MATCH_HISTORY := "bot_match_history"
 const FRIENDS_STATE := "friends_state"
 const ACCOUNT_SETTINGS_UPDATED := "account_settings_updated"
 const PASSWORD_RESET_RESULT := "password_reset_result"
@@ -171,8 +177,16 @@ static func validate_request(message: Dictionary) -> String:
 				return "Missing session id."
 			if str(payload.get("reconnect_token", "")).strip_edges().is_empty():
 				return "Missing reconnect token."
-		LIST_ROOMS, LEAVE_ROOM, REQUEST_ACCOUNT_DECKS, REQUEST_PROFILE_SUMMARY, REQUEST_FRIENDS:
+		LIST_ROOMS, LEAVE_ROOM, REQUEST_ACCOUNT_DECKS, REQUEST_PROFILE_SUMMARY, REQUEST_BOT_LADDER, REQUEST_FRIENDS:
 			pass
+		REQUEST_BOT_DECK:
+			var list_id = payload.get("list_id", "")
+			if not list_id is String or list_id.is_empty() or list_id.length() > 64:
+				return "Invalid bot list id."
+		REQUEST_BOT_MATCH_HISTORY:
+			var cursor = payload.get("before_match_id", "")
+			if not cursor is String or cursor.length() > 64:
+				return "Invalid bot match history cursor."
 		REPORT_HOST_VIABILITY:
 			if not payload.has("viable"):
 				return "Missing viability flag."

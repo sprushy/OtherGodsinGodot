@@ -83,7 +83,7 @@ func _set_animation_time(time: float) -> void:
 	if time < RANK_REVEAL_TIME:
 		count = int(_result["previous_stars"])
 		required = int(_result["previous_stars_required"])
-	var progress_text := "%d / %d stars" % [count, required] if required > 0 else "%d Mythic stars" % count
+	var progress_text := "%d / %d stars" % [count, required] if required > 0 else "%d %s stars" % [count, rank_name]
 	if _progress_label.text != progress_text:
 		_progress_label.text = progress_text
 	var reveal := clampf((time - RANK_REVEAL_TIME) / 0.42, 0.0, 1.0)

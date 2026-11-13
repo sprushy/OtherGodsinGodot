@@ -5,11 +5,13 @@ const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
 const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
 const DefaultMatchSetupScript = preload("res://scripts/server/DefaultMatchSetup.gd")
 const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
+const LobbyServerScript = preload("res://scripts/server/LobbyServer.gd")
 const MatchCommandRegistryScript = preload("res://scripts/Other/MatchCommandRegistry.gd")
 const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const MatchSupervisorScript = preload("res://scripts/server/MatchSupervisor.gd")
 const NetworkManagerScript = preload("res://scripts/Other/NetworkManager.gd")
+const RankedBotDeckPoolScript = preload("res://scripts/server/RankedBotDeckPool.gd")
 const RankedProgressionScript = preload("res://scripts/server/RankedProgression.gd")
 const ServerPathsScript = preload("res://scripts/server/ServerPaths.gd")
 
@@ -38,6 +40,9 @@ func run() -> bool:
 	_check_match_supervisor_launch_config(failures)
 	_check_ranked_progression(failures)
 	_check_dedicated_ranked_history(failures)
+	_check_ranked_bot_pool(failures)
+	_check_ranked_bot_deck_generation(failures)
+	_check_standing_bot_seeks(failures)
 
 	if not failures.is_empty():
 		for failure in failures:
@@ -454,6 +459,8 @@ func _check_match_supervisor_launch_config(failures: PackedStringArray) -> void:
 		12345,
 		["session_one", "session_two"]
 	)
+	if session.to_match_info("session_one").get("has_bot") != false:
+		failures.append("Human-only match assignment did not disable the bot loading hint")
 	var config_path: String = supervisor._write_launch_config(session)
 	if config_path.is_empty():
 		failures.append("MatchSupervisor failed to write a launch config")
@@ -510,21 +517,23 @@ func _check_ranked_progression(failures: PackedStringArray) -> void:
 	if summary["rank_name"] != "Silver V" or summary["stars"] != 0 or summary["last_delta"] != -1:
 		failures.append("Ranked progression did not deduct a star above the Silver floor")
 
-	while summary["rank_name"] != "Mythic" and int(progress["matches"]) < 130:
+	while summary["rank_name"] != "Divine" and int(progress["matches"]) < 130:
 		if summary["stars_required"] != 3:
 			failures.append("Ranked progression did not require three stars per division")
 			break
 		var rank_before: String = summary["rank_name"]
 		RankedProgressionScript.apply_result(progress, "win", season)
 		summary = RankedProgressionScript.summarize(progress, season)
+		if summary["points"] == 60 and (rank_before != "Gold I" or summary["rank_name"] != "Diamond V" or summary["last_delta"] != 2):
+			failures.append("Ranked progression did not promote Gold I directly to Diamond V with the streak bonus")
 		if rank_before.begins_with("Diamond") and int(progress["last_delta"]) != 1:
 			failures.append("Ranked progression applied a streak bonus in Diamond")
 			break
 	RankedProgressionScript.apply_result(progress, "loss", season)
 	RankedProgressionScript.apply_result(progress, "draw", season)
 	summary = RankedProgressionScript.summarize(progress, season)
-	if summary["rank_name"] != "Mythic" or summary["stars"] != 0 or summary["last_delta"] != 0:
-		failures.append("Ranked progression did not reach or protect Mythic")
+	if summary["rank_name"] != "Divine" or summary["points"] != 90 or summary["stars"] != 0 or summary["last_delta"] != 0:
+		failures.append("Ranked progression did not reach or protect Divine at 90 stars")
 	summary = RankedProgressionScript.summarize(progress, season + 2)
 	if summary["rank_name"] != "Diamond V" or summary["season"] != "2026-03" or summary["matches"] != 0:
 		failures.append("Ranked progression did not reset using the peak and elapsed seasons")
@@ -602,6 +611,171 @@ func _check_dedicated_ranked_history(failures: PackedStringArray) -> void:
 		DirAccess.remove_absolute(result_dir.path_join("%s.json" % match_id.sha256_text()))
 	DirAccess.remove_absolute(result_dir)
 	DirAccess.remove_absolute(storage_path)
+
+func _check_ranked_bot_deck_generation(failures: PackedStringArray) -> void:
+	var factory := PracticeAutofillDeckFactory.new()
+	var thor := Thor.new()
+	for legendary in [false, true]:
+		var candidates := factory._get_regular_candidates(thor, {}, legendary, true)
+		var expected := "Circle of Rebirth" if legendary else "Fall of the Mighty"
+		if not candidates.any(func(card: Card) -> bool: return card.card_name == expected):
+			failures.append("Ranked bot decks cannot generate %s" % expected)
+
+	var deck := factory.build_random_deck(1337, TiamatThePrimordial.TIAMAT_CARD_NAME, true)
+	var player := Player.new()
+	if deck.is_empty() or not DeckBuilder.new().build_deck(player, _cards_from_counts(deck["cards"]), deck["special_setup"]):
+		failures.append("Ranked bot generator did not produce a legal Tiamat deck")
+		return
+	for zone in player.power_zones:
+		if zone.cards.is_empty() or not zone.cards.all(TiamatThePrimordial.is_valid_slot_creature):
+			failures.append("Ranked Tiamat did not fill all three Brood slots")
+			return
+
+	var game_manager := GameManager.new()
+	var opponent := Player.new()
+	game_manager.players.assign([player, opponent])
+	game_manager.current_player = player
+	game_manager.other_player = opponent
+	game_manager.start_turn()
+	var match_manager := MatchManager.new(game_manager)
+	var bot := PracticeFuzzPlayerBot.new()
+	bot.attach(game_manager, match_manager, ServerBotGameInput.new(match_manager, 0), 0)
+	var deck_size := player.deck_zone.cards.size()
+	bot._handle_upkeep()
+	bot.detach()
+	if player.hand_zone.cards.size() != 1 or player.deck_zone.cards.size() != deck_size \
+			or player.mana != 0 or not game_manager.has_resolved_turn_upkeep():
+		failures.append("Ranked Tiamat did not use Matriarch Rule to take a Brood creature on turn one")
+
+func _check_standing_bot_seeks(failures: PackedStringArray) -> void:
+	var lobby := LobbyServerScript.new()
+	lobby.is_listening = true
+	lobby.match_history_store = MatchHistoryStoreScript.new("preflight_standing_bot_seeks_%d.json" % OS.get_process_id(), true)
+	lobby._ensure_server_bot_seeks()
+	lobby._ensure_server_bot_seeks()
+	var open_formats: Array[bool] = []
+	for entry: Dictionary in lobby._build_room_list():
+		if entry["host_is_bot"] and entry["member_count"] == 1:
+			open_formats.append(entry["is_ranked"])
+	if open_formats.size() != 2 or true not in open_formats or false not in open_formats:
+		failures.append("Lobby did not maintain exactly one open rated and one open unrated bot seek")
+	lobby.free()
+
+func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
+	var storage_file := "preflight_bot_pool_%d.json" % OS.get_process_id()
+	var writer := MatchHistoryStoreScript.new(storage_file, true)
+	var reader := MatchHistoryStoreScript.new(storage_file, true)
+	var session := MatchSessionScript.new("bot_win", "preflight_room", "127.0.0.1", 12345, ["BOT_A", "human"], {
+		"BOT_A": {"bot_god_name": "Thor", "cards": {"Thor": 1, "Berserker": 3}},
+	}, {"human": {"account_id": "human_account", "profile_id": "human_profile"}})
+	if not session.to_match_info("human").get("has_bot", false):
+		failures.append("Rated bot match assignment did not identify the bot")
+	var saved := writer.record_completed_match(session, 0, 1, "", "Odin")
+	var recap := reader.get_ranked_match_results(saved["entry"])
+	if recap.has(0) or not recap.get(1, {}).get("loss_protected", false):
+		failures.append("Rated bot match did not award a recap only to the signed-in player")
+	var stored_results := reader.get_bot_deck_results()
+	if stored_results.size() != 1 or stored_results[0]["god_name"] != "Thor" or stored_results[0]["result"] != "win":
+		failures.append("Rated bot match did not persist the registered winning list")
+	var self_play := MatchSessionScript.new("bot_self_play", "preflight_room", "127.0.0.1", 12345, ["BOT_A", "BOT_B"], {
+		"BOT_A": {"bot_god_name": "Thor", "bot_list_id": "bot_win", "bot_stars": 1, "cards": {"Thor": 1, "Berserker": 3}},
+		"BOT_B": {"bot_god_name": "Odin", "cards": {"Odin": 1, "Brown Bear": 3}},
+	}, {"BOT_A": {"player_name": "Thor: Bloodaxe"}, "BOT_B": {"player_name": "Odin: Test"}})
+	if not self_play.to_spectator_match_info("observer").get("has_bot", false):
+		failures.append("Self-play spectator assignment did not identify the bots")
+	var self_play_saved := writer.record_completed_match(self_play, 1, 0, "Odin", "Thor", {"turns": 9})
+	var recent := reader.get_recent_bot_matches(1)
+	var self_play_results := reader.get_bot_deck_results()
+	if (not self_play_saved.get("success", false)
+			or self_play_saved["entry"].get("advances_rank", true)
+			or self_play_results.size() != 3 or recent["matches"].size() != 1):
+		failures.append("Self-play did not save both bot seats without changing human ranks")
+	else:
+		var battle: Dictionary = recent["matches"][0]
+		if battle["players"][1]["name"] != "Odin: Test" or battle["battle"].get("turns") != 9:
+			failures.append("Self-play history lost the names or battle summary")
+	if (not RankedBotDeckPoolScript.can_self_play_pair({"stars": 14}, {"stars": 17})
+			or RankedBotDeckPoolScript.can_self_play_pair({"stars": 0}, {"stars": 90})
+			or RankedBotDeckPoolScript.can_self_play_pair({"stars": 5}, {"stars": 9})
+			or RankedBotDeckPoolScript.can_self_play_pair({"stars": 5, "list_id": "same"}, {"stars": 5, "list_id": "same"})):
+		failures.append("Bot matchmaking did not enforce the three-total-star gap and distinct seats")
+	var result_dir := ServerPathsScript.get_server_data_file_path(storage_file).get_basename() + "_results"
+	DirAccess.remove_absolute(result_dir.path_join("%s.json" % session.match_id.sha256_text()))
+	DirAccess.remove_absolute(result_dir.path_join("%s.json" % self_play.match_id.sha256_text()))
+	DirAccess.remove_absolute(result_dir)
+
+	var pool := RankedBotDeckPoolScript.new()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 7
+	pool.refresh(stored_results)
+	var first_list := pool.select_deck({}, rng)
+	if first_list.get("deck_name") != "Thor: Bloodaxe" or first_list.get("stars") != 1:
+		failures.append("A winning bot list did not return with its permanent name and star")
+	pool.refresh(self_play_results)
+	var after_self_play: Dictionary = pool.get_ladder_summary()
+	if after_self_play["gods"].size() != 2:
+		failures.append("Self-play did not promote the named winning bot")
+	else:
+		var odin: Dictionary = after_self_play["gods"][0]["lists"][0]
+		var after_thor: Dictionary = after_self_play["gods"][1]["lists"][0]
+		if odin["name"] != "Odin: Test" or odin["stars"] != 1 or after_thor["stars"] != 0:
+			failures.append("Self-play did not award and subtract stars for the two bot seats")
+
+	var results: Array[Dictionary] = []
+	for i in range(7):
+		results.append(_bot_pool_result("list_%d" % i, "", {"Thor": 1, "Common": 30, "Variant %d" % i: 10}, "win"))
+	results.append(_bot_pool_result("candidate", "", {"Thor": 1, "Common": 30, "Challenger": 10}, "win"))
+	pool.refresh(results)
+	var candidate := pool.select_deck({}, rng)
+	if pool.can_play_list("Thor", "list_0") or not pool.can_play_list("Thor", "list_1") \
+			or candidate.get("list_id") != "candidate" or candidate.get("deck_name") != "Thor: Challenger":
+		failures.append("The eighth bot list did not quarantine an incumbent and get trial priority")
+	for i in range(6):
+		results.append(_bot_pool_result("trial_%d" % i, "candidate", {}, "loss"))
+	pool.refresh(results)
+	if pool.can_play_list("Thor", "list_0"):
+		failures.append("A bot list trial ended before seven completed matches")
+	var ladder_summary := pool.get_ladder_summary()
+	var thor: Dictionary = ladder_summary["gods"][0]
+	var challenger: Dictionary = thor["challenger"]
+	if thor["lists"].size() != 7 or not thor["lists"][0]["quarantined"] \
+			or thor["lists"][0]["name"] != "Thor: Bloodaxe" \
+			or challenger.get("matches_played") != 6 or challenger.get("wins") != 1 \
+			or challenger.get("losses") != 6 or challenger.get("draws") != 0 \
+			or challenger.get("stars") != 0 or challenger.has("cards") or ladder_summary["trial_length"] != 7:
+		failures.append("Bot ladder did not report the quarantined list and six completed trial matches")
+	var quarantined_deck := pool.get_deck_details(thor["lists"][0]["list_id"])
+	var challenger_deck := pool.get_deck_details(challenger.get("list_id", ""))
+	if quarantined_deck.get("cards", {}).get("Variant 0") != 10 \
+			or challenger_deck.get("cards", {}).get("Challenger") != 10:
+		failures.append("Bot ladder did not resolve both quarantined and challenger deck contents")
+	results.append(_bot_pool_result("trial_6", "candidate", {}, "loss"))
+	pool.refresh(results)
+	if not pool.can_play_list("Thor", "list_0") or pool.can_play_list("Thor", "candidate"):
+		failures.append("The stronger incumbent did not return after the seventh trial match")
+	thor = pool.get_ladder_summary()["gods"][0]
+	if not thor["challenger"].is_empty() or thor["lists"][0]["quarantined"]:
+		failures.append("Bot ladder still showed a trial after the seventh match")
+	if not pool.get_deck_details("candidate").is_empty():
+		failures.append("Bot ladder still returned a retired challenger deck")
+
+	results.append(_bot_pool_result("distinct", "", {"Thor": 1, "Different": 40}, "win"))
+	for i in range(7):
+		results.append(_bot_pool_result("variety_%d" % i, "distinct", {}, "loss"))
+	pool.refresh(results)
+	if not pool.can_play_list("Thor", "distinct") or pool.can_play_list("Thor", "list_0"):
+		failures.append("A bot list with over 75% different cards did not survive for variety")
+
+func _bot_pool_result(match_id: String, list_id: String, cards: Dictionary, outcome: String) -> Dictionary:
+	return {
+		"match_id": match_id,
+		"list_id": list_id,
+		"god_name": "Thor",
+		"cards": cards,
+		"special_setup": {},
+		"reinforcements": {},
+		"result": outcome,
+	}
 
 func _script_path(card: Card) -> String:
 	if card == null or card.get_script() == null:

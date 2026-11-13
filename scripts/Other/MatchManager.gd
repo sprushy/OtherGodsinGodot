@@ -3040,7 +3040,7 @@ func _get_declared_attack_speed(attacker: Card) -> int:
 		return attacker.get_united_front_attack_speed(game_manager)
 	return attacker.get_effective_speed()
 
-func _can_intercept(defender: Card, attacker: Card, protected_target, modified_card: Card = null, speed_delta: int = 0) -> bool:
+func _can_intercept(defender: Card, attacker: Card, protected_target, modified_card: Card = null, speed_delta: int = 0, projected_attack_speed: int = -1) -> bool:
 	if attacker == null or protected_target == null:
 		return false
 	if protected_target is Card and defender == protected_target:
@@ -3052,8 +3052,8 @@ func _can_intercept(defender: Card, attacker: Card, protected_target, modified_c
 	if defender.can_special_intercept(game_manager, attacker, protected_target):
 		return game_manager.can_interceptor_engage_attacker(defender, attacker)
 	var interceptor_speed := game_manager.get_interceptor_speed_against_attacker(defender, attacker, protected_target, speed_delta if defender == modified_card else 0)
-	var attack_speed := _get_declared_attack_speed(attacker)
-	if attacker == modified_card and _get_declared_attack_partner(attacker) == null:
+	var attack_speed := projected_attack_speed if projected_attack_speed >= 0 else _get_declared_attack_speed(attacker)
+	if projected_attack_speed < 0 and attacker == modified_card and _get_declared_attack_partner(attacker) == null:
 		attack_speed = attacker.get_effective_speed(speed_delta)
 	if interceptor_speed < attack_speed:
 		return false
@@ -3065,14 +3065,14 @@ func _can_intercept(defender: Card, attacker: Card, protected_target, modified_c
 		return _get_intercept_row_distance(defender, protected_target) >= _get_minimum_intercept_row_distance(defender, attacker, protected_target)
 	return false
 
-func _get_possible_interceptors(attacker: Card, protected_target) -> Array[Card]:
+func _get_possible_interceptors(attacker: Card, protected_target, projected_attack_speed: int = -1) -> Array[Card]:
 	var possible_interceptors: Array[Card] = []
 	var defender: Player = protected_target if protected_target is Player else (protected_target as Card).get_controller()
 	if defender == null:
 		return possible_interceptors
 	for zone in defender.frontline_zones + defender.reserve_zones:
 		for card in zone.cards:
-			if _can_intercept(card, attacker, protected_target):
+			if _can_intercept(card, attacker, protected_target, null, 0, projected_attack_speed):
 				possible_interceptors.append(card)
 	return possible_interceptors
 

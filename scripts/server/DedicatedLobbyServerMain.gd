@@ -28,6 +28,7 @@ func _boot_server(launch_args: Dictionary) -> void:
 	_server.name = "LobbyPeer"
 	_server.use_dedicated_match_processes = true
 	_server.allow_in_process_match_fallback = false
+	_server.server_bot_self_play_limit = clampi(int(launch_args.get("bot_self_play_limit", 10)), 0, 10)
 	_server.use_default_multiplayer = true
 	_server.trace_network = true
 	_server.trace_file_path = trace_file_path

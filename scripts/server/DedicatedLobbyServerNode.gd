@@ -9,6 +9,7 @@ func _ready() -> void:
 	super._ready()
 
 	var launch_args: Dictionary = _parse_user_args(OS.get_cmdline_user_args())
+	server_bot_self_play_limit = clampi(int(launch_args.get("bot_self_play_limit", OS.get_environment("OTHERGODS_BOT_SELF_PLAY_LIMIT") if OS.has_environment("OTHERGODS_BOT_SELF_PLAY_LIMIT") else MAX_BOT_SELF_PLAY)), 0, MAX_BOT_SELF_PLAY)
 	var advertised_host: String = str(launch_args.get("lobby_host", "127.0.0.1")).strip_edges()
 	if advertised_host.is_empty():
 		advertised_host = "127.0.0.1"

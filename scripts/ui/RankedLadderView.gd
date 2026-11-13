@@ -99,7 +99,7 @@ func _ready() -> void:
 		rows.add_child(row)
 		var league_label := _label(row, league_name, 17, MUTED)
 		league_label.custom_minimum_size.x = 100
-		if league_index == RankedProgressionScript.MYTHIC:
+		if league_index == RankedProgressionScript.DIVINE:
 			_add_rank_cell(row, league_name, "Open-ended")
 			next_league_rank = league_name
 			continue
@@ -141,14 +141,14 @@ func _render_progress(scroll_to_rank: bool = false) -> void:
 		return
 	var stars := int(progress.get("stars", 0))
 	var required := int(progress.get("stars_required", 0))
-	var stars_text := "%d / %d stars" % [stars, required] if required > 0 else "%d Mythic stars" % stars
+	var stars_text := "%d / %d stars" % [stars, required] if required > 0 else "%d %s stars" % [stars, rank]
 	_progress_label.text = "Your rank  ·  %s  ·  %s" % [rank, stars_text]
 	var promotion_text := ""
 	if _promotion_targets.has(rank) and required > stars:
 		var remaining := required - stars
 		var unit := "star" if remaining == 1 else "stars"
 		promotion_text = "%d %s to %s" % [remaining, unit, _promotion_targets[rank]]
-	elif rank == RankedProgressionScript.LEAGUES[RankedProgressionScript.MYTHIC]:
+	elif rank == RankedProgressionScript.LEAGUES[RankedProgressionScript.DIVINE]:
 		promotion_text = "Highest rank reached"
 	_promotion_label.text = promotion_text
 	_promotion_label.visible = not promotion_text.is_empty()

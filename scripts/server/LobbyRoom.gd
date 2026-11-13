@@ -11,6 +11,7 @@ var host_session_id: String = ""
 var assigned_match_id: String = ""
 var status: String = STATUS_WAITING
 var is_ranked: bool = true
+var is_bot_self_play: bool = false
 var best_of: int = 1
 var members: Array[String] = []
 var ready_by_session_id: Dictionary = {}
@@ -184,7 +185,7 @@ func to_room_list_entry(sessions_by_id: Dictionary) -> Dictionary:
 	var host_is_bot := false
 	if sessions_by_id.has(host_session_id):
 		host_is_bot = bool(sessions_by_id[host_session_id].get("is_bot", false))
-	return {
+	var entry := {
 		"room_id": room_id,
 		"host_name": host_name,
 		"host_is_bot": host_is_bot,
@@ -194,6 +195,15 @@ func to_room_list_entry(sessions_by_id: Dictionary) -> Dictionary:
 		"max_players": MAX_PLAYERS,
 		"status": status,
 	}
+	if host_is_bot:
+		entry["bot_stars"] = int(get_deck_submission(host_session_id).get("bot_stars", 0))
+	if is_bot_self_play:
+		entry["is_bot_self_play"] = true
+		var bot_names: Array[String] = []
+		for session_id in members:
+			bot_names.append(str(sessions_by_id.get(session_id, {}).get("player_name", "Bot")))
+		entry["bot_names"] = bot_names
+	return entry
 
 static func compute_deck_hash(
 	deck_name: String,

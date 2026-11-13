@@ -11,6 +11,9 @@ var _uses_dedicated_results: bool
 var _matches_by_id: Dictionary = {}
 var _history_ids_by_profile_id: Dictionary = {}
 var _ranked_history_ids_by_account_id: Dictionary = {}
+var _bot_deck_match_ids: Array[String] = []
+var _sorted_bot_match_ids: Array[String] = []
+var _bot_results: Array[Dictionary] = []
 var _dedicated_result_files_loaded: Dictionary = {}
 var _loaded: bool = false
 
@@ -25,7 +28,8 @@ func record_completed_match(
 	winner_index: int,
 	loser_index: int,
 	winner_god_name: String,
-	loser_god_name: String
+	loser_god_name: String,
+	bot_battle: Dictionary = {}
 ) -> Dictionary:
 	if match_session == null:
 		return {"success": false, "message": "Missing match session.", "entry": {}}
@@ -57,6 +61,11 @@ func record_completed_match(
 		# Each match subprocess writes its own file. Both players' results are
 		# committed together and no subprocess rewrites another match's history.
 		entry["advances_rank"] = _is_ranked_ladder_match(match_session, player_entries)
+		var bot_results := _build_bot_deck_results(match_session, player_entries)
+		if not bot_results.is_empty():
+			entry["bot_deck_results"] = bot_results
+		if match_session.is_bot_self_play():
+			entry["bot_battle"] = bot_battle.duplicate(true)
 		var result_path := _get_dedicated_results_dir().path_join("%s.json" % match_id.sha256_text())
 		if FileAccess.file_exists(result_path):
 			var existing := JsonStoreScript.load_dictionary(result_path, {}, "MatchHistoryStore")
@@ -197,11 +206,96 @@ func _is_ranked_ladder_match(match_session, player_entries: Array[Dictionary]) -
 		return false
 	var account_ids: Array[String] = []
 	for player_entry in player_entries:
+		if match_session.is_bot_session(player_entry["session_id"]):
+			continue
 		var account_id := str(player_entry["account_id"]).strip_edges()
-		if account_id.is_empty() or account_ids.has(account_id) or match_session.is_bot_session(player_entry["session_id"]):
+		if account_id.is_empty() or account_ids.has(account_id):
 			return false
 		account_ids.append(account_id)
-	return true
+	return not account_ids.is_empty()
+
+func _build_bot_deck_results(match_session, player_entries: Array[Dictionary]) -> Array[Dictionary]:
+	var results: Array[Dictionary] = []
+	if not match_session.is_ranked or player_entries.size() != 2:
+		return results
+	for player_entry in player_entries:
+		var session_id: String = player_entry["session_id"]
+		if not match_session.is_bot_session(session_id):
+			continue
+		var deck: Dictionary = match_session.registered_player_decks_by_session.get(session_id, {})
+		if str(deck.get("bot_god_name", "")).is_empty() or deck.get("cards", {}).is_empty():
+			continue
+		results.append({
+			"god_name": deck["bot_god_name"],
+			"bot_name": player_entry["player_name"],
+			"list_id": deck.get("bot_list_id", ""),
+			"cards": deck["cards"],
+			"reinforcements": deck.get("reinforcements", {}),
+			"special_setup": deck.get("special_setup", {}),
+			"result": player_entry["result"],
+			"player_index": player_entry["player_index"],
+			"is_self_play": match_session.is_bot_self_play(),
+		})
+	return results
+
+func get_bot_deck_results() -> Array[Dictionary]:
+	_ensure_loaded()
+	_load_dedicated_results()
+	if _sorted_bot_match_ids.size() == _bot_deck_match_ids.size():
+		return _bot_results
+	var start := _sorted_bot_match_ids.size()
+	var updated_ids := _get_sorted_match_ids(_bot_deck_match_ids)
+	if start > 0 and updated_ids[start - 1] != _sorted_bot_match_ids.back():
+		start = 0
+		_bot_results = []
+	else:
+		_bot_results = _bot_results.duplicate()
+	_sorted_bot_match_ids = updated_ids
+	for index in range(start, _sorted_bot_match_ids.size()):
+		var match_id := _sorted_bot_match_ids[index]
+		var entry: Dictionary = _matches_by_id[match_id]
+		if entry.has("bot_deck_result"):
+			var legacy: Dictionary = entry["bot_deck_result"].duplicate(true)
+			legacy["match_id"] = match_id
+			_bot_results.append(legacy)
+		for row: Dictionary in entry.get("bot_deck_results", []):
+			var result := row.duplicate(true)
+			result["match_id"] = match_id
+			if entry["bot_deck_results"].size() > 1:
+				result["match_id"] = "%s_%d" % [match_id, int(result["player_index"])]
+			_bot_results.append(result)
+	return _bot_results
+
+func get_recent_bot_matches(limit: int = 50, before_match_id: String = "") -> Dictionary:
+	get_bot_deck_results()
+	var matches: Array[Dictionary] = []
+	var start := _sorted_bot_match_ids.size() - 1 if before_match_id.is_empty() else _sorted_bot_match_ids.find(before_match_id) - 1
+	var next_cursor := ""
+	for index in range(start, -1, -1):
+		var match_id := _sorted_bot_match_ids[index]
+		var entry: Dictionary = _matches_by_id[match_id]
+		if entry.get("bot_deck_results", []).size() != 2:
+			continue
+		if matches.size() >= limit:
+			next_cursor = matches.back()["match_id"]
+			break
+		var seats: Array[Dictionary] = []
+		for seat: Dictionary in entry["players"]:
+			var start_stars := int(seat.get("bot_stars", 0))
+			var rank := RankedProgressionScript.summarize_bot_stars(start_stars)
+			seats.append({"name": seat["player_name"], "result": seat["result"], "rank": rank["name"], "stars": rank["stars"]})
+		matches.append({"match_id": match_id, "played_unix": entry["played_unix"], "players": seats, "battle": entry.get("bot_battle", {})})
+	return {"matches": matches, "next_cursor": next_cursor}
+
+func get_human_ladder(usernames: Dictionary) -> Array[Dictionary]:
+	_ensure_loaded()
+	_load_dedicated_results()
+	var season := RankedProgressionScript.season_for_time(Time.get_unix_time_from_system())
+	var players: Array[Dictionary] = []
+	for account_id in usernames:
+		var progress := _get_ranked_progress(account_id, 1, season)
+		players.append({"name": usernames[account_id], "points": progress["points"], "rank": progress["rank_name"], "stars": progress["stars"]})
+	return players
 
 func _get_ranked_progress(account_id: String, best_of: int, season: int) -> Dictionary:
 	if account_id.is_empty():
@@ -221,7 +315,10 @@ func get_ranked_match_results(entry: Dictionary) -> Dictionary:
 	var season := RankedProgressionScript.season_for_time(float(stored_entry["played_unix"]))
 	var results := {}
 	for player_entry in stored_entry["players"]:
-		var progress := _replay_ranked_history(str(player_entry["account_id"]), best_of, match_id)
+		var account_id := str(player_entry["account_id"])
+		if account_id.is_empty():
+			continue
+		var progress := _replay_ranked_history(account_id, best_of, match_id)
 		var before := RankedProgressionScript.summarize(progress, season)
 		var outcome := str(player_entry["result"])
 		RankedProgressionScript.apply_result(progress, outcome, season)
@@ -258,6 +355,8 @@ func _replay_ranked_history(account_id: String, best_of: int, stop_before_match_
 
 func _index_result(entry: Dictionary) -> void:
 	var match_id := str(entry["match_id"])
+	if entry.has("bot_deck_result") or entry.has("bot_deck_results"):
+		_bot_deck_match_ids.append(match_id)
 	for player_entry in entry["players"]:
 		_add_history_id(_history_ids_by_profile_id, str(player_entry["profile_id"]), match_id)
 		if bool(entry.get("advances_rank", false)):
@@ -315,6 +414,7 @@ func _build_player_entry(
 		"god_name": god_name,
 		"deck_name": str(submission.get("deck_name", "")),
 		"deck_id": str(submission.get("deck_id", "")),
+		"bot_stars": int(submission.get("bot_stars", 0)),
 	}
 
 func _get_profile_history_ids(profile_id: String) -> Array[String]:

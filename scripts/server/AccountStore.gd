@@ -476,6 +476,10 @@ func get_username_map(account_ids: Array) -> Dictionary:
 			usernames[account_id] = username
 	return usernames
 
+func get_ladder_usernames() -> Dictionary:
+	_ensure_loaded()
+	return get_username_map(_accounts_by_id.keys())
+
 func get_storage_path_for_debug() -> String:
 	return ProjectSettings.globalize_path(_get_storage_path())
 

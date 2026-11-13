@@ -4766,9 +4766,9 @@ func _setup_action_log() -> void:
 
 	_action_log_button = Button.new()
 	_action_log_button.name = "ActionLogNotebookButton"
+	_action_log_button.text = "Match Log"
 	_action_log_button.icon = ACTION_LOG_NOTEBOOK_ICON
-	_action_log_button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_action_log_button.expand_icon = true
+	_action_log_button.icon_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	_action_log_button.add_theme_constant_override("icon_max_width", 30)
 	_action_log_button.tooltip_text = "Match Log"
 	_action_log_button.accessibility_name = "Match Log"
@@ -5750,7 +5750,7 @@ func _open_action_log_popup() -> void:
 	vbox.add_child(header)
 
 	var title := Label.new()
-	title.text = "Log History"
+	title.text = "Match Log"
 	title.add_theme_font_size_override("font_size", 13)
 	header.add_child(title)
 

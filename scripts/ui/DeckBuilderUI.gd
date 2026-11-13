@@ -13,6 +13,7 @@ const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
 const ReinforcementCardTileScript = preload("res://scripts/ui/ReinforcementCardTile.gd")
 const ReinforcementDropAreaScript = preload("res://scripts/ui/ReinforcementDropArea.gd")
 const UIHoverSfxScript = preload("res://scripts/core/UIHoverSfx.gd")
+const FeedbackEmailScript = preload("res://scripts/ui/FeedbackEmail.gd")
 const MANA_ORB_TEXTURE := preload("res://images/ui/ManaOrb.png")
 
 signal back_pressed
@@ -99,7 +100,10 @@ var _preview_text_box: VBoxContainer
 var _preview_details_scroll: ScrollContainer
 var _deck_list:        VBoxContainer
 var _deck_count_lbl:   Label
+var _deck_status_box:  VBoxContainer
 var _validation_lbl:   Label
+var _status_flash_lbl: Label
+var _status_flash_timer: Timer
 var _profile_lbl:      Label
 var _deck_name_edit:   LineEdit
 var _reinforcements_mode_btn: Button
@@ -118,6 +122,8 @@ var _import_deck_dialog: ConfirmationDialog
 var _import_deck_text_edit: TextEdit
 var _send_friend_dialog: ConfirmationDialog
 var _send_friend_option: OptionButton
+var _submit_bot_button: Button
+var _bot_submission_overlay: Control
 var _search_edit:      LineEdit
 var _tiamat_panel:     PanelContainer
 var _tiamat_hint_lbl:  Label
@@ -168,8 +174,8 @@ var _deck_row_drag_start_pos: Vector2 = Vector2.ZERO
 var _deck_row_drag_active: bool = false
 var _deck_row_drag_offset: Vector2 = Vector2.ZERO
 var _deck_row_drag_ghost: Control = null
-var _main_deck_section_header: Control = null
-var _reinforcement_section_header: Control = null
+var _main_deck_section_header: Label = null
+var _reinforcement_section_header: Label = null
 var _visual_deck_view_enabled: bool = false
 var _deck_visual_board: HBoxContainer = null
 var _deck_visual_main_grid: GridContainer = null
@@ -405,6 +411,13 @@ func _build_top_bar(parent: Control) -> void:
 	var gap := Control.new()
 	gap.custom_minimum_size.x = 16
 	inner.add_child(gap)
+
+	_submit_bot_button = Button.new()
+	_submit_bot_button.text = "Submit a Bot"
+	_submit_bot_button.tooltip_text = "Send this deck and a strategy for a future bot."
+	_submit_bot_button.custom_minimum_size.y = 32
+	_submit_bot_button.pressed.connect(_open_bot_submission)
+	inner.add_child(_submit_bot_button)
 
 	var back_btn := Button.new()
 	back_btn.text = "← Menu"
@@ -863,13 +876,26 @@ func _build_deck_panel(parent: Control) -> void:
 
 
 	# ── validation status ────────────────────────────────
+	_deck_status_box = VBoxContainer.new()
+	_deck_status_box.add_theme_constant_override("separation", 0)
+	panel.add_child(_deck_status_box)
+
 	_validation_lbl = Label.new()
-	_validation_lbl.text = ""
+	_validation_lbl.text = " \n "
 	_validation_lbl.add_theme_font_size_override("font_size", 12)
 	_validation_lbl.autowrap_mode = TextServer.AUTOWRAP_OFF
 	_validation_lbl.clip_text = true
 	_validation_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	panel.add_child(_validation_lbl)
+	_status_flash_lbl = _validation_lbl.duplicate() as Label
+	_status_flash_lbl.text = " "
+	_deck_status_box.add_child(_status_flash_lbl)
+	_deck_status_box.add_child(_validation_lbl)
+
+	_status_flash_timer = Timer.new()
+	_status_flash_timer.one_shot = true
+	_status_flash_timer.wait_time = 2.0
+	_status_flash_timer.timeout.connect(_set_status_flash.bind(""))
+	add_child(_status_flash_timer)
 
 	# ── action buttons ───────────────────────────────────
 	var btns := HFlowContainer.new()
@@ -931,6 +957,8 @@ func _build_exit_confirm_dialog() -> void:
 	_exit_confirm_dialog = dialog
 
 func request_exit() -> void:
+	if _close_bot_submission():
+		return
 	if not _has_unsaved_deck_changes():
 		back_pressed.emit()
 		return
@@ -2039,10 +2067,15 @@ func _set_show_collection_card_overlays(enabled: bool) -> void:
 			_set_collection_card_overlay_state(control_root, hovered)
 
 func _refresh_deck_panel(rebuild_collection: bool = false, refresh_layout: bool = false) -> void:
-	for child in _deck_list.get_children():
-		child.queue_free()
-	_main_deck_section_header = null
-	_reinforcement_section_header = null
+	_submit_bot_button.disabled = _deck.is_empty()
+	var reuse_visual_board := _visual_deck_view_enabled and is_instance_valid(_deck_visual_board)
+	if not reuse_visual_board:
+		for child in _deck_list.get_children():
+			_deck_list.remove_child(child)
+			child.queue_free()
+		_deck_visual_board = null
+		_main_deck_section_header = null
+		_reinforcement_section_header = null
 
 	var total := 0
 	for card_name in _deck:
@@ -2053,7 +2086,12 @@ func _refresh_deck_panel(rebuild_collection: bool = false, refresh_layout: bool 
 	if _deck_count_lbl != null:
 		_deck_count_lbl.text = "%d main + %d Reinforcements" % [total, reinforcement_total]
 	if _visual_deck_view_enabled:
-		_build_visual_deck_panel_contents()
+		if reuse_visual_board:
+			_main_deck_section_header.text = _get_visual_main_header_text()
+			_reinforcement_section_header.text = _get_visual_reinforcement_header_text()
+			_populate_visual_deck_tiles()
+		else:
+			_build_visual_deck_panel_contents()
 		_refresh_tiamat_panel()
 		_update_validation()
 		if rebuild_collection:
@@ -2246,8 +2284,10 @@ func _populate_visual_deck_tiles() -> void:
 	if _deck_visual_main_grid == null or _deck_visual_side_list == null:
 		return
 	for child in _deck_visual_main_grid.get_children():
+		_deck_visual_main_grid.remove_child(child)
 		child.queue_free()
 	for child in _deck_visual_side_list.get_children():
+		_deck_visual_side_list.remove_child(child)
 		child.queue_free()
 	for card in _get_sorted_cards_in_bucket(_deck):
 		var card_name := str(card.card_name)
@@ -2438,7 +2478,7 @@ func _cleanup_visual_deck_drag_ghost() -> void:
 	_visual_deck_drag_ghost = null
 
 func _layout_visual_deck_view() -> void:
-	if _deck_visual_main_grid == null or not is_instance_valid(_deck_visual_main_grid):
+	if not is_instance_valid(_deck_visual_board):
 		return
 	var available_height := 520.0
 	if is_instance_valid(_deck_scroll) and _deck_scroll.size.y > 0.0:
@@ -2478,6 +2518,7 @@ func _refresh_tiamat_panel() -> void:
 		return
 
 	for child in _tiamat_rows.get_children():
+		_tiamat_rows.remove_child(child)
 		child.queue_free()
 
 	if _deck_uses_tiamat():
@@ -2830,8 +2871,8 @@ func _toggle_visual_deck_view() -> void:
 		_set_status_flash("Visual deck view enabled. Drag or use +/- between Main Deck and Reinforcements.")
 	else:
 		_set_status_flash("List deck view enabled.")
+	_body_scroll.scroll_vertical = 0
 	_refresh_deck_panel(false, true)
-	_queue_responsive_layout_refresh()
 
 func _deck_uses_tiamat() -> bool:
 	return TiamatScript.is_tiamat_god(_get_selected_god_template())
@@ -3200,9 +3241,7 @@ func _save_deck() -> void:
 		file.store_string(JSON.stringify(_deck, "\t"))
 		file.close()
 		print("DeckBuilder: saved to user://saved_deck.json")
-		# Flash save button text feedback
-		_validation_lbl.text = "✓ Deck saved!\n" + _validation_lbl.text
-		get_tree().create_timer(2.0).timeout.connect(Callable(self, "_update_validation_if_ready"))
+		_set_status_flash("✓ Deck saved!")
 	else:
 		print("DeckBuilder: save failed.")
 
@@ -3261,6 +3300,108 @@ func _export_current_deck() -> void:
 	var deck_name := _deck_name_edit.text if _deck_name_edit != null else ""
 	var shareable_deck := _make_shareable_deck(deck_name, _deck, _get_deck_special_setup(), _reinforcements)
 	_copy_deck_share_code(shareable_deck, "Deck share code copied.")
+
+func _open_bot_submission() -> void:
+	if _deck.is_empty() or is_instance_valid(_bot_submission_overlay):
+		return
+	var deck := _make_shareable_deck(_deck_name_edit.text, _deck, _get_deck_special_setup(), _reinforcements)
+	var deck_list := _format_bot_submission_deck(deck)
+	var overlay := ColorRect.new()
+	overlay.color = Color(0.01, 0.02, 0.05, 0.86)
+	overlay.z_index = 2250
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(overlay)
+	_bot_submission_overlay = overlay
+
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.add_child(center)
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size.x = minf(640.0, get_viewport_rect().size.x - 32.0)
+	center.add_child(panel)
+	var margin := MarginContainer.new()
+	for side in ["left", "right", "top", "bottom"]:
+		margin.add_theme_constant_override("margin_" + side, 16)
+	panel.add_child(margin)
+	var content := VBoxContainer.new()
+	content.add_theme_constant_override("separation", 8)
+	margin.add_child(content)
+
+	var title := Label.new()
+	title.text = "Submit a Bot"
+	title.add_theme_font_size_override("font_size", 22)
+	content.add_child(title)
+	var instructions := Label.new()
+	instructions.text = "Suggest how a future bot should play this deck. Your email will include the deck list and an import code."
+	instructions.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	content.add_child(instructions)
+	var preview := TextEdit.new()
+	preview.text = deck_list
+	preview.editable = false
+	preview.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
+	preview.custom_minimum_size.y = 132
+	content.add_child(preview)
+	var strategy := TextEdit.new()
+	strategy.placeholder_text = "Describe the game plan, key combos, and when the bot should use them."
+	strategy.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
+	strategy.custom_minimum_size.y = 132
+	content.add_child(strategy)
+
+	var status := Label.new()
+	status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	status.hide()
+	content.add_child(status)
+	var actions := HBoxContainer.new()
+	actions.alignment = BoxContainer.ALIGNMENT_END
+	content.add_child(actions)
+	var close_button := Button.new()
+	close_button.text = "Close"
+	close_button.pressed.connect(_close_bot_submission)
+	actions.add_child(close_button)
+	var email_button := Button.new()
+	email_button.text = "Open Email Draft"
+	email_button.disabled = true
+	email_button.pressed.connect(func() -> void:
+		var body := "Strategy\n%s\n\n%s\n\nDeck import code\n%s" % [
+			strategy.text.strip_edges(), deck_list, _encode_deck_share_code(deck),
+		]
+		status.text = FeedbackEmailScript.open_draft("Other Gods bot submission", body)
+		status.show()
+	)
+	actions.add_child(email_button)
+	strategy.text_changed.connect(func() -> void:
+		email_button.disabled = strategy.text.strip_edges().is_empty()
+		status.hide()
+	)
+	_apply_hover_to_all_buttons(overlay)
+	strategy.grab_focus()
+
+func _close_bot_submission() -> bool:
+	if not is_instance_valid(_bot_submission_overlay):
+		return false
+	_bot_submission_overlay.hide()
+	_bot_submission_overlay.queue_free()
+	_bot_submission_overlay = null
+	_submit_bot_button.grab_focus()
+	return true
+
+func _format_bot_submission_deck(deck: Dictionary) -> String:
+	var lines := PackedStringArray([str(deck["name"])])
+	for section in ["cards", "reinforcements"]:
+		var cards: Dictionary = deck[section]
+		if cards.is_empty():
+			continue
+		lines.append_array(["", "Main Deck" if section == "cards" else "Reinforcements"])
+		var card_names := cards.keys()
+		card_names.sort()
+		for card_name in card_names:
+			lines.append("%d x %s" % [cards[card_name], card_name])
+	var matriarch_slots := TiamatScript.get_slot_card_names_from_setup(deck["special_setup"])
+	for slot_index in range(matriarch_slots.size()):
+		var slot_cards: Array = matriarch_slots[slot_index]
+		if not slot_cards.is_empty():
+			lines.append("Matriarch slot %d: %s" % [slot_index + 1, ", ".join(slot_cards)])
+	return "\n".join(lines)
 
 func _show_send_friend_dialog() -> void:
 	if _deck.is_empty():
@@ -3341,10 +3482,12 @@ func _make_shareable_deck(deck_name: String, cards, special_setup, reinforcement
 	}
 	return payload
 
-func _copy_deck_share_code(shareable_deck: Dictionary, status_message: String) -> void:
+func _encode_deck_share_code(shareable_deck: Dictionary) -> String:
 	var json_text := JSON.stringify(shareable_deck)
-	var share_code := DECK_SHARE_PREFIX + Marshalls.raw_to_base64(json_text.to_utf8_buffer())
-	DisplayServer.clipboard_set(share_code)
+	return DECK_SHARE_PREFIX + Marshalls.raw_to_base64(json_text.to_utf8_buffer())
+
+func _copy_deck_share_code(shareable_deck: Dictionary, status_message: String) -> void:
+	DisplayServer.clipboard_set(_encode_deck_share_code(shareable_deck))
 	_set_status_flash(status_message)
 
 func _decode_shared_deck_text(raw_text: String) -> Dictionary:
@@ -4270,14 +4413,11 @@ func _can_sync_account_decks() -> bool:
 	return _online_lobby_client.is_authenticated()
 
 func _set_status_flash(message: String) -> void:
-	if _validation_lbl == null:
+	if _status_flash_lbl == null:
 		return
-	_validation_lbl.text = "%s\n%s" % [message, _validation_lbl.text]
-	get_tree().create_timer(2.0).timeout.connect(Callable(self, "_update_validation_if_ready"))
-
-func _update_validation_if_ready() -> void:
-	if is_instance_valid(_validation_lbl):
-		_update_validation()
+	_status_flash_lbl.text = " " if message.is_empty() else message
+	if not message.is_empty():
+		_status_flash_timer.start()
 
 func _update_validation() -> void:
 	var validation := DeckValidatorScript.new().validate_deck(
@@ -4297,7 +4437,9 @@ func _update_validation() -> void:
 	]
 	var is_valid := bool(validation.get("is_valid", false))
 	var error := str(validation.get("error", "")).strip_edges()
-	_validation_lbl.text = summary if error.is_empty() else "%s\n%s" % [summary, error]
+	# Keep the status and validation area the same height as messages change.
+	var error_line := " " if error.is_empty() else error
+	_validation_lbl.text = "%s\n%s" % [summary, error_line]
 	_validation_lbl.modulate = Color(0.5, 1.0, 0.55) if is_valid else Color(1.0, 0.72, 0.42)
 	_validation_lbl.tooltip_text = error
 
@@ -4525,7 +4667,7 @@ func _cycle_card_art(card: Card) -> void:
 
 # ── filter ─────────────────────────────────────────────────────────
 func _input(event: InputEvent) -> void:
-	if not visible:
+	if not visible or is_instance_valid(_bot_submission_overlay):
 		return
 	if _try_handle_visual_deck_card_drag_input(event):
 		get_viewport().set_input_as_handled()
@@ -4560,7 +4702,7 @@ func _input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 
 func _unhandled_input(event: InputEvent) -> void:
-	if not visible:
+	if not visible or is_instance_valid(_bot_submission_overlay):
 		return
 	if event is InputEventMouseButton:
 		var mouse_event := event as InputEventMouseButton
@@ -4773,7 +4915,6 @@ func _update_responsive_layout() -> void:
 	if is_instance_valid(_body_scroll):
 		_body_scroll.custom_minimum_size.y = 0.0
 		_body_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-		_body_scroll.scroll_vertical = 0
 
 	var target_panel_width := clampf(floor(viewport_width * 0.34), MIN_DECK_PANEL_WIDTH, MAX_DECK_PANEL_WIDTH)
 	if use_visual_deck_layout:
@@ -4805,8 +4946,8 @@ func _update_responsive_layout() -> void:
 		_deck_footer_buttons.visible = not use_visual_deck_layout
 	if is_instance_valid(_autofill_deck_btn):
 		_autofill_deck_btn.visible = not use_visual_deck_layout
-	if is_instance_valid(_validation_lbl):
-		_validation_lbl.visible = not use_visual_deck_layout
+	if is_instance_valid(_deck_status_box):
+		_deck_status_box.visible = not use_visual_deck_layout
 
 	var preview_height := 252.0
 	if is_instance_valid(_preview_outer) and _preview_outer.visible:
@@ -5051,7 +5192,7 @@ func _get_preferred_autofill_regular_candidates() -> Array[Card]:
 	if god == null:
 		return candidates
 	for card: Card in _all_cards:
-		if not _is_regular_card(card):
+		if not _is_regular_card(card) or card.is_single_player_card:
 			continue
 		if int(_deck.get(card.card_name, 0)) + int(_reinforcements.get(card.card_name, 0)) >= _max_copies(card):
 			continue
@@ -5118,7 +5259,7 @@ func _is_regular_card(card: Card) -> bool:
 	return card != null and not card.is_god and not card.is_power
 
 func _can_autofill_regular_card(card: Card, god: GodCard, legendary_only: bool) -> bool:
-	if not _is_regular_card(card):
+	if not _is_regular_card(card) or card.is_single_player_card:
 		return false
 	if legendary_only and not card.is_legendary:
 		return false
@@ -5131,7 +5272,7 @@ func _can_autofill_regular_card(card: Card, god: GodCard, legendary_only: bool) 
 	return _is_card_compatible_with_selected_god(card, god)
 
 func _can_autofill_power_card(card: Card, god: GodCard) -> bool:
-	if card == null or not card.is_power or card.is_god:
+	if card == null or not card.is_power or card.is_god or card.is_single_player_card:
 		return false
 	if int(_deck.get(card.card_name, 0)) + int(_reinforcements.get(card.card_name, 0)) >= _max_copies(card):
 		return false

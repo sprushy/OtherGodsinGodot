@@ -8,14 +8,17 @@ const MANA_VALUE := 1000
 const TACTICAL_CARDS := [
 	"BitMeseri", "RunicSpellbreaker", "Snowball", "SirensSong", "TabletOfLife",
 	"BookOfLife", "Earthquake", "FiresOfJudgment", "Famine", "OccultSingularity",
-	"FallOfTheMighty", "BaneOfTheSvartalfar", "CircleOfRebirth", "Absence",
+	"FalloftheMighty", "BaneOfTheSvartalfar", "CircleofRebirth", "Absence",
 	"LightOfMorningsDoors", "FoolishOptimism", "DivineLightning", "FifaTheMagicalArrow", "Exorcism",
 	"GungnirTheSpearOfOdin", "NamburbiApotropaeon", "HeroicStand", "Hringhorni",
 	"Banishment", "SpellDemolition", "Sap", "SepLemutti", "Smite", "VoidShield",
 	"TheInferno", "TheDeluge", "Dromi", "Gleipnir", "SapStrength", "VisionOfTartarus", "VisionOfOdin", "Hermes",
+	"Drought", "HeavySnow", "Storm", "SavingGrace", "JiangZiyaFisherOfKings",
 ]
 const ACTIVE_POWERS := ["AcceleratedFate", "OraclesSight", "BerserkerMead", "MechFactory", "Palisade", "ManaGuard"]
-const BOARD_ABILITIES := ["Alu", "Lindwyrm", "Lamashatu", "ClayEaters", "AncientPyre", "Watchtower", "Gawain"]
+const BOARD_ABILITIES := ["Alu", "Lindwyrm", "Lamashatu", "ClayEaters", "AncientPyre", "Watchtower", "Gawain", "Beyla", "Nimue", "JiangZiyaFisherOfKings"]
+const EQUIPMENT := ["BeardedAxe", "RunicShortsword", "ReedBow", "SharurTheFlyingMace", "SevenLeagueBoots", "DraupnirTheMultiplying"]
+const STRUCTURES := ["AncientPyre", "Watchtower", "WardingStone", "DoorwayToTheVoid"]
 const PASSIVE_TYPES := {
 	"AncientWisdom": ["Mage"],
 	"GiantsDisdain": ["Giant"], "SummonedSap": ["Plant", "Animal", "Hybrid"],
@@ -30,6 +33,12 @@ static func key(card: Card) -> String:
 
 static func supported(card: Card) -> bool:
 	return key(card) in TACTICAL_CARDS
+
+static func supports_ranked_deck_card(card: Card) -> bool:
+	var id := key(card)
+	if card is PowerCard:
+		return id in ACTIVE_POWERS or id in ["SavingGrace", "Ragnarok", "CallOfTheValkyrie", "FerociousDefence"] or PASSIVE_TYPES.has(id)
+	return id in TACTICAL_CARDS or id in EQUIPMENT or id in STRUCTURES or id in ["BlotSacrifice", "KeyOfSolomon", "MeadOfPoetry", "WheelOfFire"]
 
 static func visible(bot, card: Card) -> bool:
 	if card == null:
@@ -190,9 +199,12 @@ static func combat_gain(bot, target: Card, str_delta: int, res_delta: int = 0, a
 			continue
 		if target.get_controller() == bot.bot_player and target != attacker:
 			continue
-		var defenders: Array = bot._get_board_creatures(bot.opponent) if target == attacker else [target]
+		var defenders: Array = []
 		if target == attacker:
+			defenders.append_array(bot._get_board_creatures(bot.opponent))
 			defenders.append(bot.opponent)
+		else:
+			defenders.append(target)
 		for defender in defenders:
 			if defender is Card and (not visible(bot, defender) or not bot._can_attack_creature(attacker, defender)):
 				continue
@@ -238,6 +250,17 @@ static func target_score(bot, card: Card, target: Card, action: CardAction = nul
 			return int(removal_score(bot, card, target) * 0.7)
 		"Alu":
 			return int(value(bot, target) * 0.8) if enemy and not target.is_sleeping else BAD
+		"Nimue":
+			if own and target is EquipmentCard:
+				for bearer in bot._get_board_creatures(bot.bot_player):
+					if target.can_equip_to(bearer):
+						return value(bot, target) / 2
+				return BAD
+			return removal_score(bot, card, target, action, false) if enemy and visible(bot, target) else BAD
+		"JiangZiyaFisherOfKings":
+			if own and target.current_zone == bot.bot_player.deck_zone and bot.game_manager.can_player_add_to_hand_now(bot.bot_player):
+				return bot._get_hand_value(target) * 70 - (2500 if card.current_zone in bot.bot_player.frontline_zones else 800)
+			return BAD
 		"Dromi", "Gleipnir":
 			if not enemy or not visible(bot, target) or target.has_status_effect("cannot_attack"):
 				return BAD
@@ -355,7 +378,7 @@ static func wipe_cards(bot, card: Card) -> Array:
 			"BaneOfTheSvartalfar": doomed = card._should_petrify(target)
 		if doomed:
 			result.append(target)
-	if id == "FallOfTheMighty":
+	if id == "FalloftheMighty":
 		# Its maximum depends on hidden strength; leave that uncertain cast
 		# alone rather than querying private stats from the authoritative state.
 		for target in bot.game_manager.get_field_cards():
@@ -370,6 +393,24 @@ static func effect_score(bot, card: Card, target: Card = null, action: CardActio
 	if target != null:
 		gain = target_score(bot, card, target, action)
 	match id:
+		"SavingGrace":
+			if not combat_visible(bot, action):
+				return BAD
+			var result: Dictionary = bot._estimate_attack_economy(action, null, 0, 0)
+			var cost: int = card.get_unlock_mana_cost(bot.game_manager)
+			if action.get_timing_speed() > SavingGrace.BASE_RESPONSE_SPEED:
+				cost += SavingGrace.FAST_RESPONSE_EXTRA_COST
+			return bot._score_follower_loss(bot.bot_player, int(result["bot_followers_lost"])) - mana_penalty(bot, cost)
+		"JiangZiyaFisherOfKings":
+			if action == null:
+				return BAD
+			if action.type == CardAction.Type.ATTACK:
+				return maxi(1800, removal_score(bot, card, action.attacker, action))
+			return 3500
+		"Drought", "HeavySnow", "Storm":
+			if action != null:
+				return BAD
+			gain = weather_score(bot, card)
 		"Banishment", "SpellDemolition":
 			if action != null and action.card != null and action.card.get_controller() == bot.opponent:
 				gain = value(bot, action.card)
@@ -394,7 +435,7 @@ static func effect_score(bot, card: Card, target: Card = null, action: CardActio
 					for creature in bot._get_board_creatures(bot.bot_player):
 						gain += value(bot, creature) / 2
 		"HeroicStand": gain = 7 * MANA_VALUE
-		"TheInferno", "TheDeluge", "Earthquake", "FiresOfJudgment", "Famine", "OccultSingularity", "FallOfTheMighty", "BaneOfTheSvartalfar":
+		"TheInferno", "TheDeluge", "Earthquake", "FiresOfJudgment", "Famine", "OccultSingularity", "FalloftheMighty", "BaneOfTheSvartalfar":
 			gain = 0
 			var removed: Array = []
 			for doomed in wipe_cards(bot, card):
@@ -415,7 +456,7 @@ static func effect_score(bot, card: Card, target: Card = null, action: CardActio
 		"FoolishOptimism":
 			var choice := forced_combat_choice(bot, card, card.get_lowest_level_attacker_choices(bot.game_manager), card.get_highest_level_defender_choices(bot.game_manager))
 			gain = int(choice.get("score", BAD))
-		"CircleOfRebirth":
+		"CircleofRebirth":
 			gain = 0
 			var spaces := {bot.bot_player: open_spaces(bot.bot_player), bot.opponent: open_spaces(bot.opponent)}
 			for dead in bot.game_manager.died_this_turn:
@@ -431,13 +472,57 @@ static func effect_score(bot, card: Card, target: Card = null, action: CardActio
 		return gain - mana_penalty(bot, Hermes.ACTIVATION_COST)
 	return gain - CARD_VALUE - mana_penalty(bot, activation_cost(bot, card))
 
+static func weather_score(bot, weather: Card) -> int:
+	var id := key(weather)
+	var gain := 0
+	for field_card in bot.game_manager.get_field_cards():
+		if not visible(bot, field_card) or field_card.is_face_down or field_card.abilities_suppressed():
+			continue
+		var side := 1 if field_card.get_controller() == bot.opponent else -1
+		if key(field_card) == id:
+			return BAD
+		if field_card is SpellCard and field_card.has_type("Weather"):
+			gain += side * CARD_VALUE
+		if field_card.card_type != Card.CardType.CREATURE:
+			continue
+		match id:
+			"HeavySnow":
+				if (field_card.has_type("Anguine") or field_card.has_type("Amphibious")) and not weather._weather_effect_is_blocked(field_card):
+					gain += side * value(bot, field_card) * (1 if field_card.is_sleeping else 3) / 4
+			"Storm":
+				if weather._weather_effect_is_blocked(field_card):
+					continue
+				if field_card.has_type("Aerial"):
+					gain += side * 3000
+				if weather._has_non_passive_creature_ability(field_card):
+					gain += side * 2300
+	if id == "Drought":
+		# The extra preparation step is costly if our hand depends on spells.
+		gain -= bot.bot_player.hand_zone.cards.filter(func(card: Card) -> bool: return card is SpellCard and card != weather).size() * 1700
+		if open_spaces(bot.opponent) <= 2 and open_spaces(bot.bot_player) >= 3:
+			gain += 6000
+	return gain
+
+static func wake_gain(bot, source: Card, norse_only: bool = false) -> int:
+	var gain := 0
+	for player in [bot.bot_player, bot.opponent]:
+		if player == bot.opponent and not norse_only:
+			continue
+		for creature in bot._get_board_creatures(player):
+			if not visible(bot, creature) or not creature.is_sleeping or (norse_only and creature.culture != "Norse"):
+				continue
+			if bot.game_manager.is_immune_to_source(creature, source):
+				continue
+			gain += (1 if player == bot.bot_player else -1) * value(bot, creature) / 2
+	return gain
+
 static func equipment_score(bot, equipment: Card, bearer: Card) -> int:
 	if not equipment.can_equip_to(bearer) or bearer.is_sleeping:
 		return BAD
 	if key(equipment) == "DraupnirTheMultiplying":
 		# Three end-turn payments are more likely on a protected reserve bearer.
 		return (6500 if bearer.current_zone in bot.bot_player.reserve_zones else 5500) - CARD_VALUE
-	if key(equipment) not in ["BeardedAxe", "RunicShortsword", "ReedBow", "SharurTheFlyingMace", "SevenLeagueBoots"]:
+	if key(equipment) not in EQUIPMENT:
 		return BAD
 	var gain := stat_gain(bot, equipment, bearer)
 	if key(equipment) == "BeardedAxe" and bearer.culture == "Norse" and bearer.has_type("Warrior"):
@@ -459,6 +544,16 @@ static func structure_score(bot, structure: Card) -> int:
 		"Watchtower":
 			# Counters arrive from future enemy entries, not existing cards.
 			gain = 6000 if bot._board_creature_count(bot.opponent) < 3 else 3000
+		"DoorwayToTheVoid":
+			for dead in bot.opponent.graveyard_zone.cards:
+				if dead is CreatureCard:
+					gain += 600
+			for enemy in bot._get_board_creatures(bot.opponent):
+				if visible(bot, enemy) and (enemy is AgainWalker or enemy is Huginn or enemy is Muninn):
+					gain += 3500
+			for god in bot.opponent.god_zone.cards:
+				if visible(bot, god) and god is Freyja:
+					gain += 4500
 		"WardingStone":
 			if bot.game_manager.attack_restrictions.has(bot.opponent):
 				return BAD
@@ -519,7 +614,10 @@ static func healing_score(bot, target: Card, status: Dictionary) -> int:
 		return int(value(bot, target) * 0.6)
 	return 0
 
-static func budget_choices(bot, uids: Array, budget: int, count_limit: int, harmful: bool = false) -> Array[String]:
+static func blot_summon_gain(bot, card: Card) -> int:
+	return bot._get_card_economic_value(card) - CARD_VALUE / 2 + (bot._get_play_cost(card, false) + card.sacrifice_cost * 2) * MANA_VALUE
+
+static func budget_choices(bot, uids: Array, budget: int, count_limit: int, harmful: bool = false, blot: bool = false) -> Array[String]:
 	# A small knapsack over level and board-space budgets beats choosing one
 	# large creature that excludes a more valuable combination of small ones.
 	var states := {Vector2i.ZERO: {"score": 0, "uids": []}}
@@ -533,7 +631,7 @@ static func budget_choices(bot, uids: Array, budget: int, count_limit: int, harm
 		if card == null:
 			continue
 		var level := maxi(0, card.get_effective_level())
-		var gain := value(bot, card)
+		var gain := blot_summon_gain(bot, card) if blot else value(bot, card)
 		if harmful == (card.get_controller() == bot.bot_player):
 			gain = -gain
 		var previous := states.duplicate(true)
@@ -559,7 +657,7 @@ static func power_score(bot, power: PowerCard, target: Card = null) -> int:
 	var gain := BAD
 	match key(power):
 		"AcceleratedFate":
-			if not bot.bot_player.deck_zone.cards.is_empty():
+			if not bot.bot_player.deck_zone.cards.is_empty() and bot.game_manager.can_player_add_to_hand_now(bot.bot_player):
 				gain = CARD_VALUE + (2500 if bot.bot_player.hand_zone.cards.size() <= 2 else 0)
 		"OraclesSight": gain = target_score(bot, power, target) if target != null else BAD
 		"BerserkerMead": gain = target_score(bot, power, target)
@@ -605,4 +703,11 @@ static func unlock_score(bot, power: PowerCard) -> int:
 		for other in bot._get_player_powers():
 			if other != power and other.culture == "Olympic":
 				gain += 2200
+	elif id == "Ragnarok":
+		gain = -5000 # The bot forfeits its attacks this turn.
+		for field_card in bot.game_manager.get_field_cards():
+			if visible(bot, field_card) and (destruction_guard(field_card) or bot.game_manager.is_immune_to_source(field_card, power)):
+				continue
+			gain += value(bot, field_card) * (1 if field_card.get_controller() == bot.opponent else -1)
+		gain += CARD_VALUE * (maxi(0, bot.opponent.hand_zone.cards.size() - Ragnarok.HAND_LIMIT) - maxi(0, bot.bot_player.hand_zone.cards.size() - Ragnarok.HAND_LIMIT))
 	return gain - mana_penalty(bot, power.get_unlock_mana_cost(bot.game_manager))

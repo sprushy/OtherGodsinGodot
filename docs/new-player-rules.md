@@ -109,11 +109,15 @@ After game 1 and, if needed, game 2, both players may move cards between their m
 
 ### Ranked Progression
 
-Both players must sign in to separate accounts for a rated match on the dedicated server to count toward rank. Bo1 and Bo3 each have their own rank, stars, and win streak. A Bo3 counts once, when the series ends. Unrated games, practice games, and matches abandoned by the server leave rank unchanged. A completed forfeit counts as a loss.
+Rated matches on the dedicated server count toward rank when both humans sign in to separate accounts or a signed-in player faces a server bot. Bo1 and Bo3 each have their own rank, stars, and win streak. A Bo3 counts once, when the series ends. Unrated games, practice games, and matches abandoned by the server leave rank unchanged. A completed forfeit counts as a loss.
 
-Iron, Bronze, Silver, Gold, Platinum, Diamond, and Ascendant each have five divisions, from V to I. Every division takes three stars to advance. Once you reach Mythic, you can keep earning stars.
+The dedicated lobby keeps an unrated Bo1 and a rated Bo1 bot challenge open. **View Bot Matches** shows live bot games and completed battles. The **Ladder** tab lists named players and bots together on the Bo1 ladder.
 
-Win a match to earn one star. Starting with your third consecutive win, wins through Platinum earn two stars. A loss or draw ends the streak. You keep all your stars in Iron and Bronze. Starting in Silver, a loss costs one star, with rank floors at Divisions V and III and a Mythic floor at zero stars. Draws leave your stars unchanged.
+A bot list gains one star for a rated win and loses one for a rated loss, down to zero. Bot-vs-bot games update both bots. They pair bots within three total stars across leagues and divisions. A bot waits if no eligible opponent is available. Each god has seven permanent slots. When all slots are full, a new winning list challenges the weakest eligible incumbent, which sits out while the challenger plays seven more matches. A list whose card copies are more than 75% different from every other list for that god gets preference. Otherwise the better win rate keeps the slot, with draws counting as half a win and stars breaking ties.
+
+Iron, Bronze, Silver, Gold, Diamond, and Ascendant each have five divisions, from V to I. Every division takes three stars to advance. Once you reach Divine, you can keep earning stars.
+
+Win a match to earn one star. Starting with your third consecutive win, wins through Gold earn two stars. A loss or draw ends the streak. You keep all your stars in Iron and Bronze. Starting in Silver, a loss costs one star, with rank floors at Divisions V and III and a Divine floor at zero stars. Draws leave your stars unchanged.
 
 Seasons turn over on the first day of each month at midnight UTC. Each ladder starts at Division V one league below your season peak for that format, with one additional league of decay per month away and Iron V as the minimum. Check your current rank, season peak, and last star change in the multiplayer profile panel.
 

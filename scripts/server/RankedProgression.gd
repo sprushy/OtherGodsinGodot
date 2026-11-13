@@ -1,11 +1,11 @@
 extends RefCounted
 
-const LEAGUES := ["Iron", "Bronze", "Silver", "Gold", "Platinum", "Diamond", "Ascendant", "Mythic"]
+const LEAGUES := ["Iron", "Bronze", "Silver", "Gold", "Diamond", "Ascendant", "Divine"]
 const STARS_PER_DIVISION := 3
 const DIVISIONS := ["V", "IV", "III", "II", "I"]
 const FIRST_LEAGUE_WITH_STAR_LOSS := 2
-const FIRST_LEAGUE_WITHOUT_STREAK_BONUS := 5
-const MYTHIC := 7
+const FIRST_LEAGUE_WITHOUT_STREAK_BONUS := 4
+const DIVINE := 6
 
 static func season_for_time(unix_time: float) -> int:
 	var date := Time.get_datetime_dict_from_unix_time(int(unix_time))
@@ -61,6 +61,7 @@ static func summarize(progress: Dictionary, season: int) -> Dictionary:
 	return {
 		"season": "%04d-%02d" % [year, active_season % 12 + 1],
 		"rank_name": rank["name"],
+		"points": points,
 		"stars": rank["stars"],
 		"stars_required": rank["stars_required"],
 		"at_floor": points == int(rank["floor_points"]),
@@ -71,12 +72,15 @@ static func summarize(progress: Dictionary, season: int) -> Dictionary:
 		"last_delta": progress["last_delta"],
 	}
 
+static func summarize_bot_stars(total_stars: int) -> Dictionary:
+	return _rank_at(maxi(0, total_stars))
+
 static func _rank_at(points: int) -> Dictionary:
 	var stars_per_league := _stars_per_league()
 	@warning_ignore("integer_division")
-	var league := mini(points / stars_per_league, MYTHIC)
+	var league := mini(points / stars_per_league, DIVINE)
 	var league_start := league * stars_per_league
-	if league < MYTHIC:
+	if league < DIVINE:
 		var stars_in_league := points - league_start
 		@warning_ignore("integer_division")
 		var division := stars_in_league / STARS_PER_DIVISION
@@ -91,8 +95,8 @@ static func _rank_at(points: int) -> Dictionary:
 			"floor_points": floor_points,
 		}
 	return {
-		"name": LEAGUES[MYTHIC],
-		"league": MYTHIC,
+		"name": LEAGUES[DIVINE],
+		"league": DIVINE,
 		"stars": points - league_start,
 		"stars_required": 0,
 		"floor_points": league_start,

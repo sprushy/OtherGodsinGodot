@@ -10,10 +10,13 @@ const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
 const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
 const PracticeFuzzPlayerBotScript = preload("res://scripts/bots/PracticeFuzzPlayerBot.gd")
 const ServerBotGameInputScript = preload("res://scripts/bots/ServerBotGameInput.gd")
+const ServerPathsScript = preload("res://scripts/server/ServerPaths.gd")
 const INITIAL_JOIN_TIMEOUT_SECONDS := 120
 const ABANDONED_MATCH_SHUTDOWN_DELAY_SECONDS := 0.25
 const GAME_END_SHUTDOWN_DELAY_SECONDS := 3.0
 const STATUS_HEARTBEAT_INTERVAL_SECONDS := 1.0
+const BOT_SELF_PLAY_STALL_MSEC := 45_000
+const BOT_SELF_PLAY_LIMIT_MSEC := 20 * 60 * 1000
 
 signal startup_succeeded(match_id: String, port: int)
 signal startup_failed(message: String)
@@ -38,14 +41,31 @@ var _ranked_results_by_player: Dictionary = {}
 var _status_heartbeat_elapsed: float = 0.0
 var _reinforcement_phase_active: bool = false
 var _server_bot_entries: Array[Dictionary] = []
+var _bot_review_started_msec := 0
+var _bot_review_progress_msec := 0
+var _bot_review_turn := 0
+var _bot_review_drawn := [{}, {}]
+var _bot_review_played := [{}, {}]
+var _bot_review_activated := [{}, {}]
+var _bot_review_issues := {}
 
 func _process(delta: float) -> void:
 	if not _abandoned_shutdown_started:
 		_status_heartbeat_elapsed += delta
 		if _status_heartbeat_elapsed >= STATUS_HEARTBEAT_INTERVAL_SECONDS:
 			_status_heartbeat_elapsed = 0.0
+			if (match_session != null and match_session.is_bot_self_play() and match_session.supervisor_process_id > 0
+					and not _finished_shutdown_pending and not OS.is_process_running(match_session.supervisor_process_id)):
+				_shutdown_abandoned_match("Lobby supervisor exited.")
+				return
 			_write_status_file()
 	_shutdown_if_match_was_abandoned()
+	if _bot_review_started_msec > 0 and not _abandoned_shutdown_started and not _finished_shutdown_pending:
+		var now := Time.get_ticks_msec()
+		if now - _bot_review_progress_msec >= BOT_SELF_PLAY_STALL_MSEC:
+			_shutdown_abandoned_match("Bot self-play stopped advancing turns.")
+		elif now - _bot_review_started_msec >= BOT_SELF_PLAY_LIMIT_MSEC:
+			_shutdown_abandoned_match("Bot self-play reached its match time limit.")
 
 func start_from_config(config: Dictionary) -> Error:
 	var config_error: String = _validate_config(config)
@@ -128,6 +148,8 @@ func maybe_start_match_if_ready() -> bool:
 		return false
 	_match_started = true
 	_initial_join_deadline_unix = 0
+	if match_session.is_bot_self_play():
+		_start_bot_review()
 	_attach_server_bots_for_match()
 	game_manager.start_turn()
 	_poll_server_bots()
@@ -291,6 +313,8 @@ func _on_game_ended(_winner: Player, _loser: Player) -> void:
 		series_snapshot = match_session.get_series_snapshot()
 	_detach_server_bots()
 	_ranked_results_by_player = _record_match_result(_winner, _loser)
+	if match_session.is_bot_self_play():
+		_write_bot_review(winner_index)
 	_series_end_payload = {
 		"winner_index": winner_index,
 		"series": series_snapshot,
@@ -515,6 +539,8 @@ func _shutdown_abandoned_match(reason: String) -> void:
 	if match_session != null:
 		match_session.mark_abandoned()
 	_detach_server_bots()
+	if match_session != null and match_session.is_bot_self_play():
+		_write_bot_review(-1)
 	_write_status_file(MatchSessionScript.STATUS_ABANDONED, reason)
 	if network_manager != null:
 		network_manager.broadcast_event_to_all("match_abandoned", {"reason": reason})
@@ -534,10 +560,13 @@ func _record_match_result(winner: Player, loser: Player) -> Dictionary:
 		winner_index,
 		loser_index,
 		_get_player_god_name(winner),
-		_get_player_god_name(loser)
+		_get_player_god_name(loser),
+		_bot_battle_summary() if match_session.is_bot_self_play() else {}
 	)
 	if not bool(record_result.get("success", false)):
 		push_warning("HeadlessMatchServer: failed to record match result: %s" % str(record_result.get("message", "Unknown error.")))
+		if match_session.is_bot_self_play():
+			_on_bot_review_move_failed("Failed to save the rated match result.")
 		return {}
 	return _match_history_store.get_ranked_match_results(record_result["entry"])
 
@@ -570,7 +599,92 @@ func _write_status_file(status_override: String = "", reason: String = "") -> vo
 	var clean_reason := reason.strip_edges()
 	if not clean_reason.is_empty():
 		payload["reason"] = clean_reason
+	if match_session.is_bot_self_play() and _bot_review_started_msec > 0:
+		payload["bot_turn"] = _bot_review_turn
+		payload["bot_issues"] = _bot_review_issues
 	JsonStoreScript.save_json(status_path, payload, "HeadlessMatchServer")
+
+func _start_bot_review() -> void:
+	_bot_review_started_msec = maxi(1, Time.get_ticks_msec())
+	_bot_review_progress_msec = _bot_review_started_msec
+	game_manager.turn_started.connect(_on_bot_review_turn_started)
+	game_manager.card_summoned.connect(_on_bot_review_summon)
+	game_manager.hand_card_entered_play.connect(_on_bot_review_hand_play)
+	match_manager.action_resolved.connect(_on_bot_review_action)
+	match_manager.move_validated.connect(_on_bot_review_command)
+	match_manager.move_failed.connect(_on_bot_review_move_failed)
+	for i in game_manager.players.size():
+		var player := game_manager.players[i]
+		player.card_moved.connect(_on_bot_review_card_moved.bind(i))
+		for card in player.hand_zone.cards:
+			_increment_bot_review_count(_bot_review_drawn[i], card.card_name)
+
+func _on_bot_review_turn_started(turn: int, _player: Player) -> void:
+	if turn > _bot_review_turn:
+		_bot_review_turn = turn
+		_bot_review_progress_msec = Time.get_ticks_msec()
+
+func _on_bot_review_card_moved(card: Card, from_zone: Zone, to_zone: Zone, index: int) -> void:
+	if card != null and to_zone == game_manager.players[index].hand_zone and from_zone != to_zone:
+		_increment_bot_review_count(_bot_review_drawn[index], card.card_name)
+
+func _on_bot_review_summon(player: Player, card: Card, from_zone: Zone, _to_zone: Zone, _source: Card, _face_down: bool, _stealth: bool) -> void:
+	if from_zone == null or from_zone.zone_type != Zone.ZoneType.HAND:
+		_on_bot_review_hand_play(player, card)
+
+func _on_bot_review_hand_play(player: Player, card: Card) -> void:
+	var index := game_manager.players.find(player)
+	if index >= 0 and card != null and not card.is_token:
+		_increment_bot_review_count(_bot_review_played[index], card.card_name)
+
+func _on_bot_review_action(action: CardAction) -> void:
+	if action != null and action.card != null and action.type != CardAction.Type.EVENT and (action.card is SpellCard or action.card is CharmCard or action.card is HexCard):
+		var index := game_manager.players.find(action.source_player)
+		if index >= 0:
+			_increment_bot_review_count(_bot_review_activated[index], action.card.card_name)
+
+func _on_bot_review_command(command: Dictionary) -> void:
+	if str(command.get("type", "")) != "unlock_power":
+		return
+	var card := game_manager.get_card_by_uid(str(command.get("power_uid", "")))
+	if card != null and not card.is_face_down:
+		_on_bot_review_hand_play(card.get_controller(), card)
+
+func _on_bot_review_move_failed(reason: String) -> void:
+	if _bot_review_issues.has(reason) or _bot_review_issues.size() < 32:
+		_increment_bot_review_count(_bot_review_issues, reason)
+
+func _increment_bot_review_count(counts: Dictionary, name: String) -> void:
+	counts[name] = int(counts.get(name, 0)) + 1
+
+func _bot_battle_summary() -> Dictionary:
+	var followers: Array[int] = []
+	for player in game_manager.players:
+		followers.append(player.followers)
+	return {"turns": game_manager.turn_number, "duration_seconds": int(game_manager.match_result_stats.get("duration_seconds", 0)), "followers": followers}
+
+func _write_bot_review(winner_index: int) -> void:
+	var seats: Array[Dictionary] = []
+	for i in match_session.player_session_ids.size():
+		var id: String = match_session.player_session_ids[i]
+		var deck: Dictionary = match_session.registered_player_decks_by_session.get(id, {})
+		var never_played: Array[String] = []
+		var unplayed_main_deck: Array[String] = []
+		for name in _bot_review_drawn[i]:
+			if not _bot_review_played[i].has(name) and not _bot_review_activated[i].has(name):
+				never_played.append(name)
+		never_played.sort()
+		for name in deck.get("cards", {}):
+			if name != deck.get("bot_god_name", "") and not _bot_review_played[i].has(name) and not _bot_review_activated[i].has(name):
+				unplayed_main_deck.append(name)
+		unplayed_main_deck.sort()
+		seats.append({"name": match_session.get_player_display_name(id, i), "list_id": deck.get("bot_list_id", ""),
+			"cards": deck.get("cards", {}), "seen_in_hand": _bot_review_drawn[i], "played": _bot_review_played[i],
+			"magic_resolutions": _bot_review_activated[i], "seen_but_never_played": never_played, "unplayed_deck_cards": unplayed_main_deck})
+	JsonStoreScript.save_json(ServerPathsScript.get_bot_review_path(match_session.match_id), {
+		"match_id": match_session.match_id, "turns": _bot_review_turn, "winner_index": winner_index,
+		"status": match_session.status, "seats": seats, "command_failures": _bot_review_issues,
+	}, "BotSelfPlay")
 
 func _get_player_god_name(player: Player) -> String:
 	if player == null or player.god_zone == null or player.god_zone.cards.is_empty():

@@ -166,7 +166,7 @@ static func build_command(bot, type: String, data: Dictionary) -> Dictionary:
 			var candidates := {"target_uids": []}
 			for target in source.get_valid_hand_creatures():
 				candidates["target_uids"].append(target.uid)
-			var selected := Strategy.budget_choices(bot, candidates["target_uids"], budget, zones.size())
+			var selected := Strategy.budget_choices(bot, candidates["target_uids"], budget, zones.size(), false, true)
 			command.merge({"type": "blot_sacrifice_choice", "choices": selected})
 		"return_to_hand_choice":
 			var card_uid := str(data.get("card_uid", ""))

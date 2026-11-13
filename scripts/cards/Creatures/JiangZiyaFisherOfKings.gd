@@ -224,8 +224,8 @@ func _action_targets_self(action: CardAction) -> bool:
 	return _target_value_contains_self(action.event_data)
 
 func _target_value_contains_self(value) -> bool:
-	if value == self:
-		return true
+	if value is Card:
+		return value == self
 	if value is Array:
 		for entry in value:
 			if _target_value_contains_self(entry):

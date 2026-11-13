@@ -3,14 +3,12 @@ class_name PracticeAutofillDeckFactory
 
 const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
 const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
+const BotCardStrategyScript = preload("res://scripts/bots/BotCardStrategy.gd")
 
 const DEFAULT_REGULAR_CARD_COUNT := 40
 const MAX_POWERS := 3
 const MAX_BUILD_ATTEMPTS := 32
 const MAX_RANDOM_PICK_ATTEMPTS := 256
-const EXCLUDED_GOD_NAMES := {
-	"Tiamat, the Primordial": true,
-}
 const PROMPT_HEAVY_CARD_NAMES := {
 	"Aphrodite Areia": true,
 	"Blessed Knights": true,
@@ -61,13 +59,10 @@ var _validator := DeckValidatorScript.new()
 var _all_cards: Array[Card] = []
 var _gods: Array[GodCard] = []
 var _cards_by_name: Dictionary = {}
-var _excluded_god_lookup: Dictionary = {}
 var _prompt_heavy_lookup: Dictionary = {}
 var _safe_non_creature_lookup: Dictionary = {}
 
 func _init() -> void:
-	for excluded_name in EXCLUDED_GOD_NAMES.keys():
-		_excluded_god_lookup[CardCatalogScript.to_lookup_key(str(excluded_name))] = true
 	for prompt_name in PROMPT_HEAVY_CARD_NAMES.keys():
 		_prompt_heavy_lookup[CardCatalogScript.to_lookup_key(str(prompt_name))] = true
 	for safe_name in SAFE_NON_CREATURE_CARD_NAMES.keys():
@@ -77,25 +72,29 @@ func _init() -> void:
 		if card == null:
 			continue
 		_cards_by_name[str(card.card_name)] = card
-		if card is GodCard and not _excluded_god_lookup.has(CardCatalogScript.to_lookup_key(str(card.card_name))):
+		if card is GodCard:
 			_gods.append(card as GodCard)
 
-func build_random_deck(seed_value: int, forced_god_name: String = "") -> Dictionary:
+func build_random_deck(seed_value: int, forced_god_name: String = "", ranked: bool = false) -> Dictionary:
 	if _gods.is_empty():
 		return {}
 	for attempt in range(MAX_BUILD_ATTEMPTS):
 		var deck_seed := seed_value + attempt
 		var rng := RandomNumberGenerator.new()
 		rng.seed = deck_seed
-		var god := _choose_god_template(rng, forced_god_name)
+		var god := _choose_god_template(rng, forced_god_name, ranked)
 		if god == null:
 			continue
 		var deck_cards: Dictionary = {}
 		deck_cards[god.card_name] = 1
-		if not _fill_regular_cards_for_god(deck_cards, god, rng):
+		if not _fill_regular_cards_for_god(deck_cards, god, rng, ranked):
 			continue
-		_fill_safe_powers_for_god(deck_cards, god, rng)
-		var validation := _validator.validate_deck(deck_cards)
+		var special_setup := {}
+		if TiamatThePrimordial.is_tiamat_god(god):
+			special_setup = _build_tiamat_brood_setup(rng)
+		else:
+			_fill_safe_powers_for_god(deck_cards, god, rng, ranked)
+		var validation := _validator.validate_deck(deck_cards, special_setup)
 		if bool(validation.get("is_valid", false)):
 			return {
 				"name": "%s Autofill %d" % [god.card_name, seed_value],
@@ -182,28 +181,40 @@ func build_purpose_deck(deck_name: String, god_name: String, card_counts: Dictio
 	}
 	return result
 
-func _choose_god_template(rng: RandomNumberGenerator, forced_god_name: String) -> GodCard:
+func _choose_god_template(rng: RandomNumberGenerator, forced_god_name: String, ranked: bool) -> GodCard:
 	var resolved_forced_name := forced_god_name.strip_edges()
 	if not resolved_forced_name.is_empty():
 		var forced_card = _cards_by_name.get(resolved_forced_name, null)
 		return forced_card as GodCard
-	if _gods.is_empty():
+	var candidates := _gods if ranked else _gods.filter(func(god: GodCard) -> bool:
+		return not TiamatThePrimordial.is_tiamat_god(god)
+	)
+	if candidates.is_empty():
 		return null
-	return _gods[rng.randi_range(0, _gods.size() - 1)]
+	return candidates[rng.randi_range(0, candidates.size() - 1)]
 
-func _fill_regular_cards_for_god(deck_cards: Dictionary, god: GodCard, rng: RandomNumberGenerator) -> bool:
+func _fill_regular_cards_for_god(deck_cards: Dictionary, god: GodCard, rng: RandomNumberGenerator, ranked: bool = false) -> bool:
 	var regular_count := 0
 	var legendary_count := 0
 	var preferred_added := 0
+	var support_added := 0
 	while regular_count < DEFAULT_REGULAR_CARD_COUNT:
 		var only_legendary := legendary_count < mini(3, int(DEFAULT_REGULAR_CARD_COUNT / 10.0)) and rng.randf() < 0.12
-		var candidates := _get_regular_candidates(god, deck_cards, only_legendary)
+		var candidates := _get_regular_candidates(god, deck_cards, only_legendary, ranked)
 		if candidates.is_empty():
 			if only_legendary:
-				candidates = _get_regular_candidates(god, deck_cards, false)
+				candidates = _get_regular_candidates(god, deck_cards, false, ranked)
 			if candidates.is_empty():
 				return false
-		var preferred_candidates := _get_preferred_regular_candidates(god, deck_cards)
+		var preferred_candidates := _get_preferred_regular_candidates(god, deck_cards, ranked)
+		if ranked and support_added < 10 and (support_added < 4 or rng.randf() < 0.25):
+			var support := candidates.filter(func(card: Card) -> bool: return card.card_type != Card.CardType.CREATURE)
+			if not support.is_empty():
+				candidates = support
+		elif ranked:
+			candidates = candidates.filter(func(card: Card) -> bool: return card.card_type == Card.CardType.CREATURE)
+			if candidates.is_empty():
+				candidates = _get_regular_candidates(god, deck_cards, false, ranked)
 		var chosen := candidates[rng.randi_range(0, candidates.size() - 1)]
 		if preferred_added < 7 and not preferred_candidates.is_empty() and rng.randf() < 0.35:
 			chosen = preferred_candidates[rng.randi_range(0, preferred_candidates.size() - 1)]
@@ -213,59 +224,108 @@ func _fill_regular_cards_for_god(deck_cards: Dictionary, god: GodCard, rng: Rand
 			return false
 		if chosen.is_legendary:
 			copies_to_add = 1
+		if ranked and chosen.card_type != Card.CardType.CREATURE:
+			copies_to_add = mini(copies_to_add, 10 - support_added)
 		copies_to_add = mini(copies_to_add, DEFAULT_REGULAR_CARD_COUNT - regular_count)
 		if chosen.is_legendary and legendary_count + copies_to_add > int(DEFAULT_REGULAR_CARD_COUNT / 10.0):
 			continue
 		deck_cards[chosen.card_name] = int(deck_cards.get(chosen.card_name, 0)) + copies_to_add
 		regular_count += copies_to_add
+		if chosen.card_type != Card.CardType.CREATURE:
+			support_added += copies_to_add
 		if chosen.is_legendary:
 			legendary_count += copies_to_add
 	return true
 
-func _fill_safe_powers_for_god(deck_cards: Dictionary, god: GodCard, rng: RandomNumberGenerator) -> void:
+func _build_tiamat_brood_setup(rng: RandomNumberGenerator) -> Dictionary:
+	var candidates := _all_cards.filter(func(card: Card) -> bool:
+		return TiamatThePrimordial.is_valid_slot_creature(card) and not card.is_single_player_card
+	)
+	var opening_creatures := candidates.filter(func(card: Card) -> bool:
+		return card.level <= TiamatThePrimordial.MAX_SLOT_LEVEL_TOTAL and card.mana_cost == 0 \
+			and card.sacrifice_cost == 0 and card.discard_cost == 0 and card.shelve_cost == 0 and card.banish_cost == 0
+	)
+	var slots: Array = []
+	for slot_index in range(TiamatThePrimordial.POWER_SLOT_COUNT):
+		var slot: Array[String] = []
+		var remaining_levels := TiamatThePrimordial.MAX_SLOT_LEVEL_TOTAL
+		# Give Tiamat at least one creature she can take and summon at zero mana.
+		if slot_index == 0 and not opening_creatures.is_empty():
+			var opener: Card = opening_creatures[rng.randi_range(0, opening_creatures.size() - 1)]
+			candidates.erase(opener)
+			slot.append(opener.card_name)
+			remaining_levels -= opener.level
+		while remaining_levels > 0:
+			var fitting := candidates.filter(func(card: Card) -> bool: return card.level <= remaining_levels)
+			if fitting.is_empty():
+				break
+			var chosen: Card = fitting[rng.randi_range(0, fitting.size() - 1)]
+			candidates.erase(chosen)
+			slot.append(chosen.card_name)
+			remaining_levels -= chosen.level
+		slots.append(slot)
+	return TiamatThePrimordial.build_special_setup(slots)
+
+func _fill_safe_powers_for_god(deck_cards: Dictionary, god: GodCard, rng: RandomNumberGenerator, ranked: bool = false) -> void:
 	var desired_powers := rng.randi_range(0, MAX_POWERS)
+	if ranked:
+		desired_powers = maxi(2, desired_powers)
 	for _power_index in range(desired_powers):
-		var candidates := _get_power_candidates(god, deck_cards)
+		var candidates := _get_power_candidates(god, deck_cards, ranked)
 		if candidates.is_empty():
 			return
 		var chosen := candidates[rng.randi_range(0, candidates.size() - 1)]
 		deck_cards[chosen.card_name] = int(deck_cards.get(chosen.card_name, 0)) + 1
 
-func _get_regular_candidates(god: GodCard, deck_cards: Dictionary, legendary_only: bool) -> Array[Card]:
+func _get_regular_candidates(god: GodCard, deck_cards: Dictionary, legendary_only: bool, ranked: bool = false) -> Array[Card]:
 	var candidates: Array[Card] = []
 	for template in _all_cards:
-		if not _is_safe_regular_card(template, god, deck_cards, legendary_only):
+		if not _is_safe_regular_card(template, god, deck_cards, legendary_only, ranked):
 			continue
 		candidates.append(template)
 	return candidates
 
-func _get_preferred_regular_candidates(god: GodCard, deck_cards: Dictionary) -> Array[Card]:
+func _get_preferred_regular_candidates(god: GodCard, deck_cards: Dictionary, ranked: bool = false) -> Array[Card]:
 	var candidates: Array[Card] = []
 	if god == null:
 		return candidates
 	for template in _all_cards:
-		if not _is_safe_regular_card(template, god, deck_cards, false):
+		if not _is_safe_regular_card(template, god, deck_cards, false, ranked):
 			continue
 		if _is_preferred_card_for_god(template, god):
 			candidates.append(template)
 	return candidates
 
-func _get_power_candidates(god: GodCard, deck_cards: Dictionary) -> Array[Card]:
+func _get_power_candidates(god: GodCard, deck_cards: Dictionary, ranked: bool = false) -> Array[Card]:
 	var candidates: Array[Card] = []
 	for template in _all_cards:
 		if template == null or not template.is_power or template.is_god:
 			continue
-		if not _safe_non_creature_lookup.has(CardCatalogScript.to_lookup_key(str(template.card_name))):
+		if ranked and not BotCardStrategyScript.supports_ranked_deck_card(template):
+			continue
+		if not ranked and not _safe_non_creature_lookup.has(CardCatalogScript.to_lookup_key(str(template.card_name))):
 			continue
 		if int(deck_cards.get(template.card_name, 0)) >= 1:
 			continue
 		if not _is_card_compatible_with_god(template, god):
 			continue
+		if ranked and BotCardStrategyScript.PASSIVE_TYPES.has(BotCardStrategyScript.key(template)):
+			var matches := 0
+			for name in deck_cards:
+				var candidate: Card = _cards_by_name.get(name)
+				if candidate == null or candidate.card_type != Card.CardType.CREATURE:
+					continue
+				for type in BotCardStrategyScript.PASSIVE_TYPES[BotCardStrategyScript.key(template)]:
+					if candidate.has_type(type):
+						matches += int(deck_cards[name])
+						break
+			if matches < 6:
+				continue
 		candidates.append(template)
 	return candidates
 
-func _is_safe_regular_card(card: Card, god: GodCard, deck_cards: Dictionary, legendary_only: bool) -> bool:
-	if card == null or card.is_god or card.is_power:
+func _is_safe_regular_card(card: Card, god: GodCard, deck_cards: Dictionary, legendary_only: bool, ranked: bool = false) -> bool:
+	if card == null or card.is_god or card.is_power or card.is_single_player_card:
 		return false
 	if card is ActiveGodCard:
 		return false
@@ -275,6 +335,10 @@ func _is_safe_regular_card(card: Card, god: GodCard, deck_cards: Dictionary, leg
 		return false
 	if int(deck_cards.get(card.card_name, 0)) >= _max_copies(card):
 		return false
+	if ranked:
+		if card.card_type != Card.CardType.CREATURE and not BotCardStrategyScript.supports_ranked_deck_card(card):
+			return false
+		return _is_card_compatible_with_god(card, god)
 	if _prompt_heavy_lookup.has(CardCatalogScript.to_lookup_key(str(card.card_name))):
 		return false
 	if card.card_type != Card.CardType.CREATURE and not _safe_non_creature_lookup.has(CardCatalogScript.to_lookup_key(str(card.card_name))):

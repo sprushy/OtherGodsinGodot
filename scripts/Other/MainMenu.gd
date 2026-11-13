@@ -17,12 +17,16 @@ const BotGameInputScript = preload("res://scripts/bots/BotGameInput.gd")
 const HostHuntingTacticsBotScript = preload("res://scripts/bots/HostHuntingTacticsBot.gd")
 const NetworkClientSmokeBotScript = preload("res://scripts/bots/NetworkClientSmokeBot.gd")
 const LoadingBarScript = preload("res://scripts/ui/LoadingBar.gd")
+const MatchLoadingHintsScript = preload("res://scripts/ui/MatchLoadingHints.gd")
+const FeedbackEmailScript = preload("res://scripts/ui/FeedbackEmail.gd")
+const SmallScreenPlayViewScript = preload("res://scripts/ui/SmallScreenPlayView.gd")
 const UIFontScript = preload("res://scripts/ui/UIFont.gd")
 const GameSettingsTabsScript = preload("res://scripts/ui/GameSettingsTabs.gd")
 const AudioSettingsScript = preload("res://scripts/core/AudioSettings.gd")
 const UIHoverSfxScript = preload("res://scripts/core/UIHoverSfx.gd")
 const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
 const RankedLadderViewScript = preload("res://scripts/ui/RankedLadderView.gd")
+const BotLadderViewScript = preload("res://scripts/ui/BotLadderView.gd")
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const LobbyRoomScript = preload("res://scripts/server/LobbyRoom.gd")
 const HostReachabilityProbeScript = preload("res://scripts/network/HostReachabilityProbe.gd")
@@ -129,6 +133,10 @@ var lobby_server: LobbyServer = null
 var lobby_client: LobbyClient = null
 var _current_room_snapshot: Dictionary = {}
 var _open_seek_rooms: Array[Dictionary] = []
+var _seek_tabs: TabBar
+var _bot_match_history: Array = []
+var _bot_match_history_cursor := ""
+var _bot_match_history_more: Button
 var _lobby_session_id: String = ""
 var _lobby_reconnect_token: String = ""
 var _pending_join_room_code: String = ""
@@ -185,6 +193,8 @@ var _current_profile_summary: Dictionary = {}
 var _profile_summary_expanded: bool = false
 var _ranked_ladder_button: Button = null
 var _ranked_ladder_view: RankedLadderViewScript = null
+var _bot_ladder_view: BotLadderViewScript = null
+var _bot_ladder_request_serial: int = 0
 var _account_decks_cache: Array[Dictionary] = []
 var _auth_onboarding_overlay: Control = null
 var _auth_onboarding_selected_mode: String = AUTH_MODE_LOGIN
@@ -348,9 +358,12 @@ var _startup_loading_bar: LoadingBar = null
 var _startup_loading_progress_tween: Tween = null
 var _startup_loading_finished: bool = false
 var _match_loading_overlay: Control = null
-var _match_loading_status_label: Label = null
+var _match_loading_hint_label: Label = null
+var _match_loading_bot_hint_label: Label = null
 var _match_loading_bar: LoadingBar = null
 var _match_loading_lobby_button: Button = null
+var _match_loading_hints: Array[String] = []
+var _match_loading_uses_tap_controls: bool = false
 var _startup_music_player: AudioStreamPlayer = null
 var _sound_mute_button: Button = null
 var _music_muted: bool = false
@@ -420,6 +433,7 @@ func _ready() -> void:
 	_build_auth_controls()
 	_startup_trace("_ready: auth controls")
 	_build_settings_controls()
+	_build_bug_report_controls()
 	_startup_trace("_ready: settings controls")
 	_ensure_local_profile_store()
 	_startup_trace("_ready: local profile store loaded")
@@ -427,6 +441,7 @@ func _ready() -> void:
 	_startup_trace("_ready: auth prefs restored")
 	_build_profile_summary_controls()
 	_build_ranked_ladder_controls()
+	_build_seek_tabs()
 	_build_account_identity_controls()
 	_build_friends_controls()
 	_build_resume_controls()
@@ -587,7 +602,7 @@ func _build_match_loading_overlay() -> void:
 	content.add_theme_constant_override("separation", 16)
 	center.add_child(content)
 	var title := Label.new()
-	title.text = "Preparing your match"
+	title.text = "Loading"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.add_theme_font_size_override("font_size", 36)
 	title.add_theme_color_override("font_color", Color(0.87, 0.78, 0.58))
@@ -595,30 +610,53 @@ func _build_match_loading_overlay() -> void:
 	var bar := LoadingBarScript.new()
 	bar.custom_minimum_size = Vector2(620.0, 86.0)
 	content.add_child(bar)
-	var status := Label.new()
-	status.custom_minimum_size = Vector2(620.0, 0.0)
-	status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	status.add_theme_font_size_override("font_size", 20)
-	status.add_theme_color_override("font_color", Color(0.74, 0.80, 0.90))
-	content.add_child(status)
+	var hint := Label.new()
+	hint.custom_minimum_size = Vector2(620.0, 0.0)
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint.add_theme_font_size_override("font_size", 20)
+	hint.add_theme_color_override("font_color", Color(0.74, 0.80, 0.90))
+	content.add_child(hint)
+	var bot_hint := hint.duplicate() as Label
+	bot_hint.text = MatchLoadingHintsScript.BOT_FEEDBACK
+	bot_hint.hide()
+	content.add_child(bot_hint)
 	var lobby_button := Button.new()
 	lobby_button.text = "Show lobby"
 	lobby_button.pressed.connect(_finish_match_loading)
 	content.add_child(lobby_button)
 	_match_loading_overlay = overlay
-	_match_loading_status_label = status
+	_match_loading_hint_label = hint
+	_match_loading_bot_hint_label = bot_hint
 	_match_loading_bar = bar
 	_match_loading_lobby_button = lobby_button
 
-func _begin_match_loading(message: String) -> void:
+func _begin_match_loading(has_bot: bool = false, can_show_lobby: bool = false) -> void:
 	_build_match_loading_overlay()
-	_match_loading_status_label.text = message
+	if not _match_loading_overlay.visible:
+		_match_loading_hint_label.text = _next_match_loading_hint()
 	_match_loading_bar.indeterminate = true
-	_match_loading_lobby_button.visible = not _match_launch_queued
-	if not _match_launch_queued:
-		status_label.text = message
+	_match_loading_bot_hint_label.visible = has_bot
+	_match_loading_lobby_button.visible = can_show_lobby
 	_match_loading_overlay.show()
+
+func _next_match_loading_hint() -> String:
+	var force_phone_controls := _get_saved_bool_setting(
+		GameSettingsTabsScript.COMBAT_SETTINGS_SECTION,
+		GameSettingsTabsScript.PHONE_CONTROLS_ON_DESKTOP_KEY,
+		false
+	)
+	var uses_tap_controls := SmallScreenPlayViewScript.uses_tap_controls(get_viewport(), force_phone_controls)
+	if _match_loading_hints.is_empty() or uses_tap_controls != _match_loading_uses_tap_controls:
+		_match_loading_uses_tap_controls = uses_tap_controls
+		_match_loading_hints.assign(MatchLoadingHintsScript.GENERAL)
+		_match_loading_hints.append_array(
+			MatchLoadingHintsScript.TAP if uses_tap_controls else MatchLoadingHintsScript.MOUSE_AND_KEYBOARD
+		)
+		_match_loading_hints.shuffle()
+		if _match_loading_hints.back() == _match_loading_hint_label.text:
+			_match_loading_hints.push_front(_match_loading_hints.pop_back())
+	return _match_loading_hints.pop_back()
 
 func _finish_match_loading() -> void:
 	if _match_loading_overlay == null:
@@ -1395,18 +1433,6 @@ func _refresh_server_version_overlay_visibility() -> void:
 
 func _process(delta: float) -> void:
 	_poll_host_viability_probe()
-	if _match_loading_overlay != null and _match_loading_overlay.visible:
-		if not _match_launch_queued:
-			_match_loading_status_label.text = status_label.text
-		else:
-			var game := get_node_or_null("GameContainer/MockGame")
-			if game != null and bool(game.get("_match_launch_loading")):
-				var action_label = game.get("action_label")
-				var manager = game.get("game_manager")
-				if manager != null and manager.turn_number == 0 and not bool(game.get("_awaiting_initial_full_state")):
-					_match_loading_status_label.text = "Waiting for the other player to connect..."
-				elif action_label != null and not str(action_label.text).strip_edges().is_empty():
-					_match_loading_status_label.text = action_label.text
 	if not _deferred_required_update.is_empty() and not _should_defer_required_update():
 		var pending_update := _deferred_required_update
 		_deferred_required_update = {}
@@ -1576,11 +1602,21 @@ func _input(event: InputEvent) -> void:
 		_hide_multiplayer_deck_popup()
 
 func _handle_escape_navigation() -> bool:
+	if is_instance_valid(_bug_report_overlay):
+		if is_instance_valid(_bug_report_file_dialog) and _bug_report_file_dialog.visible:
+			_bug_report_file_dialog.hide()
+		else:
+			_close_bug_report_overlay()
+		return true
 	if _close_confirm_overlay != null and is_instance_valid(_close_confirm_overlay):
 		_close_program()
 		return true
 	if is_instance_valid(_ranked_ladder_view):
 		_close_ranked_ladder()
+		return true
+	if is_instance_valid(_bot_ladder_view):
+		if not _bot_ladder_view.close_deck():
+			_close_bot_ladder()
 		return true
 	if _rules_overlay != null and is_instance_valid(_rules_overlay):
 		var return_to_menu_after_rules = menu_container != null and menu_container.visible
@@ -1593,11 +1629,11 @@ func _handle_escape_navigation() -> bool:
 		show_menu()
 		return true
 	if _is_deck_builder_open():
-		var deck_builder := game_container.get_node_or_null("DeckBuilder")
-		if deck_builder != null and deck_builder.has_method("request_exit"):
-			deck_builder.request_exit()
-		else:
+		var deck_builder := game_container.get_node_or_null("DeckBuilder") as DeckBuilderUI
+		if deck_builder == null:
 			_return_to_menu()
+		else:
+			deck_builder.request_exit()
 		return true
 	if menu_container != null and menu_container.visible and multiplayer_container != null and multiplayer_container.visible:
 		if _auth_onboarding_overlay == null or not is_instance_valid(_auth_onboarding_overlay):
@@ -1915,6 +1951,7 @@ func _on_lobby_sign_in_watchdog_timeout(watchdog_serial: int) -> void:
 	if not lobby_client.is_transport_connected():
 		return
 	_write_smoke_trace("lobby_sign_in_watchdog_timeout")
+	_finish_match_loading()
 	_cancel_lobby_sign_in_watchdog()
 	_startup_autologin_in_progress = false
 	_account_switch_pending = false
@@ -2624,16 +2661,71 @@ func _get_selected_multiplayer_deck() -> Dictionary:
 		return {}
 	return (selected_entry.get("saved_deck", {}) as Dictionary).duplicate(true)
 
+func _build_seek_tabs() -> void:
+	if seek_list == null:
+		return
+	_seek_tabs = TabBar.new()
+	_seek_tabs.add_tab("Seeks")
+	_seek_tabs.add_tab("View Bot Matches")
+	_seek_tabs.add_tab("Ladder")
+	multiplayer_container.add_child(_seek_tabs)
+	multiplayer_container.move_child(_seek_tabs, seek_list.get_index())
+	_seek_tabs.tab_changed.connect(_on_seek_tab_changed)
+	_bot_match_history_more = Button.new()
+	_bot_match_history_more.text = "Load older bot matches"
+	_bot_match_history_more.pressed.connect(func() -> void:
+		if lobby_client != null:
+			lobby_client.request_bot_match_history(_bot_match_history_cursor)
+	)
+	multiplayer_container.add_child(_bot_match_history_more)
+	multiplayer_container.move_child(_bot_match_history_more, seek_list.get_index() + 1)
+	_bot_match_history_more.hide()
+
+func _on_seek_tab_changed(tab: int) -> void:
+	if tab == 1:
+		_bot_match_history.clear()
+		_bot_match_history_cursor = ""
+		if lobby_client != null:
+			lobby_client.request_bot_match_history()
+	elif tab == 2:
+		_open_bot_ladder()
+	_refresh_seek_list()
+
+func _on_bot_match_history_received(history: Dictionary) -> void:
+	var cursor := str(history.get("before_match_id", ""))
+	var received: Array = history.get("matches", [])
+	if cursor.is_empty():
+		var seen := {}
+		for row: Dictionary in received:
+			seen[row["match_id"]] = true
+		var older := _bot_match_history.filter(func(row: Dictionary) -> bool: return not seen.has(row["match_id"]))
+		_bot_match_history = received + older
+		if _bot_match_history.size() == received.size():
+			_bot_match_history_cursor = str(history.get("next_cursor", ""))
+	elif cursor == _bot_match_history_cursor:
+		_bot_match_history.append_array(received)
+		_bot_match_history_cursor = str(history.get("next_cursor", ""))
+	_refresh_seek_list()
+
 func _refresh_seek_list() -> void:
 	if seek_list == null:
 		return
 	seek_list.clear()
-	if _open_seek_rooms.is_empty():
-		seek_list.add_item("No open seeks or live matches right now.")
-		seek_list.set_item_disabled(0, true)
+	var tab := _seek_tabs.current_tab if is_instance_valid(_seek_tabs) else 0
+	if is_instance_valid(_bot_match_history_more):
+		_bot_match_history_more.visible = tab == 1 and not _bot_match_history_cursor.is_empty()
+	if tab == 2:
 		return
 	for room in _open_seek_rooms:
+		if bool(room.get("is_bot_self_play", false)) != (tab == 1):
+			continue
 		var host_name := str(room.get("host_name", "Host")).strip_edges()
+		if tab == 1:
+			host_name = " vs ".join(room.get("bot_names", []))
+		elif bool(room.get("host_is_bot", false)):
+			host_name += "  ·  Bot"
+			if _get_room_is_ranked(room) and room.has("bot_stars"):
+				host_name += "  ·  %d★" % int(room["bot_stars"])
 		var member_count := int(room.get("member_count", 0))
 		var max_players := int(room.get("max_players", 2))
 		var room_status := str(room.get("status", "waiting")).strip_edges().to_lower()
@@ -2644,6 +2736,23 @@ func _refresh_seek_list() -> void:
 			action_hint = "  Click to Rejoin" if bool(room.get("viewer_can_rejoin", false)) else "  Click to Observe"
 		seek_list.add_item("%s%s  %d/%d  %s%s" % [rank_tag, host_name, member_count, max_players, status, action_hint])
 		seek_list.set_item_metadata(seek_list.get_item_count() - 1, room.duplicate(true))
+	if tab == 1:
+		for match_entry: Dictionary in _bot_match_history:
+			var players: Array = match_entry.get("players", [])
+			if players.size() != 2:
+				continue
+			var result := "Draw"
+			for player: Dictionary in players:
+				if player["result"] == "win":
+					result = "%s won" % player["name"]
+			var date := Time.get_date_string_from_unix_time(int(match_entry["played_unix"]))
+			var battle: Dictionary = match_entry.get("battle", {})
+			var detail := "  ·  %d turns" % int(battle["turns"]) if battle.has("turns") else ""
+			seek_list.add_item("%s vs %s  ·  %s%s  ·  %s" % [players[0]["name"], players[1]["name"], result, detail, date])
+			seek_list.set_item_disabled(seek_list.get_item_count() - 1, true)
+	if seek_list.get_item_count() == 0:
+		seek_list.add_item("No live or completed bot matches." if tab == 1 else "No open seeks or live matches right now.")
+		seek_list.set_item_disabled(0, true)
 
 func _format_seek_format_label(room: Dictionary) -> String:
 	return "Bo%d %s" % [
@@ -2742,12 +2851,13 @@ func _on_seek_item_clicked(index: int, _at_position: Vector2, _mouse_button_inde
 		if can_rejoin:
 			_on_rejoin_match_requested(room_id)
 			return
-		_on_observe_match_requested(room_id)
+		var has_bot := bool(room_data.get("host_is_bot", false)) or bool(room_data.get("is_bot_self_play", false))
+		_on_observe_match_requested(room_id, has_bot)
 		return
 	if _get_selected_multiplayer_deck().is_empty():
 		status_label.text = "Choose a saved legal deck before joining a seek."
 		return
-	_on_join_seek_requested(room_id)
+	_on_join_seek_requested(room_id, bool(room_data.get("host_is_bot", false)))
 
 func _on_refresh_seeks_pressed() -> void:
 	var target_error := _validate_multiplayer_target()
@@ -2805,7 +2915,7 @@ func _on_create_seek_option_pressed(is_ranked: bool, best_of: int) -> void:
 	multiplayer_container.visible = true
 	_connect_to_browseable_lobby("Connecting to lobby...")
 
-func _on_join_seek_requested(room_id: String) -> void:
+func _on_join_seek_requested(room_id: String, has_bot: bool = false) -> void:
 	var target_error := _validate_multiplayer_target()
 	if not target_error.is_empty():
 		status_label.text = target_error
@@ -2814,7 +2924,8 @@ func _on_join_seek_requested(room_id: String) -> void:
 	if not auth_error.is_empty():
 		status_label.text = auth_error
 		return
-	_begin_match_loading("Joining seek...")
+	status_label.text = "Joining seek..."
+	_begin_match_loading(has_bot, true)
 	# Paint feedback before deck validation and lobby work begin.
 	await get_tree().process_frame
 	await get_tree().process_frame
@@ -2838,7 +2949,7 @@ func _on_join_seek_requested(room_id: String) -> void:
 	multiplayer_container.visible = true
 	_connect_to_browseable_lobby("Connecting to lobby...")
 
-func _on_observe_match_requested(room_id: String) -> void:
+func _on_observe_match_requested(room_id: String, has_bot: bool) -> void:
 	var target_error := _validate_multiplayer_target()
 	if not target_error.is_empty():
 		status_label.text = target_error
@@ -2858,6 +2969,8 @@ func _on_observe_match_requested(room_id: String) -> void:
 	_pending_local_lobby_launch_on_connect_failure = false
 	room_code_line_edit.text = room_id.strip_edges().to_upper()
 	multiplayer_container.visible = true
+	if has_bot:
+		_begin_match_loading(true, true)
 	_connect_to_browseable_lobby("Connecting to live match...")
 
 func _on_rejoin_match_requested(room_id: String) -> void:
@@ -2918,6 +3031,7 @@ func _connect_to_browseable_lobby(connect_status: String, connect_serial: int = 
 	var expected_connect_serial := _authenticated_lobby_connect_serial
 	var target_error := _validate_multiplayer_target()
 	if not target_error.is_empty():
+		_finish_match_loading()
 		status_label.text = target_error
 		_abort_startup_autologin(target_error, false)
 		return
@@ -2960,6 +3074,7 @@ func _connect_to_browseable_lobby(connect_status: String, connect_serial: int = 
 		_selected_account_accepts_game_updates
 	)
 	if connect_err != OK:
+		_finish_match_loading()
 		status_label.text = "Could not connect to the lobby."
 		_cleanup_lobby_client()
 		_set_connected_server_version("")
@@ -4853,18 +4968,10 @@ func _build_bug_report_controls() -> void:
 	if _report_bug_button == null:
 		_report_bug_button = Button.new()
 		_report_bug_button.name = "ReportBugButton"
-		_report_bug_button.text = "Report Bug"
-		_report_bug_button.custom_minimum_size = Vector2(120, 38)
-		_report_bug_button.anchor_left = 1.0
-		_report_bug_button.anchor_right = 1.0
-		_report_bug_button.anchor_top = 1.0
-		_report_bug_button.anchor_bottom = 1.0
-		_report_bug_button.offset_left = -142
-		_report_bug_button.offset_right = -18
-		_report_bug_button.offset_top = -54
-		_report_bug_button.offset_bottom = -16
+		_report_bug_button.text = "Report an Issue"
 		_report_bug_button.pressed.connect(_open_bug_report_overlay)
-		add_child(_report_bug_button)
+		menu_container.add_child(_report_bug_button)
+		menu_container.move_child(_report_bug_button, _settings_button.get_index() + 1)
 
 	if _bug_report_file_dialog == null:
 		_bug_report_file_dialog = FileDialog.new()
@@ -4884,6 +4991,7 @@ func _open_bug_report_overlay() -> void:
 
 	_bug_report_overlay = Control.new()
 	_bug_report_overlay.name = "BugReportOverlay"
+	_bug_report_overlay.z_index = 2250
 	_bug_report_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_bug_report_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(_bug_report_overlay)
@@ -4900,7 +5008,7 @@ func _open_bug_report_overlay() -> void:
 	_bug_report_overlay.add_child(center)
 
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(640, 0)
+	panel.custom_minimum_size.x = minf(640.0, get_viewport_rect().size.x - 32.0)
 	panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	var panel_style := StyleBoxFlat.new()
 	panel_style.bg_color = Color(0.08, 0.10, 0.16, 0.98)
@@ -4922,17 +5030,16 @@ func _open_bug_report_overlay() -> void:
 	panel.add_child(outer_margin)
 
 	var content := VBoxContainer.new()
-	content.custom_minimum_size = Vector2(640, 0)
 	content.add_theme_constant_override("separation", 10)
 	outer_margin.add_child(content)
 
 	var title := Label.new()
-	title.text = "Bug Report"
+	title.text = "Report an Issue"
 	title.add_theme_font_size_override("font_size", 22)
 	content.add_child(title)
 
 	var intro := Label.new()
-	intro.text = "Tell us what you expected to happen, what happened instead, and optionally attach a screenshot."
+	intro.text = "Describe the issue or the play you think a bot should have made. Send the report to %s from your email app." % FeedbackEmailScript.ADDRESS
 	intro.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	content.add_child(intro)
 
@@ -4952,7 +5059,7 @@ func _open_bug_report_overlay() -> void:
 
 	_bug_report_actual_edit = TextEdit.new()
 	_bug_report_actual_edit.custom_minimum_size = Vector2(0, 140)
-	_bug_report_actual_edit.placeholder_text = "Describe what the game actually did."
+	_bug_report_actual_edit.placeholder_text = "Include the cards, bot or match, and steps to reproduce the issue if you remember them."
 	_bug_report_actual_edit.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
 	content.add_child(_bug_report_actual_edit)
 
@@ -5006,7 +5113,7 @@ func _open_bug_report_overlay() -> void:
 	actions.add_child(cancel_btn)
 
 	var submit_btn := Button.new()
-	submit_btn.text = "Save Report"
+	submit_btn.text = "Open Email Draft"
 	submit_btn.custom_minimum_size = Vector2(130, 38)
 	submit_btn.pressed.connect(_submit_bug_report)
 	actions.add_child(submit_btn)
@@ -5018,6 +5125,7 @@ func _close_bug_report_overlay() -> void:
 	if _bug_report_overlay == null:
 		return
 	if is_instance_valid(_bug_report_overlay):
+		_bug_report_overlay.hide()
 		_bug_report_overlay.queue_free()
 	_bug_report_overlay = null
 	_bug_report_expected_edit = null
@@ -5025,6 +5133,9 @@ func _close_bug_report_overlay() -> void:
 	_bug_report_status_label = null
 	_bug_report_screenshot_label = null
 	_bug_report_screenshot_preview = null
+	_bug_report_selected_screenshot_path = ""
+	if is_instance_valid(_report_bug_button) and _report_bug_button.is_visible_in_tree():
+		_report_bug_button.grab_focus()
 
 func _open_bug_report_file_dialog() -> void:
 	if _bug_report_file_dialog == null:
@@ -5041,7 +5152,8 @@ func _clear_bug_report_screenshot() -> void:
 
 func _refresh_bug_report_screenshot_preview() -> void:
 	if _bug_report_screenshot_label != null:
-		_bug_report_screenshot_label.text = "No screenshot selected." if _bug_report_selected_screenshot_path.is_empty() else _bug_report_selected_screenshot_path
+		_bug_report_screenshot_label.text = "No screenshot selected." if _bug_report_selected_screenshot_path.is_empty() else _bug_report_selected_screenshot_path.get_file()
+		_bug_report_screenshot_label.tooltip_text = _bug_report_selected_screenshot_path
 	if _bug_report_screenshot_preview == null:
 		return
 	_bug_report_screenshot_preview.texture = null
@@ -5072,78 +5184,19 @@ func _submit_bug_report() -> void:
 		_bug_report_actual_edit.grab_focus()
 		return
 
-	var report_id := "report_%d_%d" % [int(Time.get_unix_time_from_system()), Time.get_ticks_msec() % 100000]
-	var reports_dir := "user://bug_reports"
-	var screenshots_dir := reports_dir + "/screenshots"
-	_ensure_user_directory(reports_dir)
-	_ensure_user_directory(screenshots_dir)
-
-	var screenshot_saved_path := ""
+	var body := "What I expected\n%s\n\nWhat happened\n%s\n\nOther Gods %s (%s)" % [
+		expected_text, actual_text, AppReleaseInfoScript.get_display_version(), OS.get_name(),
+	]
+	var email_status := FeedbackEmailScript.open_draft("Other Gods issue report", body)
 	if not _bug_report_selected_screenshot_path.is_empty():
-		screenshot_saved_path = _copy_bug_report_screenshot(_bug_report_selected_screenshot_path, screenshots_dir, report_id)
-		if screenshot_saved_path.is_empty():
-			_set_bug_report_status("The report text was ready, but the screenshot could not be copied.")
-			return
-
-	var report_data := {
-		"report_id": report_id,
-		"reported_at_unix": int(Time.get_unix_time_from_system()),
-		"reported_at_utc": Time.get_datetime_string_from_system(true, true),
-		"expected_behavior": expected_text,
-		"actual_behavior": actual_text,
-		"screenshot_original_path": _bug_report_selected_screenshot_path,
-		"screenshot_saved_path": screenshot_saved_path,
-		"profile_id": _local_profile_id,
-		"lobby_session_id": _lobby_session_id,
-		"selected_auth_mode": _get_selected_auth_mode(),
-		"menu_visible": menu_container.visible,
-		"game_visible": game_container.visible,
-		"pending_room_code": _pending_join_room_code,
-	}
-
-	var report_path := "%s/%s.json" % [reports_dir, report_id]
-	var file := FileAccess.open(report_path, FileAccess.WRITE)
-	if file == null:
-		_set_bug_report_status("Could not save the bug report file.")
-		return
-	file.store_string(JSON.stringify(report_data, "\t"))
-	file.flush()
-	file.close()
-
-	_set_bug_report_status("Bug report saved to %s" % report_path)
-	status_label.text = "Bug report saved to %s" % report_path
-	_bug_report_expected_edit.text = ""
-	_bug_report_actual_edit.text = ""
-	_bug_report_selected_screenshot_path = ""
-	_refresh_bug_report_screenshot_preview()
+		email_status += " Attach %s in your email app." % _bug_report_selected_screenshot_path.get_file()
+	_set_bug_report_status(email_status)
 
 func _set_bug_report_status(message: String) -> void:
 	if _bug_report_status_label == null:
 		return
 	_bug_report_status_label.visible = not message.is_empty()
 	_bug_report_status_label.text = message
-
-func _ensure_user_directory(path: String) -> void:
-	var global_path := ProjectSettings.globalize_path(path)
-	DirAccess.make_dir_recursive_absolute(global_path)
-
-func _copy_bug_report_screenshot(source_path: String, screenshots_dir: String, report_id: String) -> String:
-	var source_file := FileAccess.open(source_path, FileAccess.READ)
-	if source_file == null:
-		return ""
-	var bytes := source_file.get_buffer(source_file.get_length())
-	source_file.close()
-	var extension := source_path.get_extension().to_lower()
-	if extension.is_empty():
-		extension = "png"
-	var destination_path := "%s/%s.%s" % [screenshots_dir, report_id, extension]
-	var destination_file := FileAccess.open(destination_path, FileAccess.WRITE)
-	if destination_file == null:
-		return ""
-	destination_file.store_buffer(bytes)
-	destination_file.flush()
-	destination_file.close()
-	return destination_path
 
 func _maybe_show_auth_onboarding(force_show: bool = false) -> void:
 	if _local_profile_store == null:
@@ -6971,24 +7024,13 @@ func _start_deck_builder_tutorial_lesson(lesson: Dictionary) -> void:
 	_begin_tutorial_coach(lesson, null, "deck_builder")
 
 func _start_practice_tutorial_lesson(lesson: Dictionary) -> void:
-	if not _is_practice_thor_enabled():
-		return
-	_refresh_multiplayer_deck_options()
-	var selected_practice_deck := _get_selected_multiplayer_deck()
-	_match_launch_queued = false
 	_close_tutorial_coach_overlay()
-	var practice_game = _show_embedded_game("PracticeThor")
-	show_game()
-	if practice_game == null:
-		return
-	if practice_game.has_method("set_player_practice_deck"):
-		practice_game.set_player_practice_deck(selected_practice_deck)
-	await practice_game.start_game(false, false, "127.0.0.1", 12345, {
-		"player_names": [_get_active_profile_display_name("Player"), "Thor"],
+	var practice_game := await _start_practice_match({
 		"tutorial_lesson_id": String(lesson.get("lesson_id", "")),
 		"tutorial_lesson_title": String(lesson.get("title", "Tutorial")),
 	})
-	_begin_tutorial_coach(lesson, practice_game, "practice")
+	if practice_game != null:
+		_begin_tutorial_coach(lesson, practice_game, "practice")
 
 func _begin_tutorial_coach(lesson: Dictionary, target: Node, mode: String) -> void:
 	_close_tutorial_coach_overlay()
@@ -7609,18 +7651,28 @@ func _on_card_test_pressed() -> void:
 	await card_test.start_game()
 
 func _on_practice_thor_pressed() -> void:
-	if not _is_practice_thor_enabled():
-		return
+	await _start_practice_match()
+
+func _start_practice_match(match_info: Dictionary = {}) -> PracticeThorGame:
+	if not _is_practice_thor_enabled() or _match_loading_overlay.visible:
+		return null
+	_begin_match_loading(true)
+	# Give the loading screen a frame before loading the practice scene and deck.
+	await get_tree().process_frame
+	await get_tree().process_frame
 	_refresh_multiplayer_deck_options()
 	var selected_practice_deck := _get_selected_multiplayer_deck()
 	_match_launch_queued = false
-	var practice_game = _show_embedded_game("PracticeThor")
+	var practice_game := _show_embedded_game("PracticeThor") as PracticeThorGame
+	if practice_game == null:
+		_finish_match_loading()
+		return null
 	show_game()
-	if practice_game != null:
-		practice_game.set_player_practice_deck(selected_practice_deck)
-		await practice_game.start_game(false, false, "127.0.0.1", 12345, {
-			"player_names": [_get_active_profile_display_name("Player"), "Thor"],
-		})
+	practice_game.set_player_practice_deck(selected_practice_deck)
+	var practice_info := match_info.duplicate()
+	practice_info["player_names"] = [_get_active_profile_display_name("Player"), "Thor"]
+	await practice_game.start_game(false, false, "127.0.0.1", 12345, practice_info)
+	return practice_game
 
 func _on_host_game_pressed() -> void:
 	print("[SMOKE-DIAG] _on_host_game_pressed entered")
@@ -7807,6 +7859,10 @@ func _bind_lobby_client_signals() -> void:
 		lobby_client.account_deck_deleted.connect(_on_account_deck_deleted)
 	if not lobby_client.profile_summary_received.is_connected(_on_profile_summary_received):
 		lobby_client.profile_summary_received.connect(_on_profile_summary_received)
+	if not lobby_client.bot_ladder_received.is_connected(_on_bot_ladder_received):
+		lobby_client.bot_ladder_received.connect(_on_bot_ladder_received)
+		lobby_client.bot_deck_received.connect(_on_bot_deck_received)
+		lobby_client.bot_match_history_received.connect(_on_bot_match_history_received)
 	if lobby_client.has_signal("friends_state_received") and not lobby_client.friends_state_received.is_connected(_on_friends_state_received):
 		lobby_client.friends_state_received.connect(_on_friends_state_received)
 	if lobby_client.has_signal("account_settings_updated") and not lobby_client.account_settings_updated.is_connected(_on_account_settings_updated):
@@ -7930,6 +7986,7 @@ func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, play
 	_refresh_profile_summary_label()
 	_maybe_request_account_decks()
 	_maybe_request_profile_summary()
+	_request_bot_ladder()
 	_request_friends_state()
 	# Proactively report whether this client can host a player-hosted match so
 	# unranked seeks can use listen-server topology when viable. Best-effort and
@@ -8033,6 +8090,7 @@ func _on_lobby_reconnect_succeeded(
 	_refresh_profile_summary_label()
 	_maybe_request_account_decks()
 	_maybe_request_profile_summary()
+	_request_bot_ladder()
 	_request_friends_state()
 	# Proactively report whether this client can host a player-hosted match so
 	# unranked seeks can use listen-server topology when viable. Best-effort and
@@ -8113,6 +8171,8 @@ func _on_lobby_room_list_updated(rooms: Array) -> void:
 		_clear_current_seek_state()
 		retried_seek_switch = _retry_pending_seek_switch_after_room_clear()
 	_refresh_seek_list()
+	if is_instance_valid(_seek_tabs) and _seek_tabs.current_tab == 1 and lobby_client != null:
+		lobby_client.request_bot_match_history()
 	if _current_room_snapshot.is_empty() and not retried_seek_switch:
 		if _open_seek_rooms.is_empty():
 			status_label.text = "No open seeks or live matches right now. Create one to start a match."
@@ -8189,6 +8249,8 @@ func _apply_room_snapshot(snapshot: Dictionary) -> void:
 	var local_deck_message := ""
 	var deck_error := str(local_member.get("deck_error", "")).strip_edges()
 	if not deck_error.is_empty():
+		if not _match_launch_queued:
+			_finish_match_loading()
 		local_deck_message = deck_error
 	elif not str(local_member.get("selected_deck_name", "")).strip_edges().is_empty():
 		local_deck_message = "Your deck: %s" % str(local_member.get("selected_deck_name", ""))
@@ -8285,7 +8347,7 @@ func _launch_assigned_match(
 	match_info: Dictionary = {},
 	server_match_session = null
 ) -> void:
-	_begin_match_loading("Preparing the board..." if is_host else "Connecting to the match server...")
+	_begin_match_loading(_match_has_bot(match_info))
 	await get_tree().process_frame
 	await get_tree().process_frame
 	_show_embedded_game("MockGame")
@@ -8310,6 +8372,16 @@ func _launch_assigned_match(
 		await _drive_hunting_tactics_smoke(false)
 		return
 	_finish_smoke_if_enabled("PASS:client_launched_match")
+
+func _match_has_bot(match_info: Dictionary) -> bool:
+	if match_info.has("has_bot"):
+		return bool(match_info["has_bot"])
+	# Older lobby servers still identify bot-hosted rooms in the seek list.
+	var room_id := str(match_info.get("room_id", ""))
+	for room in _open_seek_rooms:
+		if str(room.get("room_id", "")) == room_id:
+			return bool(room.get("host_is_bot", false)) or bool(room.get("is_bot_self_play", false))
+	return false
 
 # Called after match launch for the hunting_tactics_host / hunting_tactics_client
 # smoke roles. Attaches a gameplay-driving bot to the running CombatMockGame and
@@ -8608,6 +8680,7 @@ func _on_lobby_connection_failed(message: String) -> void:
 func _on_lobby_disconnected() -> void:
 	_finish_match_loading()
 	_refresh_ranked_ladder()
+	_request_bot_ladder()
 	_write_smoke_trace("lobby_disconnected")
 	_cancel_lobby_sign_in_watchdog()
 	var restore_auth_prompt := _startup_autologin_in_progress
@@ -8644,6 +8717,7 @@ func _is_lobby_auto_reconnecting() -> bool:
 func _on_lobby_auto_reconnect_started(attempt: int, max_attempts: int) -> void:
 	_write_smoke_trace("lobby_auto_reconnect_started %d/%d" % [attempt, max_attempts])
 	_refresh_ranked_ladder()
+	_request_bot_ladder()
 	_lobby_auto_reconnect_was_active = true
 	if status_label != null:
 		status_label.text = "Connection lost. Reconnecting to the lobby... (attempt %d of %d)" % [attempt, max_attempts]
@@ -8915,6 +8989,10 @@ func _cleanup_lobby(clear_session: bool) -> void:
 	_clear_current_seek_state()
 	_pending_seek_switch_join_room_id = ""
 	_open_seek_rooms.clear()
+	_bot_match_history.clear()
+	_bot_match_history_cursor = ""
+	if is_instance_valid(_seek_tabs):
+		_seek_tabs.current_tab = 0
 	_seek_list_request_pending = false
 	_seek_auto_refresh_elapsed = 0.0
 	_refresh_seek_list()
@@ -9579,6 +9657,60 @@ func _close_ranked_ladder() -> void:
 func _on_ranked_ladder_lobby_visibility_changed() -> void:
 	if not multiplayer_container.is_visible_in_tree():
 		_close_ranked_ladder()
+		_close_bot_ladder()
+
+func _open_bot_ladder() -> void:
+	if not multiplayer_container.is_visible_in_tree() or is_instance_valid(_bot_ladder_view):
+		return
+	_hide_multiplayer_deck_popup()
+	_bot_ladder_view = BotLadderViewScript.new()
+	_bot_ladder_view.close_requested.connect(_close_bot_ladder)
+	_bot_ladder_view.refresh_requested.connect(_request_bot_ladder)
+	_bot_ladder_view.deck_requested.connect(_request_bot_deck)
+	add_child(_bot_ladder_view)
+	_request_bot_ladder()
+
+func _request_bot_ladder() -> void:
+	if not is_instance_valid(_bot_ladder_view):
+		return
+	_bot_ladder_request_serial += 1
+	if not _has_active_lobby_connection() or not _uses_server_account_storage():
+		_bot_ladder_view.set_status("Sign in to the lobby to see the ladder.", false, true)
+		return
+	if not lobby_client.supports_bot_ladder:
+		_bot_ladder_view.set_status("This lobby server does not support the bot ladder yet.", false, true)
+		return
+	var request_serial := _bot_ladder_request_serial
+	_bot_ladder_view.set_status("Loading ladder…", false)
+	lobby_client.request_bot_ladder()
+	await get_tree().create_timer(5.0).timeout
+	if is_instance_valid(_bot_ladder_view) and request_serial == _bot_ladder_request_serial:
+		_bot_ladder_view.set_status("The lobby did not respond. Try refreshing.", true)
+
+func _on_bot_ladder_received(summary: Dictionary) -> void:
+	if not is_instance_valid(_bot_ladder_view) or not _has_active_lobby_connection():
+		return
+	_bot_ladder_request_serial += 1
+	_bot_ladder_view.show_summary(summary)
+
+func _request_bot_deck(list_id: String) -> void:
+	if _has_active_lobby_connection():
+		lobby_client.request_bot_deck(list_id)
+
+func _on_bot_deck_received(list_id: String, deck: Dictionary) -> void:
+	if is_instance_valid(_bot_ladder_view) and _has_active_lobby_connection():
+		_bot_ladder_view.show_deck(list_id, deck)
+
+func _close_bot_ladder() -> void:
+	if not is_instance_valid(_bot_ladder_view):
+		return
+	_bot_ladder_request_serial += 1
+	_bot_ladder_view.hide()
+	_bot_ladder_view.queue_free()
+	_bot_ladder_view = null
+	if is_instance_valid(_seek_tabs) and _seek_tabs.current_tab == 2:
+		_seek_tabs.current_tab = 0
+		_seek_tabs.grab_focus()
 
 func _build_account_identity_controls() -> void:
 	if menu_container == null:
@@ -10379,7 +10511,7 @@ func _refresh_profile_summary_label() -> void:
 		lines.insert(lines.size() - 1, rank_line)
 	if has_ranked_progress:
 		if panel != null:
-			panel.tooltip_text = "Both players must sign in for a rated match to count. Each division takes three stars. A win earns one star. From your third consecutive win through Platinum, wins earn two stars. Losses cost one star starting in Silver, with floors at Divisions V and III. Ranks reset monthly based on your season peak."
+			panel.tooltip_text = "Both players must sign in for a rated match to count. Each division takes three stars. A win earns one star. From your third consecutive win through Gold, wins earn two stars. Losses cost one star starting in Silver, with floors at Divisions V and III. Ranks reset monthly based on your season peak."
 	elif _current_profile_summary.has("ranked_progress"):
 		lines.insert(0, "Sign in to earn ranked stars")
 
@@ -12117,6 +12249,7 @@ func _run_practice_thor_fuzz_smoke() -> void:
 	show_game()
 	var deck_factory := PracticeAutofillDeckFactoryScript.new()
 	var total_games := maxi(1, int(_smoke_config.get("games", 20)))
+	var ranked_decks := bool(_smoke_config.get("ranked_bot_decks", false))
 	var base_seed := int(_smoke_config.get("seed", 1337))
 	var stall_frames := maxi(60, int(_smoke_config.get("stall_frames", 360)))
 	var match_frames := maxi(stall_frames + 60, int(_smoke_config.get("match_frames", 2400)))
@@ -12125,11 +12258,11 @@ func _run_practice_thor_fuzz_smoke() -> void:
 	for game_index in range(total_games):
 		var player_seed := base_seed + game_index * 2
 		var thor_seed := base_seed + game_index * 2 + 1
-		var player_deck := deck_factory.build_random_deck(player_seed)
+		var player_deck := deck_factory.build_random_deck(player_seed, "", ranked_decks)
 		if player_deck.is_empty():
 			_fail_smoke_if_enabled("practice_thor_fuzz_player_deck_failed index=%d seed=%d" % [game_index, player_seed])
 			return
-		var thor_deck := deck_factory.build_random_deck(thor_seed, "Thor")
+		var thor_deck := deck_factory.build_random_deck(thor_seed, "Thor", ranked_decks)
 		if thor_deck.is_empty():
 			_fail_smoke_if_enabled("practice_thor_fuzz_thor_deck_failed index=%d seed=%d" % [game_index, thor_seed])
 			return
@@ -12772,6 +12905,7 @@ func _parse_smoke_config(args: Array) -> Dictionary:
 		"lobby_port": int(str(config.get("smoke_lobby_port", str(LobbyProtocolScript.PORT))).to_int()),
 		"match_port": int(str(config.get("smoke_match_port", str(LobbyProtocolScript.MATCH_PORT))).to_int()),
 		"games": int(str(config.get("smoke_games", "20")).to_int()),
+		"ranked_bot_decks": str(config.get("smoke_ranked_bot_decks", "0")) == "1",
 		"seed": int(str(config.get("smoke_seed", "1337")).to_int()),
 		"stall_frames": int(str(config.get("smoke_stall_frames", "360")).to_int()),
 		"match_frames": int(str(config.get("smoke_match_frames", "2400")).to_int()),

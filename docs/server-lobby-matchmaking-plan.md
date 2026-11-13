@@ -486,3 +486,25 @@ Implement Phase 1 only:
 
 That is the smallest slice that unlocks the full lobby architecture without
 forcing a full rewrite all at once.
+
+## Bot self-play
+
+The dedicated lobby starts up to ten concurrent bot matches, one worker per
+lobby maintenance tick. Set `OTHERGODS_BOT_SELF_PLAY_LIMIT` or pass
+`bot_self_play_limit=0..10` on the dedicated lobby command line to lower the cap.
+Zero keeps the standing bot challenges and disables background matches.
+
+The scheduler reserves a logical CPU slot for the lobby and reduces its worker
+budget as dedicated human matches start. It checks physical memory headroom,
+lobby frame time, free disk space, and spare match ports. It sheds background
+workers under pressure and waits before refilling. Workers run at 30 FPS. A
+match stops and records a diagnostic after 45 seconds without advancing a turn
+or 20 minutes overall.
+
+Completed battles are recorded in `server_data/match_history_results`. Each
+record stores both bot outcomes, starting ranks, turns, and final follower
+counts. Use **View Bot Matches** to observe live games or page through results.
+Review files under `server_data/bot_self_play` link to worker logs and record
+crashes, stalls, command failures, cards seen in hand, cards played, and cards
+that went unused. A single unplayed card is one observation. Compare its
+appearance and play counts across matches when assessing bot behavior.

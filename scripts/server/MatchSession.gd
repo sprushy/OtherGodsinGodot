@@ -22,6 +22,7 @@ var is_ranked: bool = true
 var launch_config_path: String = ""
 var status_file_path: String = ""
 var process_id: int = 0
+var supervisor_process_id: int = 0
 var process_launch_error: String = ""
 var reconnect_deadline_unix: int = 0
 var reconnect_window_seconds: int = 90
@@ -105,6 +106,9 @@ func get_human_player_count() -> int:
 			continue
 		count += 1
 	return count
+
+func is_bot_self_play() -> bool:
+	return player_session_ids.size() == 2 and get_human_player_count() == 0
 
 func get_connected_human_player_count() -> int:
 	var count := 0
@@ -355,6 +359,7 @@ func to_match_info(session_id: String = "") -> Dictionary:
 		"match_websocket_url": match_websocket_url,
 		"player_index": get_player_index(session_id) if not session_id.is_empty() else -1,
 		"player_names": get_public_player_names(),
+		"has_bot": get_human_player_count() < player_session_ids.size(),
 		"status": status,
 		"server_mode": server_mode,
 		"is_ranked": is_ranked,
@@ -443,6 +448,7 @@ func to_launch_config() -> Dictionary:
 		"reconnect_window_seconds": reconnect_window_seconds,
 		"created_unix": created_unix,
 		"status_file_path": status_file_path,
+		"supervisor_process_id": supervisor_process_id,
 		"player_match_tokens": player_match_tokens.duplicate(true),
 		"player_decks_by_session": player_decks_by_session.duplicate(true),
 		"player_identity_by_session": player_identity_by_session.duplicate(true),
@@ -495,6 +501,7 @@ static func from_launch_config(config: Dictionary) -> MatchSession:
 	)
 	session.reinforcement_ready_by_session = _to_dictionary(config.get("reinforcement_ready_by_session", {}))
 	session.status_file_path = str(config.get("status_file_path", "")).strip_edges()
+	session.supervisor_process_id = int(config.get("supervisor_process_id", 0))
 	session.launch_config_path = str(config.get("_launch_config_path", "")).strip_edges()
 	var configured_tokens = config.get("player_match_tokens", {})
 	if configured_tokens is Dictionary:

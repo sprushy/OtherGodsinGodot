@@ -105,12 +105,11 @@ are limited to one planned activation per bot turn. Duplicate bindings,
 pending Clay-Eaters targets, and existing Lamashatu/Berserker Mead buffs are
 avoided. Supported spells may be prepared when Drought requires it.
 
-Complex random, weather, movement-plan, alternate-form, and multi-cost effects
-retain their existing prompt handling rather than receiving speculative casts.
+Complex random, movement-plan, alternate-form, and some multi-cost effects
+retain their existing prompt handling.
 Generic power unlocks requiring a discard or sacrifice are skipped because the
-current unlock command cannot specify that payment. Blot and Tezcatlipoca's
-budget selectors are improved, but this does not add automatic initiation of
-their sacrifice/alternate-form abilities. Passive unlock scoring uses relevant
+current unlock command cannot specify that payment. Tezcatlipoca's alternate-form
+ability still requires separate initiation logic. Passive unlock scoring uses relevant
 pieces as a conservative estimate of future value, not a full trigger forecast.
 
 Verification: Godot 4.7 headless script checks and maintained interception,
@@ -139,8 +138,7 @@ cards in the table. No new probe scripts or visual QA were added.
   from available attackers. Earlier legal response windows can be used to buff
   an upcoming attacker past an equal-speed interceptor. An interception already
   chosen is preserved; a later attack response cannot retroactively evade it.
-  The planner skips hidden defenders and does not forecast multi-response combos
-  or United Front attacks.
+  Stat-buff projections skip hidden defenders and multi-response combos.
 - Afanc and Pictish Beast emit `reveal_effect` with a resolver method. MatchManager
   executes these through priority events; neither requires a card-choice answer.
 - Priority and intercept retain their bot command paths. Practice bots use the
@@ -162,6 +160,28 @@ cards in the table. No new probe scripts or visual QA were added.
 - Included Kur-Jara's required sacrifice count in the authoritative prompt.
 - Carried prompt IDs on bot answers, suppressed repeated prompt delivery, and
   released rejected answer IDs so reissued prompts can be answered again.
+
+## Ranked bot play
+
+- Compare development, power use, removal, and combat before spending mana.
+  Keep the 25-followers-per-card baseline and give lethal and prevention higher
+  priority. Upkeep can choose mana to enable a strong spell or take Skoll's Sun
+  Hunt when the free summon compares well with the normal summon.
+- Compare up to two attacks, or a setup action followed by the attacks it opens.
+  Account for visible interception choices, mana, Guard, and committed attackers.
+  Replan after every resolution. Favor single attacks over United Front when the
+  extra damage does not justify spending the partner's attack or using lower Speed.
+- Give removal extra value when it opens direct attacks. On defense, compare each
+  offered interceptor with letting the attack through and spend an interceptor
+  only if its projected outcome is better.
+- Cast Blot Sacrifice when the best group under seven levels pays for the spell
+  and sacrificed creature. Cast Key of Solomon when the returned Demons justify
+  the Animal payment. Compare friendly and enemy losses before playing Weather or
+  unlocking Ragnarok. Saving Grace, Nimue, Beyla, Jiang Ziya, and Doorway to the
+  Void have card-specific rules for when to use their effects.
+- New ranked lists draw support cards from the shared strategy rules and select
+  type-dependent Powers only when the deck has matching creatures. The practice
+  fuzz smoke can exercise this generator with `smoke_ranked_bot_decks=1`.
 
 ## Verification
 
