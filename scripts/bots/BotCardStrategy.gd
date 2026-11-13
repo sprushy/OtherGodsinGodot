@@ -37,7 +37,7 @@ static func supported(card: Card) -> bool:
 static func supports_ranked_deck_card(card: Card) -> bool:
 	var id := key(card)
 	if card is PowerCard:
-		return id in ACTIVE_POWERS or id in ["SavingGrace", "Ragnarok", "CallOfTheValkyrie", "FerociousDefence"] or PASSIVE_TYPES.has(id)
+		return id in ACTIVE_POWERS or id in ["SavingGrace", "Ragnarok", "CallOfTheValkyrie", "FerociousDefence", "TakeTheField"] or PASSIVE_TYPES.has(id)
 	return id in TACTICAL_CARDS or id in EQUIPMENT or id in STRUCTURES or id in ["BlotSacrifice", "KeyOfSolomon", "MeadOfPoetry", "WheelOfFire"]
 
 static func visible(bot, card: Card) -> bool:

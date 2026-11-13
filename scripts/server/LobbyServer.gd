@@ -18,6 +18,7 @@ const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.
 const PracticeAutofillDeckFactoryScript = preload("res://scripts/server/PracticeAutofillDeckFactory.gd")
 const RankedBotDeckPoolScript = preload("res://scripts/server/RankedBotDeckPool.gd")
 const RankedProgressionScript = preload("res://scripts/server/RankedProgression.gd")
+const RankBadgeCatalog = preload("res://scripts/core/RankBadgeCatalog.gd")
 const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
 const ServerPathsScript = preload("res://scripts/server/ServerPaths.gd")
 const LOBBY_EVENT_TYPE := "__lobby_event__"
@@ -30,6 +31,7 @@ const BOT_SESSION_PREFIX := "BOT_"
 const SERVER_BOT_AUTH_MODE := "bot"
 const SERVER_BOT_TYPE_FUZZ := "practice_fuzz"
 const MAX_BOT_SELF_PLAY := 10
+const BOT_SELF_PLAY_LIMIT_ENV := "OTHERGODS_BOT_SELF_PLAY_LIMIT"
 const BOT_SELF_PLAY_FRAME_LIMIT := 0.055
 const BOT_SELF_PLAY_MEMORY_RESERVE := 512 * 1024 * 1024
 const BOT_SELF_PLAY_MEMORY_PER_WORKER := 256 * 1024 * 1024
@@ -81,6 +83,12 @@ var _ranked_bot_deck_pool := RankedBotDeckPoolScript.new()
 var _bot_deck_rng := RandomNumberGenerator.new()
 var _lobby_frame_seconds := 0.0
 var _next_bot_self_play_msec := 0
+
+static func get_dedicated_bot_self_play_limit(launch_args: Dictionary) -> int:
+	var default_limit := MAX_BOT_SELF_PLAY
+	if OS.has_environment(BOT_SELF_PLAY_LIMIT_ENV):
+		default_limit = int(OS.get_environment(BOT_SELF_PLAY_LIMIT_ENV))
+	return clampi(int(launch_args.get("bot_self_play_limit", default_limit)), 0, MAX_BOT_SELF_PLAY)
 
 func _ready() -> void:
 	_bot_deck_rng.randomize()
@@ -309,6 +317,8 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 				_send_error_to_peer(peer_id, "Join the lobby before observing a match.")
 				return
 			_observe_room_for_session(str(observe_session.get("session_id", "")), str(payload.get("room_id", "")))
+		LobbyProtocolScript.REQUEST_NEXT:
+			_handle_request_next(peer_id, str(payload["match_id"]).strip_edges())
 		LobbyProtocolScript.LEAVE_ROOM:
 			var leave_session: Dictionary = _get_session_for_peer(peer_id)
 			if leave_session.is_empty():
@@ -340,6 +350,8 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 			_handle_set_observer_friend_card_visibility(peer_id, payload)
 		LobbyProtocolScript.REQUEST_PROFILE_SUMMARY:
 			_handle_request_profile_summary(peer_id)
+		LobbyProtocolScript.SET_RANK_BADGE:
+			_handle_set_rank_badge(peer_id, payload)
 		LobbyProtocolScript.REQUEST_BOT_LADDER, LobbyProtocolScript.REQUEST_BOT_DECK:
 			_handle_request_bot_ladder(peer_id, message_type, payload)
 		LobbyProtocolScript.REQUEST_BOT_MATCH_HISTORY:
@@ -709,6 +721,7 @@ func _complete_login_for_peer(
 		"allow_friend_observers_to_see_cards": _get_allow_friend_observers_to_see_cards(existing),
 		"server_version": _get_server_version(),
 		"supports_bot_ladder": true,
+		"supports_ladder_pages": true,
 		"room": room_snapshot,
 		"active_match_info": active_match_info,
 	})
@@ -774,6 +787,7 @@ func _handle_reconnect_request(peer_id: int, payload: Dictionary) -> void:
 		"allow_friend_observers_to_see_cards": _get_allow_friend_observers_to_see_cards(session),
 		"server_version": _get_server_version(),
 		"supports_bot_ladder": true,
+		"supports_ladder_pages": true,
 		"room": room_snapshot,
 		"active_match_info": active_match_info,
 	})
@@ -938,7 +952,36 @@ func _handle_request_profile_summary(peer_id: int) -> void:
 		return
 	var account_id := str(session.get("account_id", "")).strip_edges()
 	var summary: Dictionary = match_history_store.get_profile_summary(profile_id, 5, account_id)
+	if not account_id.is_empty() and account_store != null:
+		summary["supports_rank_badges"] = true
+		for key in ["ranked_progress", "ranked_bo3_progress"]:
+			var progress: Dictionary = summary.get(key, {})
+			if not progress.is_empty():
+				var league := RankBadgeCatalog.league_for_rank(progress["rank_name"])
+				progress["portrait"] = account_store.get_rank_badge(account_id, league)
 	_send_to_peer(peer_id, LobbyProtocolScript.PROFILE_SUMMARY, summary)
+
+func _handle_set_rank_badge(peer_id: int, payload: Dictionary) -> void:
+	var account_id := str(_get_session_for_peer(peer_id).get("account_id", ""))
+	var message := ""
+	if account_id.is_empty() or account_store == null:
+		message = "Sign in to save your rank badge."
+	else:
+		_ensure_match_history_store()
+		var progress: Dictionary = match_history_store.get_current_ranked_progress(account_id, int(payload["best_of"]))
+		var league := RankBadgeCatalog.league_for_rank(str(progress.get("rank_name", "")))
+		var requested: Dictionary = payload["portrait"]
+		var portrait := RankBadgeCatalog.validate_portrait(league, requested)
+		if league < 0 or league != payload["league"]:
+			message = "Your rank changed. Reopen the badge picker to choose again."
+		elif not requested.is_empty() and portrait.is_empty():
+			message = "This portrait is unavailable at your current rank."
+		elif not account_store.set_rank_badge(account_id, league, portrait):
+			message = "Could not save your rank badge."
+	var success := message.is_empty()
+	_send_to_peer(peer_id, LobbyProtocolScript.RANK_BADGE_RESULT, {"success": success, "message": message})
+	if success:
+		_handle_request_profile_summary(peer_id)
 
 func _handle_request_bot_ladder(peer_id: int, message_type: String, payload: Dictionary) -> void:
 	var session := _get_session_for_peer(peer_id)
@@ -946,29 +989,44 @@ func _handle_request_bot_ladder(peer_id: int, message_type: String, payload: Dic
 		_send_error_to_peer(peer_id, "Sign in to view the ladder.")
 		return
 	_ensure_match_history_store()
-	_ranked_bot_deck_pool.refresh(match_history_store.get_bot_deck_results())
 	if message_type == LobbyProtocolScript.REQUEST_BOT_DECK:
+		_ranked_bot_deck_pool.refresh(match_history_store.get_bot_deck_results())
 		var list_id: String = payload["list_id"]
 		_send_to_peer(peer_id, LobbyProtocolScript.BOT_DECK, {
 			"list_id": list_id,
 			"deck": _ranked_bot_deck_pool.get_deck_details(list_id),
 		})
 		return
-	var summary := _ranked_bot_deck_pool.get_ladder_summary()
-	var ladder: Array[Dictionary] = match_history_store.get_human_ladder(account_store.get_ladder_usernames())
-	for god: Dictionary in summary["gods"]:
-		var lists: Array = god["lists"].duplicate()
-		if not god["challenger"].is_empty():
-			lists.append(god["challenger"])
-		for bot: Dictionary in lists:
-			var rank := RankedProgressionScript.summarize_bot_stars(int(bot["stars"]))
-			ladder.append({"name": bot["name"], "list_id": bot["list_id"], "points": bot["stars"],
-				"rank": rank["name"], "stars": rank["stars"], "is_bot": true})
+	_send_to_peer(peer_id, LobbyProtocolScript.BOT_LADDER, _build_ladder_page(payload))
+
+func _build_ladder_page(request: Dictionary) -> Dictionary:
+	var is_paged := request.has("request_id")
+	var best_of := int(request["best_of"]) if is_paged else 1
+	var ladder: Array[Dictionary] = match_history_store.get_human_ladder(account_store.get_ladder_usernames(), best_of)
+	if best_of == 1:
+		_ranked_bot_deck_pool.refresh(match_history_store.get_bot_deck_results())
+		for god: Dictionary in _ranked_bot_deck_pool.get_ladder_summary()["gods"]:
+			var lists: Array = god["lists"].duplicate()
+			if not god["challenger"].is_empty():
+				lists.append(god["challenger"])
+			for bot: Dictionary in lists:
+				var rank := RankedProgressionScript.summarize_bot_stars(int(bot["stars"]))
+				ladder.append({"name": bot["name"], "list_id": bot["list_id"], "points": bot["stars"],
+					"rank": rank["name"], "stars": rank["stars"], "is_bot": true})
 	ladder.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		return a["name"].nocasecmp_to(b["name"]) < 0 if a["points"] == b["points"] else int(a["points"]) > int(b["points"])
 	)
-	summary["ladder"] = ladder
-	_send_to_peer(peer_id, LobbyProtocolScript.BOT_LADDER, summary)
+	if not is_paged:
+		return {"ladder": ladder.slice(0, NetworkManagerScript.MAX_NETWORK_PAYLOAD_ITEMS)}
+	var last_page := maxi(0, ceili(float(ladder.size()) / LobbyProtocolScript.LADDER_PAGE_SIZE) - 1)
+	var page := mini(int(request["page"]), last_page)
+	var start := page * LobbyProtocolScript.LADDER_PAGE_SIZE
+	return {
+		"ladder": ladder.slice(start, start + LobbyProtocolScript.LADDER_PAGE_SIZE),
+		"request_id": request["request_id"],
+		"page": page,
+		"last_page": last_page,
+	}
 
 func _handle_request_friends(peer_id: int) -> void:
 	var session: Dictionary = _get_session_for_peer(peer_id)
@@ -1287,7 +1345,7 @@ func _create_server_bot_seek(ranked: bool) -> LobbyRoom:
 	var bot_session_id := _create_server_bot_session()
 	if bot_session_id.is_empty():
 		return null
-	var deck_submission := _build_server_bot_deck_submission() if ranked else _build_fresh_bot_deck_submission()
+	var deck_submission := _build_fresh_bot_deck_submission()
 	if deck_submission.is_empty():
 		_remove_server_bot_session(bot_session_id)
 		return null
@@ -1341,19 +1399,42 @@ func _create_server_bot_session() -> String:
 	}
 	return session_id
 
-func _build_server_bot_deck_submission(excluded_room_id: String = "") -> Dictionary:
+func _match_server_bot_to_player(room: LobbyRoom) -> bool:
+	var opponent_id := room.members[1]
+	var account_id := str(sessions_by_id.get(opponent_id, {}).get("account_id", ""))
+	if not account_id.is_empty():
+		var matched := _find_rank_matched_bot_deck(room.best_of, account_id)
+		if not matched.is_empty():
+			_apply_server_bot_deck(room, matched)
+			return true
+	var existing := room.get_deck_submission(room.host_session_id)
+	if str(existing.get("bot_list_id", "")).is_empty():
+		return not existing.is_empty()
+	var fresh := _build_fresh_bot_deck_submission()
+	if fresh.is_empty():
+		return false
+	_apply_server_bot_deck(room, fresh)
+	return true
+
+func _find_rank_matched_bot_deck(best_of: int, account_id: String) -> Dictionary:
 	_ensure_match_history_store()
 	_ranked_bot_deck_pool.refresh(match_history_store.get_bot_deck_results())
-	var deck := _ranked_bot_deck_pool.select_deck(_busy_bot_list_ids(excluded_room_id), _bot_deck_rng)
-	var submission := _validate_server_bot_deck(deck)
-	if not submission.is_empty():
-		return submission
-	return _build_fresh_bot_deck_submission()
+	var progress: Dictionary = match_history_store.get_current_ranked_progress(account_id, best_of)
+	var target_stars := int(progress.get("points", 0))
+	var unavailable := _busy_bot_list_ids()
+	var deck := _ranked_bot_deck_pool.select_deck(unavailable, _bot_deck_rng, target_stars)
+	while not deck.is_empty():
+		var submission := _validate_server_bot_deck(deck)
+		if not submission.is_empty():
+			return submission
+		unavailable[deck["list_id"]] = true
+		deck = _ranked_bot_deck_pool.select_deck(unavailable, _bot_deck_rng, target_stars)
+	return {}
 
-func _busy_bot_list_ids(excluded_room_id: String = "") -> Dictionary:
+func _busy_bot_list_ids() -> Dictionary:
 	var busy := {}
 	for room: LobbyRoom in rooms_by_id.values():
-		if room.room_id == excluded_room_id:
+		if room.status != LobbyRoomScript.STATUS_IN_MATCH:
 			continue
 		for session_id in room.members:
 			if not _is_server_bot_session(session_id):
@@ -1684,6 +1765,46 @@ func _rejoin_room_for_session(session_id: String, room_id: String) -> void:
 		return
 	_send_to_session(session_id, LobbyProtocolScript.MATCH_ASSIGNED, match_info)
 
+func _get_request_next_target(match_session: MatchSession, requester: Dictionary) -> String:
+	if match_session == null or match_session.status != MatchSessionScript.STATUS_ACTIVE \
+			or match_session.player_session_ids.size() != 2 or match_session.get_human_player_count() != 1:
+		return ""
+	var account_id := str(requester.get("account_id", ""))
+	if account_id.is_empty():
+		return ""
+	for session_id in match_session.player_session_ids:
+		if match_session.is_bot_session(session_id):
+			continue
+		var player: Dictionary = sessions_by_id.get(session_id, {})
+		if str(player.get("account_id", "")) != account_id \
+				and bool(player.get("connected", false)) and int(player.get("peer_id", 0)) > 0 \
+				and not bool(player.get("is_local", false)):
+			return session_id
+	return ""
+
+func _handle_request_next(peer_id: int, match_id: String) -> void:
+	var requester := _get_session_for_peer(peer_id)
+	var match_session: MatchSession = get_match_session(match_id)
+	var target_id := _get_request_next_target(match_session, requester)
+	var message := "That player is no longer available for a Request Next notification."
+	if str(requester.get("account_id", "")).is_empty():
+		message = "Sign in to request the next match."
+	elif not target_id.is_empty():
+		var room: LobbyRoom = rooms_by_id.get(match_session.room_id)
+		if room != null and room.status == LobbyRoomScript.STATUS_IN_MATCH and room.assigned_match_id == match_id \
+				and match_supervisor.is_match_ready_for_clients(match_id, false):
+			var account_id: String = requester["account_id"]
+			var player_name := str(sessions_by_id[target_id].get("player_name", "Player"))
+			if match_session.next_requests_by_account.has(account_id):
+				message = "%s already received your request." % player_name
+			else:
+				match_session.next_requests_by_account[account_id] = true
+				_send_to_session(target_id, LobbyProtocolScript.REQUEST_NEXT_RECEIVED, {
+					"requester_name": str(requester.get("player_name", "Player")),
+				})
+				message = "Request sent to %s." % player_name
+	_send_to_peer(peer_id, LobbyProtocolScript.REQUEST_NEXT_RESULT, {"message": message})
+
 func _leave_room_for_session(session_id: String) -> void:
 	var room_id: String = str(room_id_by_session.get(session_id, ""))
 	if room_id.is_empty() or not rooms_by_id.has(room_id):
@@ -1753,15 +1874,11 @@ func _assign_match(room: LobbyRoom) -> void:
 	if match_supervisor == null:
 		_send_error_to_session(room.host_session_id, "Match supervisor is unavailable.")
 		return
-	if room.is_ranked and not room.is_bot_self_play and _is_server_bot_session(room.host_session_id):
-		var bot_deck := room.get_deck_submission(room.host_session_id)
-		_ranked_bot_deck_pool.refresh(match_history_store.get_bot_deck_results())
-		if not _ranked_bot_deck_pool.can_play_list(str(bot_deck.get("bot_god_name", "")), str(bot_deck.get("bot_list_id", ""))):
-			var submission := _build_server_bot_deck_submission(room.room_id)
-			if submission.is_empty():
-				_close_room(room.room_id, "This bot list is no longer available. Join a new bot seek.")
-				return
-			_apply_server_bot_deck(room, submission)
+	if not room.is_bot_self_play and _is_server_bot_session(room.host_session_id):
+		if not _match_server_bot_to_player(room):
+			_close_room(room.room_id, "Could not prepare a bot deck. Join a new bot challenge.")
+			_broadcast_room_lists()
+			return
 
 	var player_decks_by_session: Dictionary = {}
 	for session_id in room.members:
@@ -1774,13 +1891,18 @@ func _assign_match(room: LobbyRoom) -> void:
 	var player_identity_by_session: Dictionary = {}
 	for session_id in room.members:
 		var session: Dictionary = sessions_by_id.get(session_id, {})
+		var account_id := str(session.get("account_id", ""))
+		var is_bot := bool(session.get("is_bot", false))
+		var submission: Dictionary = player_decks_by_session[session_id]
+		var bot_stars := int(submission.get("bot_stars", 0)) if is_bot else -1
 		player_identity_by_session[session_id] = {
 			"profile_id": str(session.get("profile_id", "")),
-			"account_id": str(session.get("account_id", "")),
+			"account_id": account_id,
 			"username": str(session.get("username", "")),
 			"player_name": str(session.get("player_name", "Guest")),
-			"is_bot": bool(session.get("is_bot", false)),
+			"is_bot": is_bot,
 			"bot_type": str(session.get("bot_type", "")),
+			"rank_badge": _get_match_rank_badge(account_id, room.best_of, bot_stars),
 		}
 
 	var spectator_visibility := {} if room.is_bot_self_play else _build_spectator_visibility_by_session(room.members)
@@ -1803,6 +1925,18 @@ func _assign_match(room: LobbyRoom) -> void:
 		room.best_of
 	)
 	_finalize_match_assignment(room, match_session)
+
+func _get_match_rank_badge(account_id: String, best_of: int, bot_stars: int) -> Dictionary:
+	if bot_stars >= 0:
+		var rank := RankedProgressionScript.summarize_bot_stars(bot_stars)
+		return {"rank_name": rank["name"]}
+	if account_id.is_empty() or match_history_store == null:
+		return {}
+	var progress: Dictionary = match_history_store.get_current_ranked_progress(account_id, best_of)
+	var rank_name := str(progress.get("rank_name", ""))
+	var league := RankBadgeCatalog.league_for_rank(rank_name)
+	var portrait: Dictionary = account_store.get_rank_badge(account_id, league) if account_store != null else {}
+	return {"rank_name": rank_name, "portrait": RankBadgeCatalog.validate_portrait(league, portrait)}
 
 ## Finalize a (non-player-host) match: emit room updates, then either poll the
 ## dedicated subprocess for readiness or send both assignments immediately.
@@ -2341,6 +2475,7 @@ func _collect_account_ids_from_friends_state(state: Dictionary) -> Array:
 
 func _build_room_list(viewer_session_id: String = "") -> Array:
 	var rooms: Array = []
+	var viewer: Dictionary = sessions_by_id.get(viewer_session_id, {})
 	for room_id in rooms_by_id.keys():
 		var room: LobbyRoom = rooms_by_id[room_id]
 		if room.status != LobbyRoomScript.STATUS_IN_MATCH and not _room_has_connected_member(room):
@@ -2348,20 +2483,22 @@ func _build_room_list(viewer_session_id: String = "") -> Array:
 		if room.is_waiting_for_opponent() and _is_server_bot_session(room.host_session_id) and not _is_available_server_bot_seek(room):
 			continue
 		var entry := room.to_room_list_entry(sessions_by_id)
-		var match_ready := true
-		var match_id := str(room.assigned_match_id).strip_edges()
-		if room.status == LobbyRoomScript.STATUS_IN_MATCH \
-				and match_supervisor != null \
-				and not match_id.is_empty() \
-				and match_supervisor.get_match(match_id) != null:
-			match_ready = match_supervisor.is_match_ready_for_clients(match_id)
-		if room.is_bot_self_play and (not match_ready or match_supervisor == null or match_supervisor.get_match(match_id) == null):
-			continue
-		entry["viewer_can_rejoin"] = (
-			room.status == LobbyRoomScript.STATUS_IN_MATCH
-			and match_ready
-			and not _get_matching_participant_session_id(viewer_session_id, room.members).is_empty()
-		)
+		entry["viewer_can_rejoin"] = false
+		if room.status == LobbyRoomScript.STATUS_IN_MATCH:
+			var match_id := str(room.assigned_match_id).strip_edges()
+			var match_session: MatchSession = get_match_session(match_id)
+			if room.is_bot_self_play and (match_session == null or not match_supervisor.is_match_ready_for_clients(match_id)):
+				continue
+			entry["viewer_can_rejoin"] = (
+				not _get_matching_participant_session_id(viewer_session_id, room.members).is_empty()
+				and (match_session == null or match_supervisor.is_match_ready_for_clients(match_id))
+			)
+			if match_session != null and match_session.player_session_ids.size() == 2 and match_session.get_human_player_count() == 1:
+				entry["match_player_names"] = match_session.get_public_player_names()
+				if not _get_request_next_target(match_session, viewer).is_empty() \
+						and not match_session.next_requests_by_account.has(viewer.get("account_id", "")) \
+						and match_supervisor.is_match_ready_for_clients(match_id, false):
+					entry["request_next_match_id"] = match_id
 		rooms.append(entry)
 	return rooms
 
@@ -2811,8 +2948,6 @@ func _on_match_closed(match_id: String, room_id: String, final_status: String) -
 		_close_room(room_id)
 		if room.is_bot_self_play and final_status == MatchSessionScript.STATUS_ABANDONED:
 			_next_bot_self_play_msec = Time.get_ticks_msec() + BOT_SELF_PLAY_RETRY_SECONDS * 1000
-		if final_status == MatchSessionScript.STATUS_FINISHED:
-			_refresh_open_bot_seeks(room.is_bot_self_play)
 		_ensure_server_bot_seeks()
 		_broadcast_room_lists()
 		return
@@ -2829,19 +2964,6 @@ func _on_match_closed(match_id: String, room_id: String, final_status: String) -
 		return
 	_close_room(room_id)
 	_broadcast_room_lists()
-
-func _refresh_open_bot_seeks(only_retired: bool = false) -> void:
-	# A finish can open a trial or retire a deck that was already advertised.
-	_ranked_bot_deck_pool.refresh(match_history_store.get_bot_deck_results())
-	for room: LobbyRoom in rooms_by_id.values():
-		if room.is_ranked and _is_available_server_bot_seek(room):
-			var existing := room.get_deck_submission(room.host_session_id)
-			if only_retired and _ranked_bot_deck_pool.can_play_list(str(existing.get("bot_god_name", "")), str(existing.get("bot_list_id", ""))):
-				continue
-			var submission := _build_server_bot_deck_submission(room.room_id)
-			if not submission.is_empty():
-				_apply_server_bot_deck(room, submission)
-				_emit_room_updates(room)
 
 func _get_server_version() -> String:
 	return AppReleaseInfoScript.get_current_version()

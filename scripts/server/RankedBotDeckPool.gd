@@ -90,21 +90,33 @@ func _deck_details(list: Dictionary) -> Dictionary:
 		"special_setup": list["special_setup"].duplicate(true),
 	}
 
-func select_deck(busy_list_ids: Dictionary, rng: RandomNumberGenerator) -> Dictionary:
-	var available: Array[Dictionary] = []
-	var trials: Array[Dictionary] = []
+func select_deck(busy_list_ids: Dictionary, rng: RandomNumberGenerator, target_stars: int) -> Dictionary:
+	var closest: Array[Dictionary] = []
+	var closest_trials: Array[Dictionary] = []
+	var closest_gap := target_stars # A fresh list starts at zero stars.
 	for pool: Dictionary in _by_god.values():
 		var challenger: Dictionary = pool["challenger"]
-		if not challenger.is_empty() and not busy_list_ids.has(challenger["list_id"]):
-			trials.append(challenger)
-		for list: Dictionary in pool["lists"]:
-			if list["list_id"] != pool["quarantined_id"] and not busy_list_ids.has(list["list_id"]):
-				available.append(list)
-	if not trials.is_empty():
-		return trials[rng.randi_range(0, trials.size() - 1)].duplicate(true)
-	if available.is_empty() or rng.randf() < EXPLORATION_CHANCE:
+		var lists: Array = pool["lists"].duplicate()
+		if not challenger.is_empty():
+			lists.append(challenger)
+		for list: Dictionary in lists:
+			if list["list_id"] == pool["quarantined_id"] or busy_list_ids.has(list["list_id"]):
+				continue
+			var gap := absi(int(list["stars"]) - target_stars)
+			if gap > closest_gap:
+				continue
+			if gap < closest_gap:
+				closest.clear()
+				closest_trials.clear()
+				closest_gap = gap
+			if list == challenger:
+				closest_trials.append(list)
+			else:
+				closest.append(list)
+	var candidates := closest_trials if not closest_trials.is_empty() else closest
+	if candidates.is_empty():
 		return {}
-	return available[rng.randi_range(0, available.size() - 1)].duplicate(true)
+	return candidates[rng.randi_range(0, candidates.size() - 1)].duplicate(true)
 
 func select_self_play_pair(busy_list_ids: Dictionary, rng: RandomNumberGenerator) -> Array[Dictionary]:
 	var available: Array[Dictionary] = []

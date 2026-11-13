@@ -480,6 +480,29 @@ func get_ladder_usernames() -> Dictionary:
 	_ensure_loaded()
 	return get_username_map(_accounts_by_id.keys())
 
+func get_rank_badge(account_id: String, league: int) -> Dictionary:
+	_ensure_loaded()
+	var account: Dictionary = _accounts_by_id.get(account_id, {})
+	var badges: Dictionary = account.get("rank_badges", {})
+	return badges.get(str(league), {}).duplicate()
+
+func set_rank_badge(account_id: String, league: int, portrait: Dictionary) -> bool:
+	_ensure_loaded()
+	if not _accounts_by_id.has(account_id):
+		return false
+	var previous: Dictionary = _accounts_by_id[account_id]
+	var updated := previous.duplicate(true)
+	var badges: Dictionary = updated.get_or_add("rank_badges", {})
+	if portrait.is_empty():
+		badges.erase(str(league))
+	else:
+		badges[str(league)] = portrait.duplicate()
+	_accounts_by_id[account_id] = updated
+	if _save():
+		return true
+	_accounts_by_id[account_id] = previous
+	return false
+
 func get_storage_path_for_debug() -> String:
 	return ProjectSettings.globalize_path(_get_storage_path())
 

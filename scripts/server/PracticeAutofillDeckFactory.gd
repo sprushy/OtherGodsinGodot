@@ -91,7 +91,11 @@ func build_random_deck(seed_value: int, forced_god_name: String = "", ranked: bo
 			continue
 		var special_setup := {}
 		if TiamatThePrimordial.is_tiamat_god(god):
-			special_setup = _build_tiamat_brood_setup(rng)
+			var brood_count := TiamatThePrimordial.POWER_SLOT_COUNT
+			if ranked and rng.randi_range(0, 2) == 0:
+				deck_cards["Take the Field"] = 1
+				brood_count -= 1
+			special_setup = _build_tiamat_brood_setup(rng, brood_count)
 		else:
 			_fill_safe_powers_for_god(deck_cards, god, rng, ranked)
 		var validation := _validator.validate_deck(deck_cards, special_setup)
@@ -237,7 +241,7 @@ func _fill_regular_cards_for_god(deck_cards: Dictionary, god: GodCard, rng: Rand
 			legendary_count += copies_to_add
 	return true
 
-func _build_tiamat_brood_setup(rng: RandomNumberGenerator) -> Dictionary:
+func _build_tiamat_brood_setup(rng: RandomNumberGenerator, brood_count: int) -> Dictionary:
 	var candidates := _all_cards.filter(func(card: Card) -> bool:
 		return TiamatThePrimordial.is_valid_slot_creature(card) and not card.is_single_player_card
 	)
@@ -246,7 +250,7 @@ func _build_tiamat_brood_setup(rng: RandomNumberGenerator) -> Dictionary:
 			and card.sacrifice_cost == 0 and card.discard_cost == 0 and card.shelve_cost == 0 and card.banish_cost == 0
 	)
 	var slots: Array = []
-	for slot_index in range(TiamatThePrimordial.POWER_SLOT_COUNT):
+	for slot_index in range(brood_count):
 		var slot: Array[String] = []
 		var remaining_levels := TiamatThePrimordial.MAX_SLOT_LEVEL_TOTAL
 		# Give Tiamat at least one creature she can take and summon at zero mana.
@@ -309,6 +313,8 @@ func _get_power_candidates(god: GodCard, deck_cards: Dictionary, ranked: bool = 
 			continue
 		if not _is_card_compatible_with_god(template, god):
 			continue
+		if template is TakeTheField and not _can_use_take_the_field(god):
+			continue
 		if ranked and BotCardStrategyScript.PASSIVE_TYPES.has(BotCardStrategyScript.key(template)):
 			var matches := 0
 			for name in deck_cards:
@@ -327,7 +333,7 @@ func _get_power_candidates(god: GodCard, deck_cards: Dictionary, ranked: bool = 
 func _is_safe_regular_card(card: Card, god: GodCard, deck_cards: Dictionary, legendary_only: bool, ranked: bool = false) -> bool:
 	if card == null or card.is_god or card.is_power or card.is_single_player_card:
 		return false
-	if card is ActiveGodCard:
+	if card is ActiveGodCard and not ranked:
 		return false
 	if legendary_only and not card.is_legendary:
 		return false
@@ -355,6 +361,14 @@ func _is_card_compatible_with_god(card: Card, god: GodCard) -> bool:
 	if card.is_power and not card.is_god:
 		return str(card.culture).strip_edges() == "Neutral" or str(card.culture).strip_edges() == str(god.culture).strip_edges()
 	return true
+
+func _can_use_take_the_field(god: GodCard) -> bool:
+	# Tezcatlipoca's own summon also transfers the sacrifices to Titlacauan.
+	if god is TezcatlipocaTheSmokingMirror or not god.can_autofill_take_the_field():
+		return false
+	return _all_cards.any(func(card: Card) -> bool:
+		return card is ActiveGodCard and god.is_own_active_god_card(card)
+	)
 
 func _is_preferred_card_for_god(card: Card, god: GodCard) -> bool:
 	if card == null or god == null:

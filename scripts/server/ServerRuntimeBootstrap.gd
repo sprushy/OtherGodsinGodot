@@ -41,6 +41,7 @@ func _boot_lobby_runtime(launch_args: Dictionary) -> void:
 	lobby_server.name = "LobbyPeer"
 	lobby_server.use_dedicated_match_processes = true
 	lobby_server.allow_in_process_match_fallback = false
+	lobby_server.server_bot_self_play_limit = LobbyServerScript.get_dedicated_bot_self_play_limit(launch_args)
 	lobby_server.use_default_multiplayer = true
 	lobby_server.trace_file_path = trace_file_path
 	var lobby_parent := _resolve_lobby_runtime_parent()

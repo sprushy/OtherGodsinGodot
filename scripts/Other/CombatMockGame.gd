@@ -64,6 +64,7 @@ const RagnarokSerpentEffectScript = preload("res://scripts/ui/RagnarokSerpentEff
 const BoardScorchMarksScript = preload("res://scripts/ui/BoardScorchMarks.gd")
 const VOID_GATEWAY_DELAY_SECONDS := 0.2
 const DrawDeckButtonScript = preload("res://scripts/ui/DrawDeckButton.gd")
+const RankBadgeScript = preload("res://scripts/ui/RankBadge.gd")
 const PrioritySealButtonScript = preload("res://scripts/ui/PrioritySealButton.gd")
 const CardOverlayFanScript = preload("res://scripts/ui/CardOverlayFan.gd")
 const PreparedMagicalCardCoverTexture = preload("res://images/PreparedMagicalCardCoverDimRuntime.png")
@@ -384,6 +385,8 @@ const MATCH_REPLAY_MULTI_DESTROY_THRESHOLD := 2
 @onready var draw_button = $MainHBox/LeftPanel/ChoiceContainer/DrawButton
 @onready var mana_button = $MainHBox/LeftPanel/ChoiceContainer/ManaButton
 var _opponent_draw_deck = null
+var _local_deck_badge: RankBadgeScript
+var _opponent_deck_badge: RankBadgeScript
 var _upkeep_hint_completed_choices: int = 0
 # Retain the saved hint preference as the glow mode; text teaches automatically.
 var _upkeep_hint_mode: String = "always"
@@ -4766,12 +4769,13 @@ func _setup_action_log() -> void:
 
 	_action_log_button = Button.new()
 	_action_log_button.name = "ActionLogNotebookButton"
-	_action_log_button.text = "Match Log"
+	_action_log_button.text = "Log"
 	_action_log_button.icon = ACTION_LOG_NOTEBOOK_ICON
-	_action_log_button.icon_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_action_log_button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_action_log_button.vertical_icon_alignment = VERTICAL_ALIGNMENT_TOP
 	_action_log_button.add_theme_constant_override("icon_max_width", 30)
-	_action_log_button.tooltip_text = "Match Log"
-	_action_log_button.accessibility_name = "Match Log"
+	_action_log_button.tooltip_text = "Log"
+	_action_log_button.accessibility_name = "Log"
 	_action_log_button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	_action_log_button.custom_minimum_size = Vector2(44.0, 44.0)
 	_action_log_button.pressed.connect(_toggle_action_log_popup)
@@ -5750,7 +5754,7 @@ func _open_action_log_popup() -> void:
 	vbox.add_child(header)
 
 	var title := Label.new()
-	title.text = "Match Log"
+	title.text = "Log"
 	title.add_theme_font_size_override("font_size", 13)
 	header.add_child(title)
 
@@ -6534,6 +6538,8 @@ func _setup_turn_choice_buttons() -> void:
 	add_child(_opponent_draw_deck)
 	_opponent_draw_deck.set_opponent_view(true)
 	_opponent_draw_deck.set_card_protector_enabled(true)
+	_local_deck_badge = _add_deck_rank_badge("LocalDeckRankBadge")
+	_opponent_deck_badge = _add_deck_rank_badge("OpponentDeckRankBadge")
 	choice_container.reparent(self, false)
 	choice_container.z_index = 1
 	# Reuse the existing hint as an overlay between the table props.
@@ -6631,6 +6637,22 @@ func _turn_start_props_are_ready() -> bool:
 	return game_manager != null and not _awaiting_initial_full_state \
 		and _get_display_player() != null and _get_display_opponent() != null
 
+func _add_deck_rank_badge(node_name: String) -> RankBadgeScript:
+	var badge := RankBadgeScript.new()
+	badge.name = node_name
+	badge.mouse_filter = Control.MOUSE_FILTER_PASS
+	badge.hide()
+	add_child(badge)
+	return badge
+
+func _sync_deck_rank_badge(badge: RankBadgeScript, player: Player) -> void:
+	var badges: Array = _current_match_info.get("rank_badges", [])
+	var index := game_manager.players.find(player)
+	var entry: Dictionary = badges[index] if index >= 0 and index < badges.size() else {}
+	var rank_name := str(entry.get("rank_name", ""))
+	badge.visible = not rank_name.is_empty()
+	badge.set_badge(rank_name, entry.get("portrait", {}))
+
 func _sync_turn_start_props() -> void:
 	if mana_button != null:
 		mana_button.set_board_style(_get_mana_well_board_style())
@@ -6654,9 +6676,13 @@ func _sync_turn_start_props() -> void:
 		draw_button.set_draw_available(true)
 		mana_button.set_available(true)
 	if not props_ready:
+		_local_deck_badge.hide()
+		_opponent_deck_badge.hide()
 		return
 	var display_player := _get_display_player()
 	var opponent := _get_display_opponent()
+	_sync_deck_rank_badge(_local_deck_badge, display_player)
+	_sync_deck_rank_badge(_opponent_deck_badge, opponent)
 	draw_button.set_deck_count(display_player.deck_zone.get_card_count())
 	_opponent_draw_deck.set_deck_count(opponent.deck_zone.get_card_count())
 	_opponent_draw_deck.set_opponent_draw_available(not _game_finished \
@@ -6754,6 +6780,8 @@ func _layout_turn_start_props() -> void:
 	# Align the card faces with the well; deck art is inset inside its button.
 	for deck in [draw_button, _opponent_draw_deck]:
 		deck.position.x += (prop_size.x * 0.5 - deck.get_top_card_rect().get_center().x) * prop_scale
+	_position_deck_rank_badge(_opponent_deck_badge, _opponent_draw_deck, prop_scale, true)
+	_position_deck_rank_badge(_local_deck_badge, draw_button, prop_scale, false)
 	choice_intro_label.custom_minimum_size = Vector2.ZERO
 	choice_intro_label.size = choice_intro_label.get_combined_minimum_size()
 	choice_intro_label.scale = Vector2.ONE * prop_scale
@@ -6761,6 +6789,17 @@ func _layout_turn_start_props() -> void:
 	# Optional card-specific upkeep choices float beside the well instead of hiding it.
 	choice_container.size = choice_container.get_combined_minimum_size()
 	choice_container.position = midpoint + Vector2(prop_size.x * prop_scale * 0.5 + 8.0, -choice_container.size.y * 0.5)
+
+func _position_deck_rank_badge(badge: RankBadgeScript, deck: Control, prop_scale: float, above: bool) -> void:
+	if not badge.visible:
+		return
+	var card: Rect2 = deck.get_top_card_rect()
+	var center_x: float = deck.position.x + card.get_center().x * prop_scale
+	var edge_y: float = deck.position.y + (card.position.y - 8.0 if above else card.end.y + 28.0) * prop_scale
+	var available := edge_y - 4.0 if above else size.y - edge_y - 4.0
+	var extent := clampf(available, 0.0, 65.0 * prop_scale)
+	badge.size = Vector2.ONE * extent
+	badge.position = Vector2(center_x - extent * 0.5, edge_y - extent if above else edge_y)
 
 func _position_turn_start_prop(prop: Control, center: Vector2, prop_size: Vector2, prop_scale: float) -> void:
 	prop.size = prop_size

@@ -6,6 +6,7 @@ const PORT: int = 22345
 const WS_PORT: int = 24443
 const MATCH_PORT: int = 12345
 const PASSWORD_RESET_CODE_LENGTH := 6
+const LADDER_PAGE_SIZE := 50
 
 const LOGIN_GUEST := "login_guest"
 const LOGIN_ACCOUNT := "login_account"
@@ -19,6 +20,7 @@ const LIST_ROOMS := "list_rooms"
 const JOIN_ROOM := "join_room"
 const REJOIN_ROOM := "rejoin_room"
 const OBSERVE_ROOM := "observe_room"
+const REQUEST_NEXT := "request_next"
 const LEAVE_ROOM := "leave_room"
 const SET_READY := "set_ready"
 const SELECT_DECK := "select_deck"
@@ -28,6 +30,7 @@ const DELETE_ACCOUNT_DECK := "delete_account_deck"
 const SET_ACCOUNT_PREFERRED_DECK := "set_account_preferred_deck"
 const SET_OBSERVER_FRIEND_CARD_VISIBILITY := "set_observer_friend_card_visibility"
 const REQUEST_PROFILE_SUMMARY := "request_profile_summary"
+const SET_RANK_BADGE := "set_rank_badge"
 const REQUEST_BOT_LADDER := "request_bot_ladder"
 const REQUEST_BOT_DECK := "request_bot_deck"
 const REQUEST_BOT_MATCH_HISTORY := "request_bot_match_history"
@@ -44,11 +47,14 @@ const ROOM_LIST := "room_list"
 const ROOM_SNAPSHOT := "room_snapshot"
 const ROOM_ERROR := "room_error"
 const MATCH_ASSIGNED := "match_assigned"
+const REQUEST_NEXT_RECEIVED := "request_next_received"
+const REQUEST_NEXT_RESULT := "request_next_result"
 const LOBBY_RECONNECT_OK := "lobby_reconnect_ok"
 const ACCOUNT_DECK_LIST := "account_deck_list"
 const ACCOUNT_DECK_SAVED := "account_deck_saved"
 const ACCOUNT_DECK_DELETED := "account_deck_deleted"
 const PROFILE_SUMMARY := "profile_summary"
+const RANK_BADGE_RESULT := "rank_badge_result"
 const BOT_LADDER := "bot_ladder"
 const BOT_DECK := "bot_deck"
 const BOT_MATCH_HISTORY := "bot_match_history"
@@ -117,6 +123,10 @@ static func validate_request(message: Dictionary) -> String:
 		OBSERVE_ROOM:
 			if str(payload.get("room_id", "")).strip_edges().is_empty():
 				return "Missing room code."
+		REQUEST_NEXT:
+			var match_id = payload.get("match_id", "")
+			if not match_id is String or match_id.strip_edges().is_empty() or match_id.length() > 64:
+				return "Invalid match id."
 		SELECT_DECK:
 			var has_deck_id := not str(payload.get("deck_id", "")).strip_edges().is_empty()
 			var has_cards := payload.has("cards") and payload.get("cards") is Dictionary
@@ -142,6 +152,11 @@ static func validate_request(message: Dictionary) -> String:
 		SET_OBSERVER_FRIEND_CARD_VISIBILITY:
 			if not payload.has("allow_friend_observers_to_see_cards"):
 				return "Missing observe visibility setting."
+		SET_RANK_BADGE:
+			var league = payload.get("league")
+			if payload.get("best_of") not in [1, 3] or not (league is int or league is float) \
+					or not payload.get("portrait") is Dictionary:
+				return "Invalid rank badge selection."
 		SEND_FRIEND_REQUEST:
 			if str(payload.get("username", "")).strip_edges().is_empty():
 				return "Missing friend username."
@@ -177,8 +192,14 @@ static func validate_request(message: Dictionary) -> String:
 				return "Missing session id."
 			if str(payload.get("reconnect_token", "")).strip_edges().is_empty():
 				return "Missing reconnect token."
-		LIST_ROOMS, LEAVE_ROOM, REQUEST_ACCOUNT_DECKS, REQUEST_PROFILE_SUMMARY, REQUEST_BOT_LADDER, REQUEST_FRIENDS:
+		LIST_ROOMS, LEAVE_ROOM, REQUEST_ACCOUNT_DECKS, REQUEST_PROFILE_SUMMARY, REQUEST_FRIENDS:
 			pass
+		REQUEST_BOT_LADDER:
+			if payload.has("request_id"):
+				var request_id = payload["request_id"]
+				var page = payload.get("page")
+				if not request_id is int or not page is int or page < 0 or payload.get("best_of") not in [1, 3]:
+					return "Invalid ladder page request."
 		REQUEST_BOT_DECK:
 			var list_id = payload.get("list_id", "")
 			if not list_id is String or list_id.is_empty() or list_id.length() > 64:

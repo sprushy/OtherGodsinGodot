@@ -38,10 +38,13 @@ signal room_list_updated(rooms: Array)
 signal room_snapshot_updated(snapshot: Dictionary)
 signal room_error(message: String)
 signal match_assigned(match_info: Dictionary)
+signal request_next_received(requester_name: String)
+signal request_next_result(message: String)
 signal account_deck_list_received(decks: Array, preferred_deck_id: String)
 signal account_deck_saved(deck: Dictionary)
 signal account_deck_deleted(deck_id: String)
 signal profile_summary_received(summary: Dictionary)
+signal rank_badge_result(success: bool, message: String)
 signal bot_ladder_received(summary: Dictionary)
 signal bot_deck_received(list_id: String, deck: Dictionary)
 signal bot_match_history_received(history: Dictionary)
@@ -65,6 +68,7 @@ var current_auth_mode: String = "login"
 var current_accepts_game_updates: bool = false
 var current_server_version: String = ""
 var supports_bot_ladder: bool = false
+var supports_ladder_pages: bool = false
 var current_allow_friend_observers_to_see_cards: bool = true
 var current_active_match_info: Dictionary = {}
 var current_room_snapshot: Dictionary = {}
@@ -384,6 +388,10 @@ func rejoin_room(room_id: String) -> void:
 func observe_room(room_id: String) -> void:
 	_send_request(LobbyProtocolScript.OBSERVE_ROOM, {"room_id": room_id.strip_edges().to_upper()})
 
+func request_next(match_id: String) -> void:
+	if is_authenticated():
+		_send_request(LobbyProtocolScript.REQUEST_NEXT, {"match_id": match_id})
+
 func leave_room() -> void:
 	_send_request(LobbyProtocolScript.LEAVE_ROOM)
 
@@ -471,8 +479,15 @@ func set_allow_friend_observers_to_see_cards(allowed: bool) -> void:
 func request_profile_summary() -> void:
 	_send_request(LobbyProtocolScript.REQUEST_PROFILE_SUMMARY)
 
-func request_bot_ladder() -> void:
-	if is_authenticated() and supports_bot_ladder:
+func set_rank_badge(best_of: int, league: int, portrait: Dictionary) -> void:
+	_send_request(LobbyProtocolScript.SET_RANK_BADGE, {"best_of": best_of, "league": league, "portrait": portrait})
+
+func request_ladder(best_of: int, page: int, request_id: int) -> void:
+	if not is_authenticated():
+		return
+	if supports_ladder_pages:
+		_send_request(LobbyProtocolScript.REQUEST_BOT_LADDER, {"best_of": best_of, "page": page, "request_id": request_id})
+	elif supports_bot_ladder:
 		_send_request(LobbyProtocolScript.REQUEST_BOT_LADDER)
 
 func request_bot_deck(list_id: String) -> void:
@@ -551,6 +566,7 @@ func lobby_event(message: Dictionary) -> void:
 			password_reset_result.emit(bool(payload.get("completed", false)), bool(payload.get("success", false)), str(payload.get("message", "")))
 		LobbyProtocolScript.HELLO_OK:
 			supports_bot_ladder = bool(payload.get("supports_bot_ladder", false))
+			supports_ladder_pages = bool(payload.get("supports_ladder_pages", false))
 			_cancel_initial_auth_request()
 			_cancel_auth_response_timeout()
 			_finish_auto_reconnect()
@@ -574,6 +590,7 @@ func lobby_event(message: Dictionary) -> void:
 			login_succeeded.emit(current_session_id, current_reconnect_token, current_player_name)
 		LobbyProtocolScript.LOBBY_RECONNECT_OK:
 			supports_bot_ladder = bool(payload.get("supports_bot_ladder", false))
+			supports_ladder_pages = bool(payload.get("supports_ladder_pages", false))
 			_cancel_initial_auth_request()
 			_cancel_auth_response_timeout()
 			_finish_auto_reconnect()
@@ -635,6 +652,12 @@ func lobby_event(message: Dictionary) -> void:
 		LobbyProtocolScript.MATCH_ASSIGNED:
 			current_active_match_info = _prepare_match_info(payload)
 			match_assigned.emit(current_active_match_info)
+		LobbyProtocolScript.REQUEST_NEXT_RECEIVED:
+			if is_authenticated():
+				request_next_received.emit(str(payload.get("requester_name", "Player")))
+		LobbyProtocolScript.REQUEST_NEXT_RESULT:
+			if is_authenticated():
+				request_next_result.emit(str(payload.get("message", "")))
 		LobbyProtocolScript.ACCOUNT_DECK_LIST:
 			current_preferred_account_deck_id = str(payload.get("preferred_deck_id", current_preferred_account_deck_id)).strip_edges()
 			account_deck_list_received.emit(payload.get("decks", []), current_preferred_account_deck_id)
@@ -644,6 +667,9 @@ func lobby_event(message: Dictionary) -> void:
 			account_deck_deleted.emit(str(payload.get("deck_id", "")))
 		LobbyProtocolScript.PROFILE_SUMMARY:
 			profile_summary_received.emit(payload)
+		LobbyProtocolScript.RANK_BADGE_RESULT:
+			if is_authenticated():
+				rank_badge_result.emit(bool(payload.get("success", false)), str(payload.get("message", "")))
 		LobbyProtocolScript.BOT_LADDER:
 			if is_authenticated():
 				bot_ladder_received.emit(payload)
@@ -882,6 +908,7 @@ func _finalize_unexpected_disconnect() -> void:
 
 func _clear_session_fields() -> void:
 	supports_bot_ladder = false
+	supports_ladder_pages = false
 	current_session_id = ""
 	current_reconnect_token = ""
 	current_profile_id = ""

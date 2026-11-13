@@ -54,8 +54,7 @@ func _process(delta: float) -> void:
 		_status_heartbeat_elapsed += delta
 		if _status_heartbeat_elapsed >= STATUS_HEARTBEAT_INTERVAL_SECONDS:
 			_status_heartbeat_elapsed = 0.0
-			if (match_session != null and match_session.is_bot_self_play() and match_session.supervisor_process_id > 0
-					and not _finished_shutdown_pending and not OS.is_process_running(match_session.supervisor_process_id)):
+			if not _finished_shutdown_pending and _has_lost_bot_supervisor():
 				_shutdown_abandoned_match("Lobby supervisor exited.")
 				return
 			_write_status_file()
@@ -66,6 +65,16 @@ func _process(delta: float) -> void:
 			_shutdown_abandoned_match("Bot self-play stopped advancing turns.")
 		elif now - _bot_review_started_msec >= BOT_SELF_PLAY_LIMIT_MSEC:
 			_shutdown_abandoned_match("Bot self-play reached its match time limit.")
+
+func _has_lost_bot_supervisor() -> bool:
+	if match_session == null or not match_session.is_bot_self_play():
+		return false
+	var heartbeat_path: String = match_session.supervisor_heartbeat_path
+	if heartbeat_path.is_empty():
+		return false
+	# Godot's process API only tracks children created by the current process.
+	var last_heartbeat := FileAccess.get_modified_time(heartbeat_path)
+	return Time.get_unix_time_from_system() - last_heartbeat >= MatchSessionScript.SUPERVISOR_HEARTBEAT_TIMEOUT_SECONDS
 
 func start_from_config(config: Dictionary) -> Error:
 	var config_error: String = _validate_config(config)

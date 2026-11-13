@@ -142,6 +142,8 @@ func _get_current_normal_god_card() -> GodCard:
 	return _get_current_normal_god() as GodCard
 
 func _get_manifest_god_name() -> String:
+	if card_owner == null:
+		return ""
 	var normal_god := _get_current_normal_god()
 	if normal_god != null:
 		return str(normal_god.card_name).strip_edges()
@@ -204,14 +206,19 @@ func _get_manifest_search_zones() -> Array[Zone]:
 
 func _matches_manifestation(card: Card, god_name: String) -> bool:
 	var active_god := card as ActiveGodCard
-	return active_god != null and active_god.get_linked_god_name() == god_name
+	if active_god == null:
+		return false
+	var normal_god := _get_current_normal_god_card()
+	if normal_god != null:
+		return normal_god.is_own_active_god_card(active_god)
+	return active_god.get_linked_god_name() == god_name
 
 func _get_reserved_manifestation_candidate(god_name: String) -> Card:
 	var normal_god := _get_current_normal_god_card()
 	if normal_god == null:
 		return null
 	var reserved_manifestation := normal_god.get_reserved_active_god_candidate()
-	if reserved_manifestation == null or reserved_manifestation.get_linked_god_name() != god_name:
+	if not _matches_manifestation(reserved_manifestation, god_name):
 		return null
 	return reserved_manifestation
 
@@ -224,10 +231,10 @@ func _can_autofill_manifestation() -> bool:
 func _build_manifestation_fallback(god_name: String) -> Card:
 	if god_name.is_empty():
 		return null
-	for template in CardCatalogScript.make_all_cards():
-		var active_god := template as ActiveGodCard
-		if active_god == null or active_god.get_linked_god_name() != god_name:
+	for template in CardCatalogScript.get_cached_card_templates():
+		if not _matches_manifestation(template, god_name):
 			continue
+		var active_god := CardCatalogScript.instantiate_card_by_name(template.card_name)
 		active_god.card_owner = card_owner
 		return active_god
 	return null

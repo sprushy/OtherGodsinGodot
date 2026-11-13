@@ -287,15 +287,21 @@ func get_recent_bot_matches(limit: int = 50, before_match_id: String = "") -> Di
 		matches.append({"match_id": match_id, "played_unix": entry["played_unix"], "players": seats, "battle": entry.get("bot_battle", {})})
 	return {"matches": matches, "next_cursor": next_cursor}
 
-func get_human_ladder(usernames: Dictionary) -> Array[Dictionary]:
+func get_human_ladder(usernames: Dictionary, best_of: int) -> Array[Dictionary]:
 	_ensure_loaded()
 	_load_dedicated_results()
 	var season := RankedProgressionScript.season_for_time(Time.get_unix_time_from_system())
 	var players: Array[Dictionary] = []
 	for account_id in usernames:
-		var progress := _get_ranked_progress(account_id, 1, season)
+		var progress := _get_ranked_progress(account_id, best_of, season)
 		players.append({"name": usernames[account_id], "points": progress["points"], "rank": progress["rank_name"], "stars": progress["stars"]})
 	return players
+
+func get_current_ranked_progress(account_id: String, best_of: int) -> Dictionary:
+	_ensure_loaded()
+	if _uses_dedicated_results:
+		_load_dedicated_results()
+	return _get_ranked_progress(account_id, best_of, RankedProgressionScript.season_for_time(Time.get_unix_time_from_system()))
 
 func _get_ranked_progress(account_id: String, best_of: int, season: int) -> Dictionary:
 	if account_id.is_empty():

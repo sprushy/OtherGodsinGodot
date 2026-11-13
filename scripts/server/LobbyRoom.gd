@@ -185,9 +185,10 @@ func to_room_list_entry(sessions_by_id: Dictionary) -> Dictionary:
 	var host_is_bot := false
 	if sessions_by_id.has(host_session_id):
 		host_is_bot = bool(sessions_by_id[host_session_id].get("is_bot", false))
+	var is_bot_challenge := host_is_bot and status != STATUS_IN_MATCH
 	var entry := {
 		"room_id": room_id,
-		"host_name": host_name,
+		"host_name": "Challenge" if is_bot_challenge else host_name,
 		"host_is_bot": host_is_bot,
 		"is_ranked": is_ranked,
 		"best_of": best_of,
@@ -195,7 +196,7 @@ func to_room_list_entry(sessions_by_id: Dictionary) -> Dictionary:
 		"max_players": MAX_PLAYERS,
 		"status": status,
 	}
-	if host_is_bot:
+	if host_is_bot and not is_bot_challenge:
 		entry["bot_stars"] = int(get_deck_submission(host_session_id).get("bot_stars", 0))
 	if is_bot_self_play:
 		entry["is_bot_self_play"] = true

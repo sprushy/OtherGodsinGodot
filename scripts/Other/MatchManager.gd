@@ -5157,8 +5157,9 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var target_uid: String = command.get("target_uid", "")
 			if target_uid != "":
 				target = game_manager.get_card_by_uid(target_uid)
-			var is_champions_call_command: bool = god_card.has_method("is_champions_call_command") and god_card.is_champions_call_command(command)
-			if god_card.targets and target == null and not is_champions_call_command:
+			var is_champions_call_command: bool = god_card.has_method("has_champions_call") and god_card.has_champions_call() and god_card.is_champions_call_command(command)
+			var is_necoc_yaotl_summon: bool = god_card is TezcatlipocaTheSmokingMirror and god_card.can_resolve_necoc_yaotl_summon(game_manager)
+			if god_card.targets and target == null and not is_champions_call_command and not is_necoc_yaotl_summon:
 				move_failed.emit("god_ability: target card not found")
 				return false
 			if target != null and god_card.has_method("is_valid_activation_target") and not god_card.is_valid_activation_target(target):

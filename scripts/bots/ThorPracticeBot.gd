@@ -313,6 +313,8 @@ func _choose_upkeep_option() -> String:
 	var mana_score := 0 if best_with_bonus == null else _score_creature_play(best_with_bonus, zone, bot_player.mana + mana_gain)
 	if mana_score - draw_score > (900 if bot_player.hand_zone.cards.size() >= 4 else 1800):
 		return "mana"
+	if _upkeep_mana_enables_manifestation(mana_gain):
+		return "mana"
 	if bot_player.hand_zone.cards.size() >= 3:
 		for card in bot_player.hand_zone.cards:
 			if CardStrategy.supported(card) and card is SpellCard and card.sacrifice_cost == 0:
@@ -322,6 +324,25 @@ func _choose_upkeep_option() -> String:
 					if (not card.targets or target != null) and CardStrategy.effect_score(self, card, target) > ECON_CARD_VALUE:
 						return "mana"
 	return "draw"
+
+func _upkeep_mana_enables_manifestation(mana_gain: int) -> bool:
+	if mana_gain <= 0 or _get_first_open_summon_zone(bot_player) == null:
+		return false
+	var god := _find_player_god()
+	if god == null or god.is_muted or not game_manager.can_player_use_powers(bot_player):
+		return false
+	if god.has_champions_call():
+		var manifestation := god.get_champions_call_candidate(true)
+		if manifestation != null:
+			var cost := game_manager.get_creature_summon_mana_cost(bot_player, manifestation, god)
+			if cost > bot_player.mana and cost <= bot_player.mana + mana_gain:
+				return true
+	for power in _get_player_powers():
+		if power is TakeTheField and power.is_face_down and not power.is_muted and not power.is_activation_locked(game_manager):
+			var cost: int = power.get_unlock_display_mana_cost(game_manager)
+			if cost > bot_player.mana and cost <= bot_player.mana + mana_gain:
+				return true
+	return false
 
 func _handle_priority() -> void:
 	if game_manager.priority_player != bot_player:
@@ -455,7 +476,7 @@ func _take_main_phase_action() -> bool:
 	if _try_summon_askelladen_answer():
 		return true
 	var united_front := _plan_united_front(attacks, attack)
-	var plans := [play, united_front, _plan_power_unlock(), _plan_power_activation(), _plan_creature_summon(), _plan_strategy_support()]
+	var plans := [play, united_front, _plan_god_manifestation(), _plan_power_unlock(), _plan_power_activation(), _plan_creature_summon(), _plan_strategy_support()]
 	plans.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a.get("score", 0)) > int(b.get("score", 0)))
 	# Before the first attack, a summon can supply another attacker this turn.
 	# Discount a nonlethal attack line when deciding whether to develop first.
@@ -551,20 +572,76 @@ func _try_activate_best_god_ability() -> bool:
 				"target_uid": enthrall_target.uid,
 			})
 
-	var champions_call_score := _score_champions_call_activation(god)
-	if champions_call_score >= 2200:
-		var summon_zone := _get_first_open_summon_zone(bot_player)
-		var manifestation := god.get_champions_call_candidate(true)
-		var summon_mode := _choose_creature_summon_mode(manifestation)
-		return _submit_action({
-			"type": "god_ability",
-			"god_uid": god.uid,
-			"zone_type": summon_zone.zone_type if summon_zone != null else -1,
-			"zone_index": summon_zone.zone_index if summon_zone != null else -1,
-			"mode": "aggressive" if summon_mode == Card.CreatureMode.AGGRESSIVE else "defensive",
-			"shelve_uids": [],
-		})
 	return false
+
+func _plan_god_manifestation() -> Dictionary:
+	var god := _find_player_god()
+	if god is TezcatlipocaTheSmokingMirror:
+		return _plan_necoc_yaotl(god)
+	if god == null or not god.can_use_champions_call(game_manager):
+		return {}
+	var manifestation := god.get_champions_call_candidate(true)
+	var zone := _get_first_open_summon_zone(bot_player)
+	var mode := _choose_creature_summon_mode(manifestation)
+	var shelve_count := god.get_champions_call_required_shelve_count(game_manager)
+	var choices := god.get_champions_call_shelvable_hand_cards(manifestation)
+	choices.sort_custom(_is_lower_priority_hand_card)
+	var shelve_uids: Array[String] = []
+	var shelve_penalty := 0
+	for card in choices.slice(0, shelve_count):
+		shelve_uids.append(card.uid)
+		shelve_penalty += 900 + _get_hand_value(card) * 14
+	var cost := game_manager.get_creature_summon_mana_cost(bot_player, manifestation, god)
+	var mana_paid := maxi(0, cost - shelve_count * GodCard.CHAMPIONS_CALL_SHELVE_MANA_VALUE)
+	var score := _score_god_manifestation(manifestation, mana_paid) - shelve_penalty
+	if score < 2200:
+		return {}
+	return {"score": score, "command": {
+		"type": "god_ability",
+		"god_uid": god.uid,
+		"zone_type": zone.zone_type,
+		"zone_index": zone.zone_index,
+		"mode": "aggressive" if mode == Card.CreatureMode.AGGRESSIVE else "defensive",
+		"shelve_uids": shelve_uids,
+	}}
+
+func _plan_necoc_yaotl(god: TezcatlipocaTheSmokingMirror) -> Dictionary:
+	if not god.can_use_god_power(game_manager):
+		return {}
+	var command := {"type": "god_ability", "god_uid": god.uid}
+	if god.can_resolve_necoc_yaotl_summon(game_manager):
+		return {"score": 16000, "command": command}
+	var remaining := TezcatlipocaTheSmokingMirror.REQUIRED_NECOC_YAOTL_SACRIFICES - god.get_necoc_yaotl_sacrifices().size()
+	var board_count := _board_creature_count(bot_player)
+	var board_surplus := board_count - _board_creature_count(opponent)
+	if remaining > 1 and board_count <= 1:
+		return {}
+	var best_score := 0
+	var best_sacrifice: Card = null
+	var forms := god.get_hover_summoned_active_gods()
+	var manifestation := forms[0] as TezcatlipocaActive if not forms.is_empty() else null
+	var titlacauan_targets: Array[Card] = []
+	if manifestation != null and remaining == 1:
+		titlacauan_targets = manifestation.get_valid_titlacauan_targets(game_manager)
+	for card in god.get_valid_targets(game_manager):
+		var score := 2900 + clampi(board_surplus, -3, 3) * 900 - _score_summon_sacrifice_candidate(card)
+		score -= card.equipment.size() * 2500
+		if card.can_take_major_creature_action() and not card.is_sleeping and not _has_committed_attack(card):
+			score -= 1500
+		if remaining == 1:
+			var budget := god.get_necoc_yaotl_total_level() + card.get_effective_level()
+			var best_steal := 0
+			for target in titlacauan_targets:
+				if target.get_effective_level() <= budget:
+					best_steal = maxi(best_steal, CardStrategy.value(self, target))
+			score += 3600 + best_steal
+		if score > best_score:
+			best_score = score
+			best_sacrifice = card
+	if best_sacrifice == null:
+		return {}
+	command["target_uid"] = best_sacrifice.uid
+	return {"score": best_score, "command": command}
 
 func _should_activate_prepared_mead_for_enki() -> bool:
 	if game_manager == null or game_manager.current_player != bot_player:
@@ -2357,6 +2434,14 @@ func _can_use_generic_power_command(power: PowerCard) -> bool:
 func _score_power_unlock(power: PowerCard) -> int:
 	if power == null:
 		return -1000000
+	if power is TakeTheField:
+		var forms: Array[Card] = power.get_hover_summoned_active_gods()
+		if forms.is_empty() or forms[0].sacrifice_cost > 0:
+			return CardStrategy.BAD
+		var score := _score_god_manifestation(forms[0], power.get_unlock_display_mana_cost(game_manager))
+		if TiamatThePrimordial.is_tiamat_god(_find_player_god()):
+			score -= TiamatThePrimordial.get_available_matriarch_rule_cards(bot_player).size() * 800
+		return score
 	if power is CallOfTheValkyrie:
 		var target := _choose_call_of_the_valkyrie_target(power as CallOfTheValkyrie)
 		if target == null or not _should_use_call_of_the_valkyrie():
@@ -2380,18 +2465,11 @@ func _should_activate_untargeted_power(power: PowerCard) -> bool:
 		return true
 	return bot_player != null and bot_player.hand_zone != null and bot_player.hand_zone.cards.size() <= 1
 
-func _score_champions_call_activation(god: GodCard) -> int:
-	if god == null or not god.has_method("can_use_champions_call") or not god.can_use_champions_call(game_manager):
-		return -1000000
-	var manifestation := god.get_champions_call_candidate(true)
-	if manifestation == null:
-		return -1000000
+func _score_god_manifestation(manifestation: Card, mana_paid: int) -> int:
 	var opposing_creatures := _get_board_creatures(opponent)
 	var summon_mode := _choose_creature_summon_mode(manifestation, opposing_creatures)
 	var clean_kill_count := _count_clean_attack_targets_for(manifestation, opposing_creatures)
-	var score := _score_projected_card(manifestation)
-	var shelve_count := god.get_champions_call_required_shelve_count(game_manager)
-	score -= shelve_count * 2000
+	var score := ECON_CARD_VALUE + _score_projected_card(manifestation) - mana_paid * 350
 	if opposing_creatures.is_empty():
 		score += 1800
 	elif clean_kill_count > 0:
@@ -2406,12 +2484,11 @@ func _score_champions_call_activation(god: GodCard) -> int:
 		score += 600
 	if _board_creature_count(bot_player) < _board_creature_count(opponent):
 		score += 800
-	score += _count_other_friendly_warriors() * 250
+	if manifestation is ThorActive:
+		score += _count_other_friendly_warriors() * 250
 	var best_hand := _get_best_affordable_hand_creature(0)
-	if best_hand == null:
-		score += 600
-	else:
-		score -= int(_score_projected_card(best_hand) * 0.9)
+	if best_hand != null and _get_play_cost(best_hand, false) > bot_player.mana - mana_paid:
+		score -= int(_score_projected_card(best_hand) * 0.7)
 	return score
 
 func _choose_creature_summon_mode(card: Card, opposing_creatures: Array[Card] = []) -> Card.CreatureMode:
@@ -3077,6 +3154,8 @@ func _score_creature_play(card: Card, zone: Zone, available_mana: int) -> int:
 
 func _score_creature_play_in_zone(card: Card, zone: Zone, available_mana: int) -> int:
 	if card.card_type != Card.CardType.CREATURE or zone == null:
+		return -1000000
+	if card is ActiveGodCard and not card.can_be_played(game_manager, bot_player):
 		return -1000000
 	if zone.zone_owner != bot_player or not zone.cards.is_empty():
 		return -1000000

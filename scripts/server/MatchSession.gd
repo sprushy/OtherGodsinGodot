@@ -9,6 +9,7 @@ const SERVER_MODE_IN_PROCESS_HOST := "in_process_host"
 const SERVER_MODE_DEDICATED_HEADLESS := "dedicated_headless"
 const SERVER_MODE_PLAYER_HOST := "player_host"
 const BOT_SESSION_PREFIX := "BOT_"
+const SUPERVISOR_HEARTBEAT_TIMEOUT_SECONDS := 30
 
 var match_id: String = ""
 var room_id: String = ""
@@ -22,7 +23,7 @@ var is_ranked: bool = true
 var launch_config_path: String = ""
 var status_file_path: String = ""
 var process_id: int = 0
-var supervisor_process_id: int = 0
+var supervisor_heartbeat_path: String = ""
 var process_launch_error: String = ""
 var reconnect_deadline_unix: int = 0
 var reconnect_window_seconds: int = 90
@@ -30,6 +31,7 @@ var created_unix: int = 0
 var player_match_tokens: Dictionary = {}
 var player_decks_by_session: Dictionary = {}
 var player_identity_by_session: Dictionary = {}
+var next_requests_by_account: Dictionary = {}
 var session_id_by_peer: Dictionary = {}
 var peer_id_by_session: Dictionary = {}
 var disconnected_sessions: Dictionary = {}
@@ -160,6 +162,14 @@ func get_public_player_names() -> Array[String]:
 		var session_id := str(player_session_ids[player_index]).strip_edges()
 		names.append(get_player_display_name(session_id, player_index))
 	return names
+
+func get_public_rank_badges() -> Array[Dictionary]:
+	var badges: Array[Dictionary] = []
+	for session_id in player_session_ids:
+		var identity: Dictionary = player_identity_by_session.get(session_id, {})
+		var badge: Dictionary = identity.get("rank_badge", {})
+		badges.append(badge.duplicate(true))
+	return badges
 
 func record_series_game_win(winner_index: int) -> Dictionary:
 	if winner_index < 0 or winner_index >= player_session_ids.size():
@@ -359,6 +369,7 @@ func to_match_info(session_id: String = "") -> Dictionary:
 		"match_websocket_url": match_websocket_url,
 		"player_index": get_player_index(session_id) if not session_id.is_empty() else -1,
 		"player_names": get_public_player_names(),
+		"rank_badges": get_public_rank_badges(),
 		"has_bot": get_human_player_count() < player_session_ids.size(),
 		"status": status,
 		"server_mode": server_mode,
@@ -448,7 +459,7 @@ func to_launch_config() -> Dictionary:
 		"reconnect_window_seconds": reconnect_window_seconds,
 		"created_unix": created_unix,
 		"status_file_path": status_file_path,
-		"supervisor_process_id": supervisor_process_id,
+		"supervisor_heartbeat_path": supervisor_heartbeat_path,
 		"player_match_tokens": player_match_tokens.duplicate(true),
 		"player_decks_by_session": player_decks_by_session.duplicate(true),
 		"player_identity_by_session": player_identity_by_session.duplicate(true),
@@ -501,7 +512,7 @@ static func from_launch_config(config: Dictionary) -> MatchSession:
 	)
 	session.reinforcement_ready_by_session = _to_dictionary(config.get("reinforcement_ready_by_session", {}))
 	session.status_file_path = str(config.get("status_file_path", "")).strip_edges()
-	session.supervisor_process_id = int(config.get("supervisor_process_id", 0))
+	session.supervisor_heartbeat_path = str(config.get("supervisor_heartbeat_path", "")).strip_edges()
 	session.launch_config_path = str(config.get("_launch_config_path", "")).strip_edges()
 	var configured_tokens = config.get("player_match_tokens", {})
 	if configured_tokens is Dictionary:

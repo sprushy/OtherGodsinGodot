@@ -26,6 +26,8 @@ const AudioSettingsScript = preload("res://scripts/core/AudioSettings.gd")
 const UIHoverSfxScript = preload("res://scripts/core/UIHoverSfx.gd")
 const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
 const RankedLadderViewScript = preload("res://scripts/ui/RankedLadderView.gd")
+const RankBadgeCatalog = preload("res://scripts/core/RankBadgeCatalog.gd")
+const RankBadgePickerScript = preload("res://scripts/ui/RankBadgePicker.gd")
 const BotLadderViewScript = preload("res://scripts/ui/BotLadderView.gd")
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const LobbyRoomScript = preload("res://scripts/server/LobbyRoom.gd")
@@ -189,6 +191,8 @@ var _create_bo3_ranked_seek_button: Button = null
 var _create_bo3_unranked_seek_button: Button = null
 var _profile_summary_panel: PanelContainer = null
 var _profile_summary_label: Label = null
+var _rank_badge_buttons: Dictionary[int, Button] = {}
+var _rank_badge_picker: RankBadgePickerScript
 var _current_profile_summary: Dictionary = {}
 var _profile_summary_expanded: bool = false
 var _ranked_ladder_button: Button = null
@@ -325,6 +329,7 @@ var _tutorial_coach_baseline: Dictionary = {}
 var _tutorial_coach_seen_stack: bool = false
 var _seek_auto_refresh_elapsed: float = 0.0
 var _seek_list_request_pending: bool = false
+var _request_next_notices: VBoxContainer = null
 var _deck_picker_button: Button = null
 var _deck_picker_popup: PanelContainer = null
 var _deck_picker_popup_list: VBoxContainer = null
@@ -1611,6 +1616,9 @@ func _handle_escape_navigation() -> bool:
 	if _close_confirm_overlay != null and is_instance_valid(_close_confirm_overlay):
 		_close_program()
 		return true
+	if is_instance_valid(_rank_badge_picker):
+		_close_rank_badge_picker()
+		return true
 	if is_instance_valid(_ranked_ladder_view):
 		_close_ranked_ladder()
 		return true
@@ -2671,6 +2679,7 @@ func _build_seek_tabs() -> void:
 	multiplayer_container.add_child(_seek_tabs)
 	multiplayer_container.move_child(_seek_tabs, seek_list.get_index())
 	_seek_tabs.tab_changed.connect(_on_seek_tab_changed)
+	multiplayer_container.visibility_changed.connect(_on_ranked_ladder_lobby_visibility_changed)
 	_bot_match_history_more = Button.new()
 	_bot_match_history_more.text = "Load older bot matches"
 	_bot_match_history_more.pressed.connect(func() -> void:
@@ -2720,7 +2729,9 @@ func _refresh_seek_list() -> void:
 		if bool(room.get("is_bot_self_play", false)) != (tab == 1):
 			continue
 		var host_name := str(room.get("host_name", "Host")).strip_edges()
-		if tab == 1:
+		if room.has("match_player_names"):
+			host_name = " vs ".join(room["match_player_names"])
+		elif tab == 1:
 			host_name = " vs ".join(room.get("bot_names", []))
 		elif bool(room.get("host_is_bot", false)):
 			host_name += "  ·  Bot"
@@ -2736,6 +2747,11 @@ func _refresh_seek_list() -> void:
 			action_hint = "  Click to Rejoin" if bool(room.get("viewer_can_rejoin", false)) else "  Click to Observe"
 		seek_list.add_item("%s%s  %d/%d  %s%s" % [rank_tag, host_name, member_count, max_players, status, action_hint])
 		seek_list.set_item_metadata(seek_list.get_item_count() - 1, room.duplicate(true))
+		var request_next_match_id := str(room.get("request_next_match_id", ""))
+		if not request_next_match_id.is_empty() and _has_active_lobby_connection():
+			var action_index: int = seek_list.add_item("    Request Next")
+			seek_list.set_item_metadata(action_index, request_next_match_id)
+			seek_list.set_item_tooltip(action_index, "Tell the player in this match you'd like to play them next.")
 	if tab == 1:
 		for match_entry: Dictionary in _bot_match_history:
 			var players: Array = match_entry.get("players", [])
@@ -2836,6 +2852,12 @@ func _on_seek_item_clicked(index: int, _at_position: Vector2, _mouse_button_inde
 	if seek_list.is_item_disabled(index):
 		return
 	var room_entry = seek_list.get_item_metadata(index)
+	if room_entry is String:
+		if _has_active_lobby_connection():
+			lobby_client.request_next(room_entry)
+		else:
+			_show_request_next_notice("Reconnect to the lobby to request the next match.")
+		return
 	if not (room_entry is Dictionary):
 		return
 	var room_data := room_entry as Dictionary
@@ -2858,6 +2880,50 @@ func _on_seek_item_clicked(index: int, _at_position: Vector2, _mouse_button_inde
 		status_label.text = "Choose a saved legal deck before joining a seek."
 		return
 	_on_join_seek_requested(room_id, bool(room_data.get("host_is_bot", false)))
+
+func _on_request_next_received(requester_name: String) -> void:
+	_show_request_next_notice("%s would like to play you next." % requester_name)
+
+func _on_request_next_result(message: String) -> void:
+	_show_request_next_notice(message)
+	_queue_room_list_refresh(false)
+
+func _show_request_next_notice(message: String) -> void:
+	if message.is_empty():
+		return
+	if not is_instance_valid(_request_next_notices):
+		_request_next_notices = VBoxContainer.new()
+		_request_next_notices.name = "RequestNextNotices"
+		_request_next_notices.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_request_next_notices.z_index = 2200
+		add_child(_request_next_notices)
+		_request_next_notices.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+		_request_next_notices.offset_left = -240.0
+		_request_next_notices.offset_right = 240.0
+		_request_next_notices.offset_top = 20.0
+		_request_next_notices.offset_bottom = 20.0
+	if _request_next_notices.get_child_count() >= 4:
+		var oldest := _request_next_notices.get_child(0)
+		_request_next_notices.remove_child(oldest)
+		oldest.queue_free()
+	var panel := PanelContainer.new()
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.07, 0.09, 0.14, 0.96)
+	style.set_corner_radius_all(8)
+	style.content_margin_left = 16.0
+	style.content_margin_right = 16.0
+	style.content_margin_top = 10.0
+	style.content_margin_bottom = 10.0
+	panel.add_theme_stylebox_override("panel", style)
+	var label := Label.new()
+	label.text = message
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(label)
+	_request_next_notices.add_child(panel)
+	get_tree().create_timer(8.0).timeout.connect(panel.queue_free)
 
 func _on_refresh_seeks_pressed() -> void:
 	var target_error := _validate_multiplayer_target()
@@ -7847,6 +7913,10 @@ func _bind_lobby_client_signals() -> void:
 		lobby_client.room_snapshot_updated.connect(_on_lobby_room_snapshot_updated)
 	if not lobby_client.room_error.is_connected(_on_lobby_room_error):
 		lobby_client.room_error.connect(_on_lobby_room_error)
+	if not lobby_client.request_next_received.is_connected(_on_request_next_received):
+		lobby_client.request_next_received.connect(_on_request_next_received)
+	if not lobby_client.request_next_result.is_connected(_on_request_next_result):
+		lobby_client.request_next_result.connect(_on_request_next_result)
 	if not lobby_client.match_assigned.is_connected(_on_remote_match_assigned):
 		lobby_client.match_assigned.connect(_on_remote_match_assigned)
 	if lobby_client.has_signal("match_host_viability_requested") and not lobby_client.match_host_viability_requested.is_connected(_on_match_host_viability_requested):
@@ -7859,6 +7929,8 @@ func _bind_lobby_client_signals() -> void:
 		lobby_client.account_deck_deleted.connect(_on_account_deck_deleted)
 	if not lobby_client.profile_summary_received.is_connected(_on_profile_summary_received):
 		lobby_client.profile_summary_received.connect(_on_profile_summary_received)
+	if not lobby_client.rank_badge_result.is_connected(_on_rank_badge_result):
+		lobby_client.rank_badge_result.connect(_on_rank_badge_result)
 	if not lobby_client.bot_ladder_received.is_connected(_on_bot_ladder_received):
 		lobby_client.bot_ladder_received.connect(_on_bot_ladder_received)
 		lobby_client.bot_deck_received.connect(_on_bot_deck_received)
@@ -8679,6 +8751,7 @@ func _on_lobby_connection_failed(message: String) -> void:
 
 func _on_lobby_disconnected() -> void:
 	_finish_match_loading()
+	_close_rank_badge_picker()
 	_refresh_ranked_ladder()
 	_request_bot_ladder()
 	_write_smoke_trace("lobby_disconnected")
@@ -9029,8 +9102,13 @@ func _cleanup_lobby(clear_session: bool) -> void:
 	_refresh_multiplayer_action_state()
 
 func _cleanup_lobby_client() -> void:
+	_close_rank_badge_picker()
 	_pending_background_lobby_auth_completion = Callable()
 	_cancel_lobby_sign_in_watchdog()
+	if is_instance_valid(_request_next_notices):
+		_request_next_notices.hide()
+		_request_next_notices.queue_free()
+		_request_next_notices = null
 	if lobby_client == null:
 		return
 	var existing_client: LobbyClient = lobby_client
@@ -9592,6 +9670,8 @@ func _build_profile_summary_controls() -> void:
 	style.corner_radius_bottom_right = 4
 	panel.add_theme_stylebox_override("panel", style)
 	_profile_summary_panel = panel
+	var row := HBoxContainer.new()
+	panel.add_child(row)
 	_profile_summary_label = Label.new()
 	_profile_summary_label.name = "ProfileSummaryLabel"
 	_profile_summary_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -9599,10 +9679,64 @@ func _build_profile_summary_controls() -> void:
 	_profile_summary_label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	_profile_summary_label.add_theme_font_size_override("font_size", 13)
 	_profile_summary_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.add_child(_profile_summary_label)
+	_profile_summary_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(_profile_summary_label)
+	var badge_buttons := VBoxContainer.new()
+	badge_buttons.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(badge_buttons)
+	for best_of in [1, 3]:
+		var button := Button.new()
+		button.text = "Bo%d Badge" % best_of
+		button.tooltip_text = "Choose and crop your rank badge portrait"
+		button.pressed.connect(_open_rank_badge_picker.bind(best_of))
+		button.hide()
+		badge_buttons.add_child(button)
+		_rank_badge_buttons[best_of] = button
 	multiplayer_container.add_child(panel)
+	multiplayer_container.visibility_changed.connect(_on_rank_badge_lobby_visibility_changed)
 	if seek_list != null:
 		multiplayer_container.move_child(panel, seek_list.get_index())
+
+func _open_rank_badge_picker(best_of: int) -> void:
+	if not _has_active_lobby_connection() or is_instance_valid(_rank_badge_picker):
+		return
+	var key := "ranked_bo3_progress" if best_of == 3 else "ranked_progress"
+	var progress: Dictionary = _current_profile_summary.get(key, {})
+	var rank := str(progress.get("rank_name", ""))
+	var league := RankBadgeCatalog.league_for_rank(rank)
+	if league < 0:
+		return
+	_hide_multiplayer_deck_popup()
+	_rank_badge_picker = RankBadgePickerScript.new(best_of, rank, progress.get("portrait", {}))
+	_rank_badge_picker.close_requested.connect(_close_rank_badge_picker)
+	_rank_badge_picker.save_requested.connect(_save_rank_badge.bind(league))
+	add_child(_rank_badge_picker)
+
+func _save_rank_badge(best_of: int, portrait: Dictionary, league: int) -> void:
+	if not _has_active_lobby_connection():
+		_rank_badge_picker.show_save_error("Reconnect to the lobby to save your badge.")
+		return
+	lobby_client.set_rank_badge(best_of, league, portrait)
+
+func _on_rank_badge_result(success: bool, message: String) -> void:
+	if not is_instance_valid(_rank_badge_picker):
+		return
+	if success:
+		_close_rank_badge_picker()
+	else:
+		_rank_badge_picker.show_save_error(message)
+		_maybe_request_profile_summary()
+
+func _close_rank_badge_picker() -> void:
+	if is_instance_valid(_rank_badge_picker):
+		_rank_badge_picker.hide()
+		_rank_badge_picker.queue_free()
+		_rank_badge_picker = null
+
+func _on_rank_badge_lobby_visibility_changed() -> void:
+	if not multiplayer_container.is_visible_in_tree():
+		_close_rank_badge_picker()
 
 func _build_ranked_ladder_controls() -> void:
 	if not OS.is_debug_build() or multiplayer_container == null or is_instance_valid(_ranked_ladder_button):
@@ -9614,7 +9748,6 @@ func _build_ranked_ladder_controls() -> void:
 	multiplayer_container.add_child(_ranked_ladder_button)
 	if _profile_summary_panel != null:
 		multiplayer_container.move_child(_ranked_ladder_button, _profile_summary_panel.get_index() + 1)
-	multiplayer_container.visibility_changed.connect(_on_ranked_ladder_lobby_visibility_changed)
 
 func _open_ranked_ladder() -> void:
 	if not OS.is_debug_build() or not multiplayer_container.is_visible_in_tree() or is_instance_valid(_ranked_ladder_view):
@@ -9666,29 +9799,36 @@ func _open_bot_ladder() -> void:
 	_bot_ladder_view = BotLadderViewScript.new()
 	_bot_ladder_view.close_requested.connect(_close_bot_ladder)
 	_bot_ladder_view.refresh_requested.connect(_request_bot_ladder)
+	_bot_ladder_view.page_requested.connect(_request_bot_ladder)
 	_bot_ladder_view.deck_requested.connect(_request_bot_deck)
 	add_child(_bot_ladder_view)
 	_request_bot_ladder()
 
-func _request_bot_ladder() -> void:
+func _request_bot_ladder(page: int = -1) -> void:
 	if not is_instance_valid(_bot_ladder_view):
 		return
 	_bot_ladder_request_serial += 1
 	if not _has_active_lobby_connection() or not _uses_server_account_storage():
+		_bot_ladder_view.set_paging_supported(false)
 		_bot_ladder_view.set_status("Sign in to the lobby to see the ladder.", false, true)
 		return
 	if not lobby_client.supports_bot_ladder:
-		_bot_ladder_view.set_status("This lobby server does not support the bot ladder yet.", false, true)
+		_bot_ladder_view.set_paging_supported(false)
+		_bot_ladder_view.set_status("Update the lobby server to view ranked standings.", false, true)
 		return
+	_bot_ladder_view.set_paging_supported(lobby_client.supports_ladder_pages)
 	var request_serial := _bot_ladder_request_serial
 	_bot_ladder_view.set_status("Loading ladder…", false)
-	lobby_client.request_bot_ladder()
+	var requested_page := _bot_ladder_view.get_current_page() if page < 0 else page
+	lobby_client.request_ladder(_bot_ladder_view.get_best_of(), requested_page, request_serial)
 	await get_tree().create_timer(5.0).timeout
 	if is_instance_valid(_bot_ladder_view) and request_serial == _bot_ladder_request_serial:
 		_bot_ladder_view.set_status("The lobby did not respond. Try refreshing.", true)
 
 func _on_bot_ladder_received(summary: Dictionary) -> void:
 	if not is_instance_valid(_bot_ladder_view) or not _has_active_lobby_connection():
+		return
+	if int(summary.get("request_id", _bot_ladder_request_serial)) != _bot_ladder_request_serial:
 		return
 	_bot_ladder_request_serial += 1
 	_bot_ladder_view.show_summary(summary)
@@ -10489,6 +10629,10 @@ func _refresh_profile_summary_label() -> void:
 		1: _current_profile_summary.get("ranked_progress", {}),
 		3: _current_profile_summary.get("ranked_bo3_progress", {}),
 	}
+	var can_edit_badge: bool = bool(_current_profile_summary.get("supports_rank_badges", false)) \
+		and _has_active_lobby_connection() and _current_profile_summary.get("profile_id", "") == lobby_client.current_profile_id
+	for best_of in _rank_badge_buttons:
+		_rank_badge_buttons[best_of].visible = can_edit_badge and not ranked_by_format[best_of].is_empty()
 	var has_separate_ladders := _current_profile_summary.has("ranked_bo3_progress")
 	var has_ranked_progress := false
 	if panel != null:

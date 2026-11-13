@@ -10,6 +10,7 @@ const DEDICATED_SERVER_EXPORT_RELATIVE_PATH := "res://.exports/server/OtherGodsS
 const MATCH_STATUS_FILE_STALE_SECONDS := 20
 const MATCH_STATUS_FILE_STARTUP_GRACE_SECONDS := 150
 const MIN_FREE_BOT_DISK_BYTES := 512 * 1024 * 1024
+const SUPERVISOR_HEARTBEAT_INTERVAL_MSEC := 5000
 
 signal match_created(match_session)
 signal match_closed(match_id: String, room_id: String, final_status: String)
@@ -27,15 +28,22 @@ var last_create_match_error: String = ""
 var _rng := RandomNumberGenerator.new()
 var _cleanup_poll_interval_seconds: float = 1.0
 var _cleanup_poll_elapsed: float = 0.0
+var _supervisor_heartbeat_path: String = ""
+var _next_supervisor_heartbeat_msec: int = 0
 
 func _ready() -> void:
 	_rng.randomize()
+
+func _exit_tree() -> void:
+	_remove_supervisor_heartbeat()
 
 func _process(delta: float) -> void:
 	_cleanup_poll_elapsed += delta
 	if _cleanup_poll_elapsed < _cleanup_poll_interval_seconds:
 		return
 	_cleanup_poll_elapsed = 0.0
+	if not _supervisor_heartbeat_path.is_empty() and Time.get_ticks_msec() >= _next_supervisor_heartbeat_msec:
+		_write_supervisor_heartbeat()
 	_refresh_active_matches()
 
 func configure(
@@ -87,8 +95,6 @@ func create_match(
 	)
 	session.spectator_visible_player_indices_by_session = spectator_visible_player_indices_by_session.duplicate(true)
 	session.is_ranked = is_ranked
-	if session.is_bot_self_play():
-		session.supervisor_process_id = OS.get_process_id()
 	var require_dedicated := session.get_human_player_count() < player_session_ids.size()
 	session.configure_series_format(best_of)
 	session.mark_active()
@@ -148,7 +154,7 @@ func refresh_match_status(match_id: String) -> void:
 		return
 	_refresh_match(resolved_match_id, int(Time.get_unix_time_from_system()))
 
-func is_match_ready_for_clients(match_id: String) -> bool:
+func is_match_ready_for_clients(match_id: String, allow_finished_reconnect: bool = true) -> bool:
 	var resolved_match_id := match_id.strip_edges()
 	if resolved_match_id.is_empty() or not active_matches.has(resolved_match_id):
 		return false
@@ -163,7 +169,7 @@ func is_match_ready_for_clients(match_id: String) -> bool:
 	var status := str(status_data.get("status", "")).strip_edges()
 	if status == MatchSessionScript.STATUS_ACTIVE:
 		return true
-	if status == MatchSessionScript.STATUS_FINISHED:
+	if status == MatchSessionScript.STATUS_FINISHED and allow_finished_reconnect:
 		return _finished_status_allows_reconnect(status_data)
 	return false
 
@@ -216,6 +222,7 @@ func close_match(
 func clear() -> void:
 	for match_id in active_matches.keys().duplicate():
 		close_match(str(match_id), MatchSessionScript.STATUS_ABANDONED, true)
+	_remove_supervisor_heartbeat()
 
 func _generate_match_id() -> String:
 	const CHARS := "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -291,9 +298,29 @@ func _write_launch_config(session) -> String:
 		return ""
 	var config_path := base_dir.path_join("%s.json" % str(session.match_id))
 	session.status_file_path = _get_status_file_path_for_match(str(session.match_id))
+	if session.is_bot_self_play():
+		if _supervisor_heartbeat_path.is_empty():
+			_supervisor_heartbeat_path = base_dir.path_join("supervisor_%s.heartbeat" % str(session.match_id))
+		if not _write_supervisor_heartbeat():
+			return ""
+		session.supervisor_heartbeat_path = _supervisor_heartbeat_path
 	if not JsonStoreScript.save_json(config_path, session.to_launch_config(), "MatchSupervisor"):
 		return ""
 	return config_path
+
+func _write_supervisor_heartbeat() -> bool:
+	_next_supervisor_heartbeat_msec = Time.get_ticks_msec() + SUPERVISOR_HEARTBEAT_INTERVAL_MSEC
+	var heartbeat := FileAccess.open(_supervisor_heartbeat_path, FileAccess.WRITE)
+	if heartbeat == null:
+		return false
+	var written := heartbeat.store_8(1)
+	heartbeat.close()
+	return written
+
+func _remove_supervisor_heartbeat() -> void:
+	if not _supervisor_heartbeat_path.is_empty():
+		DirAccess.remove_absolute(_supervisor_heartbeat_path)
+		_supervisor_heartbeat_path = ""
 
 func _refresh_active_matches() -> void:
 	if active_matches.is_empty():

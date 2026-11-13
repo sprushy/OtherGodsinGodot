@@ -6,6 +6,7 @@ const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
 const DefaultMatchSetupScript = preload("res://scripts/server/DefaultMatchSetup.gd")
 const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
 const LobbyServerScript = preload("res://scripts/server/LobbyServer.gd")
+const LobbyProtocolScript = preload("res://scripts/network/LobbyProtocol.gd")
 const MatchCommandRegistryScript = preload("res://scripts/Other/MatchCommandRegistry.gd")
 const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
@@ -13,12 +14,25 @@ const MatchSupervisorScript = preload("res://scripts/server/MatchSupervisor.gd")
 const NetworkManagerScript = preload("res://scripts/Other/NetworkManager.gd")
 const RankedBotDeckPoolScript = preload("res://scripts/server/RankedBotDeckPool.gd")
 const RankedProgressionScript = preload("res://scripts/server/RankedProgression.gd")
+const RankBadgeCatalog = preload("res://scripts/core/RankBadgeCatalog.gd")
 const ServerPathsScript = preload("res://scripts/server/ServerPaths.gd")
 
 const MIN_CATALOG_CARDS := 200
 const RESULT_ARG_PREFIX := "preflight_result_file="
 
 var _ran := false
+
+class RequestNextLobby extends LobbyServerScript:
+	var events: Array[Dictionary] = []
+
+	func _send_to_peer(peer_id: int, message_type: String, payload: Dictionary) -> void:
+		events.append({"peer": peer_id, "type": message_type, "payload": payload})
+
+class BadgeTestAccountStore extends AccountStore:
+	var storage_path: String
+
+	func _get_storage_path() -> String:
+		return storage_path
 
 func _ready() -> void:
 	var success := run()
@@ -39,10 +53,13 @@ func run() -> bool:
 	_check_json_store_round_trip(failures)
 	_check_match_supervisor_launch_config(failures)
 	_check_ranked_progression(failures)
+	_check_rank_badges(failures)
 	_check_dedicated_ranked_history(failures)
 	_check_ranked_bot_pool(failures)
 	_check_ranked_bot_deck_generation(failures)
 	_check_standing_bot_seeks(failures)
+	_check_ladder_pages(failures)
+	_check_request_next(failures)
 
 	if not failures.is_empty():
 		for failure in failures:
@@ -538,6 +555,58 @@ func _check_ranked_progression(failures: PackedStringArray) -> void:
 	if summary["rank_name"] != "Diamond V" or summary["season"] != "2026-03" or summary["matches"] != 0:
 		failures.append("Ranked progression did not reset using the peak and elapsed seasons")
 
+func _check_rank_badges(failures: PackedStringArray) -> void:
+	var ranks := ["Iron V", "Bronze V", "Silver V", "Gold V", "Diamond V", "Ascendant V", "Divine"]
+	var defaults := ["Wolf Cub", "Minotaur Footsoldier", "Berserker", "En-hedu-anna", "Nergal Lion", "Enki, Lord of Eridu", "Freyja"]
+	for league in range(ranks.size()):
+		var default_portrait := RankBadgeCatalog.resolve_portrait(league, {})
+		var card: Card = RankBadgeCatalog.get_cards(league).get(defaults[league])
+		if RankBadgeCatalog.league_for_rank(ranks[league]) != league or default_portrait.get("card") != defaults[league] \
+				or card == null or not ResourceLoader.exists(card.art_path, "Texture2D"):
+			failures.append("Rank badge default portrait or art missing for %s" % ranks[league])
+	var portrait := {"card": "Wolf Cub", "art": 0, "x": 0.15, "y": 0.85, "zoom": 2.25}
+	var saved := RankBadgeCatalog.validate_portrait(0, portrait)
+	if saved != portrait or not RankBadgeCatalog.validate_portrait(1, portrait).is_empty() \
+			or not RankBadgeCatalog.validate_portrait(0, {"card": "Wolf Cub", "x": 1.5}).is_empty() \
+			or not RankBadgeCatalog.validate_portrait(0, {"card": "Wolf Cub", "art": 99}).is_empty() \
+			or not RankBadgeCatalog.validate_portrait(0, {"card": "Freyja"}).is_empty() \
+			or RankBadgeCatalog.validate_portrait(6, {"card": "Freyja, Active God"}).is_empty():
+		failures.append("Rank badge eligibility or crop validation failed")
+	var session := MatchSessionScript.new("badge_match", "badge_room", "127.0.0.1", 12345, ["seat_a", "seat_b"], {}, {
+		"seat_a": {"rank_badge": {"rank_name": "Iron V", "portrait": saved}},
+		"seat_b": {"rank_badge": {"rank_name": "Bronze IV"}},
+	})
+	var badges: Array = session.to_spectator_match_info()["rank_badges"]
+	if badges.size() != 2 or badges[0].get("portrait") != portrait or badges[1].get("rank_name") != "Bronze IV" \
+			or session.to_match_info("seat_b")["rank_badges"] != badges:
+		failures.append("Match assignment did not preserve public rank badges in seat order")
+
+	var account_path := ProjectSettings.globalize_path("user://preflight_badges_%d.json" % OS.get_process_id())
+	var legacy_account := {"account_id": "badge_account", "username": "Badge Player", "password_salt": "test_salt", "password_hash": "test_hash"}
+	if not JsonStoreScript.save_json(account_path, {"accounts_by_id": {"badge_account": legacy_account}}, "preflight_probe"):
+		failures.append("Could not prepare a preflight account for rank badge persistence")
+		return
+	var store := BadgeTestAccountStore.new()
+	store.storage_path = account_path
+	var bronze := RankBadgeCatalog.validate_portrait(1, {"card": "Minotaur Footsoldier"})
+	if not store.get_rank_badge("badge_account", 0).is_empty() \
+			or not store.set_rank_badge("badge_account", 0, saved) or not store.set_rank_badge("badge_account", 1, bronze):
+		failures.append("Could not save badge preferences for an existing account")
+	var reopened := BadgeTestAccountStore.new()
+	reopened.storage_path = account_path
+	if RankBadgeCatalog.validate_portrait(0, reopened.get_rank_badge("badge_account", 0)) != saved \
+			or RankBadgeCatalog.validate_portrait(1, reopened.get_rank_badge("badge_account", 1)) != bronze:
+		failures.append("Rank badge choices or crop did not round-trip through account storage")
+	if not reopened.set_rank_badge("badge_account", 0, {}):
+		failures.append("Could not restore the default rank badge")
+	var reset_store := BadgeTestAccountStore.new()
+	reset_store.storage_path = account_path
+	if not reset_store.get_rank_badge("badge_account", 0).is_empty() \
+			or RankBadgeCatalog.validate_portrait(1, reset_store.get_rank_badge("badge_account", 1)) != bronze:
+		failures.append("Resetting a rank badge changed preferences for another league")
+	DirAccess.remove_absolute(account_path)
+	DirAccess.remove_absolute(account_path + ".bak")
+
 func _check_dedicated_ranked_history(failures: PackedStringArray) -> void:
 	var storage_file := "preflight_ranked_%d.json" % OS.get_process_id()
 	var storage_path := ServerPathsScript.get_server_data_file_path(storage_file)
@@ -586,6 +655,11 @@ func _check_dedicated_ranked_history(failures: PackedStringArray) -> void:
 	if bo3_progress["matches"] != 1 or bo3_progress["win_streak"] != 1 \
 			or bo3_progress["rank_name"] != "Iron V" or bo3_progress["stars"] != 1:
 		failures.append("Bo3 ranked progression did not stay independent of Bo1")
+	var usernames := {"account_a": "Winner", "account_b": "Opponent"}
+	var bo1_ladder := reader.get_human_ladder(usernames, 1)
+	var bo3_ladder := reader.get_human_ladder(usernames, 3)
+	if bo1_ladder[0]["points"] != 4 or bo3_ladder[0]["points"] != 1:
+		failures.append("Ladder standings did not use the requested ranked format")
 	var first_results := reader.get_ranked_match_results(first_match["entry"])
 	var first_win: Dictionary = first_results.get(0, {})
 	var first_loss: Dictionary = first_results.get(1, {})
@@ -657,16 +731,135 @@ func _check_standing_bot_seeks(failures: PackedStringArray) -> void:
 	for entry: Dictionary in lobby._build_room_list():
 		if entry["host_is_bot"] and entry["member_count"] == 1:
 			open_formats.append(entry["is_ranked"])
+			if entry.has("bot_stars"):
+				failures.append("Open bot challenge advertised a rank before matchmaking")
 	if open_formats.size() != 2 or true not in open_formats or false not in open_formats:
 		failures.append("Lobby did not maintain exactly one open rated and one open unrated bot seek")
 	lobby.free()
+
+func _check_request_next(failures: PackedStringArray) -> void:
+	var lobby := RequestNextLobby.new()
+	var supervisor := MatchSupervisorScript.new()
+	lobby.match_supervisor = supervisor
+	var target: Dictionary = lobby._create_session("Playing", 2, false, "", "target_account")
+	var viewer: Dictionary = lobby._create_session("Challenger", 3, false, "", "viewer_account")
+	var same_account: Dictionary = lobby._create_session("Playing", 4, false, "", "target_account")
+	var room := LobbyRoom.new("NEXT", "BOT_A")
+	room.add_member("BOT_A")
+	room.add_member(target["session_id"])
+	room.status = LobbyRoom.STATUS_IN_MATCH
+	room.assigned_match_id = "match_next"
+	lobby.rooms_by_id[room.room_id] = room
+	var session := MatchSessionScript.new(room.assigned_match_id, room.room_id, "127.0.0.1", 12345, room.members, {}, {
+		"BOT_A": {"player_name": "Thor"},
+		target["session_id"]: {"player_name": "Playing"},
+	})
+	session.mark_active()
+	session.server_mode = MatchSessionScript.SERVER_MODE_DEDICATED_HEADLESS
+	session.status_file_path = "user://preflight_request_next_%d.json" % OS.get_process_id()
+	supervisor.active_matches[session.match_id] = session
+	if lobby._build_room_list(viewer["session_id"])[0].has("request_next_match_id"):
+		failures.append("Request Next was advertised before the dedicated match started")
+	if not JsonStoreScript.save_json(session.status_file_path, {"status": MatchSessionScript.STATUS_ACTIVE}, "preflight_probe"):
+		failures.append("Could not write Request Next match status")
+	var entry: Dictionary = lobby._build_room_list(viewer["session_id"])[0]
+	if entry.get("request_next_match_id") != session.match_id or entry.get("match_player_names") != ["Thor", "Playing"] \
+			or lobby._build_room_list(same_account["session_id"])[0].has("request_next_match_id") \
+			or lobby._build_room_list()[0].has("request_next_match_id"):
+		failures.append("Request Next was not advertised only to eligible viewers")
+	var request := LobbyProtocol.make_message(LobbyProtocol.REQUEST_NEXT, {"match_id": session.match_id})
+	lobby._handle_request(3, request)
+	if lobby.events.size() != 2 \
+			or lobby.events[0] != {"peer": 2, "type": LobbyProtocol.REQUEST_NEXT_RECEIVED, "payload": {"requester_name": "Challenger"}} \
+			or lobby.events[1]["peer"] != 3 or lobby.events[1]["type"] != LobbyProtocol.REQUEST_NEXT_RESULT:
+		failures.append("Request Next did not privately notify the player and confirm to the requester")
+	lobby.events.clear()
+	lobby._handle_request(3, request)
+	lobby._handle_request(4, request)
+	lobby._handle_request(5, request)
+	if lobby.events.size() != 3 or lobby.events.any(func(event: Dictionary) -> bool: return event["type"] != LobbyProtocol.REQUEST_NEXT_RESULT) \
+			or lobby._build_room_list(viewer["session_id"])[0].has("request_next_match_id"):
+		failures.append("Request Next permitted a duplicate, self-request, or unauthenticated request")
+	session.next_requests_by_account.clear()
+	var finished_status := {
+		"status": MatchSessionScript.STATUS_FINISHED,
+		"waiting_for_reconnect": true,
+		"reconnect_deadline_unix": int(Time.get_unix_time_from_system()) + 60,
+	}
+	if not JsonStoreScript.save_json(session.status_file_path, finished_status, "preflight_probe"):
+		failures.append("Could not write finished Request Next match status")
+	lobby.events.clear()
+	lobby._handle_request(3, request)
+	if not lobby._build_room_list(target["session_id"])[0]["viewer_can_rejoin"] \
+			or lobby.events.size() != 1 or lobby.events[0]["type"] != LobbyProtocol.REQUEST_NEXT_RESULT \
+			or lobby._build_room_list(viewer["session_id"])[0].has("request_next_match_id"):
+		failures.append("Request Next did not distinguish a finished match from a rejoinable match")
+	DirAccess.remove_absolute(session.status_file_path)
+	DirAccess.remove_absolute(session.status_file_path + ".bak")
+	supervisor.free()
+	lobby.free()
+
+func _check_ladder_pages(failures: PackedStringArray) -> void:
+	var account_path := ProjectSettings.globalize_path("user://preflight_ladder_%d.json" % OS.get_process_id())
+	var accounts := {}
+	var player_count := NetworkManagerScript.MAX_NETWORK_PAYLOAD_ITEMS + 1
+	for index in range(player_count):
+		var account_id := "account_%d" % index
+		accounts[account_id] = {"account_id": account_id, "username": "Player %03d" % index,
+			"password_salt": "test_salt", "password_hash": "test_hash"}
+	if not JsonStoreScript.save_json(account_path, {"accounts_by_id": accounts}, "preflight_probe"):
+		failures.append("Could not prepare ladder page test accounts")
+		return
+	var store := BadgeTestAccountStore.new()
+	store.storage_path = account_path
+	var lobby := LobbyServerScript.new()
+	lobby.account_store = store
+	var storage_file := "preflight_ladder_history_%d.json" % OS.get_process_id()
+	var history := MatchHistoryStoreScript.new(storage_file, true)
+	lobby.match_history_store = history
+	var session := MatchSessionScript.new("ladder_bot_win", "preflight_room", "127.0.0.1", 12345, ["BOT_A", "human"], {
+		"BOT_A": {"bot_god_name": "Thor", "cards": {"Thor": 1, "Berserker": 3}},
+	}, {"human": {"account_id": "account_0"}})
+	history.record_completed_match(session, 0, 1, "Thor", "Odin")
+	var network := NetworkManagerScript.new()
+	var names := {}
+	var bot_count := 0
+	var last_page := ceili(float(player_count + 1) / LobbyProtocolScript.LADDER_PAGE_SIZE) - 1
+	for page in range(last_page + 1):
+		var summary := lobby._build_ladder_page({"best_of": 1, "request_id": page, "page": page})
+		var message := LobbyProtocolScript.make_message(LobbyProtocolScript.BOT_LADDER, summary)
+		if summary["request_id"] != page or summary["page"] != page or summary["last_page"] != last_page \
+				or not network.get_game_event_payload_rejection_reason("__lobby_event__", message).is_empty():
+			failures.append("A ranked ladder page exceeded the network limits or reported incorrect page metadata")
+			break
+		for row: Dictionary in summary["ladder"]:
+			if row.get("is_bot", false):
+				bot_count += 1
+				if page != 0 or str(row.get("list_id", "")).is_empty():
+					failures.append("Bo1 standings did not rank the winning bot or include its deck link")
+			else:
+				names[row["name"]] = true
+	if names.size() != player_count:
+		failures.append("Ladder pages did not expose every player account")
+	var bo3 := lobby._build_ladder_page({"best_of": 3, "request_id": 0, "page": 0})
+	if bot_count != 1 or bo3["ladder"].any(func(row: Dictionary) -> bool: return row.get("is_bot", false)):
+		failures.append("Ladder did not show ranked bots in their match format")
+	var legacy_summary := lobby._build_ladder_page({})
+	if legacy_summary["ladder"].size() != NetworkManagerScript.MAX_NETWORK_PAYLOAD_ITEMS:
+		failures.append("Legacy ladder response did not fit the network array limit")
+	network.free()
+	lobby.free()
+	DirAccess.remove_absolute(account_path)
+	var result_dir := ServerPathsScript.get_server_data_file_path(storage_file).get_basename() + "_results"
+	DirAccess.remove_absolute(result_dir.path_join("%s.json" % session.match_id.sha256_text()))
+	DirAccess.remove_absolute(result_dir)
 
 func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 	var storage_file := "preflight_bot_pool_%d.json" % OS.get_process_id()
 	var writer := MatchHistoryStoreScript.new(storage_file, true)
 	var reader := MatchHistoryStoreScript.new(storage_file, true)
 	var session := MatchSessionScript.new("bot_win", "preflight_room", "127.0.0.1", 12345, ["BOT_A", "human"], {
-		"BOT_A": {"bot_god_name": "Thor", "cards": {"Thor": 1, "Berserker": 3}},
+		"BOT_A": {"bot_god_name": "Thor", "cards": _known_good_deck_counts()},
 	}, {"human": {"account_id": "human_account", "profile_id": "human_profile"}})
 	if not session.to_match_info("human").get("has_bot", false):
 		failures.append("Rated bot match assignment did not identify the bot")
@@ -677,6 +870,24 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 	var stored_results := reader.get_bot_deck_results()
 	if stored_results.size() != 1 or stored_results[0]["god_name"] != "Thor" or stored_results[0]["result"] != "win":
 		failures.append("Rated bot match did not persist the registered winning list")
+	var lobby := LobbyServerScript.new()
+	lobby.match_history_store = reader
+	var seek := lobby._create_server_bot_seek(true)
+	lobby.sessions_by_id["human"] = {"account_id": "human_account", "connected": true}
+	lobby._join_room_for_session("human", seek.room_id)
+	var matched_before := lobby._match_server_bot_to_player(seek)
+	var before_win := seek.get_deck_submission(seek.host_session_id)
+	var human_win := MatchSessionScript.new("human_win", "preflight_room", "127.0.0.1", 12345, ["human", "opponent"], {}, {
+		"human": {"account_id": "human_account"},
+		"opponent": {"account_id": "opponent_account"},
+	})
+	writer.record_completed_match(human_win, 0, 1, "Thor", "Odin")
+	var matched_after := lobby._match_server_bot_to_player(seek)
+	var after_win := seek.get_deck_submission(seek.host_session_id)
+	if not matched_before or not matched_after or before_win.get("bot_stars") != 0 \
+			or after_win.get("bot_list_id") != "bot_win" or after_win.get("bot_stars") != 1:
+		failures.append("Bot challenge did not use the player's current ladder points to select their opponent")
+	lobby.free()
 	var self_play := MatchSessionScript.new("bot_self_play", "preflight_room", "127.0.0.1", 12345, ["BOT_A", "BOT_B"], {
 		"BOT_A": {"bot_god_name": "Thor", "bot_list_id": "bot_win", "bot_stars": 1, "cards": {"Thor": 1, "Berserker": 3}},
 		"BOT_B": {"bot_god_name": "Odin", "cards": {"Odin": 1, "Brown Bear": 3}},
@@ -701,6 +912,7 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 		failures.append("Bot matchmaking did not enforce the three-total-star gap and distinct seats")
 	var result_dir := ServerPathsScript.get_server_data_file_path(storage_file).get_basename() + "_results"
 	DirAccess.remove_absolute(result_dir.path_join("%s.json" % session.match_id.sha256_text()))
+	DirAccess.remove_absolute(result_dir.path_join("%s.json" % human_win.match_id.sha256_text()))
 	DirAccess.remove_absolute(result_dir.path_join("%s.json" % self_play.match_id.sha256_text()))
 	DirAccess.remove_absolute(result_dir)
 
@@ -708,9 +920,11 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 7
 	pool.refresh(stored_results)
-	var first_list := pool.select_deck({}, rng)
+	var first_list := pool.select_deck({}, rng, 1)
 	if first_list.get("deck_name") != "Thor: Bloodaxe" or first_list.get("stars") != 1:
 		failures.append("A winning bot list did not return with its permanent name and star")
+	if not pool.select_deck({}, rng, 0).is_empty():
+		failures.append("Bot matchmaking did not prefer a fresh list for a player at zero stars")
 	pool.refresh(self_play_results)
 	var after_self_play: Dictionary = pool.get_ladder_summary()
 	if after_self_play["gods"].size() != 2:
@@ -726,10 +940,20 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 		results.append(_bot_pool_result("list_%d" % i, "", {"Thor": 1, "Common": 30, "Variant %d" % i: 10}, "win"))
 	results.append(_bot_pool_result("candidate", "", {"Thor": 1, "Common": 30, "Challenger": 10}, "win"))
 	pool.refresh(results)
-	var candidate := pool.select_deck({}, rng)
+	var candidate := pool.select_deck({}, rng, 1)
 	if pool.can_play_list("Thor", "list_0") or not pool.can_play_list("Thor", "list_1") \
 			or candidate.get("list_id") != "candidate" or candidate.get("deck_name") != "Thor: Challenger":
-		failures.append("The eighth bot list did not quarantine an incumbent and get trial priority")
+		failures.append("The eighth bot list did not quarantine an incumbent and get trial priority at equal rank")
+	var high_rank_results := results.duplicate()
+	for i in range(14):
+		high_rank_results.append(_bot_pool_result("ranked_%d" % i, "list_1", {}, "win"))
+	for i in range(15):
+		high_rank_results.append(_bot_pool_result("quarantined_%d" % i, "list_0", {}, "win"))
+	var high_rank_pool := RankedBotDeckPoolScript.new()
+	high_rank_pool.refresh(high_rank_results)
+	if high_rank_pool.select_deck({}, rng, 16).get("list_id") != "list_1" \
+			or high_rank_pool.select_deck({"list_1": true}, rng, 16).get("stars") != 1:
+		failures.append("Bot matchmaking did not prefer the closest total stars across leagues among available lists")
 	for i in range(6):
 		results.append(_bot_pool_result("trial_%d" % i, "candidate", {}, "loss"))
 	pool.refresh(results)
