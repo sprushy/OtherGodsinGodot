@@ -128,6 +128,15 @@ func create_match(
 func get_match(match_id: String):
 	return active_matches.get(match_id, null)
 
+func start_shared_bot_match(session: MatchSession) -> bool:
+	if session == null or not session.is_bot_self_play() or active_matches.has(session.match_id):
+		return false
+	if not _launch_shared_bot_match(session):
+		return false
+	active_matches[session.match_id] = session
+	match_created.emit(session)
+	return true
+
 func has_background_worker_capacity() -> bool:
 	var port_limit := 65536 - default_match_port
 	if not public_websocket_url.is_empty():
@@ -220,9 +229,9 @@ func close_match(
 	active_matches.erase(match_id)
 	match_closed.emit(match_id, str(session.room_id), str(session.status))
 
-func clear() -> void:
+func clear(reason: String = "") -> void:
 	for match_id in active_matches.keys().duplicate():
-		close_match(str(match_id), MatchSessionScript.STATUS_ABANDONED, true)
+		close_match(str(match_id), MatchSessionScript.STATUS_ABANDONED, true, reason)
 	_remove_supervisor_heartbeat()
 
 func _generate_match_id() -> String:
@@ -247,10 +256,10 @@ func _allocate_match_port() -> int:
 		return -1
 	return allocated_port
 
-func _launch_dedicated_match(session, force_process: bool = false) -> bool:
+func _launch_dedicated_match(session) -> bool:
 	if session == null:
 		return false
-	if session.is_bot_self_play() and not force_process:
+	if session.is_bot_self_play():
 		return _launch_shared_bot_match(session)
 	var uses_exported_runtime := _is_exported_server_runtime(godot_executable_path)
 	if godot_executable_path.is_empty() or (not uses_exported_runtime and project_path.is_empty()):
@@ -342,7 +351,9 @@ func _write_launch_config(session) -> String:
 	var config_path := base_dir.path_join("%s.json" % str(session.match_id))
 	session.status_file_path = _get_status_file_path_for_match(str(session.match_id))
 	if _supervisor_heartbeat_path.is_empty():
-		_supervisor_heartbeat_path = base_dir.path_join("supervisor_%s.heartbeat" % str(OS.get_process_id()))
+		_supervisor_heartbeat_path = base_dir.path_join(
+			"supervisor_%d_%d.heartbeat" % [OS.get_process_id(), get_instance_id()]
+		)
 	if not _write_supervisor_heartbeat():
 		return ""
 	session.supervisor_heartbeat_path = _supervisor_heartbeat_path

@@ -567,6 +567,7 @@ func _check_match_supervisor_launch_config(failures: PackedStringArray) -> void:
 	var config_path: String = supervisor._write_launch_config(session)
 	if config_path.is_empty():
 		failures.append("MatchSupervisor failed to write a launch config")
+		supervisor.clear()
 		supervisor.free()
 		return
 	var loaded := JsonStoreScript.load_dictionary(config_path, {}, "preflight_probe")
@@ -578,7 +579,22 @@ func _check_match_supervisor_launch_config(failures: PackedStringArray) -> void:
 			or FileAccess.file_exists("%s.tmp" % config_path) \
 			or FileAccess.file_exists("%s.bak" % config_path):
 		failures.append("MatchSupervisor did not clean launch config artifacts")
+	var other_supervisor := MatchSupervisorScript.new()
+	var other_session := MatchSessionScript.new(
+		"preflight_other_match_config", "preflight_room", "127.0.0.1", 12346, ["session_three", "session_four"]
+	)
+	other_session.launch_config_path = other_supervisor._write_launch_config(other_session)
+	var heartbeat_path := str(loaded.get("supervisor_heartbeat_path", ""))
+	var other_heartbeat_path := other_session.supervisor_heartbeat_path
+	if not FileAccess.file_exists(heartbeat_path) or not FileAccess.file_exists(other_heartbeat_path):
+		failures.append("MatchSupervisor did not write both heartbeat files")
+	supervisor.clear()
+	if FileAccess.file_exists(heartbeat_path) or not FileAccess.file_exists(other_heartbeat_path):
+		failures.append("Closing one MatchSupervisor did not remove only its own heartbeat")
 	supervisor.free()
+	other_supervisor._cleanup_launch_config(other_session)
+	other_supervisor.clear()
+	other_supervisor.free()
 
 func _check_ranked_progression(failures: PackedStringArray) -> void:
 	var progress := {}
@@ -1474,6 +1490,48 @@ func _check_bot_shift_and_extraction(failures: PackedStringArray) -> void:
 	tez.tonal_mastery_tokens = 2
 	player.god_zone.add_card(tez)
 	player.mana = 2
+	var nagual := Nagual.new()
+	nagual.card_owner = player
+	nagual.creature_mode = Card.CreatureMode.DEFENSIVE
+	player.frontline_zones[1].add_card(nagual)
+	blocker.strength = 21
+	blocker.speed = 3
+	opponent.frontline_zones[0].add_card(blocker)
+	var danger := bot._forecast_incoming_follower_loss()
+	if not bot._plan_shift([], {}, danger).is_empty():
+		failures.append("Tezcatlipoca traded Nagual's 22 RES for 17 RES and exposed it to a 21 STR attacker to gain mana")
+	nagual.shift_forms()
+	tez.is_muted = true
+	shift = bot._plan_shift([], {}, danger)
+	if shift.get("command", {}).get("source_uid") != nagual.uid:
+		failures.append("Bot did not Shift Nagual back to 22 RES to survive a 21 STR attack")
+	tez.is_muted = false
+	opponent.frontline_zones[0].remove_card(blocker)
+	opponent.reserve_zones[0].add_card(blocker)
+	nagual.shift_forms()
+	blocker.spend_minor_creature_action()
+	blocker.spend_major_creature_action()
+	danger = bot._forecast_incoming_follower_loss()
+	if not bot._plan_shift([], {}, danger).is_empty():
+		failures.append("Bot exposed Nagual to a reserve attacker that could advance after its actions reset")
+	blocker.add_status_effect("cannot_move", "Preflight")
+	shift = bot._plan_shift([], {}, danger)
+	if shift.get("command", {}).get("source_uid") != nagual.uid:
+		failures.append("Bot avoided a safe Shift because it expected a movement-locked creature to advance")
+	blocker.remove_status_effects_by_name("cannot_move")
+	var occupied_lanes: Array[Card] = []
+	for lane in [0, 1]:
+		var occupant := CreatureCard.new()
+		occupant.card_owner = opponent
+		opponent.frontline_zones[lane].add_card(occupant)
+		occupied_lanes.append(occupant)
+	shift = bot._plan_shift([], {}, danger)
+	if shift.get("command", {}).get("source_uid") != nagual.uid:
+		failures.append("Bot avoided a safe Shift because it expected a reserve creature to move into an occupied lane")
+	for occupant in occupied_lanes:
+		occupant.current_zone.remove_card(occupant)
+	opponent.reserve_zones[0].remove_card(blocker)
+	player.frontline_zones[1].remove_card(nagual)
 	var serpent := TheWhiteSerpent.new()
 	serpent.card_owner = player
 	player.reserve_zones[0].add_card(serpent)

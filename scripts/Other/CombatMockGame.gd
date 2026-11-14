@@ -391,9 +391,8 @@ const MATCH_REPLAY_MULTI_DESTROY_THRESHOLD := 2
 var _opponent_draw_deck = null
 var _local_deck_badge: RankBadgeScript
 var _opponent_deck_badge: RankBadgeScript
-var _match_identity_panels: Array[PanelContainer] = []
-var _match_identity_names: Array[Label] = []
-var _match_identity_badges: Array[RankBadgeScript] = []
+var _local_deck_badge_name: Label
+var _opponent_deck_badge_name: Label
 var _upkeep_hint_completed_choices: int = 0
 # Retain the saved hint preference as the glow mode; text teaches automatically.
 var _upkeep_hint_mode: String = "always"
@@ -6579,7 +6578,8 @@ func _setup_turn_choice_buttons() -> void:
 	_opponent_draw_deck.inspect_requested.connect(_show_deck_contents.bind(true))
 	_local_deck_badge = _add_deck_rank_badge("LocalDeckRankBadge")
 	_opponent_deck_badge = _add_deck_rank_badge("OpponentDeckRankBadge")
-	_setup_match_identity_panels()
+	_local_deck_badge_name = _add_deck_rank_badge_name("LocalDeckRankBadgeName")
+	_opponent_deck_badge_name = _add_deck_rank_badge_name("OpponentDeckRankBadgeName")
 	choice_container.reparent(self, false)
 	choice_container.z_index = 1
 	# Reuse the existing hint as an overlay between the table props.
@@ -6690,76 +6690,25 @@ func _sync_deck_rank_badge(badge: RankBadgeScript, player: Player) -> void:
 	var index := game_manager.players.find(player)
 	var entry: Dictionary = badges[index] if index >= 0 and index < badges.size() else {}
 	var rank_name := str(entry.get("rank_name", ""))
-	badge.visible = _is_observer_mode or not rank_name.is_empty()
+	badge.visible = not rank_name.is_empty()
 	badge.set_badge(rank_name, entry.get("portrait", {}))
-	if _is_observer_mode:
-		badge.tooltip_text = _get_player_display_name_for_index(index)
 
-func _setup_match_identity_panels() -> void:
-	for player_index in range(2):
-		var panel := PanelContainer.new()
-		panel.name = "MatchPlayerIdentity%d" % (player_index + 1)
-		panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		panel.custom_minimum_size = Vector2(250.0, 58.0)
-		panel.set_anchors_preset(Control.PRESET_TOP_LEFT if player_index == 0 else Control.PRESET_TOP_RIGHT)
-		panel.offset_left = 18.0 if player_index == 0 else -268.0
-		panel.offset_right = 268.0 if player_index == 0 else -18.0
-		panel.offset_top = 18.0
-		panel.offset_bottom = 76.0
-		var style := StyleBoxFlat.new()
-		style.bg_color = Color("101722", 0.90)
-		style.border_color = Color("d2b477", 0.60)
-		style.set_border_width_all(1)
-		style.set_corner_radius_all(8)
-		style.content_margin_left = 7.0
-		style.content_margin_right = 7.0
-		style.content_margin_top = 4.0
-		style.content_margin_bottom = 4.0
-		panel.add_theme_stylebox_override("panel", style)
-		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 8)
-		panel.add_child(row)
-		var badge := RankBadgeScript.new()
-		badge.custom_minimum_size = Vector2(48.0, 48.0)
-		badge.size = Vector2(48.0, 48.0)
-		badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		row.add_child(badge)
-		var player_name := Label.new()
-		player_name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		player_name.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		player_name.clip_text = true
-		player_name.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-		player_name.add_theme_font_size_override("font_size", 15)
-		player_name.add_theme_color_override("font_color", Color("f4e8cd"))
-		row.add_child(player_name)
-		add_child(panel)
-		_match_identity_panels.append(panel)
-		_match_identity_names.append(player_name)
-		_match_identity_badges.append(badge)
-
-func _sync_match_identity_panels() -> void:
-	if _match_identity_panels.size() != 2 or game_manager == null or game_manager.players.size() < 2:
-		return
-	var show_identity := _is_observer_mode or bool(_current_match_info.get("has_bot", false))
-	for player_index in range(2):
-		var panel := _match_identity_panels[player_index]
-		panel.visible = show_identity
-		if not show_identity:
-			continue
-		var player_name := _get_player_display_name_for_index(player_index)
-		var name_label := _match_identity_names[player_index]
-		name_label.text = player_name
-		name_label.tooltip_text = player_name
-		var badges: Array = _current_match_info.get("rank_badges", [])
-		var entry: Dictionary = badges[player_index] if player_index < badges.size() else {}
-		var rank_name := str(entry.get("rank_name", ""))
-		var badge := _match_identity_badges[player_index]
-		badge.visible = not rank_name.is_empty()
-		badge.set_badge(rank_name, entry.get("portrait", {}))
-		badge.tooltip_text = "%s · %s" % [player_name, rank_name] if not rank_name.is_empty() else player_name
+func _add_deck_rank_badge_name(node_name: String) -> Label:
+	var label := Label.new()
+	label.name = node_name
+	label.visible = false
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label.add_theme_font_size_override("font_size", 14)
+	label.add_theme_color_override("font_color", Color("f4e8cd"))
+	label.add_theme_color_override("font_outline_color", Color(0.04, 0.03, 0.02, 0.95))
+	label.add_theme_constant_override("outline_size", 4)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	add_child(label)
+	return label
 
 func _sync_turn_start_props() -> void:
-	_sync_match_identity_panels()
 	if mana_button != null:
 		mana_button.set_board_style(_get_mana_well_board_style())
 	if _opponent_draw_deck == null:
@@ -6784,11 +6733,18 @@ func _sync_turn_start_props() -> void:
 	if not props_ready:
 		_local_deck_badge.hide()
 		_opponent_deck_badge.hide()
+		_local_deck_badge_name.hide()
+		_opponent_deck_badge_name.hide()
 		return
 	var display_player := _get_display_player()
 	var opponent := _get_display_opponent()
 	_sync_deck_rank_badge(_local_deck_badge, display_player)
 	_sync_deck_rank_badge(_opponent_deck_badge, opponent)
+	var show_badge_names := _is_observer_mode or bool(_current_match_info.get("has_bot", false))
+	_local_deck_badge_name.text = _get_player_display_name_for_index(game_manager.players.find(display_player))
+	_opponent_deck_badge_name.text = _get_player_display_name_for_index(game_manager.players.find(opponent))
+	_local_deck_badge_name.visible = show_badge_names and _local_deck_badge.visible
+	_opponent_deck_badge_name.visible = show_badge_names and _opponent_deck_badge.visible
 	draw_button.set_deck_count(display_player.deck_zone.get_card_count())
 	_opponent_draw_deck.set_deck_count(opponent.deck_zone.get_card_count())
 	var local_top := display_player.deck_zone.get_primed_top_card()
@@ -6893,11 +6849,17 @@ func _layout_turn_start_props() -> void:
 		deck.position.x += (prop_size.x * 0.5 - deck.get_top_card_rect().get_center().x) * prop_scale
 	var local_deck_badge := _local_deck_badge
 	var opponent_deck_badge := _opponent_deck_badge
+	var local_deck_badge_name := _local_deck_badge_name
+	var opponent_deck_badge_name := _opponent_deck_badge_name
 	if _is_observer_mode:
 		local_deck_badge = _opponent_deck_badge if _observer_perspective_player_index == 1 else _local_deck_badge
 		opponent_deck_badge = _local_deck_badge if _observer_perspective_player_index == 1 else _opponent_deck_badge
+		local_deck_badge_name = _opponent_deck_badge_name if _observer_perspective_player_index == 1 else _local_deck_badge_name
+		opponent_deck_badge_name = _local_deck_badge_name if _observer_perspective_player_index == 1 else _opponent_deck_badge_name
 	_position_deck_rank_badge(opponent_deck_badge, _opponent_draw_deck, prop_scale, true)
 	_position_deck_rank_badge(local_deck_badge, draw_button, prop_scale, false)
+	_position_deck_rank_badge_name(opponent_deck_badge_name, opponent_deck_badge, true)
+	_position_deck_rank_badge_name(local_deck_badge_name, local_deck_badge, false)
 	choice_intro_label.custom_minimum_size = Vector2.ZERO
 	choice_intro_label.size = choice_intro_label.get_combined_minimum_size()
 	choice_intro_label.scale = Vector2.ONE * prop_scale
@@ -6913,9 +6875,16 @@ func _position_deck_rank_badge(badge: RankBadgeScript, deck: Control, prop_scale
 	var center_x: float = deck.position.x + card.get_center().x * prop_scale
 	var edge_y: float = deck.position.y + (card.position.y - 16.0 if above else card.end.y + 36.0) * prop_scale
 	var available := edge_y - 4.0 if above else size.y - edge_y - 4.0
-	var extent := clampf(available, 0.0, 76.0 * prop_scale)
+	var extent := clampf(available, 48.0 * prop_scale, 76.0 * prop_scale)
 	badge.size = Vector2.ONE * extent
 	badge.position = Vector2(center_x - extent * 0.5, edge_y - extent if above else edge_y)
+
+func _position_deck_rank_badge_name(label: Label, badge: RankBadgeScript, above: bool) -> void:
+	if not label.visible or not badge.visible:
+		return
+	label.size = Vector2(220.0, 22.0)
+	label.position = Vector2(badge.position.x + (badge.size.x - label.size.x) * 0.5,
+		badge.position.y + badge.size.y + 2.0 if above else badge.position.y - label.size.y - 2.0)
 
 func _position_turn_start_prop(prop: Control, center: Vector2, prop_size: Vector2, prop_scale: float) -> void:
 	prop.size = prop_size

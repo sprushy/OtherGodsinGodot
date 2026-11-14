@@ -43,7 +43,7 @@ var _status_message := ""
 var _search_debounce: Timer
 var _badge_viewports: Dictionary[String, SubViewport] = {}
 var _god_art_paths: Dictionary[String, String] = {}
-var _god_textures: Dictionary[String, Texture2D] = {}
+var _god_icon_viewports: Dictionary[String, SubViewport] = {}
 
 func _ready() -> void:
 	name = "BotLadderView"
@@ -293,6 +293,9 @@ func _clear_ladder_rows() -> void:
 	for viewport in _badge_viewports.values():
 		viewport.queue_free()
 	_badge_viewports.clear()
+	for viewport in _god_icon_viewports.values():
+		viewport.queue_free()
+	_god_icon_viewports.clear()
 
 func _get_badge_icon(rank_name: String, portrait: Dictionary) -> Texture2D:
 	var key := JSON.stringify([rank_name, portrait])
@@ -315,8 +318,8 @@ func _get_god_icon(god_names: PackedStringArray) -> Texture2D:
 	if god_names.is_empty():
 		return null
 	var god_name := str(god_names[0])
-	if _god_textures.has(god_name):
-		return _god_textures[god_name]
+	if _god_icon_viewports.has(god_name):
+		return _god_icon_viewports[god_name].get_texture()
 	var art_path := str(_god_art_paths.get(god_name, ""))
 	if art_path.is_empty():
 		for card: Card in CardCatalogScript.get_cached_card_templates():
@@ -325,9 +328,22 @@ func _get_god_icon(god_names: PackedStringArray) -> Texture2D:
 				_god_art_paths[god_name] = art_path
 				break
 	var texture := TextureCacheScript.get_texture(art_path)
-	if texture != null:
-		_god_textures[god_name] = texture
-	return texture
+	if texture == null:
+		return null
+	var viewport := SubViewport.new()
+	viewport.size = BADGE_SIZE
+	viewport.transparent_bg = true
+	viewport.disable_3d = true
+	var thumbnail := TextureRect.new()
+	thumbnail.texture = texture
+	thumbnail.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	thumbnail.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	thumbnail.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	viewport.add_child(thumbnail)
+	add_child(viewport)
+	viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
+	_god_icon_viewports[god_name] = viewport
+	return viewport.get_texture()
 
 func _open_selected_entry() -> void:
 	var selected := _table.get_selected()

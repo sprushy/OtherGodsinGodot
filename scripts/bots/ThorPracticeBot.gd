@@ -923,11 +923,13 @@ func _plan_shift(attacks: Array[Dictionary], baseline: Dictionary, danger: int) 
 		var combat_score := int(combat.get("score", 0))
 		var lethal := bool(combat.get("lethal", false))
 		var safety := _follower_safety_gain(danger, {"shifting": card, "shifted_form": form})
+		var creature_safety := _estimate_shift_target_casualty_cost(card, card, {}) \
+			- _estimate_shift_target_casualty_cost(card, form, {card: stats})
 		# Favor stronger aggressive forms and sturdier defensive forms when
 		# neither side has an immediate combat line that distinguishes them.
 		var defensive := card.creature_mode == Card.CreatureMode.DEFENSIVE
 		var form_value := stats.x * (20 if defensive else 55) + stats.y * (55 if defensive else 15) + stats.z * 250
-		var score := combat_score - baseline_score + safety + form_value + mastery_value \
+		var score := combat_score - baseline_score + safety + creature_safety + form_value + mastery_value \
 			- CardStrategy.mana_penalty(self, tax)
 		# Leave the minor action available to advance a reserve attacker this turn.
 		if not card is ErlqueensNightingale and card.current_zone in bot_player.reserve_zones \
@@ -966,6 +968,26 @@ func _shift_stat_changes(card: Card, form: Card) -> Vector3i:
 	return Vector3i(form.get_effective_strength() - card.get_effective_strength(),
 		form.get_effective_resilience() - card.get_effective_resilience(),
 		form.get_effective_speed() - card.get_effective_speed())
+
+func _estimate_shift_target_casualty_cost(card: Card, form: Card, stats: Dictionary) -> int:
+	var worst_loss := 0
+	for attacker in _get_creature_attackers_next_turn(form, [], true):
+		var action := CardAction.new()
+		action.type = CardAction.Type.ATTACK
+		action.attacker = attacker
+		action.target = card
+		var result := _estimate_raw_attack_economy(action, stats)
+		if card not in result["casualties"]:
+			continue
+		var loss := int(result["bot_cards_lost"]) - int(result["opponent_cards_lost"])
+		for interceptor in match_manager._get_possible_interceptors(attacker, form):
+			if interceptor == card or _status_persists_to_next_turn(interceptor, "cannot_intercept"):
+				continue
+			action.interceptor = interceptor
+			var reply := _estimate_raw_attack_economy(action, stats)
+			loss = mini(loss, int(reply["bot_cards_lost"]) - int(reply["opponent_cards_lost"]))
+		worst_loss = maxi(worst_loss, loss)
+	return worst_loss
 
 func _get_tonal_mastery_god(player: Player) -> TezcatlipocaTheSmokingMirror:
 	if player == null or player.god_zone.cards.is_empty() \
@@ -1234,21 +1256,8 @@ func _estimate_projected_summon_casualty_cost(
 ) -> int:
 	if creature == null or zone == null or zone not in bot_player.frontline_zones:
 		return 0
-	var restriction: Dictionary = game_manager.attack_restrictions.get(opponent, {})
-	if not restriction.is_empty() and restriction.get("source") not in removed:
-		return 0
-	var budget := opponent.mana + game_manager.get_automatic_upkeep_mana_gain(opponent, game_manager.turn_number + 1) \
-		+ game_manager.get_effective_upkeep_mana_gain(game_manager.get_base_upkeep_mana_gain(), opponent)
 	var greatest_loss := 0
-	for attacker in _get_board_creatures(opponent):
-		if attacker in removed or not CardStrategy.visible(self, attacker) \
-				or attacker.current_zone == null or attacker.current_zone not in opponent.frontline_zones \
-				or (attacker.creature_mode != Card.CreatureMode.AGGRESSIVE and not attacker.is_stealth) \
-				or attacker.is_petrified() or _status_persists_to_next_turn(attacker, "sleep", removed) \
-				or _status_persists_to_next_turn(attacker, "cannot_attack", removed) \
-				or game_manager.get_creature_action_mana_cost(attacker, "attack") > budget \
-				or not game_manager.can_cards_engage_each_other(attacker, creature):
-			continue
+	for attacker in _get_creature_attackers_next_turn(creature, removed):
 		var action := CardAction.new()
 		action.type = CardAction.Type.ATTACK
 		action.attacker = attacker
@@ -1266,6 +1275,57 @@ func _estimate_projected_summon_casualty_cost(
 		loss -= _score_follower_loss(opponent, int(result.get("opponent_followers_lost", 0)))
 		greatest_loss = maxi(greatest_loss, maxi(0, loss))
 	return greatest_loss
+
+func _get_creature_attackers_next_turn(target: Card, removed: Array, include_reserve: bool = false) -> Array[Card]:
+	var attackers: Array[Card] = []
+	var restriction: Dictionary = game_manager.attack_restrictions.get(opponent, {})
+	if not restriction.is_empty() and restriction.get("source") not in removed:
+		return attackers
+	var budget := opponent.mana + game_manager.get_automatic_upkeep_mana_gain(opponent, game_manager.turn_number + 1) \
+		+ game_manager.get_effective_upkeep_mana_gain(game_manager.get_base_upkeep_mana_gain(), opponent)
+	for attacker in _get_board_creatures(opponent):
+		if attacker in removed or not CardStrategy.visible(self, attacker) \
+				or attacker.is_petrified() or _status_persists_to_next_turn(attacker, "sleep", removed) \
+				or _status_persists_to_next_turn(attacker, "cannot_attack", removed) \
+				or game_manager.get_creature_action_mana_cost(attacker, "attack") > budget \
+				or not game_manager.can_cards_engage_each_other(attacker, target):
+			continue
+		if attacker.current_zone in opponent.frontline_zones:
+			if attacker.creature_mode != Card.CreatureMode.AGGRESSIVE and not attacker.is_stealth:
+				continue
+		elif not include_reserve or not _can_advance_from_reserve_next_turn(attacker, budget, removed):
+			continue
+		attackers.append(attacker)
+	return attackers
+
+func _can_advance_from_reserve_next_turn(attacker: Card, mana: int, removed: Array) -> bool:
+	if attacker.current_zone not in opponent.reserve_zones or _status_persists_to_next_turn(attacker, "cannot_move", removed):
+		return false
+	# Both action pools reset next turn. Moving (and changing stance if needed)
+	# must fit in the minor actions so the attacker retains its major action.
+	var moves := attacker.get_max_minor_creature_actions_per_turn()
+	var available_mana := mana - game_manager.get_creature_action_mana_cost(attacker, "attack")
+	if attacker.creature_mode != Card.CreatureMode.AGGRESSIVE:
+		moves -= 1
+		available_mana -= game_manager.get_creature_action_mana_cost(attacker, "change stance")
+	var move_cost := game_manager.get_creature_action_mana_cost(attacker, "move")
+	var reachable: Array[Zone] = [attacker.current_zone]
+	var visited := {attacker.current_zone: true}
+	for _step in range(moves):
+		if available_mana < move_cost or reachable.is_empty():
+			break
+		available_mana -= move_cost
+		var next_zones: Array[Zone] = []
+		for zone in reachable:
+			for destination in opponent.get_adjacent_zones(zone):
+				if destination in visited or not destination.cards.all(func(card: Card) -> bool: return card in removed):
+					continue
+				if destination in opponent.frontline_zones:
+					return true
+				visited[destination] = true
+				next_zones.append(destination)
+		reachable = next_zones
+	return false
 
 func _score_summon_removal(creature: Card, danger: int, change: Dictionary, baseline: int) -> int:
 	var options: Array[Dictionary] = []

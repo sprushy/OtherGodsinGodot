@@ -102,7 +102,7 @@ const LOCAL_BOT_MATCH_MEMORY_PER_WORKER := 1024 * 1024 * 1024
 const LOCAL_BOT_MATCH_RESERVED_CORES := 2
 const LOCAL_BOT_MATCH_CORES_PER_WORKER := 2
 const LOCAL_BOT_MATCH_MAX_WORKERS := 8
-const LOCAL_BOT_MATCH_STALE_HEARTBEAT_SECONDS := 15
+const LOCAL_BOT_MATCH_LEASE_REFRESH_SECONDS := 25.0
 const AUTH_TITLE_FONT_SIZE := 28
 const AUTH_BODY_FONT_SIZE := 18
 const AUTH_CONTROL_FONT_SIZE := 18
@@ -162,6 +162,8 @@ var _choose_bot_gauntlet := false
 var _bot_match_hosting_enabled := false
 var _pending_local_bot_match_modes: Array[bool] = []
 var _local_bot_match_workers: Dictionary = {}
+var _local_bot_match_supervisor: MatchSupervisor
+var _local_bot_match_lease_timer: Timer
 var _watch_next_local_bot_match_pending: bool = false
 var _local_bot_match_submitting: Dictionary = {}
 var _bot_match_retry_timer: Timer
@@ -2852,13 +2854,15 @@ func _render_recent_match_activities(raw_activities: Variant) -> void:
 		var loser_name := str(activity.get("loser_name", "")).strip_edges()
 		var rank_achievement := str(activity.get("rank_achievement", "")).strip_edges()
 		var ladder_update := str(activity.get("ladder_update", "")).strip_edges()
-		if not winner_name.is_empty() and not loser_name.is_empty() and not announcement.contains("has been eliminated"):
+		if announcement.contains("has been eliminated") and not ladder_update.is_empty() and not winner_name.is_empty():
+			announcement = "%s. %s enters the ladder %s." % [announcement.trim_suffix("."), winner_name, ladder_update]
+		elif not winner_name.is_empty() and not loser_name.is_empty():
 			if not rank_achievement.is_empty():
 				announcement = "%s reached %s by defeating %s" % [winner_name, rank_achievement, loser_name]
 			else:
 				announcement = "%s defeated %s" % [winner_name, loser_name]
 		if not ladder_update.is_empty():
-			announcement += ", and %s" % ladder_update
+			announcement += ". %s." % ladder_update.capitalize()
 		if announcement.is_empty():
 			continue
 		var card := PanelContainer.new()
@@ -3096,32 +3100,31 @@ func _on_local_bot_work_assigned(job: Dictionary) -> void:
 	session.is_ranked = true
 	session.configure_series_format(1)
 	session.set_spectator_visible_player_indices("local_volunteer_host", [0, 1])
-	var supervisor = MatchSupervisorScript.new()
-	supervisor.name = "LocalBotMatchWorker_%s" % session.match_id.validate_node_name()
-	add_child(supervisor)
-	supervisor.configure("127.0.0.1", match_port, true, "", ProjectSettings.globalize_path("res://"), false)
-	supervisor.active_matches[session.match_id] = session
-	if not supervisor._launch_dedicated_match(session, true):
+	if _local_bot_match_supervisor == null:
+		_local_bot_match_supervisor = MatchSupervisorScript.new()
+		_local_bot_match_supervisor.name = "LocalBotMatchSupervisor"
+		_local_bot_match_supervisor.match_closed.connect(_on_local_bot_match_closed)
+		add_child(_local_bot_match_supervisor)
+	if not _local_bot_match_supervisor.start_shared_bot_match(session):
 		_watch_next_local_bot_match_pending = false
-		supervisor.queue_free()
 		lobby_client.cancel_bot_work(session.match_id)
 		if continuous:
 			_schedule_continuous_bot_match_retry()
 		_update_local_bot_hosting_state()
 		return
-	var poll := Timer.new()
-	poll.wait_time = 2.0
-	poll.timeout.connect(_poll_local_bot_match.bind(session.match_id))
-	add_child(poll)
-	poll.start()
 	_local_bot_match_workers[session.match_id] = {
-		"supervisor": supervisor,
-		"poll": poll,
 		"session": session,
 		"continuous": continuous,
 		"custom_bot_id": custom_bot_id,
-		"last_heartbeat_unix": int(Time.get_unix_time_from_system()),
 	}
+	if _local_bot_match_lease_timer == null:
+		_local_bot_match_lease_timer = Timer.new()
+		_local_bot_match_lease_timer.name = "LocalBotMatchLeaseRefresh"
+		_local_bot_match_lease_timer.wait_time = LOCAL_BOT_MATCH_LEASE_REFRESH_SECONDS
+		_local_bot_match_lease_timer.timeout.connect(_refresh_local_bot_match_leases)
+		add_child(_local_bot_match_lease_timer)
+	if _local_bot_match_lease_timer.is_stopped():
+		_local_bot_match_lease_timer.start()
 	if _watch_next_local_bot_match_pending:
 		_watch_next_local_bot_match_pending = false
 		call_deferred("_watch_local_bot_match", session.match_id)
@@ -3145,69 +3148,38 @@ func _allocate_local_bot_match_port() -> int:
 			return port
 	return -1
 
-func _poll_local_bot_match(match_id: String) -> void:
+func _refresh_local_bot_match_leases() -> void:
+	if lobby_client == null or not lobby_client.is_authenticated():
+		return
+	for match_id in _local_bot_match_workers:
+		lobby_client.report_bot_work_started(str(match_id))
+
+func _on_local_bot_match_closed(match_id: String, _room_id: String, final_status: String) -> void:
 	var worker: Dictionary = _local_bot_match_workers.get(match_id, {})
 	if worker.is_empty():
 		return
-	var supervisor = worker.get("supervisor", null)
-	var session = worker.get("session", null)
-	if session == null:
-		_cleanup_failed_local_bot_match(match_id, worker, supervisor, "Bot match worker lost its session.")
-		return
-	var status := JsonStoreScript.load_dictionary(str(session.status_file_path), {}, "LocalBotMatchWorker")
-	var match_status := str(status.get("status", ""))
-	if match_status != MatchSessionScript.STATUS_FINISHED:
-		var process_exited: bool = session.has_spawned_process() and not OS.is_process_running(int(session.process_id))
-		var heartbeat_unix := int(status.get("heartbeat_unix", 0))
-		var heartbeat_stale := match_status == MatchSessionScript.STATUS_ACTIVE \
-			and heartbeat_unix > 0 \
-			and int(Time.get_unix_time_from_system()) - heartbeat_unix >= LOCAL_BOT_MATCH_STALE_HEARTBEAT_SECONDS
-		if match_status == MatchSessionScript.STATUS_ABANDONED or process_exited or heartbeat_stale:
-			var reason := str(status.get("reason", "Bot match stopped responding before recording a result."))
-			_cleanup_failed_local_bot_match(match_id, worker, supervisor, reason)
-			return
-		var now_unix := int(Time.get_unix_time_from_system())
-		if now_unix - int(worker.get("last_heartbeat_unix", 0)) >= 25:
-			if lobby_client != null and lobby_client.is_authenticated():
-				lobby_client.report_bot_work_started(match_id)
-			worker["last_heartbeat_unix"] = now_unix
-			_local_bot_match_workers[match_id] = worker
-		return
-	var review := JsonStoreScript.load_dictionary(ServerPathsScript.get_bot_review_path(match_id), {}, "LocalBotMatchWorker")
+	_local_bot_match_workers.erase(match_id)
+	if _local_bot_match_workers.is_empty():
+		_local_bot_match_lease_timer.stop()
 	var continuous := bool(worker.get("continuous", false))
-	if int(review.get("winner_index", -1)) in [0, 1] and lobby_client != null and lobby_client.is_authenticated():
+	var finished := final_status == MatchSessionScript.STATUS_FINISHED
+	var review := {}
+	if finished:
+		review = JsonStoreScript.load_dictionary(ServerPathsScript.get_bot_review_path(match_id), {}, "LocalBotMatchWorker")
+	var winner_index := int(review.get("winner_index", -1))
+	var submitting := winner_index in [0, 1] and lobby_client != null and lobby_client.is_authenticated()
+	if submitting:
 		_local_bot_match_submitting[match_id] = continuous
-		lobby_client.submit_bot_work_result(match_id, int(review["winner_index"]), int(review.get("turns", 1)))
-	elif lobby_client != null:
-		lobby_client.cancel_bot_work(match_id)
-	supervisor.close_match(match_id, MatchSessionScript.STATUS_FINISHED, false)
-	supervisor.queue_free()
-	var poll: Timer = worker.get("poll", null)
-	if is_instance_valid(poll):
-		poll.queue_free()
-	_local_bot_match_workers.erase(match_id)
-	if not _local_bot_match_submitting.has(match_id):
+		lobby_client.submit_bot_work_result(match_id, winner_index, int(review.get("turns", 1)))
+	else:
 		_continuous_bot_match_ids.erase(match_id)
-	_update_local_bot_hosting_state()
-	if not _local_bot_match_submitting.has(match_id) and _bot_match_hosting_enabled:
-		_request_continuous_bot_match()
-
-func _cleanup_failed_local_bot_match(match_id: String, worker: Dictionary, supervisor, reason: String) -> void:
-	if lobby_client != null:
-		lobby_client.cancel_bot_work(match_id)
-	if is_instance_valid(supervisor):
-		supervisor.close_match(match_id, MatchSessionScript.STATUS_ABANDONED, true, reason)
-		supervisor.queue_free()
-	var poll: Timer = worker.get("poll", null)
-	if is_instance_valid(poll):
-		poll.queue_free()
-	var continuous := bool(worker.get("continuous", false))
-	_local_bot_match_workers.erase(match_id)
-	_local_bot_match_submitting.erase(match_id)
-	_continuous_bot_match_ids.erase(match_id)
+		if lobby_client != null:
+			lobby_client.cancel_bot_work(match_id)
 	_update_local_bot_hosting_state()
 	_refresh_seek_list()
-	if continuous and _bot_match_hosting_enabled:
+	if not submitting and finished and _bot_match_hosting_enabled:
+		_request_continuous_bot_match()
+	elif not finished and continuous and _bot_match_hosting_enabled:
 		_schedule_continuous_bot_match_retry()
 
 func _on_local_bot_work_result(job_id: String, success: bool, message: String) -> void:
@@ -3256,6 +3228,8 @@ func _stop_local_bot_match_worker() -> void:
 	_watch_next_local_bot_match_pending = false
 	if is_instance_valid(_bot_match_retry_timer):
 		_bot_match_retry_timer.stop()
+	if is_instance_valid(_local_bot_match_lease_timer):
+		_local_bot_match_lease_timer.stop()
 	_pending_local_bot_match_modes.clear()
 	_custom_bot_ids_pending.clear()
 	for match_id in _local_bot_match_submitting.keys():
@@ -3263,19 +3237,12 @@ func _stop_local_bot_match_worker() -> void:
 			lobby_client.cancel_bot_work(str(match_id))
 	_local_bot_match_submitting.clear()
 	_continuous_bot_match_ids.clear()
-	for match_id in _local_bot_match_workers.keys().duplicate():
-		var worker: Dictionary = _local_bot_match_workers[match_id]
+	for match_id in _local_bot_match_workers:
 		if lobby_client != null:
 			lobby_client.cancel_bot_work(str(match_id))
-		var poll: Timer = worker.get("poll", null)
-		if is_instance_valid(poll):
-			poll.stop()
-			poll.queue_free()
-		var supervisor = worker.get("supervisor", null)
-		if is_instance_valid(supervisor):
-			supervisor.close_match(str(match_id), MatchSessionScript.STATUS_ABANDONED, true, "Volunteer stopped hosting bot matches.")
-			supervisor.queue_free()
 	_local_bot_match_workers.clear()
+	if is_instance_valid(_local_bot_match_supervisor):
+		_local_bot_match_supervisor.clear("Volunteer stopped hosting bot matches.")
 	_update_host_bot_match_button()
 
 func _update_local_bot_hosting_state() -> void:
