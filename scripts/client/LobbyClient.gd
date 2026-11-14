@@ -49,10 +49,11 @@ signal bot_ladder_received(summary: Dictionary)
 signal bot_deck_received(list_id: String, deck: Dictionary)
 signal bot_match_history_received(history: Dictionary)
 signal bot_work_assignment_received(job: Dictionary)
-signal bot_work_result_received(success: bool, message: String)
+signal bot_work_result_received(job_id: String, success: bool, message: String)
 signal friends_state_received(state: Dictionary)
 signal account_settings_updated(account: Dictionary)
 signal password_reset_result(completed: bool, success: bool, message: String)
+signal issue_report_result(success: bool, message: String)
 signal connection_failed(message: String)
 signal disconnected_from_lobby()
 signal match_host_viability_requested()
@@ -504,6 +505,14 @@ func request_bot_work() -> void:
 	if is_authenticated():
 		_send_request(LobbyProtocolScript.REQUEST_BOT_WORK)
 
+func report_bot_work_started(job_id: String) -> void:
+	if is_authenticated():
+		_send_request(LobbyProtocolScript.REPORT_BOT_WORK_STARTED, {"job_id": job_id})
+
+func cancel_bot_work(job_id: String) -> void:
+	if is_authenticated():
+		_send_request(LobbyProtocolScript.CANCEL_BOT_WORK, {"job_id": job_id})
+
 func submit_bot_work_result(job_id: String, winner_index: int, turns: int) -> void:
 	if is_authenticated():
 		_send_request(LobbyProtocolScript.SUBMIT_BOT_WORK_RESULT, {
@@ -511,6 +520,18 @@ func submit_bot_work_result(job_id: String, winner_index: int, turns: int) -> vo
 			"winner_index": winner_index,
 			"turns": turns,
 		})
+
+func submit_issue_report(expected: String, actual: String, screenshot_jpeg: String = "") -> void:
+	if not is_authenticated():
+		issue_report_result.emit(false, "Connect to the lobby and sign in before submitting a report.")
+		return
+	_send_request(LobbyProtocolScript.SUBMIT_ISSUE_REPORT, {
+		"expected": expected,
+		"actual": actual,
+		"screenshot_jpeg": screenshot_jpeg,
+		"client_version": AppReleaseInfoScript.get_display_version(),
+		"platform": OS.get_name(),
+	})
 
 func request_friends() -> void:
 	_send_request(LobbyProtocolScript.REQUEST_FRIENDS)
@@ -698,7 +719,9 @@ func lobby_event(message: Dictionary) -> void:
 				bot_work_assignment_received.emit(payload)
 		LobbyProtocolScript.BOT_WORK_RESULT:
 			if is_authenticated():
-				bot_work_result_received.emit(bool(payload.get("success", false)), str(payload.get("message", "")))
+				bot_work_result_received.emit(str(payload.get("job_id", "")), bool(payload.get("success", false)), str(payload.get("message", "")))
+		LobbyProtocolScript.ISSUE_REPORT_RESULT:
+			issue_report_result.emit(bool(payload.get("success", false)), str(payload.get("message", "")))
 		LobbyProtocolScript.FRIENDS_STATE:
 			friends_state_received.emit(payload)
 		LobbyProtocolScript.ACCOUNT_SETTINGS_UPDATED:

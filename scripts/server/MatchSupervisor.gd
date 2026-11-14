@@ -247,18 +247,21 @@ func _allocate_match_port() -> int:
 		return -1
 	return allocated_port
 
-func _launch_dedicated_match(session) -> bool:
+func _launch_dedicated_match(session, force_process: bool = false) -> bool:
 	if session == null:
 		return false
-	if session.is_bot_self_play():
+	if session.is_bot_self_play() and not force_process:
 		return _launch_shared_bot_match(session)
 	var uses_exported_runtime := _is_exported_server_runtime(godot_executable_path)
 	if godot_executable_path.is_empty() or (not uses_exported_runtime and project_path.is_empty()):
 		session.mark_process_launch_failed("Godot executable path or project path was not configured.")
 		return false
 
+	var previous_mode := str(session.server_mode)
+	session.server_mode = MatchSessionScript.SERVER_MODE_DEDICATED_HEADLESS
 	var config_path := _write_launch_config(session)
 	if config_path.is_empty():
+		session.server_mode = previous_mode
 		session.mark_process_launch_failed("Failed to write the dedicated match launch config.")
 		return false
 
@@ -287,6 +290,7 @@ func _launch_dedicated_match(session) -> bool:
 		])
 	var pid := OS.create_process(godot_executable_path, args, false)
 	if pid <= 0:
+		session.server_mode = previous_mode
 		session.mark_process_launch_failed("OS.create_process failed for the dedicated headless match server.")
 		_cleanup_launch_config_path(config_path)
 		return false

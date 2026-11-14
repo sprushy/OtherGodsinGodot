@@ -30447,7 +30447,7 @@ func _apply_full_state(data: Dictionary) -> void:
 	_sync_deferred_turn_action_after_opponent_priority()
 
 func _play_network_ui_sound_cues(raw_cues: Variant) -> void:
-	if not (raw_cues is Array):
+	if not is_visible_in_tree() or not (raw_cues is Array):
 		return
 	for raw_cue in raw_cues:
 		var cue := str(raw_cue)

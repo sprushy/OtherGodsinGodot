@@ -35,6 +35,8 @@ const REQUEST_BOT_LADDER := "request_bot_ladder"
 const REQUEST_BOT_DECK := "request_bot_deck"
 const REQUEST_BOT_MATCH_HISTORY := "request_bot_match_history"
 const REQUEST_BOT_WORK := "request_bot_work"
+const REPORT_BOT_WORK_STARTED := "report_bot_work_started"
+const CANCEL_BOT_WORK := "cancel_bot_work"
 const SUBMIT_BOT_WORK_RESULT := "submit_bot_work_result"
 const REQUEST_FRIENDS := "request_friends"
 const SEND_FRIEND_REQUEST := "send_friend_request"
@@ -43,6 +45,7 @@ const SEND_DECK_TO_FRIEND := "send_deck_to_friend"
 const RESPOND_DECK_SHARE := "respond_deck_share"
 const REQUEST_RECONNECT_LOBBY := "request_reconnect_lobby"
 const REPORT_HOST_VIABILITY := "report_host_viability"
+const SUBMIT_ISSUE_REPORT := "submit_issue_report"
 
 const HELLO_OK := "hello_ok"
 const ROOM_LIST := "room_list"
@@ -66,6 +69,7 @@ const FRIENDS_STATE := "friends_state"
 const ACCOUNT_SETTINGS_UPDATED := "account_settings_updated"
 const PASSWORD_RESET_RESULT := "password_reset_result"
 const MATCH_HOST_VIABILITY_REQUEST := "match_host_viability_request"
+const ISSUE_REPORT_RESULT := "issue_report_result"
 
 static func make_message(message_type: String, payload: Dictionary = {}) -> Dictionary:
 	return {
@@ -214,6 +218,14 @@ static func validate_request(message: Dictionary) -> String:
 				return "Invalid bot match history cursor."
 		REQUEST_BOT_WORK:
 			pass
+		REPORT_BOT_WORK_STARTED:
+			var started_job_id = payload.get("job_id", "")
+			if not started_job_id is String or started_job_id.is_empty() or started_job_id.length() > 64:
+				return "Invalid bot worker job id."
+		CANCEL_BOT_WORK:
+			var canceled_job_id = payload.get("job_id", "")
+			if not canceled_job_id is String or canceled_job_id.is_empty() or canceled_job_id.length() > 64:
+				return "Invalid bot worker job id."
 		SUBMIT_BOT_WORK_RESULT:
 			var job_id = payload.get("job_id", "")
 			var winner = payload.get("winner_index", -1)
@@ -222,6 +234,16 @@ static func validate_request(message: Dictionary) -> String:
 		REPORT_HOST_VIABILITY:
 			if not payload.has("viable"):
 				return "Missing viability flag."
+		SUBMIT_ISSUE_REPORT:
+			var expected = payload.get("expected", "")
+			var actual = payload.get("actual", "")
+			var screenshot_jpeg = payload.get("screenshot_jpeg", "")
+			if not expected is String or expected.strip_edges().is_empty() or expected.length() > 1200:
+				return "Enter what you expected to happen (at most 1200 characters)."
+			if not actual is String or actual.strip_edges().is_empty() or actual.length() > 1200:
+				return "Enter what happened (at most 1200 characters)."
+			if not screenshot_jpeg is String or screenshot_jpeg.length() > 16000:
+				return "The screenshot is too large. Choose a smaller image."
 		_:
 			return "Unknown lobby message type: %s" % message_type
 

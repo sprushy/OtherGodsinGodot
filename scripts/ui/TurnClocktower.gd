@@ -227,7 +227,7 @@ func _set_hovered(hovered: bool) -> void:
 
 
 func ring_bell() -> void:
-	if DisplayServer.get_name() != "headless":
+	if is_visible_in_tree() and DisplayServer.get_name() != "headless":
 		_bell_player.play()
 	if is_instance_valid(_ring_tween):
 		_ring_tween.kill()

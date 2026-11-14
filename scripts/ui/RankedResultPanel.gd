@@ -26,8 +26,8 @@ func build(result: Dictionary, animate: bool) -> void:
 	style.border_color = Color(_accent, 0.5)
 	style.set_border_width_all(1)
 	style.set_corner_radius_all(12)
-	style.content_margin_top = 10
-	style.content_margin_bottom = 10
+	style.content_margin_top = 8
+	style.content_margin_bottom = 8
 	add_theme_stylebox_override("panel", style)
 
 	var column := VBoxContainer.new()
@@ -36,10 +36,10 @@ func build(result: Dictionary, animate: bool) -> void:
 	var best_of := int(result.get("best_of", 0))
 	var heading := "Bo%d Ranked Progress" % best_of if best_of > 0 else "Ranked Progress"
 	_label(column, heading, 14, SILVER)
-	_rank_label = _label(column, "", 34, _accent)
+	_rank_label = _label(column, "", 30, _accent)
 	_rank_label.add_theme_font_override("font", TITLE_FONT)
 	_star_row = Control.new()
-	_star_row.custom_minimum_size.y = 52
+	_star_row.custom_minimum_size.y = 42
 	_star_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_star_row.draw.connect(_draw_stars)
 	column.add_child(_star_row)
@@ -63,7 +63,7 @@ func _label(parent: Node, text: String, font_size: int, tint: Color) -> Label:
 
 func _result_text() -> String:
 	if _delta == 0:
-		return "0 stars · Rank protected" if bool(_result["loss_protected"]) else "0 stars · Draw"
+		return "0 stars · Draw" if not bool(_result["loss_protected"]) else "0 stars"
 	var change := "+%d" % _delta if _delta > 0 else "−%d" % absi(_delta)
 	change += " star" if absi(_delta) == 1 else " stars"
 	if _rank_changed:

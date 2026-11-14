@@ -53,7 +53,7 @@ func build(
 	_panel.add_child(scroll)
 	var body := VBoxContainer.new()
 	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	body.add_theme_constant_override("separation", 10)
+	body.add_theme_constant_override("separation", 6)
 	scroll.add_child(body)
 	_label(body, "O T H E R   G O D S   /   M A T C H   C O M P L E T E", 13, _accent)
 	var title := _label(body, result_title.to_upper(), 66, _accent)
@@ -149,14 +149,14 @@ func _rule(parent: Node) -> void:
 func _award(title: String, subtitle: String, entry: Dictionary, stats: Dictionary, unit: String, empty_text: String, accent: Color, metric: String = "damage") -> void:
 	var tile := PanelContainer.new()
 	tile.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	tile.add_theme_stylebox_override("panel", _style(_tile_background, Color(accent, 0.45), 14, 14))
+	tile.add_theme_stylebox_override("panel", _style(_tile_background, Color(accent, 0.45), 14, 10))
 	_awards.add_child(tile)
 	var column := VBoxContainer.new()
 	column.add_theme_constant_override("separation", 5)
 	tile.add_child(column)
 	_label(column, title, 15, accent)
 	var portrait := PanelContainer.new()
-	portrait.custom_minimum_size.y = 124
+	portrait.custom_minimum_size.y = 96
 	portrait.clip_contents = true
 	portrait.add_theme_stylebox_override("panel", _style(Color("0b111c"), Color(accent, 0.2), 8, 0))
 	column.add_child(portrait)
@@ -184,7 +184,7 @@ func _award(title: String, subtitle: String, entry: Dictionary, stats: Dictionar
 		emblem.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	var card_name := str(entry.get("name", empty_text))
 	var card_label := _label(column, card_name, 20, WHITE)
-	card_label.custom_minimum_size.y = 44
+	card_label.custom_minimum_size.y = 36
 	card_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	card_label.tooltip_text = card_name
 	var owner := "—"
@@ -235,14 +235,18 @@ func _button(parent: Node, text: String, callback: Callable, primary: bool = fal
 func _layout() -> void:
 	if _panel == null:
 		return
-	var extent := Vector2(minf(1140, maxf(260, size.x - 48)), minf(940, maxf(240, size.y - 48)))
+	# Keep the complete recap visible on a standard 1080p display. The old
+	# 940px cap forced the VBox into the ScrollContainer even when the viewport
+	# had plenty of space above and below it.
+	var extent := Vector2(minf(1140, maxf(260, size.x - 32)), minf(1048, maxf(240, size.y - 32)))
 	_panel.size = extent
 	_panel.position = (size - extent) * 0.5
+	_panel.add_theme_stylebox_override("panel", _style(_surface, Color(_accent, 0.55), 24, 16))
 	_awards.columns = 4 if extent.x >= 1040 else (2 if extent.x >= 650 else 1)
 	queue_redraw()
 
 func play_victory_sound() -> void:
-	if _is_defeat or DisplayServer.get_name() == "headless":
+	if _is_defeat or not is_visible_in_tree() or DisplayServer.get_name() == "headless":
 		return
 	var player := AudioStreamPlayer.new()
 	player.name = "VictorySound"

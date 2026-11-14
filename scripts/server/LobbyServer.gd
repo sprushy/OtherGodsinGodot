@@ -36,6 +36,7 @@ const BOT_SELF_PLAY_FRAME_LIMIT := 0.055
 const BOT_SELF_PLAY_MEMORY_RESERVE := 512 * 1024 * 1024
 const BOT_SELF_PLAY_MEMORY_PER_WORKER := 256 * 1024 * 1024
 const BOT_SELF_PLAY_RETRY_SECONDS := 30
+const ISSUE_REPORT_COOLDOWN_SECONDS := 60
 const ALLOW_INSECURE_ACCOUNT_AUTH_ENV := "OTHERGODS_ALLOW_INSECURE_ACCOUNT_AUTH"
 const ALLOW_INSECURE_ACCOUNT_AUTH_SETTING := "application/config/allow_insecure_account_auth"
 
@@ -84,6 +85,7 @@ var _bot_deck_rng := RandomNumberGenerator.new()
 var _lobby_frame_seconds := 0.0
 var _next_bot_self_play_msec := 0
 var _client_bot_jobs: Dictionary = {}
+var _issue_report_last_submit_by_peer: Dictionary = {}
 
 static func get_dedicated_bot_self_play_limit(launch_args: Dictionary) -> int:
 	var default_limit := MAX_BOT_SELF_PLAY
@@ -360,9 +362,16 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 				var cursor: String = payload.get("before_match_id", "")
 				var page: Dictionary = match_history_store.get_recent_bot_matches(50, cursor)
 				page["before_match_id"] = cursor
+				page["live_matches"] = _get_live_bot_work_matches()
 				_send_to_peer(peer_id, LobbyProtocolScript.BOT_MATCH_HISTORY, page)
 		LobbyProtocolScript.REQUEST_BOT_WORK:
 			_handle_request_bot_work(peer_id)
+		LobbyProtocolScript.SUBMIT_ISSUE_REPORT:
+			_handle_submit_issue_report(peer_id, payload)
+		LobbyProtocolScript.REPORT_BOT_WORK_STARTED:
+			_handle_report_bot_work_started(peer_id, payload)
+		LobbyProtocolScript.CANCEL_BOT_WORK:
+			_handle_cancel_bot_work(peer_id, payload)
 		LobbyProtocolScript.SUBMIT_BOT_WORK_RESULT:
 			_handle_submit_bot_work_result(peer_id, payload)
 		LobbyProtocolScript.REQUEST_FRIENDS:
@@ -993,17 +1002,30 @@ func _handle_request_bot_work(peer_id: int) -> void:
 	if session.is_empty() or str(session.get("account_id", "")).is_empty():
 		return
 	var busy := {}
+	var account_job_count := 0
 	for job: Dictionary in _client_bot_jobs.values():
 		if int(job.get("expires_unix", 0)) > Time.get_unix_time_from_system():
 			if str(job.get("account_id", "")) == str(session["account_id"]):
-				return
+				account_job_count += 1
 			busy[str(job.get("deck_a", {}).get("bot_list_id", ""))] = true
 			busy[str(job.get("deck_b", {}).get("bot_list_id", ""))] = true
+	if account_job_count >= 2:
+		_send_to_peer(peer_id, LobbyProtocolScript.BOT_WORK_RESULT, {
+			"job_id": "",
+			"success": false,
+			"message": "This account already has two volunteer matches running.",
+		})
+		return
 	_ranked_bot_deck_pool.refresh(match_history_store.get_bot_deck_results())
 	var pair := _ranked_bot_deck_pool.select_self_play_pair(busy, _bot_deck_rng)
 	var deck_a := _validate_server_bot_deck(pair[0]) if pair.size() == 2 else _build_fresh_bot_deck_submission()
 	var deck_b := _validate_server_bot_deck(pair[1]) if pair.size() == 2 else _build_fresh_bot_deck_submission()
 	if deck_a.is_empty() or deck_b.is_empty():
+		_send_to_peer(peer_id, LobbyProtocolScript.BOT_WORK_RESULT, {
+			"job_id": "",
+			"success": false,
+			"message": "No bot match is available for this computer right now.",
+		})
 		return
 	for deck in [deck_a, deck_b]:
 		deck["bot_god_name"] = deck["god_name"]
@@ -1015,11 +1037,145 @@ func _handle_request_bot_work(peer_id: int) -> void:
 		"deck_a": deck_a,
 		"deck_b": deck_b,
 		"expires_unix": int(Time.get_unix_time_from_system()) + 600,
+		"status": "assigned",
 	}
 	_send_to_peer(peer_id, LobbyProtocolScript.BOT_WORK_ASSIGNMENT, {
 		"job_id": job_id,
 		"decks": [deck_a, deck_b],
 	})
+
+func _handle_submit_issue_report(peer_id: int, payload: Dictionary) -> void:
+	var session := _get_session_for_peer(peer_id)
+	if session.is_empty():
+		_send_to_peer(peer_id, LobbyProtocolScript.ISSUE_REPORT_RESULT, {
+			"success": false,
+			"message": "Sign in to the lobby before submitting a report.",
+		})
+		return
+	var account_id := str(session.get("account_id", ""))
+	var now_unix := int(Time.get_unix_time_from_system())
+	var last_submit := int(_issue_report_last_submit_by_peer.get(account_id, 0))
+	if now_unix - last_submit < ISSUE_REPORT_COOLDOWN_SECONDS:
+		_send_to_peer(peer_id, LobbyProtocolScript.ISSUE_REPORT_RESULT, {
+			"success": false,
+			"message": "Please wait a minute before sending another report.",
+		})
+		return
+	var screenshot_bytes := PackedByteArray()
+	var screenshot_jpeg := str(payload.get("screenshot_jpeg", ""))
+	if not screenshot_jpeg.is_empty():
+		screenshot_bytes = Marshalls.base64_to_raw(screenshot_jpeg)
+		if screenshot_bytes.size() < 3 or screenshot_bytes[0] != 0xFF or screenshot_bytes[1] != 0xD8 or screenshot_bytes[2] != 0xFF:
+			_send_to_peer(peer_id, LobbyProtocolScript.ISSUE_REPORT_RESULT, {
+				"success": false,
+				"message": "The screenshot could not be read. Please choose a JPEG or submit without it.",
+			})
+			return
+	var report_id := "%d_%d_%d" % [now_unix, peer_id, Time.get_ticks_usec() % 1000000]
+	var report_dir := ServerPathsScript.get_server_data_file_path("issue_reports")
+	DirAccess.make_dir_recursive_absolute(report_dir)
+	var screenshot_file := ""
+	if not screenshot_bytes.is_empty():
+		screenshot_file = "%s.jpg" % report_id
+		var screenshot_path := report_dir.path_join(screenshot_file)
+		DirAccess.make_dir_recursive_absolute(report_dir)
+		var screenshot_handle := FileAccess.open(screenshot_path, FileAccess.WRITE)
+		if screenshot_handle == null:
+			_send_to_peer(peer_id, LobbyProtocolScript.ISSUE_REPORT_RESULT, {
+				"success": false,
+				"message": "The server could not save the screenshot. Please try again without it.",
+			})
+			return
+		screenshot_handle.store_buffer(screenshot_bytes)
+		screenshot_handle.flush()
+		screenshot_handle.close()
+	var report := {
+		"report_id": report_id,
+		"submitted_unix": now_unix,
+		"account_id": str(session.get("account_id", "")),
+		"username": str(session.get("username", session.get("player_name", "Player"))),
+		"expected": str(payload.get("expected", "")).strip_edges(),
+		"actual": str(payload.get("actual", "")).strip_edges(),
+		"client_version": str(payload.get("client_version", "")).substr(0, 80),
+		"platform": str(payload.get("platform", "")).substr(0, 40),
+		"screenshot_file": screenshot_file,
+	}
+	var report_path := report_dir.path_join("%s.json" % report_id)
+	var report_handle := FileAccess.open(report_path, FileAccess.WRITE)
+	if report_handle == null:
+		if not screenshot_file.is_empty():
+			DirAccess.remove_absolute(report_dir.path_join(screenshot_file))
+		_send_to_peer(peer_id, LobbyProtocolScript.ISSUE_REPORT_RESULT, {
+			"success": false,
+			"message": "The server could not save the report. Please try again later.",
+		})
+		return
+	report_handle.store_string(JSON.stringify(report, "\t"))
+	report_handle.flush()
+	report_handle.close()
+	_issue_report_last_submit_by_peer[account_id] = now_unix
+	print("LobbyServer: issue report received id=%s account=%s" % [report_id, str(session.get("account_id", ""))])
+	_send_to_peer(peer_id, LobbyProtocolScript.ISSUE_REPORT_RESULT, {
+		"success": true,
+		"message": "Report submitted. Thank you.",
+	})
+
+func _handle_report_bot_work_started(peer_id: int, payload: Dictionary) -> void:
+	var session := _get_session_for_peer(peer_id)
+	var job_id := str(payload.get("job_id", "")).strip_edges()
+	var job: Dictionary = _client_bot_jobs.get(job_id, {})
+	if job.is_empty() or session.is_empty() \
+			or str(job.get("account_id", "")) != str(session.get("account_id", "")) \
+			or int(job.get("expires_unix", 0)) < Time.get_unix_time_from_system():
+		return
+	job["status"] = "running"
+	job["started_unix"] = int(Time.get_unix_time_from_system())
+	job["expires_unix"] = int(Time.get_unix_time_from_system()) + 1800
+	_client_bot_jobs[job_id] = job
+	_broadcast_bot_match_history()
+
+func _handle_cancel_bot_work(peer_id: int, payload: Dictionary) -> void:
+	var session := _get_session_for_peer(peer_id)
+	var job_id := str(payload.get("job_id", "")).strip_edges()
+	var job: Dictionary = _client_bot_jobs.get(job_id, {})
+	if job.is_empty() or session.is_empty() \
+			or str(job.get("account_id", "")) != str(session.get("account_id", "")):
+		return
+	_client_bot_jobs.erase(job_id)
+	_broadcast_bot_match_history()
+
+func _get_live_bot_work_matches() -> Array[Dictionary]:
+	var matches: Array[Dictionary] = []
+	var now_unix := int(Time.get_unix_time_from_system())
+	for job_id in _client_bot_jobs:
+		var job: Dictionary = _client_bot_jobs[job_id]
+		if str(job.get("status", "")) != "running" or int(job.get("expires_unix", 0)) < now_unix:
+			continue
+		var first: Dictionary = job.get("deck_a", {})
+		var second: Dictionary = job.get("deck_b", {})
+		if first.is_empty() or second.is_empty():
+			continue
+		matches.append({
+			"match_id": "volunteer_%s" % str(job_id),
+			"played_unix": int(job.get("started_unix", now_unix)),
+			"status": "live",
+			"players": [
+				{"name": str(first.get("deck_name", "Bot")), "result": "pending", "stars": int(first.get("stars", 0))},
+				{"name": str(second.get("deck_name", "Bot")), "result": "pending", "stars": int(second.get("stars", 0))},
+			],
+		})
+	matches.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a.get("played_unix", 0)) > int(b.get("played_unix", 0)))
+	return matches
+
+func _broadcast_bot_match_history() -> void:
+	var page: Dictionary = match_history_store.get_recent_bot_matches(50)
+	page["before_match_id"] = ""
+	page["live_matches"] = _get_live_bot_work_matches()
+	for raw_peer_id in session_id_by_peer.keys():
+		var peer_id := int(raw_peer_id)
+		var session := _get_session_for_peer(peer_id)
+		if not str(session.get("account_id", "")).is_empty():
+			_send_to_peer(peer_id, LobbyProtocolScript.BOT_MATCH_HISTORY, page)
 
 func _handle_submit_bot_work_result(peer_id: int, payload: Dictionary) -> void:
 	var job_id := str(payload.get("job_id", "")).strip_edges()
@@ -1056,11 +1212,13 @@ func _handle_submit_bot_work_result(peer_id: int, payload: Dictionary) -> void:
 		if accepted:
 			_client_bot_jobs.erase(job_id)
 	_send_to_peer(peer_id, LobbyProtocolScript.BOT_WORK_RESULT, {
+		"job_id": job_id,
 		"success": accepted,
 		"message": "Bot match added to the shared ladder." if accepted else "Bot match could not be recorded.",
 	})
 	if accepted:
 		_broadcast_room_lists()
+		_broadcast_bot_match_history()
 
 func _handle_request_bot_ladder(peer_id: int, message_type: String, payload: Dictionary) -> void:
 	var session := _get_session_for_peer(peer_id)
@@ -1599,10 +1757,10 @@ func _maintain_bot_self_play() -> void:
 	for match_session in match_supervisor.active_matches.values():
 		if match_session.is_bot_self_play():
 			background.append(match_session)
-		elif match_session.is_dedicated_headless() or not match_session.is_player_host():
+		else:
 			foreground += 1
 	var cpu_budget := maxi(0, OS.get_processor_count() - 1 - foreground)
-	var target := mini(clampi(server_bot_self_play_limit, 0, MAX_BOT_SELF_PLAY), cpu_budget)
+	var target := 1 if foreground == 0 and server_bot_self_play_limit > 0 and cpu_budget > 0 else 0
 	var memory := OS.get_memory_info()
 	var free_bytes := int(memory.get("free", -1))
 	var available_bytes := int(memory.get("available", -1))
@@ -1610,11 +1768,22 @@ func _maintain_bot_self_play() -> void:
 	if available_bytes >= 0 and headroom >= 0:
 		headroom = mini(available_bytes, headroom)
 	var overloaded := _lobby_frame_seconds > BOT_SELF_PLAY_FRAME_LIMIT or (headroom >= 0 and headroom < BOT_SELF_PLAY_MEMORY_RESERVE)
-	if not background.is_empty() and (overloaded or background.size() > target):
-		# Shed at most one worker each tick. Human games keep their slots.
-		var worker = background.back()
+	if foreground > 0 and not background.is_empty():
+		for worker in background:
+			match_supervisor.close_match(worker.match_id, MatchSessionScript.STATUS_ABANDONED, true, "Yielded capacity to a human match.")
 		_next_bot_self_play_msec = Time.get_ticks_msec() + BOT_SELF_PLAY_RETRY_SECONDS * 1000
-		match_supervisor.close_match(worker.match_id, MatchSessionScript.STATUS_ABANDONED, true, "Yielded capacity to the lobby or human matches.")
+		return
+	if not background.is_empty() and (overloaded or background.size() > target):
+		var keep_count := 0 if overloaded else target
+		for index in range(keep_count, background.size()):
+			var worker = background[index]
+			match_supervisor.close_match(
+				worker.match_id,
+				MatchSessionScript.STATUS_ABANDONED,
+				true,
+				"Yielded excess bot match capacity."
+			)
+		_next_bot_self_play_msec = Time.get_ticks_msec() + BOT_SELF_PLAY_RETRY_SECONDS * 1000
 		return
 	if overloaded or background.size() >= target or Time.get_ticks_msec() < _next_bot_self_play_msec:
 		return

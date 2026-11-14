@@ -18,7 +18,6 @@ const HostHuntingTacticsBotScript = preload("res://scripts/bots/HostHuntingTacti
 const NetworkClientSmokeBotScript = preload("res://scripts/bots/NetworkClientSmokeBot.gd")
 const LoadingBarScript = preload("res://scripts/ui/LoadingBar.gd")
 const MatchLoadingHintsScript = preload("res://scripts/ui/MatchLoadingHints.gd")
-const FeedbackEmailScript = preload("res://scripts/ui/FeedbackEmail.gd")
 const SmallScreenPlayViewScript = preload("res://scripts/ui/SmallScreenPlayView.gd")
 const UIFontScript = preload("res://scripts/ui/UIFont.gd")
 const GameSettingsTabsScript = preload("res://scripts/ui/GameSettingsTabs.gd")
@@ -139,12 +138,17 @@ var lobby_client: LobbyClient = null
 var _current_room_snapshot: Dictionary = {}
 var _open_seek_rooms: Array[Dictionary] = []
 var _seek_tabs: TabBar
-var _bot_match_history: Array = []
-var _bot_match_history_cursor := ""
-var _bot_match_history_more: Button
-var _local_bot_match_supervisor: Node
-var _local_bot_match_poll: Timer
-var _local_bot_match_id := ""
+var _bot_match_live: Array = []
+var _seek_action_row: HBoxContainer
+var _ladder_button: Button
+var _host_bot_match_button: Button
+var _host_another_bot_match_button: Button
+var _stop_hosting_bot_matches_button: Button
+var _bot_match_hosting_enabled := false
+var _pending_local_bot_match_modes: Array[bool] = []
+var _local_bot_match_workers: Dictionary = {}
+var _local_bot_match_submitting: Dictionary = {}
+var _continuous_bot_match_ids: Dictionary = {}
 var _lobby_session_id: String = ""
 var _lobby_reconnect_token: String = ""
 var _pending_join_room_code: String = ""
@@ -240,6 +244,7 @@ var _suppress_active_match_resume_until_msec: int = 0
 var _declined_active_match_rejoin_id: String = ""
 var _declined_active_match_rejoin_room_id: String = ""
 var _bug_report_status_label: Label = null
+var _bug_report_submit_button: Button = null
 var _bug_report_screenshot_label: Label = null
 var _bug_report_screenshot_preview: TextureRect = null
 var _bug_report_file_dialog: FileDialog = null
@@ -451,7 +456,6 @@ func _ready() -> void:
 	_restore_auth_preferences()
 	_startup_trace("_ready: auth prefs restored")
 	_build_profile_summary_controls()
-	_build_ranked_ladder_controls()
 	_build_seek_tabs()
 	_build_account_identity_controls()
 	_build_friends_controls()
@@ -1471,6 +1475,7 @@ func _process(delta: float) -> void:
 	_queue_room_list_refresh(false)
 
 func _exit_tree() -> void:
+	_stop_local_bot_match_worker()
 	# Join before releasing the Thread, including when quitting during discovery.
 	if _host_viability_probe_thread != null:
 		_host_viability_probe_thread.wait_to_finish()
@@ -2681,52 +2686,143 @@ func _build_seek_tabs() -> void:
 	_seek_tabs = TabBar.new()
 	_seek_tabs.add_tab("Seeks")
 	_seek_tabs.add_tab("View Bot Matches")
-	_seek_tabs.add_tab("Ladder")
 	multiplayer_container.add_child(_seek_tabs)
 	multiplayer_container.move_child(_seek_tabs, seek_list.get_index())
 	_seek_tabs.tab_changed.connect(_on_seek_tab_changed)
-	multiplayer_container.visibility_changed.connect(_on_ranked_ladder_lobby_visibility_changed)
-	_bot_match_history_more = Button.new()
-	_bot_match_history_more.text = "Load older bot matches"
-	_bot_match_history_more.pressed.connect(func() -> void:
-		if lobby_client != null:
-			lobby_client.request_bot_match_history(_bot_match_history_cursor)
-	)
-	multiplayer_container.add_child(_bot_match_history_more)
-	multiplayer_container.move_child(_bot_match_history_more, seek_list.get_index() + 1)
-	_bot_match_history_more.hide()
+	multiplayer_container.visibility_changed.connect(_on_ladder_lobby_visibility_changed)
+	_seek_action_row = HBoxContainer.new()
+	_seek_action_row.add_theme_constant_override("separation", 8)
+	multiplayer_container.add_child(_seek_action_row)
+	multiplayer_container.move_child(_seek_action_row, _seek_tabs.get_index() + 1)
+	_ladder_button = Button.new()
+	_ladder_button.text = "Ladder"
+	_ladder_button.pressed.connect(_open_bot_ladder)
+	_seek_action_row.add_child(_ladder_button)
+	_host_bot_match_button = Button.new()
+	_host_bot_match_button.text = "Host Bot Matches"
+	_host_bot_match_button.pressed.connect(_on_host_bot_match_pressed)
+	_seek_action_row.add_child(_host_bot_match_button)
+	_host_bot_match_button.hide()
+	_host_another_bot_match_button = Button.new()
+	_host_another_bot_match_button.text = "Host Another Bot Match"
+	_host_another_bot_match_button.pressed.connect(_on_host_another_bot_match_pressed)
+	_seek_action_row.add_child(_host_another_bot_match_button)
+	_host_another_bot_match_button.hide()
+	_stop_hosting_bot_matches_button = Button.new()
+	_stop_hosting_bot_matches_button.text = "Stop Hosting Bot Matches"
+	_stop_hosting_bot_matches_button.pressed.connect(_stop_local_bot_match_worker)
+	_seek_action_row.add_child(_stop_hosting_bot_matches_button)
+	_stop_hosting_bot_matches_button.hide()
 
 func _on_seek_tab_changed(tab: int) -> void:
-	if tab != 1:
-		_stop_local_bot_match_worker()
+	if is_instance_valid(_host_bot_match_button):
+		_host_bot_match_button.visible = tab == 1
+		_host_another_bot_match_button.visible = tab == 1 and _get_local_bot_match_count() > 0
+		_update_host_bot_match_button()
 	if tab == 1:
-		_bot_match_history.clear()
-		_bot_match_history_cursor = ""
 		if lobby_client != null:
 			lobby_client.request_bot_match_history()
-			if lobby_client.is_authenticated() and _has_local_bot_match_capacity():
-				if not lobby_client.bot_work_assignment_received.is_connected(_on_local_bot_work_assigned):
-					lobby_client.bot_work_assignment_received.connect(_on_local_bot_work_assigned)
-				if not lobby_client.bot_work_result_received.is_connected(_on_local_bot_work_result):
-					lobby_client.bot_work_result_received.connect(_on_local_bot_work_result)
-				lobby_client.request_bot_work()
-	elif tab == 2:
-		_open_bot_ladder()
 	_refresh_seek_list()
 
-func _has_local_bot_match_capacity() -> bool:
+func _on_host_bot_match_pressed() -> void:
+	if _bot_match_hosting_enabled:
+		_stop_local_bot_match_worker()
+		status_label.text = "Stopped hosting bot matches."
+		_refresh_seek_list()
+		return
+	_bot_match_hosting_enabled = true
+	_request_continuous_bot_match()
+
+func _on_host_another_bot_match_pressed() -> void:
+	_request_local_bot_match(false)
+
+func _request_continuous_bot_match() -> void:
+	if not _bot_match_hosting_enabled or _has_pending_continuous_bot_match() \
+			or _has_active_continuous_bot_match():
+		_update_host_bot_match_button()
+		return
+	_request_local_bot_match(true)
+
+func _request_local_bot_match(continuous: bool) -> void:
+	if lobby_client == null or not lobby_client.is_authenticated():
+		_bot_match_hosting_enabled = false if continuous else _bot_match_hosting_enabled
+		status_label.text = "Sign in to host a bot match."
+		_update_host_bot_match_button()
+		return
+	var maximum_matches := _get_local_bot_match_capacity()
+	if maximum_matches <= _get_local_bot_match_count() + _pending_local_bot_match_modes.size():
+		status_label.text = "No additional bot match slots are available on this computer."
+		return
+	if not lobby_client.bot_work_assignment_received.is_connected(_on_local_bot_work_assigned):
+		lobby_client.bot_work_assignment_received.connect(_on_local_bot_work_assigned)
+	if not lobby_client.bot_work_result_received.is_connected(_on_local_bot_work_result):
+		lobby_client.bot_work_result_received.connect(_on_local_bot_work_result)
+	_pending_local_bot_match_modes.append(continuous)
+	_update_host_bot_match_button()
+	status_label.text = "Requesting a bot match for this computer..."
+	lobby_client.request_bot_work()
+
+func _update_host_bot_match_button() -> void:
+	if not is_instance_valid(_host_bot_match_button):
+		return
+	_host_bot_match_button.text = "Stop Hosting Bot Matches" if _bot_match_hosting_enabled else "Host Bot Matches"
+	_host_bot_match_button.disabled = lobby_client == null or not lobby_client.is_authenticated() \
+		or (not _bot_match_hosting_enabled and _get_local_bot_match_capacity() <= 0)
+	var local_match_count := _get_local_bot_match_count() + _pending_local_bot_match_modes.size()
+	var has_capacity := local_match_count < _get_local_bot_match_capacity()
+	if is_instance_valid(_host_another_bot_match_button):
+		_host_another_bot_match_button.visible = is_instance_valid(_seek_tabs) \
+			and _seek_tabs.current_tab == 1 and _get_local_bot_match_count() > 0
+		_host_another_bot_match_button.disabled = lobby_client == null or not lobby_client.is_authenticated() or not has_capacity
+	if is_instance_valid(_stop_hosting_bot_matches_button):
+		_stop_hosting_bot_matches_button.visible = is_instance_valid(_seek_tabs) \
+			and _seek_tabs.current_tab == 1 and (local_match_count > 0 or not _local_bot_match_submitting.is_empty())
+
+func _get_local_bot_match_capacity() -> int:
 	if OS.get_name() not in ["Windows", "macOS", "Linux"] or OS.get_processor_count() < 4:
-		return false
+		return 0
 	var memory := OS.get_memory_info()
-	return int(memory.get("available", 0)) >= 2 * 1024 * 1024 * 1024
+	var available_bytes := int(memory.get("available", 0))
+	if available_bytes < 2 * 1024 * 1024 * 1024:
+		return 0
+	if OS.get_processor_count() >= 8 and available_bytes >= 4 * 1024 * 1024 * 1024:
+		return 2
+	return 1
+
+func _get_local_bot_match_count() -> int:
+	return _local_bot_match_workers.size()
+
+func _has_pending_continuous_bot_match() -> bool:
+	return _pending_local_bot_match_modes.has(true)
+
+func _has_active_continuous_bot_match() -> bool:
+	for continuous in _continuous_bot_match_ids.values():
+		if bool(continuous):
+			return true
+	return false
 
 func _on_local_bot_work_assigned(job: Dictionary) -> void:
-	if not is_instance_valid(_seek_tabs) or _seek_tabs.current_tab != 1 or lobby_client == null or not lobby_client.is_authenticated():
+	if _pending_local_bot_match_modes.is_empty():
+		if lobby_client != null:
+			lobby_client.cancel_bot_work(str(job.get("job_id", "")))
 		return
-	if not _local_bot_match_id.is_empty():
+	var continuous := false
+	continuous = _pending_local_bot_match_modes.pop_front()
+	if (continuous and not _bot_match_hosting_enabled) or lobby_client == null or not lobby_client.is_authenticated():
+		if lobby_client != null:
+			lobby_client.cancel_bot_work(str(job.get("job_id", "")))
+		_update_local_bot_hosting_state()
+		return
+	if _get_local_bot_match_count() >= _get_local_bot_match_capacity():
+		lobby_client.cancel_bot_work(str(job.get("job_id", "")))
+		_bot_match_hosting_enabled = false if continuous else _bot_match_hosting_enabled
+		_update_local_bot_hosting_state()
 		return
 	var decks: Array = job.get("decks", [])
 	if decks.size() != 2:
+		lobby_client.cancel_bot_work(str(job.get("job_id", "")))
+		_bot_match_hosting_enabled = false if continuous else _bot_match_hosting_enabled
+		_update_local_bot_hosting_state()
 		return
 	var first_id := "BOT_LOCAL_A_%s" % str(job["job_id"])
 	var second_id := "BOT_LOCAL_B_%s" % str(job["job_id"])
@@ -2736,79 +2832,135 @@ func _on_local_bot_work_assigned(job: Dictionary) -> void:
 		first_id: {"is_bot": true, "player_name": str(decks[0].get("deck_name", "Bot"))},
 		second_id: {"is_bot": true, "player_name": str(decks[1].get("deck_name", "Bot"))},
 	}
-	var match_port := randi_range(40000, 60000)
+	var match_port := _allocate_local_bot_match_port()
+	if match_port <= 0:
+		lobby_client.cancel_bot_work(str(job["job_id"]))
+		_bot_match_hosting_enabled = false if continuous else _bot_match_hosting_enabled
+		_update_local_bot_hosting_state()
+		return
 	var session := MatchSessionScript.new(str(job["job_id"]), str(job["job_id"]), "127.0.0.1", match_port, players, submissions, identities)
 	session.is_ranked = true
 	session.configure_series_format(1)
-	_local_bot_match_supervisor = MatchSupervisorScript.new()
-	_local_bot_match_supervisor.name = "LocalBotMatchWorker"
-	add_child(_local_bot_match_supervisor)
-	_local_bot_match_supervisor.configure("127.0.0.1", match_port, true, "", ProjectSettings.globalize_path("res://"), false)
-	_local_bot_match_supervisor.active_matches[session.match_id] = session
-	if not _local_bot_match_supervisor._launch_shared_bot_match(session):
-		_local_bot_match_supervisor.queue_free()
-		_local_bot_match_supervisor = null
+	var supervisor = MatchSupervisorScript.new()
+	supervisor.name = "LocalBotMatchWorker_%s" % session.match_id.validate_node_name()
+	add_child(supervisor)
+	supervisor.configure("127.0.0.1", match_port, true, "", ProjectSettings.globalize_path("res://"), false)
+	supervisor.active_matches[session.match_id] = session
+	if not supervisor._launch_dedicated_match(session, true):
+		supervisor.queue_free()
+		lobby_client.cancel_bot_work(session.match_id)
+		_bot_match_hosting_enabled = false if continuous else _bot_match_hosting_enabled
+		_update_local_bot_hosting_state()
 		return
-	_local_bot_match_id = session.match_id
-	_local_bot_match_poll = Timer.new()
-	_local_bot_match_poll.wait_time = 2.0
-	_local_bot_match_poll.timeout.connect(_poll_local_bot_match)
-	add_child(_local_bot_match_poll)
-	_local_bot_match_poll.start()
-	status_label.text = "Running one bot match on this computer."
+	var poll := Timer.new()
+	poll.wait_time = 2.0
+	poll.timeout.connect(_poll_local_bot_match.bind(session.match_id))
+	add_child(poll)
+	poll.start()
+	_local_bot_match_workers[session.match_id] = {
+		"supervisor": supervisor,
+		"poll": poll,
+		"session": session,
+		"continuous": continuous,
+	}
+	_continuous_bot_match_ids[session.match_id] = continuous
+	status_label.text = "Running %d bot match%s on this computer." % [
+		_get_local_bot_match_count(), "es" if _get_local_bot_match_count() != 1 else "",
+	]
+	lobby_client.report_bot_work_started(session.match_id)
+	_update_host_bot_match_button()
 
-func _poll_local_bot_match() -> void:
-	if _local_bot_match_supervisor == null or _local_bot_match_id.is_empty():
+func _allocate_local_bot_match_port() -> int:
+	var used_ports := {}
+	for worker: Dictionary in _local_bot_match_workers.values():
+		var session = worker.get("session", null)
+		if session != null:
+			used_ports[int(session.match_port)] = true
+	for _attempt in range(20):
+		var port := randi_range(40000, 60000)
+		if not used_ports.has(port):
+			return port
+	return -1
+
+func _poll_local_bot_match(match_id: String) -> void:
+	var worker: Dictionary = _local_bot_match_workers.get(match_id, {})
+	if worker.is_empty():
 		return
-	var session = _local_bot_match_supervisor.get_match(_local_bot_match_id)
+	var supervisor = worker.get("supervisor", null)
+	var session = worker.get("session", null)
 	if session == null:
 		return
 	var status := JsonStoreScript.load_dictionary(str(session.status_file_path), {}, "LocalBotMatchWorker")
 	if str(status.get("status", "")) != MatchSessionScript.STATUS_FINISHED:
 		return
-	var review := JsonStoreScript.load_dictionary(ServerPathsScript.get_bot_review_path(_local_bot_match_id), {}, "LocalBotMatchWorker")
+	var review := JsonStoreScript.load_dictionary(ServerPathsScript.get_bot_review_path(match_id), {}, "LocalBotMatchWorker")
+	var continuous := bool(worker.get("continuous", false))
 	if int(review.get("winner_index", -1)) in [0, 1] and lobby_client != null and lobby_client.is_authenticated():
-		lobby_client.submit_bot_work_result(_local_bot_match_id, int(review["winner_index"]), int(review.get("turns", 1)))
-	_local_bot_match_supervisor.close_match(_local_bot_match_id, MatchSessionScript.STATUS_FINISHED, false)
-	_local_bot_match_supervisor.queue_free()
-	_local_bot_match_supervisor = null
-	_local_bot_match_id = ""
-	_local_bot_match_poll.queue_free()
-	_local_bot_match_poll = null
+		_local_bot_match_submitting[match_id] = continuous
+		lobby_client.submit_bot_work_result(match_id, int(review["winner_index"]), int(review.get("turns", 1)))
+	elif lobby_client != null:
+		lobby_client.cancel_bot_work(match_id)
+	supervisor.close_match(match_id, MatchSessionScript.STATUS_FINISHED, false)
+	supervisor.queue_free()
+	var poll: Timer = worker.get("poll", null)
+	if is_instance_valid(poll):
+		poll.queue_free()
+	_local_bot_match_workers.erase(match_id)
+	if not _local_bot_match_submitting.has(match_id):
+		_continuous_bot_match_ids.erase(match_id)
+	_update_local_bot_hosting_state()
+	if not _local_bot_match_submitting.has(match_id) and _bot_match_hosting_enabled:
+		_request_continuous_bot_match()
 
-func _on_local_bot_work_result(success: bool, message: String) -> void:
+func _on_local_bot_work_result(job_id: String, success: bool, message: String) -> void:
+	if job_id.is_empty():
+		status_label.text = message
+		var continuous_request := false
+		if not _pending_local_bot_match_modes.is_empty():
+			continuous_request = _pending_local_bot_match_modes.pop_front()
+		if continuous_request:
+			_bot_match_hosting_enabled = false
+		_update_host_bot_match_button()
+		return
 	status_label.text = message if success else "Local bot match result was not accepted."
+	if not success and lobby_client != null:
+		lobby_client.cancel_bot_work(job_id)
+	_local_bot_match_submitting.erase(job_id)
+	_continuous_bot_match_ids.erase(job_id)
+	_update_host_bot_match_button()
 	if success and lobby_client != null:
 		lobby_client.request_bot_match_history()
-		if is_instance_valid(_seek_tabs) and _seek_tabs.current_tab == 1 and _has_local_bot_match_capacity():
-			lobby_client.request_bot_work()
+	if _bot_match_hosting_enabled:
+		_request_continuous_bot_match()
 
 func _stop_local_bot_match_worker() -> void:
-	if _local_bot_match_poll != null and is_instance_valid(_local_bot_match_poll):
-		_local_bot_match_poll.stop()
-		_local_bot_match_poll.queue_free()
-		_local_bot_match_poll = null
-	if _local_bot_match_supervisor != null and is_instance_valid(_local_bot_match_supervisor):
-		if not _local_bot_match_id.is_empty():
-			_local_bot_match_supervisor.close_match(_local_bot_match_id, MatchSessionScript.STATUS_ABANDONED, true, "Volunteer left bot matches.")
-		_local_bot_match_supervisor.queue_free()
-		_local_bot_match_supervisor = null
-	_local_bot_match_id = ""
+	_bot_match_hosting_enabled = false
+	_pending_local_bot_match_modes.clear()
+	for match_id in _local_bot_match_submitting.keys():
+		if lobby_client != null:
+			lobby_client.cancel_bot_work(str(match_id))
+	_local_bot_match_submitting.clear()
+	_continuous_bot_match_ids.clear()
+	for match_id in _local_bot_match_workers.keys().duplicate():
+		var worker: Dictionary = _local_bot_match_workers[match_id]
+		if lobby_client != null:
+			lobby_client.cancel_bot_work(str(match_id))
+		var poll: Timer = worker.get("poll", null)
+		if is_instance_valid(poll):
+			poll.stop()
+			poll.queue_free()
+		var supervisor = worker.get("supervisor", null)
+		if is_instance_valid(supervisor):
+			supervisor.close_match(str(match_id), MatchSessionScript.STATUS_ABANDONED, true, "Volunteer stopped hosting bot matches.")
+			supervisor.queue_free()
+	_local_bot_match_workers.clear()
+	_update_host_bot_match_button()
+
+func _update_local_bot_hosting_state() -> void:
+	_update_host_bot_match_button()
 
 func _on_bot_match_history_received(history: Dictionary) -> void:
-	var cursor := str(history.get("before_match_id", ""))
-	var received: Array = history.get("matches", [])
-	if cursor.is_empty():
-		var seen := {}
-		for row: Dictionary in received:
-			seen[row["match_id"]] = true
-		var older := _bot_match_history.filter(func(row: Dictionary) -> bool: return not seen.has(row["match_id"]))
-		_bot_match_history = received + older
-		if _bot_match_history.size() == received.size():
-			_bot_match_history_cursor = str(history.get("next_cursor", ""))
-	elif cursor == _bot_match_history_cursor:
-		_bot_match_history.append_array(received)
-		_bot_match_history_cursor = str(history.get("next_cursor", ""))
+	_bot_match_live = history.get("live_matches", [])
 	_refresh_seek_list()
 
 func _refresh_seek_list() -> void:
@@ -2816,10 +2968,6 @@ func _refresh_seek_list() -> void:
 		return
 	seek_list.clear()
 	var tab := _seek_tabs.current_tab if is_instance_valid(_seek_tabs) else 0
-	if is_instance_valid(_bot_match_history_more):
-		_bot_match_history_more.visible = tab == 1 and not _bot_match_history_cursor.is_empty()
-	if tab == 2:
-		return
 	for room in _open_seek_rooms:
 		if bool(room.get("is_bot_self_play", false)) != (tab == 1):
 			continue
@@ -2848,21 +2996,16 @@ func _refresh_seek_list() -> void:
 			seek_list.set_item_metadata(action_index, request_next_match_id)
 			seek_list.set_item_tooltip(action_index, "Tell the player in this match you'd like to play them next.")
 	if tab == 1:
-		for match_entry: Dictionary in _bot_match_history:
-			var players: Array = match_entry.get("players", [])
-			if players.size() != 2:
+		for match_entry: Dictionary in _bot_match_live:
+			var live_players: Array = match_entry.get("players", [])
+			if live_players.size() != 2:
 				continue
-			var result := "Draw"
-			for player: Dictionary in players:
-				if player["result"] == "win":
-					result = "%s won" % player["name"]
-			var date := Time.get_date_string_from_unix_time(int(match_entry["played_unix"]))
-			var battle: Dictionary = match_entry.get("battle", {})
-			var detail := "  ·  %d turns" % int(battle["turns"]) if battle.has("turns") else ""
-			seek_list.add_item("%s vs %s  ·  %s%s  ·  %s" % [players[0]["name"], players[1]["name"], result, detail, date])
+			var job_id := str(match_entry.get("match_id", "")).trim_prefix("volunteer_")
+			var live_label := "Live on this computer" if _local_bot_match_workers.has(job_id) or _local_bot_match_submitting.has(job_id) else "Live · volunteer"
+			seek_list.add_item("%s vs %s  ·  %s" % [live_players[0].get("name", "Bot"), live_players[1].get("name", "Bot"), live_label])
 			seek_list.set_item_disabled(seek_list.get_item_count() - 1, true)
 	if seek_list.get_item_count() == 0:
-		seek_list.add_item("No live or completed bot matches." if tab == 1 else "No open seeks or live matches right now.")
+		seek_list.add_item("No live bot matches right now." if tab == 1 else "No open seeks or live matches right now.")
 		seek_list.set_item_disabled(0, true)
 
 func _format_seek_format_label(room: Dictionary) -> String:
@@ -5200,7 +5343,7 @@ func _open_bug_report_overlay() -> void:
 	content.add_child(title)
 
 	var intro := Label.new()
-	intro.text = "Describe the issue or the play you think a bot should have made. Send the report to %s from your email app." % FeedbackEmailScript.ADDRESS
+	intro.text = "Describe the issue or the play you think a bot should have made. Your report will be sent to the game server."
 	intro.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	content.add_child(intro)
 
@@ -5274,10 +5417,11 @@ func _open_bug_report_overlay() -> void:
 	actions.add_child(cancel_btn)
 
 	var submit_btn := Button.new()
-	submit_btn.text = "Open Email Draft"
+	submit_btn.text = "Submit Report"
 	submit_btn.custom_minimum_size = Vector2(130, 38)
 	submit_btn.pressed.connect(_submit_bug_report)
 	actions.add_child(submit_btn)
+	_bug_report_submit_button = submit_btn
 
 	_refresh_bug_report_screenshot_preview()
 	_bug_report_expected_edit.grab_focus()
@@ -5292,6 +5436,7 @@ func _close_bug_report_overlay() -> void:
 	_bug_report_expected_edit = null
 	_bug_report_actual_edit = null
 	_bug_report_status_label = null
+	_bug_report_submit_button = null
 	_bug_report_screenshot_label = null
 	_bug_report_screenshot_preview = null
 	_bug_report_selected_screenshot_path = ""
@@ -5344,14 +5489,49 @@ func _submit_bug_report() -> void:
 		_set_bug_report_status("Please fill in what happened.")
 		_bug_report_actual_edit.grab_focus()
 		return
+	if expected_text.length() > 1200 or actual_text.length() > 1200:
+		_set_bug_report_status("Keep each answer under 1200 characters.")
+		return
+	if lobby_client == null:
+		_set_bug_report_status("Connect to the lobby and sign in before submitting a report.")
+		return
 
-	var body := "What I expected\n%s\n\nWhat happened\n%s\n\nOther Gods %s (%s)" % [
-		expected_text, actual_text, AppReleaseInfoScript.get_display_version(), OS.get_name(),
-	]
-	var email_status := FeedbackEmailScript.open_draft("Other Gods issue report", body)
+	if not lobby_client.is_authenticated():
+		_set_bug_report_status("Connect to the lobby and sign in before submitting a report.")
+		return
+	var screenshot_jpeg := ""
 	if not _bug_report_selected_screenshot_path.is_empty():
-		email_status += " Attach %s in your email app." % _bug_report_selected_screenshot_path.get_file()
-	_set_bug_report_status(email_status)
+		screenshot_jpeg = _encode_bug_report_screenshot()
+		if screenshot_jpeg.is_empty():
+			_set_bug_report_status("Could not prepare the screenshot. Try a smaller image or clear the screenshot.")
+			return
+	if _bug_report_submit_button != null:
+		_bug_report_submit_button.disabled = true
+	_set_bug_report_status("Submitting report...")
+	lobby_client.submit_issue_report(expected_text, actual_text, screenshot_jpeg)
+
+func _encode_bug_report_screenshot() -> String:
+	var image := Image.new()
+	if image.load(_bug_report_selected_screenshot_path) != OK:
+		return ""
+	image.convert(Image.FORMAT_RGB8)
+	var max_dimension := maxi(image.get_width(), image.get_height())
+	if max_dimension > 480:
+		var scale := 480.0 / float(max_dimension)
+		image.resize(maxi(1, int(image.get_width() * scale)), maxi(1, int(image.get_height() * scale)), Image.INTERPOLATE_LANCZOS)
+	for _attempt in range(5):
+		var jpeg_bytes := image.save_jpg_to_buffer(0.58)
+		if jpeg_bytes.size() <= 12000:
+			return Marshalls.raw_to_base64(jpeg_bytes)
+		image.resize(maxi(1, int(image.get_width() * 0.75)), maxi(1, int(image.get_height() * 0.75)), Image.INTERPOLATE_LANCZOS)
+	return ""
+
+func _on_bug_report_result(success: bool, message: String) -> void:
+	_set_bug_report_status(message)
+	if _bug_report_submit_button != null:
+		_bug_report_submit_button.disabled = success
+		if success:
+			_bug_report_submit_button.text = "Submitted"
 
 func _set_bug_report_status(message: String) -> void:
 	if _bug_report_status_label == null:
@@ -8012,6 +8192,8 @@ func _bind_lobby_client_signals() -> void:
 		lobby_client.request_next_received.connect(_on_request_next_received)
 	if not lobby_client.request_next_result.is_connected(_on_request_next_result):
 		lobby_client.request_next_result.connect(_on_request_next_result)
+	if lobby_client.has_signal("issue_report_result") and not lobby_client.issue_report_result.is_connected(_on_bug_report_result):
+		lobby_client.issue_report_result.connect(_on_bug_report_result)
 	if not lobby_client.match_assigned.is_connected(_on_remote_match_assigned):
 		lobby_client.match_assigned.connect(_on_remote_match_assigned)
 	if lobby_client.has_signal("match_host_viability_requested") and not lobby_client.match_host_viability_requested.is_connected(_on_match_host_viability_requested):
@@ -8129,6 +8311,7 @@ func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, play
 		_maybe_request_account_decks()
 		_refresh_account_identity_label()
 		_refresh_auth_controls()
+		_update_host_bot_match_button()
 		player_name_line_edit.text = _get_effective_identity_name(player_name)
 		return
 	_background_lobby_auth_error = ""
@@ -8142,6 +8325,7 @@ func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, play
 	_lobby_failure_update_check_requested = false
 	_sync_friend_observer_card_visibility()
 	_set_connected_server_version(lobby_client.current_server_version if lobby_client != null else "")
+	_update_host_bot_match_button()
 	_lobby_session_id = session_id
 	_lobby_reconnect_token = reconnect_token
 	_seek_list_request_pending = false
@@ -9158,8 +9342,7 @@ func _cleanup_lobby(clear_session: bool) -> void:
 	_clear_current_seek_state()
 	_pending_seek_switch_join_room_id = ""
 	_open_seek_rooms.clear()
-	_bot_match_history.clear()
-	_bot_match_history_cursor = ""
+	_bot_match_live.clear()
 	if is_instance_valid(_seek_tabs):
 		_seek_tabs.current_tab = 0
 	_seek_list_request_pending = false
@@ -9834,17 +10017,6 @@ func _on_rank_badge_lobby_visibility_changed() -> void:
 	if not multiplayer_container.is_visible_in_tree():
 		_close_rank_badge_picker()
 
-func _build_ranked_ladder_controls() -> void:
-	if not OS.is_debug_build() or multiplayer_container == null or is_instance_valid(_ranked_ladder_button):
-		return
-	_ranked_ladder_button = Button.new()
-	_ranked_ladder_button.name = "RankedLadderButton"
-	_ranked_ladder_button.text = "Ranked Ladder"
-	_ranked_ladder_button.pressed.connect(_open_ranked_ladder)
-	multiplayer_container.add_child(_ranked_ladder_button)
-	if _profile_summary_panel != null:
-		multiplayer_container.move_child(_ranked_ladder_button, _profile_summary_panel.get_index() + 1)
-
 func _open_ranked_ladder() -> void:
 	if not OS.is_debug_build() or not multiplayer_container.is_visible_in_tree() or is_instance_valid(_ranked_ladder_view):
 		return
@@ -9883,9 +10055,8 @@ func _close_ranked_ladder() -> void:
 	if is_instance_valid(_ranked_ladder_button) and _ranked_ladder_button.is_visible_in_tree():
 		_ranked_ladder_button.grab_focus()
 
-func _on_ranked_ladder_lobby_visibility_changed() -> void:
+func _on_ladder_lobby_visibility_changed() -> void:
 	if not multiplayer_container.is_visible_in_tree():
-		_close_ranked_ladder()
 		_close_bot_ladder()
 
 func _open_bot_ladder() -> void:
@@ -9944,9 +10115,8 @@ func _close_bot_ladder() -> void:
 	_bot_ladder_view.hide()
 	_bot_ladder_view.queue_free()
 	_bot_ladder_view = null
-	if is_instance_valid(_seek_tabs) and _seek_tabs.current_tab == 2:
-		_seek_tabs.current_tab = 0
-		_seek_tabs.grab_focus()
+	if is_instance_valid(_ladder_button) and _ladder_button.is_visible_in_tree():
+		_ladder_button.grab_focus()
 
 func _build_account_identity_controls() -> void:
 	if menu_container == null:
@@ -10744,8 +10914,6 @@ func _refresh_profile_summary_label() -> void:
 		var rank_line := "%s  •  %d stars" % [rank_name, stars]
 		if stars_required > 0:
 			rank_line = "%s  %s%s  %d/%d" % [rank_name, "★".repeat(stars), "☆".repeat(stars_required - stars), stars, stars_required]
-			if bool(ranked_progress["at_floor"]):
-				rank_line += "  •  Protected"
 		if has_separate_ladders:
 			rank_line = "Bo%d  •  %s" % [best_of, rank_line]
 		lines.insert(lines.size() - 1, rank_line)

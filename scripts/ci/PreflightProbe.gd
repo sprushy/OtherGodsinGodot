@@ -1046,8 +1046,8 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 	else:
 		var odin: Dictionary = after_self_play["gods"][0]["lists"][0]
 		var after_thor: Dictionary = after_self_play["gods"][1]["lists"][0]
-		if odin["name"] != "Odin: Test" or odin["stars"] != 1 or after_thor["stars"] != 0:
-			failures.append("Self-play did not award and subtract stars for the two bot seats")
+		if odin["name"] != "Odin: Test" or odin["stars"] != 1 or after_thor["stars"] != 1:
+			failures.append("Self-play did not award the win or protect the losing bot at its rank floor")
 
 	var results: Array[Dictionary] = []
 	for i in range(7):
@@ -1080,7 +1080,7 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 			or thor["lists"][0]["name"] != "Thor: Bloodaxe" \
 			or challenger.get("matches_played") != 6 or challenger.get("wins") != 1 \
 			or challenger.get("losses") != 6 or challenger.get("draws") != 0 \
-			or challenger.get("stars") != 0 or challenger.has("cards") or ladder_summary["trial_length"] != 7:
+			or challenger.get("stars") != 1 or challenger.has("cards") or ladder_summary["trial_length"] != 7:
 		failures.append("Bot ladder did not report the quarantined list and six completed trial matches")
 	var quarantined_deck := pool.get_deck_details(thor["lists"][0]["list_id"])
 	var challenger_deck := pool.get_deck_details(challenger.get("list_id", ""))

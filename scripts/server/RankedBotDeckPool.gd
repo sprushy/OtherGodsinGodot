@@ -1,5 +1,6 @@
 extends RefCounted
 
+const RankedProgressionScript = preload("res://scripts/server/RankedProgression.gd")
 const LISTS_PER_GOD := 7
 const TRIAL_MATCHES := 7
 const EXPLORATION_CHANCE := 0.25
@@ -265,7 +266,9 @@ func _update_record(list: Dictionary, outcome: String) -> void:
 			list["stars"] += 1
 		"loss":
 			list["losses"] += 1
-			list["stars"] = maxi(0, int(list["stars"]) - 1)
+			var stars := int(list["stars"])
+			var rank := RankedProgressionScript.summarize_bot_stars(stars)
+			list["stars"] = maxi(int(rank["floor_points"]), stars - 1)
 		"draw":
 			list["draws"] += 1
 
