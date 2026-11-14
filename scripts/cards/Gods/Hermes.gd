@@ -30,6 +30,11 @@ func can_activate(game_manager: GameManager) -> bool:
 		return false
 	return not get_valid_targets(game_manager).is_empty()
 
+func can_plan_activation_after_upkeep(game_manager: GameManager, mana_budget: int) -> bool:
+	return _meets_deceptive_speed_requirements(game_manager, mana_budget) \
+		and card_owner == game_manager.current_player \
+		and game_manager.priority_player == null and game_manager.action_stack.is_empty()
+
 func get_activation_failure_reason(game_manager: GameManager) -> String:
 	return _get_deceptive_speed_failure_reason(game_manager, false)
 
@@ -106,6 +111,15 @@ func on_removed(_game_manager: GameManager) -> void:
 	_last_used_turn = -1
 
 func _can_use_deceptive_speed(game_manager: GameManager, as_priority_response: bool) -> bool:
+	if card_owner == null or not _meets_deceptive_speed_requirements(game_manager, card_owner.mana):
+		return false
+	if not game_manager.has_resolved_turn_upkeep():
+		return false
+	if as_priority_response:
+		return not game_manager.action_stack.is_empty()
+	return can_use_god_power(game_manager)
+
+func _meets_deceptive_speed_requirements(game_manager: GameManager, mana_budget: int) -> bool:
 	if game_manager == null:
 		return false
 	if card_owner == null:
@@ -116,15 +130,9 @@ func _can_use_deceptive_speed(game_manager: GameManager, as_priority_response: b
 		return false
 	if _was_used_this_turn(game_manager):
 		return false
-	if card_owner.mana < ACTIVATION_COST:
+	if mana_budget < ACTIVATION_COST:
 		return false
-	if game_manager.has_method("has_resolved_turn_upkeep") and not game_manager.has_resolved_turn_upkeep():
-		return false
-	if game_manager.has_method("can_player_use_powers") and not game_manager.can_player_use_powers(card_owner):
-		return false
-	if as_priority_response:
-		return not game_manager.action_stack.is_empty()
-	return can_use_god_power(game_manager)
+	return game_manager.can_player_use_powers(card_owner)
 
 func _get_deceptive_speed_failure_reason(game_manager: GameManager, as_priority_response: bool) -> String:
 	if game_manager == null:

@@ -6684,8 +6684,10 @@ func _sync_deck_rank_badge(badge: RankBadgeScript, player: Player) -> void:
 	var index := game_manager.players.find(player)
 	var entry: Dictionary = badges[index] if index >= 0 and index < badges.size() else {}
 	var rank_name := str(entry.get("rank_name", ""))
-	badge.visible = not rank_name.is_empty()
+	badge.visible = _is_observer_mode or not rank_name.is_empty()
 	badge.set_badge(rank_name, entry.get("portrait", {}))
+	if _is_observer_mode:
+		badge.tooltip_text = _get_player_display_name_for_index(index)
 
 func _sync_turn_start_props() -> void:
 	if mana_button != null:
@@ -6814,8 +6816,13 @@ func _layout_turn_start_props() -> void:
 	# Align the card faces with the well; deck art is inset inside its button.
 	for deck in [draw_button, _opponent_draw_deck]:
 		deck.position.x += (prop_size.x * 0.5 - deck.get_top_card_rect().get_center().x) * prop_scale
-	_position_deck_rank_badge(_opponent_deck_badge, _opponent_draw_deck, prop_scale, true)
-	_position_deck_rank_badge(_local_deck_badge, draw_button, prop_scale, false)
+	var local_deck_badge := _local_deck_badge
+	var opponent_deck_badge := _opponent_deck_badge
+	if _is_observer_mode:
+		local_deck_badge = _opponent_deck_badge if _observer_perspective_player_index == 1 else _local_deck_badge
+		opponent_deck_badge = _local_deck_badge if _observer_perspective_player_index == 1 else _opponent_deck_badge
+	_position_deck_rank_badge(opponent_deck_badge, _opponent_draw_deck, prop_scale, true)
+	_position_deck_rank_badge(local_deck_badge, draw_button, prop_scale, false)
 	choice_intro_label.custom_minimum_size = Vector2.ZERO
 	choice_intro_label.size = choice_intro_label.get_combined_minimum_size()
 	choice_intro_label.scale = Vector2.ONE * prop_scale

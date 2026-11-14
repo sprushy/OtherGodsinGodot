@@ -327,7 +327,7 @@ func shuffle_card_into_deck(card: Card) -> bool:
 	if card == null:
 		return false
 	move_card(card, deck_zone)
-	deck_zone.cards.shuffle()
+	deck_zone.shuffle_deck()
 	return card.current_zone == deck_zone
 
 func _resolve_destination_zone(card: Card, from_zone: Zone, to_zone: Zone) -> Zone:

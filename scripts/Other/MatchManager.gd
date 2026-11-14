@@ -6802,6 +6802,8 @@ func _process_command_impl(command: Dictionary) -> bool:
 			pra_action.card = pra_source
 			pra_action.target = pra_target
 			pra_action.response_to = pra_source_action
+			if pra_source.has_method("get_priority_response_speed"):
+				pra_action.event_speed = int(pra_source.get_priority_response_speed())
 			if pra_zone != null:
 				pra_action.event_data["summon_zone"] = CardAction._zone_to_dict(pra_zone, game_manager)
 			if command.has("mode"):

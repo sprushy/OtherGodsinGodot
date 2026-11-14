@@ -149,6 +149,16 @@ var _seek_action_row: HBoxContainer
 var _ladder_button: Button
 var _host_bot_match_button: Button
 var _host_another_bot_match_button: Button
+var _host_own_bot_button: Button
+var _host_bot_gauntlet_button: Button
+var _custom_bot_ids_pending: Array[String] = []
+var _host_bot_gauntlet_id := ""
+var _host_bot_gauntlet_remaining := 0
+var _host_bot_gauntlet_opponents: Dictionary = {}
+var _my_bot_entries: Array = []
+var _my_bot_dialog: AcceptDialog
+var _my_bot_option: OptionButton
+var _choose_bot_gauntlet := false
 var _bot_match_hosting_enabled := false
 var _pending_local_bot_match_modes: Array[bool] = []
 var _local_bot_match_workers: Dictionary = {}
@@ -2743,6 +2753,16 @@ func _build_seek_tabs() -> void:
 	_host_another_bot_match_button.pressed.connect(_on_host_another_bot_match_pressed)
 	_seek_action_row.add_child(_host_another_bot_match_button)
 	_host_another_bot_match_button.hide()
+	_host_own_bot_button = Button.new()
+	_host_own_bot_button.text = "Host Match for Your Bot"
+	_host_own_bot_button.pressed.connect(_open_my_bot_picker.bind(false))
+	_seek_action_row.add_child(_host_own_bot_button)
+	_host_own_bot_button.hide()
+	_host_bot_gauntlet_button = Button.new()
+	_host_bot_gauntlet_button.text = "Host Gauntlet for Your Bot"
+	_host_bot_gauntlet_button.pressed.connect(_open_my_bot_picker.bind(true))
+	_seek_action_row.add_child(_host_bot_gauntlet_button)
+	_host_bot_gauntlet_button.hide()
 	_apply_seek_action_button_sizing()
 
 func _build_recent_activity_panel() -> void:
@@ -2861,6 +2881,8 @@ func _on_seek_tab_changed(tab: int) -> void:
 	if is_instance_valid(_host_bot_match_button):
 		_host_bot_match_button.visible = tab == 1
 		_host_another_bot_match_button.visible = tab == 1 and _get_local_bot_match_count() > 0
+		_host_own_bot_button.visible = tab == 1
+		_host_bot_gauntlet_button.visible = tab == 1
 		_update_host_bot_match_button()
 	if tab == 1:
 		if lobby_client != null:
@@ -2897,7 +2919,7 @@ func _schedule_continuous_bot_match_retry(delay_seconds: float = 15.0) -> void:
 		add_child(_bot_match_retry_timer)
 	_bot_match_retry_timer.start(maxf(1.0, delay_seconds))
 
-func _request_local_bot_match(continuous: bool) -> void:
+func _request_local_bot_match(continuous: bool, bot_id: String = "") -> void:
 	if lobby_client == null or not lobby_client.is_authenticated():
 		_bot_match_hosting_enabled = false if continuous else _bot_match_hosting_enabled
 		status_label.text = "Sign in to host a bot match."
@@ -2914,9 +2936,55 @@ func _request_local_bot_match(continuous: bool) -> void:
 	if not lobby_client.bot_work_result_received.is_connected(_on_local_bot_work_result):
 		lobby_client.bot_work_result_received.connect(_on_local_bot_work_result)
 	_pending_local_bot_match_modes.append(continuous)
+	_custom_bot_ids_pending.append(bot_id)
 	_update_host_bot_match_button()
 	status_label.text = "Requesting a bot match for this computer..."
-	lobby_client.request_bot_work()
+	var excluded: Array = _host_bot_gauntlet_opponents.keys() if not _host_bot_gauntlet_id.is_empty() else []
+	lobby_client.request_bot_work(bot_id, excluded)
+
+func _open_my_bot_picker(for_gauntlet: bool = false) -> void:
+	_choose_bot_gauntlet = for_gauntlet
+	if lobby_client == null or not lobby_client.is_authenticated():
+		status_label.text = "Sign in to host matches for your submitted bots."
+		return
+	if not lobby_client.my_bots_received.is_connected(_on_my_bots_received):
+		lobby_client.my_bots_received.connect(_on_my_bots_received)
+	lobby_client.request_my_bots()
+	status_label.text = "Loading your submitted bots..."
+
+func _on_my_bots_received(bots: Array) -> void:
+	_my_bot_entries = bots
+	if _my_bot_entries.is_empty():
+		status_label.text = "Submit a bot from the deck builder before hosting it."
+		return
+	if not is_instance_valid(_my_bot_dialog):
+		_my_bot_dialog = AcceptDialog.new()
+		_my_bot_dialog.title = "Choose Your Bot"
+		_my_bot_dialog.dialog_text = "Select a submitted bot to host."
+		_my_bot_option = OptionButton.new()
+		_my_bot_dialog.add_child(_my_bot_option)
+		add_child(_my_bot_dialog)
+		_my_bot_dialog.confirmed.connect(_start_selected_bot_match)
+	_my_bot_option.clear()
+	for bot: Dictionary in _my_bot_entries:
+		_my_bot_option.add_item("%s · %s" % [str(bot.get("deck_name", "Bot")), str(bot.get("god_name", ""))])
+	_my_bot_dialog.popup_centered()
+
+func _start_selected_bot_match() -> void:
+	if _my_bot_option == null or _my_bot_option.selected < 0 or _my_bot_option.selected >= _my_bot_entries.size():
+		return
+	var bot_id := str((_my_bot_entries[_my_bot_option.selected] as Dictionary).get("bot_id", ""))
+	if bot_id.is_empty():
+		return
+	if _choose_bot_gauntlet:
+		_host_bot_gauntlet_id = bot_id
+		_host_bot_gauntlet_remaining = 10
+		_host_bot_gauntlet_opponents.clear()
+	else:
+		_host_bot_gauntlet_id = ""
+		_host_bot_gauntlet_remaining = 0
+		_host_bot_gauntlet_opponents.clear()
+	_request_local_bot_match(false, bot_id)
 
 func _update_host_bot_match_button() -> void:
 	if not is_instance_valid(_host_bot_match_button):
@@ -2968,6 +3036,7 @@ func _on_local_bot_work_assigned(job: Dictionary) -> void:
 		return
 	var continuous := false
 	continuous = _pending_local_bot_match_modes.pop_front()
+	var custom_bot_id := _custom_bot_ids_pending.pop_front() if not _custom_bot_ids_pending.is_empty() else ""
 	if (continuous and not _bot_match_hosting_enabled) or lobby_client == null or not lobby_client.is_authenticated():
 		if lobby_client != null:
 			lobby_client.cancel_bot_work(str(job.get("job_id", "")))
@@ -2986,6 +3055,10 @@ func _on_local_bot_work_assigned(job: Dictionary) -> void:
 		_bot_match_hosting_enabled = false if continuous else _bot_match_hosting_enabled
 		_update_local_bot_hosting_state()
 		return
+	if not _host_bot_gauntlet_id.is_empty():
+		var opponent_id := str((decks[1] as Dictionary).get("bot_list_id", ""))
+		if not opponent_id.is_empty():
+			_host_bot_gauntlet_opponents[opponent_id] = true
 	var first_id := "BOT_LOCAL_A_%s" % str(job["job_id"])
 	var second_id := "BOT_LOCAL_B_%s" % str(job["job_id"])
 	var players: Array[String] = [first_id, second_id]
@@ -3029,6 +3102,7 @@ func _on_local_bot_work_assigned(job: Dictionary) -> void:
 		"poll": poll,
 		"session": session,
 		"continuous": continuous,
+		"custom_bot_id": custom_bot_id,
 		"last_heartbeat_unix": int(Time.get_unix_time_from_system()),
 	}
 	if _watch_next_local_bot_match_pending:
@@ -3126,12 +3200,30 @@ func _on_local_bot_work_result(job_id: String, success: bool, message: String) -
 		var continuous_request := false
 		if not _pending_local_bot_match_modes.is_empty():
 			continuous_request = _pending_local_bot_match_modes.pop_front()
+		if not _custom_bot_ids_pending.is_empty():
+			_custom_bot_ids_pending.pop_front()
+		if not _host_bot_gauntlet_id.is_empty():
+			_host_bot_gauntlet_id = ""
+			_host_bot_gauntlet_remaining = 0
 		if continuous_request and _bot_match_hosting_enabled \
 				and lobby_client != null and lobby_client.is_authenticated():
 			_schedule_continuous_bot_match_retry()
 		_update_host_bot_match_button()
 		return
 	status_label.text = message if success else "Local bot match result was not accepted."
+	if not _host_bot_gauntlet_id.is_empty():
+		if success:
+			_host_bot_gauntlet_remaining -= 1
+			if _host_bot_gauntlet_remaining > 0:
+				_request_local_bot_match(false, _host_bot_gauntlet_id)
+			else:
+				_host_bot_gauntlet_id = ""
+				_host_bot_gauntlet_opponents.clear()
+				status_label.text = "Your bot completed its 10 match gauntlet."
+		else:
+			_host_bot_gauntlet_id = ""
+			_host_bot_gauntlet_remaining = 0
+			_host_bot_gauntlet_opponents.clear()
 	if not success and lobby_client != null:
 		lobby_client.cancel_bot_work(job_id)
 	_local_bot_match_submitting.erase(job_id)
@@ -3148,6 +3240,7 @@ func _stop_local_bot_match_worker() -> void:
 	if is_instance_valid(_bot_match_retry_timer):
 		_bot_match_retry_timer.stop()
 	_pending_local_bot_match_modes.clear()
+	_custom_bot_ids_pending.clear()
 	for match_id in _local_bot_match_submitting.keys():
 		if lobby_client != null:
 			lobby_client.cancel_bot_work(str(match_id))

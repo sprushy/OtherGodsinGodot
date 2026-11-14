@@ -56,6 +56,15 @@ static func build_command(bot, type: String, data: Dictionary) -> Dictionary:
 			command["target_uid"] = _best_reveal_target(bot, source, data.get("target_uids", []))
 		else:
 			command["target_uid"] = _best_uid(bot, data, "target_uids", type in HARMFUL_TARGET_PROMPTS)
+		if type == "sixth_sage_an_enlilda_impact" and source is SixthSageAnEnlilda:
+			var target: Card = bot.game_manager.get_card_by_uid(str(command.get("target_uid", "")))
+			if target != null:
+				var danger: int = bot._forecast_incoming_follower_loss()
+				var gain: int = bot._deck_pick_value(target, bot.bot_player.mana, danger)
+				var loss: int = bot._get_card_economic_value(source)
+				if not bot.game_manager.can_player_add_to_hand_now(bot.bot_player) \
+						or gain + bot._follower_safety_gain(danger, {"removed": [source]}) <= loss:
+					command["target_uid"] = ""
 		return command
 	match type:
 		"blessed_knights_ward":
@@ -281,6 +290,7 @@ static func _select_uids(bot, data: Dictionary, limit: int, lowest: bool = false
 static func _ranked_uids(bot, data: Dictionary, key: String, harmful: bool, lowest: bool = false) -> Array[String]:
 	var ranked: Array[Dictionary] = []
 	var seen := {}
+	var danger := -1
 	for raw_uid in data.get(key, []):
 		var target_uid := str(raw_uid).strip_edges()
 		if target_uid.is_empty() or seen.has(target_uid):
@@ -289,18 +299,24 @@ static func _ranked_uids(bot, data: Dictionary, key: String, harmful: bool, lowe
 		var card: Card = bot.game_manager.get_card_by_uid(target_uid)
 		var score := 0
 		if card != null:
-			score = Strategy.value(bot, card)
+			if card.current_zone == bot.bot_player.deck_zone:
+				if danger < 0:
+					danger = bot._forecast_incoming_follower_loss()
+				score = bot._deck_pick_value(card, bot.bot_player.mana, danger)
+			else:
+				score = Strategy.value(bot, card)
 			if harmful and card.get_controller() == bot.bot_player:
 				score = -score
 			elif not harmful and card.get_controller() != bot.bot_player:
 				score = -score
 		ranked.append({"uid": target_uid, "score": -score if lowest else score})
-	# Stable ties preserve the order offered by the authority.
+	# Use the UID as a tie-breaker independent of the offered order.
 	var result: Array[String] = []
 	while not ranked.is_empty():
 		var best_index := 0
 		for index in range(1, ranked.size()):
-			if int(ranked[index]["score"]) > int(ranked[best_index]["score"]):
+			if int(ranked[index]["score"]) > int(ranked[best_index]["score"]) \
+					or (int(ranked[index]["score"]) == int(ranked[best_index]["score"]) and str(ranked[index]["uid"]) < str(ranked[best_index]["uid"])):
 				best_index = index
 		result.append(str(ranked[best_index]["uid"]))
 		ranked.remove_at(best_index)

@@ -125,7 +125,7 @@ func resolve_high_seat_choice(game_manager: GameManager, chosen_card: Card) -> S
 			continue
 		shelved_cards.append(card)
 
-	deck_owner.deck_zone.cards.insert(0, chosen_card)
+	deck_owner.deck_zone.prime_card(chosen_card, deck_owner == card_owner)
 	for card in shelved_cards:
 		deck_owner.deck_zone.cards.append(card)
 

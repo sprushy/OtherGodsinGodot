@@ -103,7 +103,7 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 		return
 
 	target.card_owner = controller
-	controller.deck_zone.cards.shuffle()
+	controller.deck_zone.shuffle_deck()
 	_emit_visual_state_changed()
 	game_manager.note_player_feedback(
 		"%s removes %d tactic counters and adds %s to %s's hand." % [

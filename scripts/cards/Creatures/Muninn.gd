@@ -42,8 +42,7 @@ func resolve_perish_prime_choice(game_manager: GameManager, chosen_charm: Card =
 	if valid_charms.is_empty():
 		return "%s perished, but found no charm to prime." % card_name
 	var resolved_charm := chosen_charm if chosen_charm != null and chosen_charm in valid_charms else valid_charms[0]
-	card_owner.deck_zone.cards.erase(resolved_charm)
-	card_owner.deck_zone.cards.insert(0, resolved_charm)
+	card_owner.deck_zone.prime_card(resolved_charm)
 	return "%s perished and primed %s." % [card_name, resolved_charm.card_name]
 
 func get_valid_charm_targets() -> Array[Card]:

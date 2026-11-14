@@ -44,7 +44,7 @@ func activate(game_manager: GameManager, chosen_card: Card = null) -> void:
 	if not spend_activation_mana(ACTIVATION_COST, game_manager):
 		return
 	card_owner.deck_zone.cards.erase(chosen_card)
-	card_owner.deck_zone.cards.shuffle()
+	card_owner.deck_zone.shuffle_deck()
 	stored_cards.append(chosen_card)
 	turns_until_return = RETURN_DELAY_TURNS
 	_emit_visual_state_changed()
@@ -68,7 +68,7 @@ func on_deck_shuffled() -> void:
 	for stored_card in stored_cards:
 		card_owner.deck_zone.cards.append(stored_card)
 	stored_cards.clear()
-	card_owner.deck_zone.cards.shuffle()
+	card_owner.deck_zone.shuffle_deck()
 	turns_until_return = -1
 	_emit_visual_state_changed()
 	print(card_name + ": Stored cards were shuffled back into the deck.")
@@ -79,7 +79,7 @@ func _return_stored_cards_to_top_of_deck(game_manager: GameManager = null) -> vo
 	var primed_names: Array[String] = []
 	for i in range(stored_cards.size() - 1, -1, -1):
 		primed_names.append(stored_cards[i].card_name)
-		card_owner.deck_zone.cards.insert(0, stored_cards[i])
+		card_owner.deck_zone.prime_card(stored_cards[i])
 	print(card_name + ": " + str(stored_cards.size()) + " stored card(s) placed on top of the deck.")
 	if game_manager != null:
 		var primed_label := ", ".join(primed_names)

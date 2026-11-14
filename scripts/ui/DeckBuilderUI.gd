@@ -125,6 +125,7 @@ var _submit_bot_button: Button
 var _bot_submission_overlay: Control
 var _bot_submission_status: Label
 var _bot_submission_button: Button
+var _bot_strategy_report_button: Button
 var _search_edit:      LineEdit
 var _tiamat_panel:     PanelContainer
 var _tiamat_hint_lbl:  Label
@@ -273,6 +274,9 @@ func configure_online_sync(lobby_client) -> void:
 	if _online_lobby_client != null and _online_lobby_client.has_signal("bot_proposal_result") \
 			and not _online_lobby_client.bot_proposal_result.is_connected(_on_bot_proposal_result):
 		_online_lobby_client.bot_proposal_result.connect(_on_bot_proposal_result)
+	if _online_lobby_client != null and _online_lobby_client.has_signal("bot_deck_submission_result") \
+			and not _online_lobby_client.bot_deck_submission_result.is_connected(_on_bot_deck_submission_result):
+		_online_lobby_client.bot_deck_submission_result.connect(_on_bot_deck_submission_result)
 
 func configure_account_decks(decks: Array, use_remote: bool = false, preferred_deck_id: String = "") -> bool:
 	# Change-detection gate: identical account_deck_list responses (the common
@@ -3342,7 +3346,7 @@ func _open_bot_submission() -> void:
 	title.add_theme_font_size_override("font_size", 22)
 	content.add_child(title)
 	var instructions := Label.new()
-	instructions.text = "Suggest how a future bot should play this deck. Your strategy, deck list, and import code will be submitted to the Other Gods team."
+	instructions.text = "Submit this created bot directly to the community bot pool. Strategy suggestions are a separate report and do not submit the bot."
 	instructions.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	content.add_child(instructions)
 	var preview := TextEdit.new()
@@ -3355,6 +3359,7 @@ func _open_bot_submission() -> void:
 	strategy.placeholder_text = "Describe the game plan, key combos, and when the bot should use them."
 	strategy.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
 	strategy.custom_minimum_size.y = 132
+	strategy.hide()
 	content.add_child(strategy)
 
 	_bot_submission_status = Label.new()
@@ -3369,27 +3374,45 @@ func _open_bot_submission() -> void:
 	close_button.pressed.connect(_close_bot_submission)
 	actions.add_child(close_button)
 	_bot_submission_button = Button.new()
-	_bot_submission_button.text = "Submit Suggestion"
-	_bot_submission_button.disabled = true
+	_bot_submission_button.text = "Submit Bot to Pool"
 	_bot_submission_button.pressed.connect(func() -> void:
 		if _online_lobby_client == null or not _online_lobby_client.is_authenticated():
-			_set_bot_submission_status("Connect to the lobby and sign in before submitting a bot suggestion.")
+			_set_bot_submission_status("Connect to the lobby and sign in before submitting a bot.")
 			return
 		_bot_submission_button.disabled = true
 		_bot_submission_button.text = "Submitting..."
-		_set_bot_submission_status("Submitting suggestion...")
-		_online_lobby_client.submit_bot_proposal(
-			strategy.text.strip_edges(), deck_list, _encode_deck_share_code(deck)
-		)
+		_set_bot_submission_status("Submitting bot...")
+		_online_lobby_client.submit_bot_deck(deck)
 	)
 	actions.add_child(_bot_submission_button)
-	strategy.text_changed.connect(func() -> void:
-		_bot_submission_button.disabled = strategy.text.strip_edges().is_empty()
-		_bot_submission_button.text = "Submit Suggestion"
-		_bot_submission_status.hide()
+	_bot_strategy_report_button = Button.new()
+	_bot_strategy_report_button.text = "Report Bot Strategy"
+	_bot_strategy_report_button.pressed.connect(func() -> void:
+		strategy.show()
+		_bot_strategy_report_button.hide()
+		_bot_submission_button.hide()
+		_set_bot_submission_status("Send the team a separate strategy report for this deck.")
+		strategy.grab_focus()
 	)
+	actions.add_child(_bot_strategy_report_button)
+	var send_report_button := Button.new()
+	send_report_button.text = "Send Strategy Report"
+	send_report_button.hide()
+	send_report_button.pressed.connect(func() -> void:
+		if _online_lobby_client == null or not _online_lobby_client.is_authenticated():
+			_set_bot_submission_status("Connect to the lobby and sign in before sending a strategy report.")
+			return
+		if strategy.text.strip_edges().is_empty():
+			_set_bot_submission_status("Describe the strategy before sending the report.")
+			return
+		send_report_button.disabled = true
+		send_report_button.text = "Sending..."
+		_online_lobby_client.submit_bot_proposal(strategy.text.strip_edges(), deck_list, _encode_deck_share_code(deck))
+	)
+	actions.add_child(send_report_button)
+	_bot_strategy_report_button.pressed.connect(func() -> void: send_report_button.show())
 	_apply_hover_to_all_buttons(overlay)
-	strategy.grab_focus()
+	_bot_submission_button.grab_focus()
 
 func _close_bot_submission() -> bool:
 	if not is_instance_valid(_bot_submission_overlay):
@@ -3408,9 +3431,12 @@ func _set_bot_submission_status(message: String) -> void:
 
 func _on_bot_proposal_result(success: bool, message: String) -> void:
 	_set_bot_submission_status(message)
+
+func _on_bot_deck_submission_result(success: bool, message: String, _bot: Dictionary) -> void:
+	_set_bot_submission_status(message)
 	if is_instance_valid(_bot_submission_button):
 		_bot_submission_button.disabled = success
-		_bot_submission_button.text = "Submitted" if success else "Submit Suggestion"
+		_bot_submission_button.text = "Bot Submitted" if success else "Submit Bot to Pool"
 
 func _format_bot_submission_deck(deck: Dictionary) -> String:
 	var lines := PackedStringArray([str(deck["name"])])

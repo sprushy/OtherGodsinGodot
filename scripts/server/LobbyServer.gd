@@ -14,6 +14,7 @@ const PasswordRecoveryMailerScript = preload("res://scripts/server/PasswordRecov
 const DeckStoreScript = preload("res://scripts/server/DeckStore.gd")
 const FriendStoreScript = preload("res://scripts/server/FriendStore.gd")
 const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
+const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
 const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
 const PracticeAutofillDeckFactoryScript = preload("res://scripts/server/PracticeAutofillDeckFactory.gd")
 const RankedBotDeckPoolScript = preload("res://scripts/server/RankedBotDeckPool.gd")
@@ -371,11 +372,15 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 				page["activities"] = _get_recent_match_activity_notifications()
 				_send_to_peer(peer_id, LobbyProtocolScript.BOT_MATCH_HISTORY, page)
 		LobbyProtocolScript.REQUEST_BOT_WORK:
-			_handle_request_bot_work(peer_id)
+			_handle_request_bot_work(peer_id, payload)
 		LobbyProtocolScript.SUBMIT_ISSUE_REPORT:
 			_handle_submit_issue_report(peer_id, payload)
 		LobbyProtocolScript.SUBMIT_BOT_PROPOSAL:
 			_handle_submit_bot_proposal(peer_id, payload)
+		LobbyProtocolScript.SUBMIT_BOT_DECK:
+			_handle_submit_bot_deck(peer_id, payload)
+		LobbyProtocolScript.REQUEST_MY_BOTS:
+			_handle_request_my_bots(peer_id)
 		LobbyProtocolScript.REPORT_BOT_WORK_STARTED:
 			_handle_report_bot_work_started(peer_id, payload)
 		LobbyProtocolScript.CANCEL_BOT_WORK:
@@ -1005,11 +1010,14 @@ func _handle_set_rank_badge(peer_id: int, payload: Dictionary) -> void:
 	if success:
 		_handle_request_profile_summary(peer_id)
 
-func _handle_request_bot_work(peer_id: int) -> void:
+func _handle_request_bot_work(peer_id: int, payload: Dictionary = {}) -> void:
 	var session := _get_session_for_peer(peer_id)
 	if session.is_empty() or str(session.get("account_id", "")).is_empty():
 		return
 	var busy := {}
+	var excluded_list_ids: Array = payload.get("excluded_list_ids", [])
+	for list_id in excluded_list_ids:
+		busy[str(list_id)] = true
 	var account_job_count := 0
 	for job: Dictionary in _client_bot_jobs.values():
 		if int(job.get("expires_unix", 0)) > Time.get_unix_time_from_system():
@@ -1025,9 +1033,24 @@ func _handle_request_bot_work(peer_id: int) -> void:
 		})
 		return
 	_refresh_ranked_bot_deck_pool()
-	var pair := _ranked_bot_deck_pool.select_self_play_pair(busy, _bot_deck_rng)
-	var deck_a := _validate_server_bot_deck(pair[0]) if pair.size() == 2 else _build_fresh_bot_deck_submission()
-	var deck_b := _validate_server_bot_deck(pair[1]) if pair.size() == 2 else _build_fresh_bot_deck_submission()
+	var requested_bot_id := str(payload.get("bot_id", "")).strip_edges()
+	var deck_a: Dictionary
+	var deck_b: Dictionary
+	if not requested_bot_id.is_empty():
+		busy[requested_bot_id] = true
+		var owned_bot := _find_community_bot(str(session["account_id"]), requested_bot_id)
+		if owned_bot.is_empty():
+			_send_to_peer(peer_id, LobbyProtocolScript.BOT_WORK_RESULT, {
+				"job_id": "", "success": false, "message": "That submitted bot is unavailable.",
+			})
+			return
+		deck_a = owned_bot
+		var available := _ranked_bot_deck_pool.select_deck(busy, _bot_deck_rng, 0)
+		deck_b = _validate_server_bot_deck(available) if not available.is_empty() else _build_fresh_bot_deck_submission()
+	else:
+		var pair := _ranked_bot_deck_pool.select_self_play_pair(busy, _bot_deck_rng)
+		deck_a = _validate_server_bot_deck(pair[0]) if pair.size() == 2 else _build_fresh_bot_deck_submission()
+		deck_b = _validate_server_bot_deck(pair[1]) if pair.size() == 2 else _build_fresh_bot_deck_submission()
 	if deck_a.is_empty() or deck_b.is_empty():
 		_send_to_peer(peer_id, LobbyProtocolScript.BOT_WORK_RESULT, {
 			"job_id": "",
@@ -1052,6 +1075,21 @@ func _handle_request_bot_work(peer_id: int) -> void:
 		"job_id": job_id,
 		"decks": [deck_a, deck_b],
 	})
+
+func _find_community_bot(account_id: String, bot_id: String) -> Dictionary:
+	if account_id.is_empty() or bot_id.is_empty() or bot_id.contains("/") or bot_id.contains("\\"):
+		return {}
+	var bot_path := ServerPathsScript.get_server_data_file_path("community_bot_pool").path_join("%s.json" % bot_id)
+	var bot := JsonStoreScript.load_dictionary(bot_path, {}, "CommunityBotPool")
+	if str(bot.get("account_id", "")) != account_id:
+		return {}
+	bot["name"] = str(bot.get("deck_name", "Community Bot"))
+	bot["bot_list_id"] = bot_id
+	bot["list_id"] = bot_id
+	bot["bot_god_name"] = str(bot.get("god_name", ""))
+	bot["bot_stars"] = 0
+	bot["stars"] = 0
+	return bot
 
 func _handle_submit_issue_report(peer_id: int, payload: Dictionary) -> void:
 	var session := _get_session_for_peer(peer_id)
@@ -1178,6 +1216,110 @@ func _handle_submit_bot_proposal(peer_id: int, payload: Dictionary) -> void:
 		"message": "Bot suggestion submitted. Thank you.",
 	})
 
+func _handle_submit_bot_deck(peer_id: int, payload: Dictionary) -> void:
+	var session := _get_session_for_peer(peer_id)
+	var account_id := str(session.get("account_id", ""))
+	var deck_variant = payload.get("deck", {})
+	if account_id.is_empty() or not (deck_variant is Dictionary):
+		_send_to_peer(peer_id, LobbyProtocolScript.BOT_DECK_SUBMISSION_RESULT, {
+			"success": false, "message": "Sign in and provide a bot deck before submitting.", "bot": {},
+		})
+		return
+	var deck: Dictionary = deck_variant
+	var cards_variant = deck.get("cards", {})
+	var special_variant = deck.get("special_setup", {})
+	var reinforcements_variant = deck.get("reinforcements", {})
+	if not cards_variant is Dictionary or not special_variant is Dictionary or not reinforcements_variant is Dictionary:
+		_send_to_peer(peer_id, LobbyProtocolScript.BOT_DECK_SUBMISSION_RESULT, {
+			"success": false, "message": "The submitted bot deck has invalid card data.", "bot": {},
+		})
+		return
+	var cards: Dictionary = cards_variant
+	var special_setup: Dictionary = special_variant
+	var reinforcements: Dictionary = reinforcements_variant
+	var validation: Dictionary = DeckValidatorScript.new().validate_deck(cards, special_setup, reinforcements)
+	if not bool(validation.get("is_valid", false)):
+		_send_to_peer(peer_id, LobbyProtocolScript.BOT_DECK_SUBMISSION_RESULT, {
+			"success": false,
+			"message": str(validation.get("error", "This deck is not legal for bot matches.")),
+			"bot": {},
+		})
+		return
+	var bot_id := "%s_%s" % [account_id.sha256_text().substr(0, 12), _generate_id(12)]
+	var bot_name := str(deck.get("name", deck.get("deck_name", ""))).strip_edges().substr(0, 48)
+	if bot_name.is_empty():
+		bot_name = "Community Bot"
+	var owner_name := str(session.get("username", session.get("player_name", "Player"))).strip_edges()
+	if owner_name.is_empty():
+		owner_name = "Player"
+	var god_name := str(deck.get("god_name", deck.get("god", ""))).strip_edges()
+	if god_name.is_empty():
+		var catalog_cards := CardCatalogScript.make_all_cards()
+		for card_name in (validation.get("cards", {}) as Dictionary).keys():
+			for card in catalog_cards:
+				if card != null and bool(card.is_god) and str(card.card_name) == str(card_name):
+					god_name = str(card.card_name)
+					break
+			if not god_name.is_empty():
+				break
+	var bot := {
+		"bot_id": bot_id,
+		"account_id": account_id,
+		"owner_name": owner_name,
+		"deck_name": "%s's %s" % [owner_name, bot_name],
+		"cards": validation.get("cards", {}),
+		"special_setup": validation.get("special_setup", special_setup),
+		"reinforcements": validation.get("reinforcements", reinforcements),
+		"god_name": god_name,
+		"submitted_unix": int(Time.get_unix_time_from_system()),
+	}
+	var bot_dir := ServerPathsScript.get_server_data_file_path("community_bot_pool")
+	DirAccess.make_dir_recursive_absolute(bot_dir)
+	var file := FileAccess.open(bot_dir.path_join("%s.json" % bot_id), FileAccess.WRITE)
+	if file == null:
+		_send_to_peer(peer_id, LobbyProtocolScript.BOT_DECK_SUBMISSION_RESULT, {
+			"success": false, "message": "The server could not save this bot.", "bot": {},
+		})
+		return
+	file.store_string(JSON.stringify(bot, "\t"))
+	file.flush()
+	file.close()
+	_send_to_peer(peer_id, LobbyProtocolScript.BOT_DECK_SUBMISSION_RESULT, {
+		"success": true, "message": "Bot submitted to the community pool.",
+		"bot": _public_bot_entry(bot),
+	})
+
+func _handle_request_my_bots(peer_id: int) -> void:
+	var session := _get_session_for_peer(peer_id)
+	var account_id := str(session.get("account_id", ""))
+	var bots: Array[Dictionary] = []
+	if not account_id.is_empty():
+		var bot_dir := ServerPathsScript.get_server_data_file_path("community_bot_pool")
+		var directory := DirAccess.open(bot_dir)
+		if directory != null:
+			directory.list_dir_begin()
+			var file_name := directory.get_next()
+			while not file_name.is_empty():
+				if not directory.current_is_dir() and file_name.ends_with(".json"):
+					var bot := JsonStoreScript.load_dictionary(bot_dir.path_join(file_name), {}, "CommunityBotPool")
+					if str(bot.get("account_id", "")) == account_id:
+						var entry := _public_bot_entry(bot)
+						entry.merge({"cards": bot.get("cards", {}), "special_setup": bot.get("special_setup", {}),
+							"reinforcements": bot.get("reinforcements", {}), "bot_list_id": str(bot.get("bot_id", "")),
+							"bot_god_name": str(bot.get("god_name", "")), "bot_stars": 0}, true)
+						bots.append(entry)
+				file_name = directory.get_next()
+			directory.list_dir_end()
+	_send_to_peer(peer_id, LobbyProtocolScript.MY_BOTS, {"bots": bots})
+
+func _public_bot_entry(bot: Dictionary) -> Dictionary:
+	return {
+		"bot_id": str(bot.get("bot_id", "")),
+		"deck_name": str(bot.get("deck_name", "Bot")),
+		"god_name": str(bot.get("god_name", "")),
+		"submitted_unix": int(bot.get("submitted_unix", 0)),
+	}
+
 func _handle_report_bot_work_started(peer_id: int, payload: Dictionary) -> void:
 	var session := _get_session_for_peer(peer_id)
 	var job_id := str(payload.get("job_id", "")).strip_edges()
@@ -1278,10 +1420,10 @@ func _broadcast_bot_match_history() -> void:
 			_send_to_peer(peer_id, LobbyProtocolScript.BOT_MATCH_HISTORY, page)
 
 func _get_recent_match_activity_notifications() -> Array[Dictionary]:
+	_refresh_ranked_bot_deck_pool()
 	var activities: Array[Dictionary] = match_history_store.get_recent_match_activities(12)
 	if activities.is_empty():
 		return activities
-	_refresh_ranked_bot_deck_pool()
 	var usernames: Dictionary = account_store.get_ladder_usernames()
 	var ladders := {
 		1: match_history_store.get_human_ladder(usernames, 1),
@@ -1315,7 +1457,7 @@ func _get_recent_match_activity_notifications() -> Array[Dictionary]:
 				current_place = index
 				current_points = int(ladder[index].get("points", -1))
 				break
-		if current_place < 0 or current_place >= 20 or current_points != after_points:
+		if current_place < 0 or current_place >= 100 or current_points != after_points:
 			continue
 		var ladder_before := ladder.duplicate(true)
 		for row: Dictionary in ladder_before:
@@ -1335,16 +1477,16 @@ func _get_recent_match_activity_notifications() -> Array[Dictionary]:
 				previous_place = index
 				break
 		var achievement := str(activity.get("achievement", ""))
-		var top_twenty_update := ""
-		if previous_place >= 20:
-			top_twenty_update = "entered the top 20"
-		elif current_place != previous_place:
-			top_twenty_update = "moved up to rank %d" % (current_place + 1) if current_place < previous_place \
-				else "is now rank %d" % (current_place + 1)
-		if current_place < 20 and (not top_twenty_update.is_empty() or not achievement.is_empty()):
-			if not top_twenty_update.is_empty():
+		var rank_update := ""
+		if current_place < 100 and previous_place >= 100:
+			rank_update = "entered the top 100"
+		for band in range(90, 0, -10):
+			if previous_place >= band and current_place < band:
+				rank_update = (rank_update + " and " if not rank_update.is_empty() else "") + "entered the top %d" % band
+		if current_place < 100 and (not rank_update.is_empty() or not achievement.is_empty()):
+			if not rank_update.is_empty():
 				achievement += " and " if not achievement.is_empty() else ""
-				achievement += top_twenty_update
+				achievement += rank_update
 			if not achievement.contains("rank %d" % (current_place + 1)):
 				achievement += " and " if not achievement.is_empty() else ""
 				achievement += "is rank %d" % (current_place + 1)
@@ -1449,7 +1591,19 @@ func _build_ladder_page(request: Dictionary) -> Dictionary:
 					"portrait": portrait,
 					"wins": int(bot.get("wins", 0)), "losses": int(bot.get("losses", 0)), "draws": int(bot.get("draws", 0))})
 	ladder.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-		return a["name"].nocasecmp_to(b["name"]) < 0 if a["points"] == b["points"] else int(a["points"]) > int(b["points"])
+		if int(a["points"]) != int(b["points"]):
+			return int(a["points"]) > int(b["points"])
+		var a_wins := int(a.get("wins", 0))
+		var b_wins := int(b.get("wins", 0))
+		var a_losses := int(a.get("losses", 0))
+		var b_losses := int(b.get("losses", 0))
+		var a_games := a_wins + a_losses
+		var b_games := b_wins + b_losses
+		var a_record_score := a_wins * b_games
+		var b_record_score := b_wins * a_games
+		if a_record_score != b_record_score:
+			return a_record_score > b_record_score
+		return a["name"].nocasecmp_to(b["name"]) < 0
 	)
 	for index in range(ladder.size()):
 		ladder[index]["ladder_position"] = index + 1
@@ -1478,6 +1632,8 @@ func _public_ladder_rows(rows: Array[Dictionary]) -> Array[Dictionary]:
 	for row in rows:
 		var account_id := str(row.get("account_id", ""))
 		row.erase("account_id")
+		row.erase("wins")
+		row.erase("losses")
 		if account_id.is_empty():
 			continue
 		var portrait := _get_public_rank_portrait(account_id, row["rank"])

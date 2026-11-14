@@ -111,8 +111,7 @@ func resolve_rally_choice(game_manager: GameManager, chosen_card: Card = null, s
 			card.card_owner = controller
 			continue
 		if card.current_zone == controller.deck_zone:
-			controller.deck_zone.cards.erase(card)
-			controller.deck_zone.cards.append(card)
+			controller.deck_zone.shelve_deck_card(card)
 		shelved_cards.append(card)
 
 	var summon_text := ""

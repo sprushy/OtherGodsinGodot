@@ -55,6 +55,8 @@ signal account_settings_updated(account: Dictionary)
 signal password_reset_result(completed: bool, success: bool, message: String)
 signal issue_report_result(success: bool, message: String)
 signal bot_proposal_result(success: bool, message: String)
+signal bot_deck_submission_result(success: bool, message: String, bot: Dictionary)
+signal my_bots_received(bots: Array)
 signal connection_failed(message: String)
 signal disconnected_from_lobby()
 signal match_host_viability_requested()
@@ -505,9 +507,9 @@ func request_bot_match_history(before_match_id: String = "") -> void:
 	if is_authenticated() and supports_bot_ladder:
 		_send_request(LobbyProtocolScript.REQUEST_BOT_MATCH_HISTORY, {"before_match_id": before_match_id})
 
-func request_bot_work() -> void:
+func request_bot_work(bot_id: String = "", excluded_list_ids: Array = []) -> void:
 	if is_authenticated():
-		_send_request(LobbyProtocolScript.REQUEST_BOT_WORK)
+		_send_request(LobbyProtocolScript.REQUEST_BOT_WORK, {"bot_id": bot_id, "excluded_list_ids": excluded_list_ids})
 
 func report_bot_work_started(job_id: String) -> void:
 	if is_authenticated():
@@ -548,6 +550,16 @@ func submit_bot_proposal(strategy: String, deck_text: String, deck_code: String)
 		"client_version": AppReleaseInfoScript.get_display_version(),
 		"platform": OS.get_name(),
 	})
+
+func submit_bot_deck(deck: Dictionary) -> void:
+	if not is_authenticated():
+		bot_deck_submission_result.emit(false, "Connect to the lobby and sign in before submitting a bot.", {})
+		return
+	_send_request(LobbyProtocolScript.SUBMIT_BOT_DECK, {"deck": deck})
+
+func request_my_bots() -> void:
+	if is_authenticated():
+		_send_request(LobbyProtocolScript.REQUEST_MY_BOTS)
 
 func request_friends() -> void:
 	_send_request(LobbyProtocolScript.REQUEST_FRIENDS)
@@ -740,6 +752,10 @@ func lobby_event(message: Dictionary) -> void:
 			issue_report_result.emit(bool(payload.get("success", false)), str(payload.get("message", "")))
 		LobbyProtocolScript.BOT_PROPOSAL_RESULT:
 			bot_proposal_result.emit(bool(payload.get("success", false)), str(payload.get("message", "")))
+		LobbyProtocolScript.BOT_DECK_SUBMISSION_RESULT:
+			bot_deck_submission_result.emit(bool(payload.get("success", false)), str(payload.get("message", "")), payload.get("bot", {}))
+		LobbyProtocolScript.MY_BOTS:
+			my_bots_received.emit(payload.get("bots", []))
 		LobbyProtocolScript.FRIENDS_STATE:
 			friends_state_received.emit(payload)
 		LobbyProtocolScript.ACCOUNT_SETTINGS_UPDATED:

@@ -100,7 +100,7 @@ func resolve_foresight_choice(game_manager: GameManager, chosen_card: Card = nul
 			continue
 		shelved_cards.append(card)
 
-	card_owner.deck_zone.cards.insert(0, primed_card)
+	card_owner.deck_zone.prime_card(primed_card)
 	for card in shelved_cards:
 		card_owner.deck_zone.cards.append(card)
 

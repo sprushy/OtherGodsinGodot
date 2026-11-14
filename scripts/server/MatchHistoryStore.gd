@@ -263,6 +263,7 @@ func get_bot_deck_results() -> Array[Dictionary]:
 			result["match_id"] = match_id
 			if entry["bot_deck_results"].size() > 1:
 				result["match_id"] = "%s_%d" % [match_id, int(result["player_index"])]
+			result["bot_eliminated"] = false
 			_bot_results.append(result)
 	return _bot_results
 
@@ -290,6 +291,10 @@ func get_recent_bot_matches(limit: int = 50, before_match_id: String = "") -> Di
 func get_recent_match_activities(limit: int = 12) -> Array[Dictionary]:
 	_ensure_loaded()
 	_load_dedicated_results()
+	var eliminated_bot_matches: Dictionary = {}
+	for bot_result: Dictionary in get_bot_deck_results():
+		if bool(bot_result.get("bot_eliminated", false)):
+			eliminated_bot_matches[str(bot_result.get("match_id", ""))] = true
 	var activities: Array[Dictionary] = []
 	var match_ids := _get_sorted_match_ids(_matches_by_id.keys())
 	for index in range(match_ids.size() - 1, -1, -1):
@@ -322,10 +327,17 @@ func get_recent_match_activities(limit: int = 12) -> Array[Dictionary]:
 			"winner_after_points": -1,
 		}
 		var winner_bot_result: Dictionary = {}
+		var loser_bot_result: Dictionary = {}
 		for bot_result: Dictionary in entry.get("bot_deck_results", []):
 			if int(bot_result.get("player_index", -1)) == int(winner.get("player_index", -2)):
 				winner_bot_result = bot_result
-				break
+			elif int(bot_result.get("player_index", -1)) == int(loser.get("player_index", -2)):
+				loser_bot_result = bot_result
+		var loser_bot_match_id := "%s_%d" % [str(entry["match_id"]), int(loser.get("player_index", -1))] if entry.get("bot_deck_results", []).size() > 1 else str(entry["match_id"])
+		if not loser_bot_result.is_empty() and eliminated_bot_matches.has(loser_bot_match_id):
+			var eliminated_name := _bot_activity_name(loser_bot_result, loser_name)
+			var victor_name := _bot_activity_name(winner_bot_result, winner_name) if not winner_bot_result.is_empty() else winner_name
+			activity["message"] = "%s lost to %s and has been eliminated from the ladder" % [eliminated_name, victor_name]
 		if not winner_bot_result.is_empty():
 			var previous_bot_rank := RankedProgressionScript.summarize_bot_stars(int(winner.get("bot_stars", 0)))
 			var after_bot_rank := RankedProgressionScript.summarize_bot_stars(int(winner.get("bot_stars", 0)) + 1)
@@ -352,6 +364,10 @@ func _activity_player_name(player: Dictionary) -> String:
 		player_name = player_name.replace(": ", " ")
 	return player_name if not player_name.is_empty() else "Player"
 
+func _bot_activity_name(bot_result: Dictionary, fallback: String) -> String:
+	var god_name := str(bot_result.get("god_name", "")).strip_edges().get_slice(",", 0).strip_edges()
+	return god_name if not god_name.is_empty() else fallback
+
 func get_human_ladder(usernames: Dictionary, best_of: int) -> Array[Dictionary]:
 	_ensure_loaded()
 	_load_dedicated_results()
@@ -359,9 +375,31 @@ func get_human_ladder(usernames: Dictionary, best_of: int) -> Array[Dictionary]:
 	var players: Array[Dictionary] = []
 	for account_id in usernames:
 		var progress := _get_ranked_progress(account_id, best_of, season)
+		var record := _get_ranked_record(str(account_id), best_of)
 		players.append({"account_id": account_id, "name": usernames[account_id], "points": progress["points"],
-			"rank": progress["rank_name"], "stars": progress["stars"]})
+			"rank": progress["rank_name"], "stars": progress["stars"],
+			"wins": int(record["wins"]), "losses": int(record["losses"])})
 	return players
+
+func _get_ranked_record(account_id: String, best_of: int) -> Dictionary:
+	var record := {"wins": 0, "losses": 0}
+	for match_id in _get_sorted_match_ids(_ranked_history_ids_by_account_id.get(account_id, [])):
+		var entry: Dictionary = _matches_by_id.get(match_id, {})
+		if int(entry.get("best_of", 1)) != best_of:
+			continue
+		for raw_player_entry in entry.get("players", []):
+			if not (raw_player_entry is Dictionary):
+				continue
+			var player_entry: Dictionary = raw_player_entry as Dictionary
+			if str(player_entry.get("account_id", "")) != account_id:
+				continue
+			var result := str(player_entry.get("result", "")).strip_edges().to_lower()
+			if result == "win":
+				record["wins"] += 1
+			elif result == "loss":
+				record["losses"] += 1
+			break
+	return record
 
 func get_current_ranked_progress(account_id: String, best_of: int) -> Dictionary:
 	_ensure_loaded()

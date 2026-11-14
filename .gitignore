@@ -21,3 +21,4 @@ CLAUDE.md
 .codex_tmp/
 .zcode/
 tmp_orig_profile_store.txt
+.tmp-godot-appdata/

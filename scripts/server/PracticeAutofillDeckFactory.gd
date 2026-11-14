@@ -466,6 +466,10 @@ func _has_deckbuilding_requirements(card: Card, cards: Dictionary, god: GodCard)
 		return false
 	var name := card.card_name
 	match name:
+		"Robotic Footsoldier":
+			return _count_other_matching(cards, card, ["Machine"]) >= 2
+		"Isimud":
+			return _count_other_matching(cards, card, ["Divine Manifestation"]) >= 3
 		"Fourth Sage Enmegalamma":
 			return _count_other_matching(cards, card, ["Mer", "Sage"]) >= 3
 		"Beyla":

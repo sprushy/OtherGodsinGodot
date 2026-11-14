@@ -42,8 +42,7 @@ func resolve_perish_prime_choice(game_manager: GameManager, chosen_hex: Card = n
 	if valid_hexes.is_empty():
 		return "%s perished, but found no hex to prime." % card_name
 	var resolved_hex := chosen_hex if chosen_hex != null and chosen_hex in valid_hexes else valid_hexes[0]
-	card_owner.deck_zone.cards.erase(resolved_hex)
-	card_owner.deck_zone.cards.insert(0, resolved_hex)
+	card_owner.deck_zone.prime_card(resolved_hex)
 	return "%s perished and primed %s." % [card_name, resolved_hex.card_name]
 
 func get_valid_hex_targets() -> Array[Card]:

@@ -47,6 +47,8 @@ func refresh(results: Array[Dictionary]) -> void:
 		start = 0
 		_by_god.clear()
 	for index in range(start, results.size()):
+		results[index].erase("bot_eliminated")
+	for index in range(start, results.size()):
 		_apply_result(results[index])
 	_ensure_unique_deck_names()
 	_replayed_match_count = results.size()
@@ -286,6 +288,7 @@ func _apply_result(result: Dictionary) -> void:
 			_update_record(challenger, outcome)
 			challenger["trial_matches"] += 1
 			if _should_retire_early(challenger):
+				result["bot_eliminated"] = true
 				_retire_list(pool, challenger)
 				return
 			if int(challenger["trial_matches"]) == TRIAL_MATCHES:
@@ -295,6 +298,7 @@ func _apply_result(result: Dictionary) -> void:
 			if list["list_id"] == list_id:
 				_update_record(list, outcome)
 				if _should_retire_early(list):
+					result["bot_eliminated"] = true
 					_retire_list(pool, list)
 				return
 		# A match already in flight can finish after its list was retired.
@@ -322,11 +326,13 @@ func _apply_result(result: Dictionary) -> void:
 		if list["fingerprint"] == fingerprint:
 			_update_record(list, outcome)
 			if _should_retire_early(list):
+				result["bot_eliminated"] = true
 				_retire_list(pool, list)
 			return
 	if challenger.get("fingerprint", "") == fingerprint:
 		_update_record(challenger, outcome)
 		if _should_retire_early(challenger):
+			result["bot_eliminated"] = true
 			_retire_list(pool, challenger)
 		return
 	for pending: Dictionary in pool["pending"]:
@@ -368,8 +374,7 @@ func _start_trial(pool: Dictionary, challenger: Dictionary) -> void:
 	var lists: Array = pool["lists"]
 	_name_list(challenger, lists)
 	var weakest: Dictionary = {}
-	# Record strength chooses the incumbent. Deck uniqueness only decides whether
-	# the challenger replaces this weakest list after its seven-match trial.
+	# Record strength chooses the incumbent after the challenger's seven-match trial.
 	for list: Dictionary in lists:
 		if weakest.is_empty() or _is_stronger(weakest, list):
 			weakest = list
@@ -431,14 +436,7 @@ func _resolve_trial(pool: Dictionary) -> void:
 			incumbent_index = i
 			break
 	var incumbent: Dictionary = lists[incumbent_index]
-	var other_lists := lists.duplicate()
-	other_lists.remove_at(incumbent_index)
-	var challenger_unique := _is_distinct(challenger, incumbent, other_lists)
-	var incumbent_unique := _is_distinct(incumbent, challenger, other_lists)
-	var replace := _is_stronger(challenger, incumbent)
-	if challenger_unique != incumbent_unique:
-		replace = challenger_unique
-	if replace:
+	if _is_stronger(challenger, incumbent):
 		lists[incumbent_index] = challenger
 	pool["quarantined_id"] = ""
 	pool["challenger"] = {}
@@ -453,37 +451,6 @@ func _is_stronger(first: Dictionary, second: Dictionary) -> bool:
 	if first_score != second_score:
 		return first_score > second_score
 	return int(first["stars"]) > int(second["stars"])
-
-func _is_distinct(list: Dictionary, rival: Dictionary, other_lists: Array) -> bool:
-	if not _is_over_75_percent_different(list, rival):
-		return false
-	for other: Dictionary in other_lists:
-		if other["list_id"] == list["list_id"]:
-			continue
-		if not _is_over_75_percent_different(list, other):
-			return false
-	return true
-
-func _is_over_75_percent_different(first: Dictionary, second: Dictionary) -> bool:
-	var first_cards := _card_counts(first)
-	var second_cards := _card_counts(second)
-	var first_total := 0
-	var second_total := 0
-	var shared := 0
-	for card in first_cards:
-		var count := int(first_cards[card])
-		first_total += count
-		shared += mini(count, int(second_cards.get(card, 0)))
-	for count in second_cards.values():
-		second_total += int(count)
-	return 4 * shared < maxi(first_total, second_total)
-
-func _card_counts(list: Dictionary) -> Dictionary:
-	var counts: Dictionary = list["cards"].duplicate()
-	counts.erase(list["god_name"])
-	for card in list["reinforcements"]:
-		counts[card] = int(counts.get(card, 0)) + int(list["reinforcements"][card])
-	return counts
 
 func _fingerprint(deck: Dictionary) -> String:
 	return JSON.stringify([deck["cards"], deck["reinforcements"], deck["special_setup"]]).sha256_text()

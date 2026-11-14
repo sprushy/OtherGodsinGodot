@@ -94,7 +94,7 @@ func resolve_no_conjure_home_targets() -> String:
 func _shuffle_deck(controller: Player) -> void:
 	if controller == null or controller.deck_zone == null:
 		return
-	controller.deck_zone.cards.shuffle()
+	controller.deck_zone.shuffle_deck()
 
 func _is_valid_ancient_dwelling_target(card: Card, controller: Player) -> bool:
 	return card != null \

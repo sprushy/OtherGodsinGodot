@@ -15,7 +15,7 @@ compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 [application]
 
 config/name="OtherGods"
-config/version="0.2.331"
+config/version="0.2.357"
 run/main_scene="res://scenes/main_3d.tscn"
 run/main_scene.dedicated_server="res://scenes/server/ServerRuntime.tscn"
 config/features=PackedStringArray("4.7", "Forward Plus")

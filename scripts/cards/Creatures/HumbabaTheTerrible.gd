@@ -94,7 +94,7 @@ func resolve_augury_reading(game_manager: GameManager, chosen_card: Card = null)
 			continue
 		shelved_cards.append(card)
 
-	opponent.deck_zone.cards.insert(0, primed_card)
+	opponent.deck_zone.prime_card(primed_card, false)
 	for card in shelved_cards:
 		opponent.deck_zone.cards.append(card)
 

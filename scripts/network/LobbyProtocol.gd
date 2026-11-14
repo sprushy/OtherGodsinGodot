@@ -47,6 +47,8 @@ const REQUEST_RECONNECT_LOBBY := "request_reconnect_lobby"
 const REPORT_HOST_VIABILITY := "report_host_viability"
 const SUBMIT_ISSUE_REPORT := "submit_issue_report"
 const SUBMIT_BOT_PROPOSAL := "submit_bot_proposal"
+const SUBMIT_BOT_DECK := "submit_bot_deck"
+const REQUEST_MY_BOTS := "request_my_bots"
 
 const HELLO_OK := "hello_ok"
 const ROOM_LIST := "room_list"
@@ -72,6 +74,8 @@ const PASSWORD_RESET_RESULT := "password_reset_result"
 const MATCH_HOST_VIABILITY_REQUEST := "match_host_viability_request"
 const ISSUE_REPORT_RESULT := "issue_report_result"
 const BOT_PROPOSAL_RESULT := "bot_proposal_result"
+const BOT_DECK_SUBMISSION_RESULT := "bot_deck_submission_result"
+const MY_BOTS := "my_bots"
 
 static func make_message(message_type: String, payload: Dictionary = {}) -> Dictionary:
 	return {
@@ -223,7 +227,18 @@ static func validate_request(message: Dictionary) -> String:
 			if not cursor is String or cursor.length() > 64:
 				return "Invalid bot match history cursor."
 		REQUEST_BOT_WORK:
+			var bot_id = payload.get("bot_id", "")
+			if not bot_id is String or bot_id.length() > 80:
+				return "Invalid community bot id."
+			var excluded_list_ids = payload.get("excluded_list_ids", [])
+			if not excluded_list_ids is Array or excluded_list_ids.size() > 10:
+				return "Invalid bot gauntlet exclusions."
+		REQUEST_MY_BOTS:
 			pass
+		SUBMIT_BOT_DECK:
+			var deck = payload.get("deck", {})
+			if not deck is Dictionary or JSON.stringify(deck).length() > 30000:
+				return "The submitted bot deck is invalid or too large."
 		REPORT_BOT_WORK_STARTED:
 			var started_job_id = payload.get("job_id", "")
 			if not started_job_id is String or started_job_id.is_empty() or started_job_id.length() > 64:

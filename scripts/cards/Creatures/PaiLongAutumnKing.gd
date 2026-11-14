@@ -105,7 +105,7 @@ func _weather_king_is_active() -> bool:
 func _shuffle_deck(controller: Player) -> void:
 	if controller == null or controller.deck_zone == null:
 		return
-	controller.deck_zone.cards.shuffle()
+	controller.deck_zone.shuffle_deck()
 
 func _is_valid_weather_target(card: Card, controller: Player) -> bool:
 	return card != null \

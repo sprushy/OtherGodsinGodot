@@ -53,6 +53,6 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 
 	player.lose_followers(FOLLOWER_COST, self)
 	player.deck_zone.cards.erase(target)
-	player.deck_zone.cards.shuffle()
-	player.deck_zone.cards.insert(0, target)
+	player.deck_zone.shuffle_deck()
+	player.deck_zone.prime_card(target)
 	print(card_name + ": Shuffled deck, moved " + target.card_name + " to the top.")

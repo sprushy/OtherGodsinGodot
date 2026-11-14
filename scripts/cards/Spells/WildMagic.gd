@@ -40,8 +40,7 @@ func resolve(game_manager: GameManager, _target = null) -> void:
 		if top_card.is_magical_card():
 			found_card = top_card
 			break
-		controller.deck_zone.cards.erase(top_card)
-		controller.deck_zone.cards.append(top_card)
+		controller.deck_zone.shelve_deck_card(top_card)
 		shelved_cards.append(top_card)
 
 	if found_card == null:

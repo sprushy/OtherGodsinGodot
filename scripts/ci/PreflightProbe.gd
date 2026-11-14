@@ -62,6 +62,7 @@ func run() -> bool:
 	_check_bot_power_followthrough(failures)
 	_check_bot_summon_and_intercept(failures)
 	_check_bot_main_phase_combat_order(failures)
+	_check_bot_defender_target_value(failures)
 	_check_bot_hermes_speed(failures)
 	_check_bot_combat_buff_value(failures)
 	_check_bot_jiang_counterstroke(failures)
@@ -1045,6 +1046,144 @@ func _check_bot_main_phase_combat_order(failures: PackedStringArray) -> void:
 			failures.append("Bot did not follow Fall of the Mighty with a summon ready to attack")
 	bot.detach()
 
+	game = GameManager.new()
+	player = Player.new()
+	opponent = Player.new()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	player.mana = 5
+	manager = MatchManager.new(game)
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	blocker = CreatureCard.new()
+	blocker.card_owner = opponent
+	blocker.strength = 22
+	blocker.resilience = 25
+	blocker.creature_mode = Card.CreatureMode.AGGRESSIVE
+	opponent.frontline_zones[0].add_card(blocker)
+	fall = FallOfTheMighty.new()
+	fall.card_owner = player
+	player.hand_zone.add_card(fall)
+	var unbound_score := BotCardStrategyScript.effect_score(bot, fall)
+	var unbound_combat_value := bot._get_card_economic_value(blocker)
+	blocker.add_status_effect("cannot_attack", "Preflight")
+	var attack_locked_score := BotCardStrategyScript.effect_score(bot, fall)
+	if bot._get_card_economic_value(blocker) >= unbound_combat_value:
+		failures.append("Bot combat economy ignored an attack-locked creature")
+	blocker.add_status_effect("cannot_intercept", "Preflight")
+	blocker.add_status_effect(Card.ABILITY_NEGATED_STATUS, "Preflight")
+	if BotCardStrategyScript.effect_score(bot, fall) >= attack_locked_score:
+		failures.append("Bot ignored additional interception and ability debilitation")
+	blocker.remove_status_effects_by_name("cannot_attack")
+	blocker.remove_status_effects_by_name("cannot_intercept")
+	blocker.remove_status_effects_by_name(Card.ABILITY_NEGATED_STATUS)
+	var dromi := Dromi.new()
+	dromi.card_owner = player
+	player.reserve_zones[0].add_card(dromi)
+	dromi.attached_target = blocker
+	dromi.on_attached(game, blocker)
+	var bound_score := BotCardStrategyScript.effect_score(bot, fall)
+	if unbound_score <= 0 or attack_locked_score >= unbound_score or bound_score >= attack_locked_score:
+		failures.append("Bot did not price generic attack loss and Dromi's additional follower drain separately")
+	var bound_plan := bot._get_best_strategy_action([], {}, 0)
+	if str(bound_plan.get("command", {}).get("spell_uid", "")) == fall.uid:
+		failures.append("Bot spent Fall of the Mighty on its own Dromi-bound creature without a follow-up")
+	blocker.remove_status_effects_from_source_card(dromi)
+	dromi.attached_target = null
+	blocker.add_status_effect("sleep", "Preflight")
+	if BotCardStrategyScript.effect_score(bot, fall) >= unbound_score:
+		failures.append("Bot ignored sleep when valuing removal of a debilitated creature")
+	blocker.remove_status_effects_by_name("sleep")
+	blocker.add_buff("Preflight Weakness", -10, -5, -2)
+	if BotCardStrategyScript.effect_score(bot, fall) >= unbound_score:
+		failures.append("Bot ignored weakened stats when valuing removal of a creature")
+	blocker.clear_buffs_from("Preflight Weakness")
+	blocker.add_status_effect(MalinalxochitlAcolyte.POISON_STATUS, "Preflight")
+	if BotCardStrategyScript.effect_score(bot, fall) >= unbound_score:
+		failures.append("Bot ignored ongoing poison when valuing removal of a creature")
+	blocker.remove_status_effects_by_name(MalinalxochitlAcolyte.POISON_STATUS)
+	blocker.mute_permanently(game)
+	if BotCardStrategyScript.effect_score(bot, fall) >= unbound_score:
+		failures.append("Bot ignored ability suppression when valuing removal of a debilitated creature")
+	bot.detach()
+
+func _check_bot_defender_target_value(failures: PackedStringArray) -> void:
+	var game := GameManager.new()
+	var player := Player.new()
+	var opponent := Player.new()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	player.mana = 5
+	opponent.mana = AgainWalker.RESURRECTION_COST
+	var manager := MatchManager.new(game)
+	var bot := PracticeFuzzPlayerBot.new()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var attacker := CreatureCard.new()
+	attacker.card_owner = player
+	attacker.strength = 19
+	attacker.speed = 1
+	attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
+	player.frontline_zones[0].add_card(attacker)
+	var walker := AgainWalker.new()
+	walker.card_owner = opponent
+	walker.creature_mode = Card.CreatureMode.DEFENSIVE
+	opponent.frontline_zones[0].add_card(walker)
+	var priest := EnHeduAnna.new()
+	priest.card_owner = opponent
+	priest.creature_mode = Card.CreatureMode.DEFENSIVE
+	opponent.frontline_zones[1].add_card(priest)
+	var plan := bot._plan_combat(bot._get_combat_candidates())
+	var fallback := bot._get_best_standard_attack([attacker], [walker, priest])
+	if plan.get("target") != priest or fallback.get("target") != priest:
+		failures.append("Bot preferred a resurrectable Again-Walker to permanently removing En-hedu-anna")
+
+	var action := CardAction.new()
+	action.type = CardAction.Type.ATTACK
+	action.attacker = attacker
+	action.target = walker
+	walker.creature_mode = Card.CreatureMode.AGGRESSIVE
+	var returning := bot._estimate_attack_economy(action, null, 0, 0)
+	if walker not in returning.get("returning_casualties", []) or walker not in returning["casualties"] \
+			or int(returning["opponent_followers_lost"]) != attacker.strength - walker.strength:
+		failures.append("Bot lost the immediate combat benefits of slaying a resurrectable Again-Walker")
+	var followers := opponent.followers
+	opponent.followers = attacker.strength - walker.strength
+	if bot._plan_combat(bot._get_combat_candidates()).get("target") != walker:
+		failures.append("Bot passed up lethal follower damage against a resurrectable Again-Walker")
+	opponent.followers = followers
+	opponent.mana = 0
+	var permanent := bot._estimate_attack_economy(action, null, 0, 0)
+	if walker in permanent.get("returning_casualties", []) or int(permanent["opponent_cards_lost"]) <= int(returning["opponent_cards_lost"]):
+		failures.append("Bot discounted an Again-Walker that could not afford to resurrect")
+	opponent.mana = AgainWalker.RESURRECTION_COST
+	for zone in opponent.reserve_zones:
+		var blocker := CreatureCard.new()
+		blocker.card_owner = opponent
+		zone.add_card(blocker)
+	var full_reserve := bot._estimate_attack_economy(action, null, 0, 0)
+	if walker in full_reserve.get("returning_casualties", []):
+		failures.append("Bot forecast a frontline Again-Walker resurrecting into a full reserve")
+	var asag := AsagTheDestroyer.new()
+	asag.card_owner = player
+	player.reserve_zones[0].add_card(asag)
+	action.attacker = asag
+	var reserve: Zone = opponent.reserve_zones[0]
+	reserve.remove_card(reserve.cards[0])
+	var voided := bot._estimate_attack_economy(action, null, 0, 0)
+	if walker in voided.get("returning_casualties", []) or int(voided["opponent_cards_lost"]) != int(permanent["opponent_cards_lost"]):
+		failures.append("Bot discounted an Again-Walker sent to the Abyss by Class Rend")
+	action.attacker = attacker
+	opponent.move_card(walker, reserve)
+	var vacated_reserve := bot._estimate_attack_economy(action, null, 0, 0)
+	if walker not in vacated_reserve.get("returning_casualties", []):
+		failures.append("Bot missed that Again-Walker could return to its own vacated reserve slot")
+	bot.detach()
+
 func _check_bot_hermes_speed(failures: PackedStringArray) -> void:
 	var game := GameManager.new()
 	var player := Player.new()
@@ -1138,6 +1277,46 @@ func _check_bot_combat_buff_value(failures: PackedStringArray) -> void:
 	if bot._choose_priority_response() not in [first, second]:
 		failures.append("Bot would not start the predicted two-Fifa combat line")
 	game.action_stack.clear()
+	var third := FifaTheMagicalArrow.new()
+	third.card_owner = player
+	player.hand_zone.add_card(third)
+	asaruludu.strength = 39
+	if bot._get_best_supported_attack([enkidu], [asaruludu]).get("target") != asaruludu:
+		failures.append("Bot did not anticipate a fight that needs three Fifas to win")
+	var vision := VisionOfOdin.new()
+	vision.card_owner = player
+	vision.is_prepared = true
+	player.reserve_zones[0].add_card(vision)
+	game.prepared_hexes[vision] = game.turn_number - 1
+	enkidu.culture = "Norse"
+	asaruludu.strength = 45
+	opponent.followers = 4
+	if bot._get_best_supported_attack([enkidu], [asaruludu]).get("target") != asaruludu:
+		failures.append("Bot did not anticipate lethal from a prepared Vision followed by three Fifas")
+	game.push_to_stack(attack)
+	game.pass_priority()
+	if bot._choose_priority_response() != vision:
+		failures.append("Bot did not start the four-card lethal sequence with its slower response")
+	var pending_vision := CardAction.new()
+	pending_vision.type = CardAction.Type.ABILITY
+	pending_vision.source_player = player
+	pending_vision.card = vision
+	pending_vision.target = enkidu
+	pending_vision.response_to = attack
+	game.push_to_stack(pending_vision)
+	game.pass_priority()
+	if bot._choose_priority_response() not in [first, second, third]:
+		failures.append("Bot missed the three remaining responses with Vision already pending")
+	opponent.followers = 100
+	asaruludu.strength = 28
+	if bot._choose_priority_response() != null:
+		failures.append("Bot spent three more cards for nonlethal damage after the pending Vision already won the fight")
+	game.action_stack.clear()
+	game.prepared_hexes.erase(vision)
+	player.move_card(vision, player.graveyard_zone)
+	player.move_card(third, player.graveyard_zone)
+	enkidu.culture = "Ancient"
+	opponent.followers = 100
 	asaruludu.strength = 28
 	var pending := CardAction.new()
 	pending.type = CardAction.Type.SPELL
@@ -1162,6 +1341,17 @@ func _check_bot_combat_buff_value(failures: PackedStringArray) -> void:
 	asaruludu.strength = 28
 	if bot._choose_priority_response() != null:
 		failures.append("Bot stacked a second Fifa for nonlethal damage in a pending attack")
+	var counter := CardAction.new()
+	counter.type = CardAction.Type.ABILITY
+	counter.card = Banishment.new()
+	counter.card.card_owner = opponent
+	opponent.reserve_zones[0].add_card(counter.card)
+	counter.source_player = opponent
+	counter.response_to = pending
+	second.speed = counter.card.get_effective_speed()
+	game.push_to_stack(counter)
+	if bot._choose_priority_response() != second:
+		failures.append("Bot still counted a pending Fifa after the opponent queued Banishment against it")
 	game.action_stack.clear()
 	first.resolve(game, enkidu)
 	if int(bot._score_priority_card(second, attack, -1)["score"]) > 0:

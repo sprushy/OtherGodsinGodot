@@ -45,9 +45,7 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 		return
 
 	card_owner.move_card(target, card_owner.deck_zone)
-	if card_owner.deck_zone.cards.has(target):
-		card_owner.deck_zone.cards.erase(target)
-	card_owner.deck_zone.cards.insert(0, target)
+	card_owner.deck_zone.prime_card(target)
 	print("%s: Primed %s from the graveyard." % [card_name, target.card_name])
 
 func get_activation_cost_hover_data(_game_manager: GameManager = null) -> Dictionary:

@@ -482,6 +482,7 @@ static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 		var dk_cards: Array = pdata.get("deck", [])
 		var dk_count: int = pdata.get("deck_count", -1)
 		player.deck_zone.cards.clear()
+		player.deck_zone.known_top_card = null
 		if not dk_cards.is_empty():
 			_apply_zone_cards(player.deck_zone, dk_cards)
 			if dk_count > player.deck_zone.cards.size():

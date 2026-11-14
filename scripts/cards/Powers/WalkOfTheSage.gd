@@ -74,7 +74,7 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 	var controller := card_owner
 	controller.move_card(target, controller.abyss_zone)
 	if controller.deck_zone != null:
-		controller.deck_zone.cards.shuffle()
+		controller.deck_zone.shuffle_deck()
 
 	game_manager.note_player_feedback(
 		"%s voids %s from %s's deck." % [

@@ -38,7 +38,7 @@ static func supported(card: Card) -> bool:
 static func supports_ranked_deck_card(card: Card) -> bool:
 	var id := key(card)
 	if card is PowerCard:
-		return id in ACTIVE_POWERS or id in ["SavingGrace", "Ragnarok", "CallOfTheValkyrie", "FerociousDefence", "TakeTheField"] or PASSIVE_TYPES.has(id)
+		return id in ACTIVE_POWERS or id in ["SavingGrace", "Ragnarok", "CallOfTheValkyrie", "AllfathersSacrifice", "FerociousDefence", "TakeTheField"] or PASSIVE_TYPES.has(id)
 	return id in TACTICAL_CARDS or id in EQUIPMENT or id in STRUCTURES or id in ["BlotSacrifice", "KeyOfSolomon", "MeadOfPoetry", "WheelOfFire"]
 
 static func visible(bot, card: Card) -> bool:
@@ -67,6 +67,8 @@ static func value(bot, card: Card) -> int:
 		return 0
 	if not visible(bot, card):
 		return CARD_VALUE
+	if card is WardingStone and card.get_attack_restriction_turns_remaining(bot.game_manager) <= 0:
+		return bot._get_inactive_warding_stone_value(card)
 	var score := CARD_VALUE + maxi(0, card.get_effective_strength()) * 80 + maxi(0, card.get_effective_resilience()) * 25 + maxi(0, card.mana_cost) * 200
 	if card.is_god and _would_destroying_god_cause_god_death(bot, card):
 		var owner := card.get_controller()
@@ -151,6 +153,8 @@ static func removal_score(bot, source: Card, target: Card, action: CardAction = 
 		if destruction and target.card_type == Card.CardType.CREATURE and gm.has_turn_destruction_ward(bot.opponent):
 			return BAD
 	var score := value(bot, target)
+	score -= _debilitation_discount(bot, target)
+	score -= _own_dromi_drain_loss(bot, target)
 	score += _attached_debuff_release_value(bot, target)
 	# Removing a combatant cancels this attack. Credit only the improvement
 	# over letting the existing combat finish, including profitable trades.
@@ -160,6 +164,62 @@ static func removal_score(bot, source: Card, target: Card, action: CardAction = 
 	else:
 		score += CARD_VALUE / 5
 	return score
+
+static func _debilitation_discount(bot, target: Card) -> int:
+	if target == null or (target.card_type != Card.CardType.CREATURE and not target.is_petrified()) or not visible(bot, target) \
+			or target.current_zone == null or not target.current_zone.is_board_zone():
+		return 0
+	var effects := {}
+	for status in target._get_effective_statuses():
+		var name := str(status.get("name", ""))
+		if name not in ["cannot_attack", "cannot_intercept", "activation_locked", "ability_negated", "petrified", "sleep", "cannot_move", "malinalxochitl_poison", "destroy_at_turn_end", "freyja_active_open_sessrumnir", "tonal_extraction_no_shift"]:
+			continue
+		var duration := 1.0
+		if name != "destroy_at_turn_end" and (status.get("expires_after_combat", false) \
+				or int(status.get("expires_turn", bot.game_manager.turn_number + 2)) <= bot.game_manager.turn_number + 1):
+			duration = 0.5
+		effects[name] = maxf(float(effects.get(name, 0.0)), duration)
+	var weight := 0.0
+	weight += 0.4 * float(effects.get("cannot_attack", 0.0))
+	weight += 0.2 * float(effects.get("cannot_intercept", 0.0))
+	weight += 0.2 * float(effects.get("activation_locked", 0.0))
+	weight += 0.25 * float(effects.get("ability_negated", 0.0))
+	weight += 0.75 * float(effects.get("petrified", 0.0))
+	weight += 0.45 * float(effects.get("sleep", 0.0))
+	weight += 0.1 * float(effects.get("cannot_move", 0.0))
+	weight += 0.15 * float(effects.get("malinalxochitl_poison", 0.0))
+	weight += 0.75 * float(effects.get("destroy_at_turn_end", 0.0))
+	weight += 0.6 * float(effects.get("freyja_active_open_sessrumnir", 0.0))
+	weight += 0.1 * float(effects.get("tonal_extraction_no_shift", 0.0))
+	if target.is_enslaved():
+		weight += 0.25
+	if target.is_muted:
+		weight += 0.25 if target.mute_turns_remaining < 0 else 0.125
+	# Strength and resilience penalties are already in value(); only speed
+	# needs a separate adjustment.
+	var speed_loss := maxi(0, target.speed - target.get_effective_speed()) * 150
+	return int(value(bot, target) * minf(weight, 0.85)) + speed_loss
+
+static func _own_dromi_drain_loss(bot, target: Card) -> int:
+	if target == null or target.get_controller() != bot.opponent or not visible(bot, target):
+		return 0
+	var bindings: Array[Dromi] = []
+	for status in target._get_effective_statuses():
+		if status.get("name", "") != "cannot_attack":
+			continue
+		var binding := status.get("source_card") as Dromi
+		if binding == null or binding.get_controller() != bot.bot_player \
+				or binding.attached_target != target or binding.current_zone == null \
+				or not binding.current_zone.is_board_zone():
+			continue
+		if binding not in bindings:
+			bindings.append(binding)
+	if bindings.is_empty():
+		return 0
+	# The attack lock is priced by _debilitation_discount(). Cap uncertain
+	# future drain so a possible later lethal does not outrank one now.
+	var drain_value := mini(CARD_VALUE, bot._score_follower_loss(bot.opponent, Dromi.FOLLOWER_LOSS))
+	return int(bindings.size() * drain_value * 1.5)
 
 static func _attached_debuff_release_value(bot, source: Card) -> int:
 	if not (source is PermanentHexCard):
@@ -325,9 +385,7 @@ static func stat_gain(bot, card: Card, target: Card, action: CardAction = null) 
 	var changes := stat_changes(bot, card, target)
 	return combat_gain(bot, target, int(changes.get("str", 0)), int(changes.get("res", 0)), action, int(changes.get("spd", 0)))
 
-static func combat_gain(bot, target: Card, str_delta: int, res_delta: int = 0, action: CardAction = null, speed_delta: int = 0, followup: Dictionary = {}) -> int:
-	if not visible(bot, target):
-		return 0
+static func combat_projection(bot, action: CardAction) -> Dictionary:
 	var pending := {}
 	if action != null and action in bot.game_manager.action_stack:
 		var stack: Array[CardAction] = bot.game_manager.action_stack
@@ -346,18 +404,24 @@ static func combat_gain(bot, target: Card, str_delta: int, res_delta: int = 0, a
 					countered = stack[index - 1]
 				negated.append(countered)
 				continue
-			var changes := _pending_stat_changes(bot, queued)
+			var changes := additive_combat_stats(bot, queued.card, queued.target as Card)
 			if changes != Vector3i.ZERO:
 				pending[queued.target] = pending.get(queued.target, Vector3i.ZERO) + changes
+	return {"attack": action if action != null and action.type == CardAction.Type.ATTACK else null, "stats": pending}
+
+static func combat_gain(bot, target: Card, str_delta: int, res_delta: int = 0, action: CardAction = null, speed_delta: int = 0) -> int:
+	if not visible(bot, target):
+		return 0
+	var projection := combat_projection(bot, action)
+	var pending: Dictionary = projection["stats"]
 	var proposed := pending.duplicate()
 	proposed[target] = pending.get(target, Vector3i.ZERO) + Vector3i(str_delta, res_delta, speed_delta)
-	for recipient in followup:
-		proposed[recipient] = proposed.get(recipient, Vector3i.ZERO) + followup[recipient]
 	if action != null:
-		if action.type == CardAction.Type.ATTACK:
-			if not combat_visible(bot, action) or (action.united_front_partner != null and not visible(bot, action.united_front_partner)):
+		var attack := projection["attack"] as CardAction
+		if attack != null:
+			if not combat_visible(bot, attack) or (attack.united_front_partner != null and not visible(bot, attack.united_front_partner)):
 				return 0
-			return _projected_combat_score(bot, action, proposed) - _projected_combat_score(bot, action, pending)
+			return _projected_combat_score(bot, attack, proposed) - _projected_combat_score(bot, attack, pending)
 		if pending.is_empty():
 			return 0
 	# These forecasts concern attacks later this turn, not next-turn value from
@@ -392,9 +456,6 @@ static func combat_gain(bot, target: Card, str_delta: int, res_delta: int = 0, a
 	if bot._can_win_followers_after_modifiers(proposed) and not bot._can_win_followers_after_modifiers(pending):
 		best = maxi(best, CARD_VALUE * 20)
 	return best
-
-static func _pending_stat_changes(bot, action: CardAction) -> Vector3i:
-	return additive_combat_stats(bot, action.card, action.target as Card)
 
 static func additive_combat_stats(bot, source: Card, target: Card) -> Vector3i:
 	# These effects add stats without replacing a previous modifier or moving a card.
@@ -456,7 +517,9 @@ static func target_score(bot, card: Card, target: Card, action: CardAction = nul
 			return removal_score(bot, card, target, action, false) if enemy and visible(bot, target) else BAD
 		"JiangZiyaFisherOfKings":
 			if own and target.current_zone == bot.bot_player.deck_zone and bot.game_manager.can_player_add_to_hand_now(bot.bot_player):
-				return bot._get_hand_value(target) * 70 - (2500 if card.current_zone in bot.bot_player.frontline_zones else 800)
+				var mana: int = bot.bot_player.mana - bot.game_manager.get_creature_action_mana_cost(card, "activate")
+				return bot._deck_pick_value(target, mana, bot._forecast_incoming_follower_loss()) \
+					- (3500 if card.current_zone in bot.bot_player.frontline_zones else 1800)
 			return BAD
 		"Dromi", "Gleipnir":
 			if not enemy or not visible(bot, target) or target.has_status_effect("cannot_attack"):
@@ -492,6 +555,7 @@ static func target_score(bot, card: Card, target: Card, action: CardAction = nul
 			var score := value(bot, target)
 			if key(card) == "TabletOfLife" and target.get_effective_level() >= 3:
 				score = int(score * 0.45)
+			score += bot._score_effect_summon_sacrifice_followup([target], activation_cost(bot, card))
 			return score
 		"BookOfLife":
 			if bot._get_first_open_summon_zone(bot.bot_player) == null:
@@ -503,6 +567,7 @@ static func target_score(bot, card: Card, target: Card, action: CardAction = nul
 				score -= 4000
 			if target.has_type("Mage") or target.has_type("Priest"):
 				score -= 1000
+			score += bot._score_effect_summon_sacrifice_followup([target], activation_cost(bot, card))
 			return score
 		"SirensSong":
 			return combat_gain_for_stolen_creature(bot, target) if enemy else BAD
@@ -640,7 +705,11 @@ static func effect_score(bot, card: Card, target: Card = null, action: CardActio
 			for doomed in removal_targets(bot, card, target, action):
 				var amount := value(bot, doomed)
 				if id == "BaneOfTheSvartalfar":
-					amount = int(amount * 0.7)
+					amount = int(maxi(0, amount - _debilitation_discount(bot, doomed)) * 0.7)
+				elif doomed.get_controller() == bot.opponent:
+					amount -= _debilitation_discount(bot, doomed) + _own_dromi_drain_loss(bot, doomed)
+				else:
+					amount -= _debilitation_discount(bot, doomed)
 				gain += amount if doomed.get_controller() == bot.opponent else -amount
 				removed.append(doomed)
 			if action != null and action.type == CardAction.Type.ATTACK and combat_visible(bot, action) and (action.attacker in removed or bot._get_attack_defender_card(action) in removed):
@@ -652,11 +721,15 @@ static func effect_score(bot, card: Card, target: Card = null, action: CardActio
 		"CircleofRebirth":
 			gain = 0
 			var spaces := {bot.bot_player: open_spaces(bot.bot_player), bot.opponent: open_spaces(bot.opponent)}
+			var friendly_summons: Array[Card] = []
 			for dead in bot.game_manager.died_this_turn:
 				if dead.current_zone not in [dead.card_owner.graveyard_zone, dead.card_owner.abyss_zone] or not (dead.has_type("Animal") or dead.has_type("Plant")) or spaces.get(dead.card_owner, 0) <= 0:
 					continue
 				spaces[dead.card_owner] -= 1
 				gain += value(bot, dead) if dead.card_owner == bot.bot_player else -value(bot, dead)
+				if dead.card_owner == bot.bot_player:
+					friendly_summons.append(dead)
+			gain += bot._score_effect_summon_sacrifice_followup(friendly_summons, activation_cost(bot, card))
 		"LightOfMorningsDoors":
 			gain = card._get_hidden_opponent_cards(bot.game_manager).size() * 1500
 	if gain <= BAD:
