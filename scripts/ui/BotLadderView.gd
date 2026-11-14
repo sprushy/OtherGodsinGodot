@@ -7,6 +7,8 @@ signal deck_requested(list_id: String)
 
 const TITLE_FONT = preload("res://fonts/custom_ui/Norsebold.otf")
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
+const RankBadgeScript = preload("res://scripts/ui/RankBadge.gd")
+const BADGE_SIZE := Vector2i(36, 36)
 const GOLD := Color("f1ce89")
 const MUTED := Color("acb9ce")
 
@@ -27,6 +29,7 @@ var _selected_list_id := ""
 var _paging_supported := false
 var _current_page := 0
 var _last_page := 0
+var _badge_viewports: Dictionary[String, SubViewport] = {}
 
 func _ready() -> void:
 	name = "BotLadderView"
@@ -68,7 +71,7 @@ func _ready() -> void:
 	_format.item_selected.connect(func(_index: int) -> void:
 		_current_page = 0
 		_last_page = 0
-		_table.clear()
+		_clear_ladder_rows()
 		page_requested.emit(0)
 	)
 	header.add_child(_format)
@@ -128,7 +131,7 @@ func set_status(message: String, can_refresh: bool, clear_table: bool = false) -
 	_refresh_button.disabled = not can_refresh
 	if clear_table:
 		close_deck()
-		_table.clear()
+		_clear_ladder_rows()
 		_current_page = 0
 		_last_page = 0
 	_previous_page.disabled = not can_refresh or _current_page == 0
@@ -153,7 +156,7 @@ func get_current_page() -> int:
 	return _current_page
 
 func show_summary(summary: Dictionary) -> void:
-	_table.clear()
+	_clear_ladder_rows()
 	_current_page = int(summary.get("page", 0))
 	_last_page = int(summary.get("last_page", 0))
 	var entries: Array = summary.get("ladder", [])
@@ -162,10 +165,12 @@ func show_summary(summary: Dictionary) -> void:
 	for entry: Dictionary in entries:
 		var row := _table.create_item(root)
 		var is_bot := bool(entry.get("is_bot", false))
+		var rank_name := str(entry["rank"])
 		row.set_text(0, str(entry["name"]))
 		row.set_tooltip_text(0, str(entry["name"]))
+		row.set_icon(0, _get_badge_icon(rank_name, entry.get("portrait", {})))
 		row.set_text(1, "%d ★" % int(entry["stars"]))
-		row.set_text(2, str(entry["rank"]))
+		row.set_text(2, rank_name)
 		row.set_text(3, "Bot" if is_bot else "Player")
 		if is_bot:
 			row.set_metadata(0, str(entry["list_id"]))
@@ -179,6 +184,29 @@ func show_summary(summary: Dictionary) -> void:
 	elif has_bot:
 		message = "Select a bot to see its deck."
 	set_status(message, true)
+
+func _clear_ladder_rows() -> void:
+	_table.clear()
+	for viewport in _badge_viewports.values():
+		viewport.queue_free()
+	_badge_viewports.clear()
+
+func _get_badge_icon(rank_name: String, portrait: Dictionary) -> Texture2D:
+	var key := JSON.stringify([rank_name, portrait])
+	if _badge_viewports.has(key):
+		return _badge_viewports[key].get_texture()
+	var viewport := SubViewport.new()
+	viewport.size = BADGE_SIZE
+	viewport.transparent_bg = true
+	viewport.disable_3d = true
+	var badge := RankBadgeScript.new()
+	badge.size = Vector2(BADGE_SIZE)
+	badge.set_badge(rank_name, portrait)
+	viewport.add_child(badge)
+	add_child(viewport)
+	viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
+	_badge_viewports[key] = viewport
+	return viewport.get_texture()
 
 func _open_selected_deck() -> void:
 	var selected := _table.get_selected()

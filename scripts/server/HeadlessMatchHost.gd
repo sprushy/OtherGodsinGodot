@@ -43,7 +43,8 @@ func setup_transport(
 	server_ip: String = "127.0.0.1",
 	server_port: int = 12345,
 	assign_local_host_player: bool = true,
-	client_match_info: Dictionary = {}
+	client_match_info: Dictionary = {},
+	shared_worker: bool = false
 ) -> Node:
 	_is_host = is_host
 	_is_client = is_client
@@ -54,18 +55,24 @@ func setup_transport(
 
 	if parent == null or parent.get_tree() == null:
 		return null
-	var transport_root: Node = parent.get_tree().root
-	var existing_transport := transport_root.get_node_or_null(NETWORK_MANAGER_NODE_NAME)
-	if existing_transport != null:
-		if existing_transport.get_parent() != null:
-			existing_transport.get_parent().remove_child(existing_transport)
-		existing_transport.queue_free()
+	var transport_root: Node = parent if shared_worker else parent.get_tree().root
+	var network_manager_name := NETWORK_MANAGER_NODE_NAME
+	if not shared_worker:
+		var existing_transport := transport_root.get_node_or_null(NETWORK_MANAGER_NODE_NAME)
+		if existing_transport != null:
+			if existing_transport.get_parent() != null:
+				existing_transport.get_parent().remove_child(existing_transport)
+			existing_transport.queue_free()
 
 	network_manager = nm_script.new()
-	network_manager.name = NETWORK_MANAGER_NODE_NAME
+	network_manager.name = network_manager_name
 	# In-process matches must not inherit the authenticated lobby's transport.
-	if not is_client and (not is_host or server_port <= 0):
+	if shared_worker or (not is_client and (not is_host or server_port <= 0)):
 		network_manager.use_current_scene_relative_path = true
+	if shared_worker:
+		# The multiplayer scope is this match subtree, keeping server-side APIs
+		# isolated while preserving MatchNetworkManager as the RPC-relative path.
+		network_manager.managed_multiplayer_root_path = parent.get_path()
 	transport_root.add_child(network_manager)
 
 	if is_host:
@@ -226,11 +233,7 @@ func _on_match_join_requested(join_request: Dictionary, sender_info: Dictionary)
 		})
 	if series_between_games:
 		return
-	var state := GameState.serialize(game_manager, player_index)
-	network_manager.broadcast_event_to_peer(peer_id, "full_state", {
-		state = state,
-		action_message = _get_match_join_state_message(),
-	})
+	game_event_broadcaster.send_player_state(peer_id, player_index, _get_match_join_state_message())
 
 func _get_match_join_state_message() -> String:
 	if game_manager != null and game_manager.is_game_over:

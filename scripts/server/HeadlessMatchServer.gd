@@ -15,6 +15,8 @@ const INITIAL_JOIN_TIMEOUT_SECONDS := 120
 const ABANDONED_MATCH_SHUTDOWN_DELAY_SECONDS := 0.25
 const GAME_END_SHUTDOWN_DELAY_SECONDS := 3.0
 const STATUS_HEARTBEAT_INTERVAL_SECONDS := 1.0
+const RANKED_TURN_TIMEOUT_MSEC := 180_000
+const RANKED_TIMEOUT_RESOLUTION_GRACE_MSEC := 8_000
 const BOT_SELF_PLAY_STALL_MSEC := 45_000
 const BOT_SELF_PLAY_LIMIT_MSEC := 20 * 60 * 1000
 
@@ -28,6 +30,7 @@ var headless_match_host = null
 var network_manager: Node = null
 var game_event_broadcaster: GameEventBroadcaster = null
 var match_session = null
+var exit_tree_on_shutdown: bool = true
 
 var _default_match_setup = DefaultMatchSetupScript.new()
 var _match_history_store = MatchHistoryStoreScript.new(MatchHistoryStoreScript.DEFAULT_STORAGE_FILE_NAME, true)
@@ -48,6 +51,12 @@ var _bot_review_drawn := [{}, {}]
 var _bot_review_played := [{}, {}]
 var _bot_review_activated := [{}, {}]
 var _bot_review_issues := {}
+var _ranked_clock_turn_number := -1
+var _ranked_clock_context: Dictionary = {}
+var _ranked_clock_remaining_by_player: Dictionary = {}
+var _ranked_clock_started_msec := 0
+var _ranked_timeout_turn_number := -1
+var _ranked_timeout_deadline_msec := 0
 
 func _process(delta: float) -> void:
 	if not _abandoned_shutdown_started:
@@ -59,6 +68,7 @@ func _process(delta: float) -> void:
 				return
 			_write_status_file()
 	_shutdown_if_match_was_abandoned()
+	_check_ranked_turn_clock()
 	if _bot_review_started_msec > 0 and not _abandoned_shutdown_started and not _finished_shutdown_pending:
 		var now := Time.get_ticks_msec()
 		if now - _bot_review_progress_msec >= BOT_SELF_PLAY_STALL_MSEC:
@@ -67,16 +77,81 @@ func _process(delta: float) -> void:
 			_shutdown_abandoned_match("Bot self-play reached its match time limit.")
 
 func _has_lost_bot_supervisor() -> bool:
-	if match_session == null or not match_session.is_bot_self_play():
+	if match_session == null or not match_session.is_ranked:
 		return false
 	var heartbeat_path: String = match_session.supervisor_heartbeat_path
 	if heartbeat_path.is_empty():
 		return false
-	# Godot's process API only tracks children created by the current process.
 	var last_heartbeat := FileAccess.get_modified_time(heartbeat_path)
-	return Time.get_unix_time_from_system() - last_heartbeat >= MatchSessionScript.SUPERVISOR_HEARTBEAT_TIMEOUT_SECONDS
+	return last_heartbeat <= 0 or Time.get_unix_time_from_system() - last_heartbeat >= MatchSessionScript.SUPERVISOR_HEARTBEAT_TIMEOUT_SECONDS
+
+func _check_ranked_turn_clock() -> void:
+	if not _match_started or _finished_shutdown_pending or match_session == null \
+			or not match_session.is_ranked or match_manager == null or game_manager == null:
+		return
+	if game_manager.turn_number != _ranked_clock_turn_number:
+		_ranked_clock_turn_number = game_manager.turn_number
+		_ranked_clock_context.clear()
+		_ranked_clock_remaining_by_player.clear()
+		_ranked_clock_started_msec = 0
+		_ranked_timeout_turn_number = -1
+		_ranked_timeout_deadline_msec = 0
+	if match_session.is_waiting_for_reconnect():
+		_save_ranked_clock_budget(Time.get_ticks_msec())
+		_ranked_clock_context.clear()
+		return
+	var context := match_manager.get_action_clock_context()
+	var now_msec := Time.get_ticks_msec()
+	if context.is_empty():
+		_save_ranked_clock_budget(now_msec)
+		_ranked_clock_context.clear()
+		return
+	var player_index := int(context.get("player_index", -1))
+	if player_index < 0 or player_index >= game_manager.players.size():
+		return
+	if context != _ranked_clock_context:
+		_save_ranked_clock_budget(now_msec)
+		if _ranked_timeout_turn_number == game_manager.turn_number:
+			return
+		_ranked_clock_context = context.duplicate()
+		var budget: int = int(_ranked_clock_remaining_by_player.get(player_index, RANKED_TURN_TIMEOUT_MSEC))
+		_ranked_clock_remaining_by_player[player_index] = int(budget)
+		_ranked_clock_started_msec = now_msec
+	var remaining := int(_ranked_clock_remaining_by_player.get(player_index, RANKED_TURN_TIMEOUT_MSEC)) \
+		- maxi(0, now_msec - _ranked_clock_started_msec)
+	if remaining > 0:
+		return
+	if _ranked_timeout_turn_number != game_manager.turn_number:
+		_ranked_timeout_turn_number = game_manager.turn_number
+		_ranked_timeout_deadline_msec = now_msec + RANKED_TIMEOUT_RESOLUTION_GRACE_MSEC
+	elif now_msec >= _ranked_timeout_deadline_msec:
+		_shutdown_abandoned_match("Ranked match stopped advancing after the turn timer expired.")
+
+func _save_ranked_clock_budget(now_msec: int) -> void:
+	if _ranked_clock_context.is_empty() or _ranked_clock_started_msec <= 0:
+		return
+	var player_index := int(_ranked_clock_context.get("player_index", -1))
+	var remaining := int(_ranked_clock_remaining_by_player.get(player_index, RANKED_TURN_TIMEOUT_MSEC)) \
+		- maxi(0, now_msec - _ranked_clock_started_msec)
+	_ranked_clock_remaining_by_player[player_index] = maxi(0, remaining)
+	_ranked_clock_started_msec = now_msec
+
+func _on_ranked_clock_move_validated(move: Dictionary) -> void:
+	if match_session == null or not match_session.is_ranked or game_manager == null:
+		return
+	if str(move.get("type", "")) not in ["play_card", "play_creature", "cast_spell", "cast_charm", "play_charm_response", "play_hex_response", "prepare_card"]:
+		return
+	var player_index := int(_ranked_clock_context.get("player_index", -1))
+	if player_index < 0:
+		return
+	var now_msec := Time.get_ticks_msec()
+	_save_ranked_clock_budget(now_msec)
+	var remaining := int(_ranked_clock_remaining_by_player.get(player_index, RANKED_TURN_TIMEOUT_MSEC))
+	_ranked_clock_remaining_by_player[player_index] = mini(RANKED_TURN_TIMEOUT_MSEC, remaining + 2_000)
+	_ranked_clock_started_msec = now_msec
 
 func start_from_config(config: Dictionary) -> Error:
+	exit_tree_on_shutdown = not bool(config.get("_shared_worker", false))
 	var config_error: String = _validate_config(config)
 	if not config_error.is_empty():
 		startup_failed.emit(config_error)
@@ -120,7 +195,9 @@ func start_from_config(config: Dictionary) -> Error:
 		false,
 		match_session.server_ip,
 		match_session.match_port,
-		false
+		false,
+		{},
+		bool(config.get("_shared_worker", false))
 	)
 	if network_manager == null:
 		startup_failed.emit("Failed to create the dedicated match transport.")
@@ -133,6 +210,8 @@ func start_from_config(config: Dictionary) -> Error:
 
 	if not game_manager.game_ended.is_connected(_on_game_ended):
 		game_manager.game_ended.connect(_on_game_ended)
+	if not match_manager.move_validated.is_connected(_on_ranked_clock_move_validated):
+		match_manager.move_validated.connect(_on_ranked_clock_move_validated)
 	headless_match_host.enable_authoritative_broadcasts()
 	game_event_broadcaster = headless_match_host.game_event_broadcaster
 
@@ -373,10 +452,7 @@ func _on_finished_match_shutdown_timer_timeout() -> void:
 		return
 	_abandoned_shutdown_started = true
 	_write_status_file(MatchSessionScript.STATUS_FINISHED)
-	var tree := get_tree()
-	if tree == null:
-		return
-	tree.quit()
+	_finish_runtime_shutdown()
 
 func _on_series_command_received(command: Dictionary, sender_info: Dictionary) -> void:
 	var peer_id := int(sender_info.get("peer_id", -1))
@@ -516,6 +592,8 @@ func _start_next_series_game() -> void:
 		return
 	if not game_manager.game_ended.is_connected(_on_game_ended):
 		game_manager.game_ended.connect(_on_game_ended)
+	if not match_manager.move_validated.is_connected(_on_ranked_clock_move_validated):
+		match_manager.move_validated.connect(_on_ranked_clock_move_validated)
 	headless_match_host.enable_authoritative_broadcasts()
 	game_event_broadcaster = headless_match_host.game_event_broadcaster
 	_attach_server_bots_for_match()
@@ -557,7 +635,15 @@ func _shutdown_abandoned_match(reason: String) -> void:
 	if tree == null:
 		return
 	var shutdown_timer := tree.create_timer(ABANDONED_MATCH_SHUTDOWN_DELAY_SECONDS)
-	shutdown_timer.timeout.connect(Callable(tree, "quit"))
+	shutdown_timer.timeout.connect(_finish_runtime_shutdown)
+
+func _finish_runtime_shutdown() -> void:
+	if exit_tree_on_shutdown:
+		var tree := get_tree()
+		if tree != null:
+			tree.quit()
+		return
+	queue_free()
 
 func _record_match_result(winner: Player, loser: Player) -> Dictionary:
 	if match_session == null or game_manager == null or not match_session.is_ranked:

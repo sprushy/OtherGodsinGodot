@@ -3294,7 +3294,7 @@ func _resolve_temporary_control_effects(ending_player: Player) -> void:
 			continue
 		if creature.current_zone == null or not creature.current_zone.is_board_zone():
 			continue
-		var return_zone := _find_enslave_destination(
+		var return_zone := _find_creature_control_destination(
 			previous_controller,
 			int(entry.get("previous_zone_type", Zone.ZoneType.FRONTLINE)),
 			int(entry.get("previous_zone_index", 0))
@@ -3469,7 +3469,7 @@ func get_enslave_failure_reason(creature: Card, new_controller: Player) -> Strin
 		return creature.card_name + " is not on the field."
 	if _is_protected_from_enslavement(creature):
 		return creature.card_name + " is protected from enslavement."
-	var destination := _find_enslave_destination(new_controller, creature.current_zone.zone_type, creature.current_zone.zone_index)
+	var destination := _find_creature_control_destination(new_controller, creature.current_zone.zone_type, creature.current_zone.zone_index)
 	if destination == null:
 		return "There is no open zone to place " + creature.card_name + "."
 	return ""
@@ -3483,12 +3483,34 @@ func enslave_creature(creature: Card, new_controller: Player) -> bool:
 		if reason != "":
 			print(reason)
 		return false
-	var destination := _find_enslave_destination(new_controller, creature.current_zone.zone_type, creature.current_zone.zone_index)
+	var destination := _find_creature_control_destination(new_controller, creature.current_zone.zone_type, creature.current_zone.zone_index)
 	if destination == null:
 		return false
 	new_controller.move_card(creature, destination)
+	creature.add_status_effect("enslaved", "Enslave", null, new_controller)
 	creature.reveal_from_stealth(self)
 	return true
+
+func get_temporary_control_failure_reason(creature: Card, new_controller: Player) -> String:
+	if creature == null or new_controller == null:
+		return "No creature was selected."
+	if creature.card_type != Card.CardType.CREATURE or creature.is_god:
+		return creature.card_name + " cannot be taken control of."
+	if creature.current_zone == null or not creature.current_zone.is_board_zone():
+		return creature.card_name + " is not on the field."
+	if creature.get_controller() == new_controller:
+		return new_controller.player_name + " already controls " + creature.card_name + "."
+	var destination := _find_creature_control_destination(
+		new_controller,
+		creature.current_zone.zone_type,
+		creature.current_zone.zone_index
+	)
+	if destination == null:
+		return "There is no open zone to place " + creature.card_name + "."
+	return ""
+
+func can_temporarily_control_creature(creature: Card, new_controller: Player) -> bool:
+	return get_temporary_control_failure_reason(creature, new_controller).is_empty()
 
 func grant_temporary_control_of_creature(
 	creature: Card,
@@ -3502,9 +3524,9 @@ func grant_temporary_control_of_creature(
 	var previous_controller := creature.get_controller()
 	if previous_controller == null or previous_controller == new_controller:
 		return false
-	if not can_enslave_creature(creature, new_controller):
+	if not can_temporarily_control_creature(creature, new_controller):
 		return false
-	var destination := _find_enslave_destination(new_controller, creature.current_zone.zone_type, creature.current_zone.zone_index)
+	var destination := _find_creature_control_destination(new_controller, creature.current_zone.zone_type, creature.current_zone.zone_index)
 	if destination == null:
 		return false
 	_temporary_control_effects = _temporary_control_effects.filter(func(entry: Dictionary) -> bool:
@@ -3523,7 +3545,7 @@ func grant_temporary_control_of_creature(
 	creature.reveal_from_stealth(self)
 	return true
 
-func _find_enslave_destination(player: Player, zone_type: int, zone_index: int) -> Zone:
+func _find_creature_control_destination(player: Player, zone_type: int, zone_index: int) -> Zone:
 	var preferred_rows: Array[Array] = []
 	if zone_type == Zone.ZoneType.FRONTLINE:
 		preferred_rows = [player.frontline_zones, player.reserve_zones]

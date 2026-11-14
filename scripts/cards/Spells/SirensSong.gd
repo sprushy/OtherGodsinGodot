@@ -43,7 +43,7 @@ func is_valid_target(target: Card, game_manager: GameManager = null) -> bool:
 		return false
 	if target.get_controller() == card_owner:
 		return false
-	return game_manager == null or game_manager.can_enslave_creature(target, card_owner)
+	return game_manager == null or game_manager.can_temporarily_control_creature(target, card_owner)
 
 func resolve(game_manager: GameManager, target = null) -> void:
 	if game_manager == null:
@@ -56,7 +56,7 @@ func resolve(game_manager: GameManager, target = null) -> void:
 		game_manager.note_player_feedback("Siren's Song fizzles: %s is immune to spells." % target_card.card_name)
 		return
 	if not game_manager.grant_temporary_control_of_creature(target_card, card_owner, self):
-		var failure_reason := game_manager.get_enslave_failure_reason(target_card, card_owner)
+		var failure_reason := game_manager.get_temporary_control_failure_reason(target_card, card_owner)
 		if failure_reason.is_empty():
 			failure_reason = "no open zone is available."
 		game_manager.note_player_feedback("Siren's Song fizzles: " + failure_reason)

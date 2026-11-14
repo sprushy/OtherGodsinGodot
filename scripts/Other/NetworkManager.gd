@@ -247,7 +247,8 @@ func start_match_websocket_server(port: int) -> Error:
 		return ERR_ALREADY_IN_USE
 	# Match RPCs retain the same relative node path as the existing UDP client.
 	_websocket_mount = Node.new()
-	_websocket_mount.name = "MatchWebSocketRoot"
+	var mount_suffix := str(get_parent().name) if get_parent() != null else str(name)
+	_websocket_mount.name = "MatchWebSocketRoot_%s" % mount_suffix.validate_node_name()
 	get_tree().root.add_child(_websocket_mount)
 	var secondary := get_script().new() as Node
 	secondary.name = name

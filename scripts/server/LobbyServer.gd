@@ -83,6 +83,7 @@ var _ranked_bot_deck_pool := RankedBotDeckPoolScript.new()
 var _bot_deck_rng := RandomNumberGenerator.new()
 var _lobby_frame_seconds := 0.0
 var _next_bot_self_play_msec := 0
+var _client_bot_jobs: Dictionary = {}
 
 static func get_dedicated_bot_self_play_limit(launch_args: Dictionary) -> int:
 	var default_limit := MAX_BOT_SELF_PLAY
@@ -360,6 +361,10 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 				var page: Dictionary = match_history_store.get_recent_bot_matches(50, cursor)
 				page["before_match_id"] = cursor
 				_send_to_peer(peer_id, LobbyProtocolScript.BOT_MATCH_HISTORY, page)
+		LobbyProtocolScript.REQUEST_BOT_WORK:
+			_handle_request_bot_work(peer_id)
+		LobbyProtocolScript.SUBMIT_BOT_WORK_RESULT:
+			_handle_submit_bot_work_result(peer_id, payload)
 		LobbyProtocolScript.REQUEST_FRIENDS:
 			_handle_request_friends(peer_id)
 		LobbyProtocolScript.SEND_FRIEND_REQUEST:
@@ -983,6 +988,80 @@ func _handle_set_rank_badge(peer_id: int, payload: Dictionary) -> void:
 	if success:
 		_handle_request_profile_summary(peer_id)
 
+func _handle_request_bot_work(peer_id: int) -> void:
+	var session := _get_session_for_peer(peer_id)
+	if session.is_empty() or str(session.get("account_id", "")).is_empty():
+		return
+	var busy := {}
+	for job: Dictionary in _client_bot_jobs.values():
+		if int(job.get("expires_unix", 0)) > Time.get_unix_time_from_system():
+			if str(job.get("account_id", "")) == str(session["account_id"]):
+				return
+			busy[str(job.get("deck_a", {}).get("bot_list_id", ""))] = true
+			busy[str(job.get("deck_b", {}).get("bot_list_id", ""))] = true
+	_ranked_bot_deck_pool.refresh(match_history_store.get_bot_deck_results())
+	var pair := _ranked_bot_deck_pool.select_self_play_pair(busy, _bot_deck_rng)
+	var deck_a := _validate_server_bot_deck(pair[0]) if pair.size() == 2 else _build_fresh_bot_deck_submission()
+	var deck_b := _validate_server_bot_deck(pair[1]) if pair.size() == 2 else _build_fresh_bot_deck_submission()
+	if deck_a.is_empty() or deck_b.is_empty():
+		return
+	for deck in [deck_a, deck_b]:
+		deck["bot_god_name"] = deck["god_name"]
+		deck["bot_list_id"] = deck["list_id"]
+		deck["bot_stars"] = deck["stars"]
+	var job_id := _generate_id(32)
+	_client_bot_jobs[job_id] = {
+		"account_id": str(session["account_id"]),
+		"deck_a": deck_a,
+		"deck_b": deck_b,
+		"expires_unix": int(Time.get_unix_time_from_system()) + 600,
+	}
+	_send_to_peer(peer_id, LobbyProtocolScript.BOT_WORK_ASSIGNMENT, {
+		"job_id": job_id,
+		"decks": [deck_a, deck_b],
+	})
+
+func _handle_submit_bot_work_result(peer_id: int, payload: Dictionary) -> void:
+	var job_id := str(payload.get("job_id", "")).strip_edges()
+	var job: Dictionary = _client_bot_jobs.get(job_id, {})
+	var session := _get_session_for_peer(peer_id)
+	var accepted := false
+	if not job.is_empty() and not session.is_empty() \
+			and str(job.get("account_id", "")) == str(session.get("account_id", "")) \
+			and int(job.get("expires_unix", 0)) >= Time.get_unix_time_from_system():
+		var first: Dictionary = job["deck_a"]
+		var second: Dictionary = job["deck_b"]
+		var first_id := "%s%s" % [BOT_SESSION_PREFIX, _generate_id(10)]
+		var second_id := "%s%s" % [BOT_SESSION_PREFIX, _generate_id(10)]
+		var player_ids: Array[String] = [first_id, second_id]
+		var decks := {first_id: first, second_id: second}
+		var identities := {
+			first_id: {"is_bot": true, "player_name": first["deck_name"]},
+			second_id: {"is_bot": true, "player_name": second["deck_name"]},
+		}
+		var match_id := "volunteer_%s" % job_id
+		var match_session := MatchSessionScript.new(match_id, match_id, "127.0.0.1", 0, player_ids, decks, identities)
+		match_session.is_ranked = true
+		match_session.configure_series_format(1)
+		var winner_index := int(payload["winner_index"])
+		var result: Dictionary = match_history_store.record_completed_match(
+			match_session,
+			winner_index,
+			1 - winner_index,
+			str(first["god_name"]) if winner_index == 0 else str(second["god_name"]),
+			str(second["god_name"]) if winner_index == 0 else str(first["god_name"]),
+			{"turns": clampi(int(payload.get("turns", 1)), 1, 1000)}
+		)
+		accepted = bool(result.get("success", false))
+		if accepted:
+			_client_bot_jobs.erase(job_id)
+	_send_to_peer(peer_id, LobbyProtocolScript.BOT_WORK_RESULT, {
+		"success": accepted,
+		"message": "Bot match added to the shared ladder." if accepted else "Bot match could not be recorded.",
+	})
+	if accepted:
+		_broadcast_room_lists()
+
 func _handle_request_bot_ladder(peer_id: int, message_type: String, payload: Dictionary) -> void:
 	var session := _get_session_for_peer(peer_id)
 	if str(session.get("account_id", "")).is_empty():
@@ -1017,16 +1096,27 @@ func _build_ladder_page(request: Dictionary) -> Dictionary:
 		return a["name"].nocasecmp_to(b["name"]) < 0 if a["points"] == b["points"] else int(a["points"]) > int(b["points"])
 	)
 	if not is_paged:
-		return {"ladder": ladder.slice(0, NetworkManagerScript.MAX_NETWORK_PAYLOAD_ITEMS)}
+		return {"ladder": _public_ladder_rows(ladder.slice(0, NetworkManagerScript.MAX_NETWORK_PAYLOAD_ITEMS))}
 	var last_page := maxi(0, ceili(float(ladder.size()) / LobbyProtocolScript.LADDER_PAGE_SIZE) - 1)
 	var page := mini(int(request["page"]), last_page)
 	var start := page * LobbyProtocolScript.LADDER_PAGE_SIZE
 	return {
-		"ladder": ladder.slice(start, start + LobbyProtocolScript.LADDER_PAGE_SIZE),
+		"ladder": _public_ladder_rows(ladder.slice(start, start + LobbyProtocolScript.LADDER_PAGE_SIZE)),
 		"request_id": request["request_id"],
 		"page": page,
 		"last_page": last_page,
 	}
+
+func _public_ladder_rows(rows: Array[Dictionary]) -> Array[Dictionary]:
+	for row in rows:
+		var account_id := str(row.get("account_id", ""))
+		row.erase("account_id")
+		if account_id.is_empty():
+			continue
+		var portrait := _get_public_rank_portrait(account_id, row["rank"])
+		if not portrait.is_empty():
+			row["portrait"] = portrait
+	return rows
 
 func _handle_request_friends(peer_id: int) -> void:
 	var session: Dictionary = _get_session_for_peer(peer_id)
@@ -1934,9 +2024,13 @@ func _get_match_rank_badge(account_id: String, best_of: int, bot_stars: int) -> 
 		return {}
 	var progress: Dictionary = match_history_store.get_current_ranked_progress(account_id, best_of)
 	var rank_name := str(progress.get("rank_name", ""))
+	return {"rank_name": rank_name, "portrait": _get_public_rank_portrait(account_id, rank_name)}
+
+func _get_public_rank_portrait(account_id: String, rank_name: String) -> Dictionary:
+	if account_store == null:
+		return {}
 	var league := RankBadgeCatalog.league_for_rank(rank_name)
-	var portrait: Dictionary = account_store.get_rank_badge(account_id, league) if account_store != null else {}
-	return {"rank_name": rank_name, "portrait": RankBadgeCatalog.validate_portrait(league, portrait)}
+	return RankBadgeCatalog.validate_portrait(league, account_store.get_rank_badge(account_id, league))
 
 ## Finalize a (non-player-host) match: emit room updates, then either poll the
 ## dedicated subprocess for readiness or send both assignments immediately.

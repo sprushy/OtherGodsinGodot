@@ -461,10 +461,8 @@ var awaiting_pyre_target: bool = false
 var pyre_source: AncientPyre = null
 var awaiting_anointing_target: bool = false
 var anointing_source: AnointingStatue = null
-var _pending_retreat_action: CardAction = null
-var _pending_retreat_target: Card = null
-var _pending_retreat_prompts: Array[Askelladen] = []
-var _pending_retreat_guardian_blocked: Array[Askelladen] = []
+var _pending_retreat_uid: String = ""
+var _pending_retreat_prompt_id: int = -1
 var _retreat_prompt_panel: Control = null
 var _awaiting_creature_sacrifice: bool = false
 var _sacrifice_pending_card: Card = null
@@ -726,7 +724,7 @@ var _last_logged_action_text: String = ""
 var _action_label_log_suppressed: bool = false
 var _suppress_next_generic_prepare_log: bool = false
 var _last_network_action_log_event_id: int = -1
-var _action_log_popup: PanelContainer = null
+var _action_log_layer: CanvasLayer = null
 var _action_log_popup_view: RichTextLabel = null
 var _action_log_hover_cards: Dictionary = {}
 var _action_log_hover_abilities: Dictionary = {}
@@ -1064,6 +1062,7 @@ const ACTION_LOG_COMPACT_HEIGHT_RATIO := 0.22
 const ACTION_LOG_COMPACT_MAX_HEIGHT := 210.0
 const ACTION_LOG_FONT_SIZE := 16
 const ACTION_LOG_LINE_SEPARATION := 5
+const ACTION_LOG_POPUP_LAYER := 1000
 const ACTION_LOG_POPUP_WIDTH := 460.0
 const ACTION_LOG_POPUP_HEIGHT := 380.0
 const ACTION_LOG_LEFT_INSET := 6
@@ -4749,6 +4748,7 @@ func _setup_action_log() -> void:
 	var action_parent := action_label.get_parent()
 	if action_parent == null:
 		return
+	visibility_changed.connect(_on_action_log_visibility_changed)
 	action_label.visible = false
 
 	var log_box := VBoxContainer.new()
@@ -5721,8 +5721,10 @@ func _try_handle_match_replay_input(event: InputEvent) -> bool:
 	return false
 
 func _toggle_action_log_popup() -> void:
-	if _action_log_popup != null and is_instance_valid(_action_log_popup):
+	if is_instance_valid(_action_log_layer):
 		_close_action_log_popup()
+		return
+	if is_instance_valid(_retreat_prompt_panel):
 		return
 	_open_action_log_popup()
 
@@ -5783,8 +5785,12 @@ func _open_action_log_popup() -> void:
 	_bind_action_log_hover_signals(history_view)
 	vbox.add_child(history_view)
 
-	add_child(panel)
-	_promote_transient_ui(panel)
+	_action_log_layer = CanvasLayer.new()
+	_action_log_layer.name = "ActionLogLayer"
+	_action_log_layer.layer = ACTION_LOG_POPUP_LAYER
+	add_child(_action_log_layer)
+	_on_action_log_visibility_changed()
+	_action_log_layer.add_child(panel)
 	panel.anchor_left = 0.5
 	panel.anchor_right = 0.5
 	panel.anchor_top = 0.5
@@ -5794,7 +5800,6 @@ func _open_action_log_popup() -> void:
 	panel.offset_top = -ACTION_LOG_POPUP_HEIGHT * 0.5
 	panel.offset_bottom = ACTION_LOG_POPUP_HEIGHT * 0.5
 
-	_action_log_popup = panel
 	_action_log_popup_view = history_view
 	_refresh_action_log_popup()
 	call_deferred("_scroll_action_log_popup_to_bottom")
@@ -6110,8 +6115,7 @@ func _show_action_log_ability_hover(entries: Array) -> void:
 		body.custom_minimum_size = Vector2(ACTION_LOG_CARD_HOVER_WIDTH - 20.0, 0.0)
 		content.add_child(body)
 	panel.add_child(content)
-	add_child(panel)
-	_promote_transient_ui(panel, HOVER_PREVIEW_Z_INDEX)
+	_add_action_log_hover_panel(panel)
 	panel.size = Vector2(ACTION_LOG_CARD_HOVER_WIDTH, 0.0)
 	_action_log_card_hover_popup = panel
 	call_deferred("_position_action_log_card_hover_popup", panel)
@@ -6148,8 +6152,7 @@ func _show_action_log_card_hover(card: Card) -> void:
 		}
 	)
 	panel.add_child(hover_body)
-	add_child(panel)
-	_promote_transient_ui(panel, HOVER_PREVIEW_Z_INDEX)
+	_add_action_log_hover_panel(panel)
 	if hover_body is ScrollContainer:
 		var hover_scroll := hover_body as ScrollContainer
 		CardDetailContentBuilderScript.apply_deckbuilder_scrollbar_style(hover_scroll, true)
@@ -6157,6 +6160,14 @@ func _show_action_log_card_hover(card: Card) -> void:
 	panel.size = Vector2(ACTION_LOG_CARD_HOVER_WIDTH, minf(ACTION_LOG_CARD_HOVER_MAX_HEIGHT, vp_size.y - 8.0))
 	_action_log_card_hover_popup = panel
 	call_deferred("_position_action_log_card_hover_popup", panel)
+
+func _add_action_log_hover_panel(panel: PanelContainer) -> void:
+	if is_instance_valid(_action_log_layer):
+		_action_log_layer.add_child(panel)
+		panel.z_index = 1
+	else:
+		add_child(panel)
+		_promote_transient_ui(panel, HOVER_PREVIEW_Z_INDEX)
 
 func _position_action_log_card_hover_popup(panel: Control) -> void:
 	if panel == null or not is_instance_valid(panel):
@@ -6197,10 +6208,15 @@ func _scroll_action_log_popup_to_bottom() -> void:
 
 func _close_action_log_popup() -> void:
 	_hide_action_log_card_hover_popup()
-	if _action_log_popup != null and is_instance_valid(_action_log_popup):
-		_action_log_popup.queue_free()
-	_action_log_popup = null
+	if is_instance_valid(_action_log_layer):
+		_action_log_layer.hide()
+		_action_log_layer.queue_free()
+	_action_log_layer = null
 	_action_log_popup_view = null
+
+func _on_action_log_visibility_changed() -> void:
+	if is_instance_valid(_action_log_layer):
+		_action_log_layer.visible = is_visible_in_tree()
 
 func start_game(
 	is_host: bool = false,
@@ -6795,9 +6811,9 @@ func _position_deck_rank_badge(badge: RankBadgeScript, deck: Control, prop_scale
 		return
 	var card: Rect2 = deck.get_top_card_rect()
 	var center_x: float = deck.position.x + card.get_center().x * prop_scale
-	var edge_y: float = deck.position.y + (card.position.y - 8.0 if above else card.end.y + 28.0) * prop_scale
+	var edge_y: float = deck.position.y + (card.position.y - 16.0 if above else card.end.y + 36.0) * prop_scale
 	var available := edge_y - 4.0 if above else size.y - edge_y - 4.0
-	var extent := clampf(available, 0.0, 65.0 * prop_scale)
+	var extent := clampf(available, 0.0, 76.0 * prop_scale)
 	badge.size = Vector2.ONE * extent
 	badge.position = Vector2(center_x - extent * 0.5, edge_y - extent if above else edge_y)
 
@@ -22115,7 +22131,7 @@ func _try_handle_escape_key(event: InputEvent) -> bool:
 		_on_forfeit_button_pressed()
 		get_viewport().set_input_as_handled()
 		return true
-	if is_instance_valid(_action_log_popup):
+	if is_instance_valid(_action_log_layer):
 		_close_action_log_popup()
 		get_viewport().set_input_as_handled()
 		return true
@@ -24093,16 +24109,32 @@ func _get_guardian_blocked_retreats(attacker: Card, defender: Card, turn_player:
 
 func _clear_pending_retreat_state() -> void:
 	_hide_retreat_prompt()
-	_pending_retreat_action = null
-	_pending_retreat_target = null
-	_pending_retreat_prompts.clear()
-	_pending_retreat_guardian_blocked.clear()
+	_pending_retreat_uid = ""
+	_pending_retreat_prompt_id = -1
+
+func _apply_retreat_prompt(data: Dictionary) -> void:
+	var ask_uid := str(data.get("askelladen_uid", ""))
+	var prompt_id := int(data.get("_prompt_id", -1))
+	if ask_uid == _pending_retreat_uid and prompt_id == _pending_retreat_prompt_id \
+			and is_instance_valid(_retreat_prompt_panel):
+		return
+	var ask_card := game_manager.get_card_by_uid(ask_uid) as Askelladen
+	if ask_card == null:
+		return
+	_pending_retreat_uid = ask_uid
+	_pending_retreat_prompt_id = prompt_id
+	_show_retreat_prompt(ask_card)
 
 func _show_retreat_prompt(ask_card: Askelladen) -> void:
 	_hide_retreat_prompt()
+	_close_action_log_popup()
+	var center := CenterContainer.new()
+	center.name = "RetreatPromptCenter"
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_retreat_prompt_panel = center
+
 	var panel := PanelContainer.new()
 	panel.name = "RetreatPromptPanel"
-	_retreat_prompt_panel = panel
 	var style := _make_priority_control_style(Color(0.07, 0.09, 0.08, 0.97), Color(0.60, 0.46, 0.25))
 	style.set_corner_radius_all(8)
 	style.content_margin_left = 16
@@ -24123,6 +24155,9 @@ func _show_retreat_prompt(ask_card: Askelladen) -> void:
 	if ask_controller != null and ask_controller.player_name != "":
 		ask_owner_prefix = ask_controller.player_name + "'s "
 	lbl.text = ask_owner_prefix + "Askelladen may use Tactical Retreat.\nReturn both creatures to the bottom of their decks?"
+	# Give wrapped text a usable width before the container measures its height.
+	lbl.custom_minimum_size.x = 308
+	lbl.custom_maximum_size.x = lbl.custom_minimum_size.x
 	lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	lbl.add_theme_font_size_override("font_size", 14)
@@ -24132,20 +24167,26 @@ func _show_retreat_prompt(ask_card: Askelladen) -> void:
 	hbox.alignment = BoxContainer.ALIGNMENT_CENTER
 	hbox.add_theme_constant_override("separation", 12)
 	vbox.add_child(hbox)
-	hbox.add_child(_make_retreat_choice("Fight", ASKELLADEN_FIGHT_BADGE, _on_retreat_no))
-	hbox.add_child(_make_retreat_choice("Retreat", ASKELLADEN_RETREAT_BADGE, _on_retreat_yes))
+	hbox.add_child(_make_retreat_choice("Fight", ASKELLADEN_FIGHT_BADGE, false))
+	hbox.add_child(_make_retreat_choice("Retreat", ASKELLADEN_RETREAT_BADGE, true))
 
-	add_child(panel)
-	_promote_transient_ui(panel)
-	panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	panel.grow_vertical = Control.GROW_DIRECTION_BOTH
-	panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER, Control.PRESET_MODE_MINSIZE)
+	center.add_child(panel)
+	add_child(center)
+	_promote_transient_ui(center)
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
-func _make_retreat_choice(caption: String, badge: Texture2D, callback: Callable) -> Button:
+func _make_retreat_choice(caption: String, badge: Texture2D, retreat: bool) -> Button:
 	var button := Button.new()
-	button.accessibility_name = caption
+	button.text = caption
+	button.icon = badge
+	button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	button.vertical_icon_alignment = VERTICAL_ALIGNMENT_BOTTOM
+	button.expand_icon = true
 	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	button.custom_minimum_size = Vector2(148, 174)
+	button.add_theme_font_size_override("font_size", 19)
+	button.add_theme_color_override("font_color", Color(1.0, 0.89, 0.67))
+	button.add_theme_constant_override("icon_max_width", 136)
 	button.add_theme_stylebox_override("normal", StyleBoxEmpty.new())
 	button.add_theme_stylebox_override("hover", _make_priority_control_style(
 		Color(0.17, 0.14, 0.09), Color(0.65, 0.49, 0.27)
@@ -24153,29 +24194,7 @@ func _make_retreat_choice(caption: String, badge: Texture2D, callback: Callable)
 	button.add_theme_stylebox_override("pressed", _make_priority_control_style(
 		Color(0.23, 0.18, 0.11), Color(0.82, 0.65, 0.38)
 	))
-	button.pressed.connect(callback)
-
-	var content := VBoxContainer.new()
-	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	content.add_theme_constant_override("separation", 3)
-	button.add_child(content)
-	content.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 6)
-
-	var label := Label.new()
-	label.text = caption
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	label.add_theme_font_size_override("font_size", 19)
-	label.add_theme_color_override("font_color", Color(1.0, 0.89, 0.67))
-	content.add_child(label)
-
-	var art := TextureRect.new()
-	art.texture = badge
-	art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	art.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	art.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	content.add_child(art)
+	button.pressed.connect(_submit_retreat_choice.bind(retreat))
 	return button
 
 func _hide_retreat_prompt() -> void:
@@ -24185,12 +24204,6 @@ func _hide_retreat_prompt() -> void:
 			_retreat_prompt_panel.get_parent().remove_child(_retreat_prompt_panel)
 		_retreat_prompt_panel.queue_free()
 	_retreat_prompt_panel = null
-	for child in get_children():
-		if child != null and child.name == "RetreatPromptPanel":
-			child.visible = false
-			if child.get_parent() != null:
-				child.get_parent().remove_child(child)
-			child.queue_free()
 
 func _get_active_altar_of_dreams(player: Player) -> AltarOfDreams:
 	for zone in player.power_zones:
@@ -27180,16 +27193,20 @@ func _on_structure_bonus_skip_pressed() -> void:
 	_set_action_label_text("Skipped Advanced Building Techniques.")
 	update_ui()
 
-func _on_retreat_yes() -> void:
-	var ask_card := _pending_retreat_prompts[0] if not _pending_retreat_prompts.is_empty() else null
-	_hide_retreat_prompt()
-	_clear_pending_retreat_state()
-	if ask_card != null and game_input != null:
-		game_input.submit_action({
-			type = "combat_retreat_decision",
-			askelladen_uid = ask_card.uid,
-			retreat = true,
-		})
+func _submit_retreat_choice(retreat: bool) -> void:
+	if _pending_retreat_uid.is_empty() or game_input == null:
+		_set_action_label_text("No active Tactical Retreat decision can be submitted.")
+		return
+	var submitted_panel := _retreat_prompt_panel
+	var command := {
+		type = "combat_retreat_decision",
+		askelladen_uid = _pending_retreat_uid,
+		retreat = retreat,
+	}
+	if _pending_retreat_prompt_id >= 0:
+		command["_prompt_id"] = _pending_retreat_prompt_id
+	if game_input.submit_action(command) and _retreat_prompt_panel == submitted_panel:
+		_clear_pending_retreat_state()
 
 func _linger_before_board_leaving_activation(card: Card, action_text: String) -> void:
 	if card == null or card.current_zone == null or not card.current_zone.is_board_zone():
@@ -27197,19 +27214,6 @@ func _linger_before_board_leaving_activation(card: Card, action_text: String) ->
 	_set_action_label_text(action_text)
 	update_ui()
 	await _await_visual_linger()
-
-func _on_retreat_no() -> void:
-	var ask_card := _pending_retreat_prompts[0] if not _pending_retreat_prompts.is_empty() else null
-	if ask_card == null or game_input == null:
-		_set_action_label_text("No active Tactical Retreat decision can be submitted.")
-		return
-	_hide_retreat_prompt()
-	_clear_pending_retreat_state()
-	game_input.submit_action({
-		type = "combat_retreat_decision",
-		askelladen_uid = ask_card.uid,
-		retreat = false,
-	})
 
 func _on_local_turn_upkeep_started(_turn_number: int, _player: Player) -> void:
 	if not _is_networked_client and not _is_real_network_host():
@@ -27745,24 +27749,7 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 		"intercept":
 			_apply_intercept_offered(data)
 		"combat_retreat":
-			var action: CardAction = data.get("action")
-			var target = data.get("target")
-			var requested_uid := str(data.get("askelladen_uid", ""))
-			var requested_ask := game_manager.get_card_by_uid(requested_uid) as Askelladen
-			if action == null or requested_ask == null:
-				return
-			if not _is_networked_client:
-				# Use the authority's live action for local and host prompts.
-				if match_manager == null or match_manager.pending_retreat_action == null \
-						or requested_uid not in match_manager.pending_retreat_prompt_uids:
-					return
-				action = match_manager.pending_retreat_action
-				target = match_manager.pending_retreat_target
-			_pending_retreat_action = action
-			_pending_retreat_target = target
-			_pending_retreat_prompts = [requested_ask]
-			_pending_retreat_guardian_blocked = []
-			_show_retreat_prompt(requested_ask)
+			_apply_retreat_prompt(data)
 		"resurrection":
 			var card := game_manager.get_card_by_uid(data.get("card_uid", ""))
 			if card != null:
@@ -28463,6 +28450,10 @@ func _cancel_match_locally(result_message: String) -> void:
 	if network_manager != null and network_manager.has_method("disconnect_client") and not bool(network_manager.get("is_server")):
 		network_manager.disconnect_client()
 	_finalize_game_result_ui(result_message, null, null, false)
+
+func _is_ranked_dedicated_match() -> bool:
+	return bool(_current_match_info.get("is_ranked", false)) \
+		and str(_current_match_info.get("server_mode", "")) == "dedicated_headless"
 
 func _schedule_post_game_return_to_menu(force_return: bool = false) -> void:
 	if _pending_post_game_return_to_menu:
@@ -29695,6 +29686,10 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 			var lost_reason := str(data.get("reason", "The match connection was lost.")).strip_edges()
 			if lost_reason.is_empty():
 				lost_reason = "The match connection was lost."
+			if _is_ranked_dedicated_match():
+				_cancel_match_locally("Ranked match cancelled because the match server disconnected. No rating was recorded.")
+				match_connection_lost.emit(lost_reason)
+				return
 			_set_match_reconnect_wait(true, "Match connection lost. Returning to the lobby to rejoin...")
 			_set_action_label_text(lost_reason)
 			_dismiss_transient_prompts()
@@ -29867,19 +29862,8 @@ func _apply_ui_interaction(event_data: Dictionary) -> void:
 		"intercept":
 			_apply_intercept_offered(payload)
 		"combat_retreat":
-			var action_dict: Dictionary = payload.get("action", {})
-			var action := CardAction.from_dict(action_dict, game_manager)
-			var target_uid: String = payload.get("target_uid", "")
-			var target = game_manager.get_card_by_uid(target_uid)
-			if target == null:
-				var p_idx: int = payload.get("target_player_index", -1)
-				if p_idx >= 0 and p_idx < game_manager.players.size():
-					target = game_manager.players[p_idx]
-			_on_match_ui_interaction(local_idx, type, {
-				"action": action,
-				"target": target,
-				"askelladen_uid": str(payload.get("askelladen_uid", "")),
-			})
+			if local_idx >= 0 and int(event_data.get("player_index", local_idx)) == local_idx:
+				_apply_retreat_prompt(payload)
 		"doorway_choice":
 			var structure_uid: String = payload.get("structure_uid", "")
 			var card_uid: String = payload.get("card_uid", "")
@@ -30436,6 +30420,12 @@ func _apply_full_state(data: Dictionary) -> void:
 		if _pending_champions_call_god != null:
 			_begin_champions_call_placement(_pending_champions_call_god, _pending_champions_call_shelves, champions_call_mode)
 
+	if _is_networked_client and data.has("pending_retreat_prompt"):
+		var retreat_prompt: Dictionary = data["pending_retreat_prompt"]
+		if retreat_prompt.is_empty():
+			_clear_pending_retreat_state()
+		else:
+			_apply_retreat_prompt(retreat_prompt)
 	update_ui()
 	var restored_reveal_prompt := _ensure_pending_reveal_click_selection()
 	if restored_reveal_prompt and _is_priority_prompt_visible():

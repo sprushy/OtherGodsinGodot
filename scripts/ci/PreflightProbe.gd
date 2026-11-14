@@ -57,6 +57,7 @@ func run() -> bool:
 	_check_dedicated_ranked_history(failures)
 	_check_ranked_bot_pool(failures)
 	_check_ranked_bot_deck_generation(failures)
+	_check_ranked_bot_manifestations(failures)
 	_check_standing_bot_seeks(failures)
 	_check_ladder_pages(failures)
 	_check_request_next(failures)
@@ -721,6 +722,104 @@ func _check_ranked_bot_deck_generation(failures: PackedStringArray) -> void:
 			or player.mana != 0 or not game_manager.has_resolved_turn_upkeep():
 		failures.append("Ranked Tiamat did not use Matriarch Rule to take a Brood creature on turn one")
 
+func _check_ranked_bot_manifestations(failures: PackedStringArray) -> void:
+	var factory := PracticeAutofillDeckFactory.new()
+	for god in factory._gods:
+		for legendary in [false, true]:
+			var candidates := factory._get_regular_candidates(god, {}, legendary, true)
+			for card in CardCatalogScript.get_cached_card_templates():
+				if card is ActiveGodCard and card.is_legendary == legendary:
+					var allowed: bool = (god is Odin or god is TiamatThePrimordial) \
+						and card.culture == god.culture and not god.is_own_active_god_card(card)
+					if candidates.any(func(candidate: Card) -> bool: return candidate.card_name == card.card_name) != allowed:
+						failures.append("Unexpected ranked deck eligibility for %s under %s" % [card.card_name, god.card_name])
+	var freyja_powers := factory._get_power_candidates(Freyja.new(), {}, true)
+	if not freyja_powers.any(func(card: Card) -> bool: return card is TakeTheField):
+		failures.append("Take the Field was unavailable to a ranked god with a matching Active God")
+	for god in [Thor.new(), GuanYu.new(), TezcatlipocaTheSmokingMirror.new(), Odin.new()]:
+		var powers := factory._get_power_candidates(god, {}, true)
+		if powers.any(func(card: Card) -> bool: return card is TakeTheField):
+			failures.append("Take the Field was offered in the ranked power pool for %s" % god.card_name)
+	var mixed_tiamat_deck := false
+	for seed_value in range(12):
+		var deck := factory.build_random_deck(seed_value, TiamatThePrimordial.TIAMAT_CARD_NAME, true)
+		if deck.get("cards", {}).get("Take the Field", 0) == 1:
+			var slots := TiamatThePrimordial.get_slot_card_names_from_setup(deck["special_setup"])
+			mixed_tiamat_deck = not slots[0].is_empty() and not slots[1].is_empty() and slots[2].is_empty()
+			break
+	if not mixed_tiamat_deck:
+		failures.append("Ranked Tiamat did not generate a legal deck with two Brood slots and Take the Field")
+
+	var gods: Array[GodCard] = [Thor.new(), GuanYu.new(), TiamatThePrimordial.new(), TezcatlipocaTheSmokingMirror.new()]
+	for god in gods:
+		var game_manager := GameManager.new()
+		var player := Player.new()
+		var opponent := Player.new()
+		game_manager.players.assign([player, opponent])
+		game_manager.current_player = player
+		game_manager.other_player = opponent
+		game_manager.start_turn()
+		game_manager.player_chooses_upkeep_only()
+		var match_manager := MatchManager.new(game_manager)
+		var bot := PracticeFuzzPlayerBot.new()
+		bot.attach(game_manager, match_manager, ServerBotGameInput.new(match_manager, 0), 0)
+		god.card_owner = player
+		player.god_zone.add_card(god)
+		if god is Thor or god is GuanYu:
+			player.mana = god.get_champions_call_candidate().mana_cost - GodCard.CHAMPIONS_CALL_SHELVE_MANA_VALUE
+			var valuable := EnkiLordOfEridu.new()
+			var shelve := BrownBear.new()
+			for card in [valuable, shelve]:
+				card.card_owner = player
+				player.hand_zone.add_card(card)
+			bot._submit_strategy_plan(bot._plan_god_manifestation())
+			for _step in range(8):
+				match_manager.advance_priority()
+			if shelve.current_zone != player.deck_zone or valuable.current_zone != player.hand_zone or player.mana != 0:
+				failures.append("Champion's Call did not shelve the lower-value card and pay the rest in mana")
+		elif god is TiamatThePrimordial:
+			player.mana = TiamatActive.new().mana_cost
+			var birth_target := Asakku.new()
+			birth_target.card_owner = player
+			player.hand_zone.add_card(birth_target)
+			var power := TakeTheField.new()
+			power.card_owner = player
+			player.power_zones[2].add_card(power)
+			bot._submit_strategy_plan(bot._plan_power_unlock())
+			if power.is_face_down or player.mana != 0:
+				failures.append("Take the Field did not pay for and unlock Tiamat's manifestation")
+			for _step in range(8):
+				match_manager.advance_priority()
+			if not bot._get_board_creatures(player).has(birth_target):
+				failures.append("Ranked Tiamat did not use Birth after Take the Field")
+		elif god is TezcatlipocaTheSmokingMirror:
+			for i in range(TezcatlipocaTheSmokingMirror.REQUIRED_NECOC_YAOTL_SACRIFICES):
+				var offering := Asakku.new()
+				offering.card_owner = player
+				player.reserve_zones[i].add_card(offering)
+				offering.spend_major_creature_action()
+			var victim := BrownBear.new()
+			victim.card_owner = opponent
+			opponent.frontline_zones[0].add_card(victim)
+			for _action in range(TezcatlipocaTheSmokingMirror.REQUIRED_NECOC_YAOTL_SACRIFICES + 1):
+				bot._submit_strategy_plan(bot._plan_god_manifestation())
+				for _step in range(8):
+					match_manager.advance_priority()
+			if victim.get_controller() != player:
+				failures.append("Necoc Yaotl did not complete Titlacauan with the stored sacrifices")
+		if god.current_zone == player.god_zone or not bot._get_board_creatures(player).any(func(card: Card) -> bool:
+			return card is ActiveGodCard and god.is_own_active_god_card(card)
+		):
+			failures.append("Ranked bot failed to summon the matching Active God for %s" % god.card_name)
+		bot.detach()
+		match_manager.reset_runtime_state()
+		game_manager.action_stack.clear()
+		for seat in game_manager.players:
+			for zone in [seat.god_zone, seat.hand_zone, seat.deck_zone, seat.graveyard_zone, seat.abyss_zone] + seat.power_zones + seat.frontline_zones + seat.reserve_zones:
+				for card in zone.cards.duplicate():
+					zone.remove_card(card)
+				zone.zone_owner = null
+
 func _check_standing_bot_seeks(failures: PackedStringArray) -> void:
 	var lobby := LobbyServerScript.new()
 	lobby.is_listening = true
@@ -803,10 +902,14 @@ func _check_ladder_pages(failures: PackedStringArray) -> void:
 	var account_path := ProjectSettings.globalize_path("user://preflight_ladder_%d.json" % OS.get_process_id())
 	var accounts := {}
 	var player_count := NetworkManagerScript.MAX_NETWORK_PAYLOAD_ITEMS + 1
+	var portrait := {"card": "Wolf Cub", "art": 0, "x": 0.2, "y": 0.75, "zoom": 2.125}
 	for index in range(player_count):
 		var account_id := "account_%d" % index
 		accounts[account_id] = {"account_id": account_id, "username": "Player %03d" % index,
 			"password_salt": "test_salt", "password_hash": "test_hash"}
+		if index > 1:
+			accounts[account_id]["rank_badges"] = {"0": portrait}
+	accounts["account_1"]["rank_badges"] = {"0": {"card": "Freyja"}}
 	if not JsonStoreScript.save_json(account_path, {"accounts_by_id": accounts}, "preflight_probe"):
 		failures.append("Could not prepare ladder page test accounts")
 		return
@@ -824,6 +927,7 @@ func _check_ladder_pages(failures: PackedStringArray) -> void:
 	var network := NetworkManagerScript.new()
 	var names := {}
 	var bot_count := 0
+	var portraits_valid := true
 	var last_page := ceili(float(player_count + 1) / LobbyProtocolScript.LADDER_PAGE_SIZE) - 1
 	for page in range(last_page + 1):
 		var summary := lobby._build_ladder_page({"best_of": 1, "request_id": page, "page": page})
@@ -833,23 +937,33 @@ func _check_ladder_pages(failures: PackedStringArray) -> void:
 			failures.append("A ranked ladder page exceeded the network limits or reported incorrect page metadata")
 			break
 		for row: Dictionary in summary["ladder"]:
+			if row.has("account_id") or row.has("email"):
+				failures.append("Ladder exposed private account fields")
+				break
 			if row.get("is_bot", false):
 				bot_count += 1
 				if page != 0 or str(row.get("list_id", "")).is_empty():
 					failures.append("Bo1 standings did not rank the winning bot or include its deck link")
 			else:
 				names[row["name"]] = true
+				var expected := {} if row["name"] in ["Player 000", "Player 001"] else portrait
+				portraits_valid = portraits_valid and row.get("portrait", {}) == expected
 	if names.size() != player_count:
 		failures.append("Ladder pages did not expose every player account")
+	if not portraits_valid:
+		failures.append("Ladder pages did not return valid saved portraits and crops")
 	var bo3 := lobby._build_ladder_page({"best_of": 3, "request_id": 0, "page": 0})
 	if bot_count != 1 or bo3["ladder"].any(func(row: Dictionary) -> bool: return row.get("is_bot", false)):
 		failures.append("Ladder did not show ranked bots in their match format")
+	if not bo3["ladder"].any(func(row: Dictionary) -> bool: return row.get("portrait") == portrait):
+		failures.append("Bo3 ladder did not include the player's saved crop")
 	var legacy_summary := lobby._build_ladder_page({})
 	if legacy_summary["ladder"].size() != NetworkManagerScript.MAX_NETWORK_PAYLOAD_ITEMS:
 		failures.append("Legacy ladder response did not fit the network array limit")
 	network.free()
 	lobby.free()
 	DirAccess.remove_absolute(account_path)
+	DirAccess.remove_absolute(account_path + ".bak")
 	var result_dir := ServerPathsScript.get_server_data_file_path(storage_file).get_basename() + "_results"
 	DirAccess.remove_absolute(result_dir.path_join("%s.json" % session.match_id.sha256_text()))
 	DirAccess.remove_absolute(result_dir)

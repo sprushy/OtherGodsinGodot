@@ -34,6 +34,8 @@ const SET_RANK_BADGE := "set_rank_badge"
 const REQUEST_BOT_LADDER := "request_bot_ladder"
 const REQUEST_BOT_DECK := "request_bot_deck"
 const REQUEST_BOT_MATCH_HISTORY := "request_bot_match_history"
+const REQUEST_BOT_WORK := "request_bot_work"
+const SUBMIT_BOT_WORK_RESULT := "submit_bot_work_result"
 const REQUEST_FRIENDS := "request_friends"
 const SEND_FRIEND_REQUEST := "send_friend_request"
 const RESPOND_FRIEND_REQUEST := "respond_friend_request"
@@ -58,6 +60,8 @@ const RANK_BADGE_RESULT := "rank_badge_result"
 const BOT_LADDER := "bot_ladder"
 const BOT_DECK := "bot_deck"
 const BOT_MATCH_HISTORY := "bot_match_history"
+const BOT_WORK_ASSIGNMENT := "bot_work_assignment"
+const BOT_WORK_RESULT := "bot_work_result"
 const FRIENDS_STATE := "friends_state"
 const ACCOUNT_SETTINGS_UPDATED := "account_settings_updated"
 const PASSWORD_RESET_RESULT := "password_reset_result"
@@ -208,6 +212,13 @@ static func validate_request(message: Dictionary) -> String:
 			var cursor = payload.get("before_match_id", "")
 			if not cursor is String or cursor.length() > 64:
 				return "Invalid bot match history cursor."
+		REQUEST_BOT_WORK:
+			pass
+		SUBMIT_BOT_WORK_RESULT:
+			var job_id = payload.get("job_id", "")
+			var winner = payload.get("winner_index", -1)
+			if not job_id is String or job_id.length() > 64 or not winner is int or winner not in [0, 1]:
+				return "Invalid bot worker result."
 		REPORT_HOST_VIABILITY:
 			if not payload.has("viable"):
 				return "Missing viability flag."

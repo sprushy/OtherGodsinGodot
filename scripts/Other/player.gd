@@ -339,10 +339,10 @@ func _resolve_destination_zone(card: Card, from_zone: Zone, to_zone: Zone) -> Zo
 		return to_zone
 	if to_zone.is_board_zone():
 		return to_zone
-	if not card.is_enslaved():
-		return to_zone
 	var owner_player := card.card_owner
 	if owner_player == null:
+		return to_zone
+	if card.get_controller() == owner_player:
 		return to_zone
 	match to_zone.zone_type:
 		Zone.ZoneType.HAND:

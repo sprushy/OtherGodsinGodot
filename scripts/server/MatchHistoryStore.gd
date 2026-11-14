@@ -294,7 +294,8 @@ func get_human_ladder(usernames: Dictionary, best_of: int) -> Array[Dictionary]:
 	var players: Array[Dictionary] = []
 	for account_id in usernames:
 		var progress := _get_ranked_progress(account_id, best_of, season)
-		players.append({"name": usernames[account_id], "points": progress["points"], "rank": progress["rank_name"], "stars": progress["stars"]})
+		players.append({"account_id": account_id, "name": usernames[account_id], "points": progress["points"],
+			"rank": progress["rank_name"], "stars": progress["stars"]})
 	return players
 
 func get_current_ranked_progress(account_id: String, best_of: int) -> Dictionary:

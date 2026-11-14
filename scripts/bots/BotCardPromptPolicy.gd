@@ -150,7 +150,8 @@ static func build_command(bot, type: String, data: Dictionary) -> Dictionary:
 			if not (source is TezcatlipocaActive):
 				return {}
 			var budget: int = source.get_titlacauan_level_budget()
-			var selected := Strategy.budget_choices(bot, data.get("target_uids", []), budget, TezcatlipocaActive.MAX_TITLACAUAN_TARGETS, true)
+			var limit := mini(TezcatlipocaActive.MAX_TITLACAUAN_TARGETS, Strategy.open_spaces(bot.bot_player))
+			var selected := Strategy.budget_choices(bot, data.get("target_uids", []), budget, limit, true)
 			command.merge({"type": "tezcatlipoca_active_titlacauan_choice", "target_uids": selected, "skip": selected.is_empty()})
 		"hunting_tactics":
 			command.merge({

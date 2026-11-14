@@ -280,6 +280,11 @@ func _on_game_ended(winner: Player, loser: Player) -> void:
 func broadcast_current_state(action_message: String = "") -> void:
 	_broadcast_full_state(action_message)
 
+func send_player_state(peer_id: int, player_index: int, action_message: String) -> void:
+	network_manager.broadcast_event_to_peer(
+		peer_id, "full_state", _build_full_state_event_data(player_index, action_message)
+	)
+
 func shutdown() -> void:
 	if match_manager != null:
 		if match_manager.move_validated.is_connected(_on_move_validated):
@@ -552,6 +557,9 @@ func _build_full_state_event_data(
 			event_data["pending_priority_prompt"] = prompt_router.serialize_prompt_data(
 				pending_priority_prompt
 			)
+		event_data["pending_retreat_prompt"] = match_manager.get_pending_retreat_prompt_data(
+			game_manager.players[player_index]
+		)
 	var attack_preview := _serialize_pending_attack_preview()
 	if player_index >= 0 and not attack_preview.is_empty():
 		event_data["pending_attack_preview"] = attack_preview

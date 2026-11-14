@@ -1722,6 +1722,20 @@ func get_pending_priority_prompt_data(player: Player) -> Dictionary:
 		return serialized_prompt_data
 	return {}
 
+func get_pending_retreat_prompt_data(player: Player) -> Dictionary:
+	if player == null or pending_retreat_action == null or pending_retreat_prompt_uids.is_empty():
+		return {}
+	for entry in _pending_ui_interactions:
+		var prompt_id := int(entry.get("prompt_id", -1))
+		if entry.get("player", null) != player or str(entry.get("type", "")) != "combat_retreat" \
+				or prompt_id == _active_command_pending_prompt_id:
+			continue
+		var data: Dictionary = entry.get("data", {})
+		var ask_uid := str(data.get("askelladen_uid", ""))
+		if ask_uid == pending_retreat_prompt_uids[0]:
+			return {"askelladen_uid": ask_uid, "_prompt_id": prompt_id}
+	return {}
+
 func _is_reveal_interaction_type(interaction_type: String) -> bool:
 	return interaction_type.strip_edges().to_lower().contains("reveal")
 
@@ -5157,8 +5171,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var target_uid: String = command.get("target_uid", "")
 			if target_uid != "":
 				target = game_manager.get_card_by_uid(target_uid)
-			var is_champions_call_command: bool = god_card.has_method("has_champions_call") and god_card.has_champions_call() and god_card.is_champions_call_command(command)
-			var is_necoc_yaotl_summon: bool = god_card is TezcatlipocaTheSmokingMirror and god_card.can_resolve_necoc_yaotl_summon(game_manager)
+			var is_champions_call_command: bool = god_card is GodCard \
+				and god_card.has_champions_call() and god_card.is_champions_call_command(command)
+			var is_necoc_yaotl_summon: bool = god_card is TezcatlipocaTheSmokingMirror \
+				and target_uid.is_empty() and god_card.can_resolve_necoc_yaotl_summon(game_manager)
 			if god_card.targets and target == null and not is_champions_call_command and not is_necoc_yaotl_summon:
 				move_failed.emit("god_ability: target card not found")
 				return false

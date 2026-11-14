@@ -329,9 +329,9 @@ func _upkeep_mana_enables_manifestation(mana_gain: int) -> bool:
 	if mana_gain <= 0 or _get_first_open_summon_zone(bot_player) == null:
 		return false
 	var god := _find_player_god()
-	if god == null or god.is_muted or not game_manager.can_player_use_powers(bot_player):
+	if god == null or not game_manager.can_player_use_powers(bot_player):
 		return false
-	if god.has_champions_call():
+	if not god.is_muted and god.has_champions_call():
 		var manifestation := god.get_champions_call_candidate(true)
 		if manifestation != null:
 			var cost := game_manager.get_creature_summon_mana_cost(bot_player, manifestation, god)
@@ -593,7 +593,7 @@ func _plan_god_manifestation() -> Dictionary:
 		shelve_penalty += 900 + _get_hand_value(card) * 14
 	var cost := game_manager.get_creature_summon_mana_cost(bot_player, manifestation, god)
 	var mana_paid := maxi(0, cost - shelve_count * GodCard.CHAMPIONS_CALL_SHELVE_MANA_VALUE)
-	var score := _score_god_manifestation(manifestation, mana_paid) - shelve_penalty
+	var score := _score_god_manifestation(manifestation, mana_paid, mode) - shelve_penalty
 	if score < 2200:
 		return {}
 	return {"score": score, "command": {
@@ -618,15 +618,15 @@ func _plan_necoc_yaotl(god: TezcatlipocaTheSmokingMirror) -> Dictionary:
 		return {}
 	var best_score := 0
 	var best_sacrifice: Card = null
-	var forms := god.get_hover_summoned_active_gods()
-	var manifestation := forms[0] as TezcatlipocaActive if not forms.is_empty() else null
 	var titlacauan_targets: Array[Card] = []
-	if manifestation != null and remaining == 1:
-		titlacauan_targets = manifestation.get_valid_titlacauan_targets(game_manager)
+	if remaining == 1 and CardStrategy.open_spaces(bot_player) > 0:
+		var forms := god.get_hover_summoned_active_gods()
+		if not forms.is_empty() and forms[0] is TezcatlipocaActive:
+			titlacauan_targets = forms[0].get_valid_titlacauan_targets(game_manager)
 	for card in god.get_valid_targets(game_manager):
 		var score := 2900 + clampi(board_surplus, -3, 3) * 900 - _score_summon_sacrifice_candidate(card)
 		score -= card.equipment.size() * 2500
-		if card.can_take_major_creature_action() and not card.is_sleeping and not _has_committed_attack(card):
+		if card.can_take_major_creature_action() and not card.is_sleeping:
 			score -= 1500
 		if remaining == 1:
 			var budget := god.get_necoc_yaotl_total_level() + card.get_effective_level()
@@ -2438,7 +2438,7 @@ func _score_power_unlock(power: PowerCard) -> int:
 		var forms: Array[Card] = power.get_hover_summoned_active_gods()
 		if forms.is_empty() or forms[0].sacrifice_cost > 0:
 			return CardStrategy.BAD
-		var score := _score_god_manifestation(forms[0], power.get_unlock_display_mana_cost(game_manager))
+		var score := _score_god_manifestation(forms[0], power.get_unlock_display_mana_cost(game_manager), Card.CreatureMode.AGGRESSIVE)
 		if TiamatThePrimordial.is_tiamat_god(_find_player_god()):
 			score -= TiamatThePrimordial.get_available_matriarch_rule_cards(bot_player).size() * 800
 		return score
@@ -2465,21 +2465,17 @@ func _should_activate_untargeted_power(power: PowerCard) -> bool:
 		return true
 	return bot_player != null and bot_player.hand_zone != null and bot_player.hand_zone.cards.size() <= 1
 
-func _score_god_manifestation(manifestation: Card, mana_paid: int) -> int:
+func _score_god_manifestation(manifestation: Card, mana_paid: int, mode: Card.CreatureMode) -> int:
 	var opposing_creatures := _get_board_creatures(opponent)
-	var summon_mode := _choose_creature_summon_mode(manifestation, opposing_creatures)
-	var clean_kill_count := _count_clean_attack_targets_for(manifestation, opposing_creatures)
 	var score := ECON_CARD_VALUE + _score_projected_card(manifestation) - mana_paid * 350
 	if opposing_creatures.is_empty():
 		score += 1800
-	elif clean_kill_count > 0:
-		score += 900 + clean_kill_count * 550
+	elif _is_projected_creature_strongest_on_board(manifestation, opposing_creatures):
+		score += 900
 	else:
 		score -= 2200
-	if summon_mode == Card.CreatureMode.DEFENSIVE:
+	if mode == Card.CreatureMode.DEFENSIVE:
 		score -= 1700
-	if game_manager != null and game_manager.turn_number <= 2 and summon_mode == Card.CreatureMode.DEFENSIVE and clean_kill_count == 0:
-		score -= 1200
 	if _board_creature_count(bot_player) == 0 and opposing_creatures.is_empty():
 		score += 600
 	if _board_creature_count(bot_player) < _board_creature_count(opponent):
@@ -3155,8 +3151,10 @@ func _score_creature_play(card: Card, zone: Zone, available_mana: int) -> int:
 func _score_creature_play_in_zone(card: Card, zone: Zone, available_mana: int) -> int:
 	if card.card_type != Card.CardType.CREATURE or zone == null:
 		return -1000000
-	if card is ActiveGodCard and not card.can_be_played(game_manager, bot_player):
-		return -1000000
+	if card is ActiveGodCard:
+		var god := _find_player_god()
+		if god == null or god.get_active_god_deck_role(card) != GodCard.ACTIVE_GOD_DECK_ROLE_ALLOWED:
+			return -1000000
 	if zone.zone_owner != bot_player or not zone.cards.is_empty():
 		return -1000000
 	if bot_player.has_summoned_this_turn and not game_manager._can_use_extra_normal_summon(bot_player, card, zone):

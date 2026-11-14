@@ -560,7 +560,10 @@ func get_combat_log_display_name(viewer: Player = null) -> String:
 
 func is_enslaved() -> bool:
 	var controller := get_controller()
-	return controller != null and card_owner != null and controller != card_owner
+	return controller != null \
+		and card_owner != null \
+		and controller != card_owner \
+		and has_status_effect("enslaved")
 
 func has_status_effect(status_name: String) -> bool:
 	for status in _get_effective_statuses():

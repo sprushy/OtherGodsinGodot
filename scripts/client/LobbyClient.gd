@@ -48,6 +48,8 @@ signal rank_badge_result(success: bool, message: String)
 signal bot_ladder_received(summary: Dictionary)
 signal bot_deck_received(list_id: String, deck: Dictionary)
 signal bot_match_history_received(history: Dictionary)
+signal bot_work_assignment_received(job: Dictionary)
+signal bot_work_result_received(success: bool, message: String)
 signal friends_state_received(state: Dictionary)
 signal account_settings_updated(account: Dictionary)
 signal password_reset_result(completed: bool, success: bool, message: String)
@@ -498,6 +500,18 @@ func request_bot_match_history(before_match_id: String = "") -> void:
 	if is_authenticated() and supports_bot_ladder:
 		_send_request(LobbyProtocolScript.REQUEST_BOT_MATCH_HISTORY, {"before_match_id": before_match_id})
 
+func request_bot_work() -> void:
+	if is_authenticated():
+		_send_request(LobbyProtocolScript.REQUEST_BOT_WORK)
+
+func submit_bot_work_result(job_id: String, winner_index: int, turns: int) -> void:
+	if is_authenticated():
+		_send_request(LobbyProtocolScript.SUBMIT_BOT_WORK_RESULT, {
+			"job_id": job_id,
+			"winner_index": winner_index,
+			"turns": turns,
+		})
+
 func request_friends() -> void:
 	_send_request(LobbyProtocolScript.REQUEST_FRIENDS)
 
@@ -679,6 +693,12 @@ func lobby_event(message: Dictionary) -> void:
 		LobbyProtocolScript.BOT_MATCH_HISTORY:
 			if is_authenticated():
 				bot_match_history_received.emit(payload)
+		LobbyProtocolScript.BOT_WORK_ASSIGNMENT:
+			if is_authenticated():
+				bot_work_assignment_received.emit(payload)
+		LobbyProtocolScript.BOT_WORK_RESULT:
+			if is_authenticated():
+				bot_work_result_received.emit(bool(payload.get("success", false)), str(payload.get("message", "")))
 		LobbyProtocolScript.FRIENDS_STATE:
 			friends_state_received.emit(payload)
 		LobbyProtocolScript.ACCOUNT_SETTINGS_UPDATED:

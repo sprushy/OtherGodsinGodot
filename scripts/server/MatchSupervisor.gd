@@ -24,6 +24,7 @@ var project_path: String = ""
 var allow_in_process_fallback: bool = true
 var active_matches: Dictionary = {}
 var last_create_match_error: String = ""
+var _shared_bot_match_servers: Dictionary = {}
 
 var _rng := RandomNumberGenerator.new()
 var _cleanup_poll_interval_seconds: float = 1.0
@@ -249,6 +250,8 @@ func _allocate_match_port() -> int:
 func _launch_dedicated_match(session) -> bool:
 	if session == null:
 		return false
+	if session.is_bot_self_play():
+		return _launch_shared_bot_match(session)
 	var uses_exported_runtime := _is_exported_server_runtime(godot_executable_path)
 	if godot_executable_path.is_empty() or (not uses_exported_runtime and project_path.is_empty()):
 		session.mark_process_launch_failed("Godot executable path or project path was not configured.")
@@ -291,6 +294,42 @@ func _launch_dedicated_match(session) -> bool:
 	session.mark_process_launched(pid, config_path)
 	return true
 
+func _launch_shared_bot_match(session) -> bool:
+	if session == null:
+		return false
+	var previous_mode := str(session.server_mode)
+	session.server_mode = MatchSessionScript.SERVER_MODE_DEDICATED_HEADLESS
+	var config_path := _write_launch_config(session)
+	if config_path.is_empty():
+		session.server_mode = previous_mode
+		session.mark_process_launch_failed("Failed to write the shared bot match config.")
+		return false
+	var match_server_script := load("res://scripts/server/HeadlessMatchServer.gd") as Script
+	if match_server_script == null or not match_server_script.can_instantiate():
+		session.server_mode = previous_mode
+		session.mark_process_launch_failed("Could not load the shared headless match runtime.")
+		_cleanup_launch_config_path(config_path)
+		return false
+	var match_server = match_server_script.new()
+	match_server.name = "BotMatch_%s" % str(session.match_id).validate_node_name()
+	match_server.exit_tree_on_shutdown = false
+	var launch_config: Dictionary = session.to_launch_config()
+	launch_config["_launch_config_path"] = config_path
+	launch_config["_shared_worker"] = true
+	session.launch_config_path = config_path
+	add_child(match_server)
+	var start_error: Error = match_server.start_from_config(launch_config)
+	if start_error != OK:
+		var reason := "Shared bot match failed to start (%s)." % error_string(start_error)
+		match_server.queue_free()
+		session.server_mode = previous_mode
+		session.mark_process_launch_failed(reason)
+		_cleanup_launch_config_path(config_path)
+		_cleanup_launch_config_path(_get_status_file_path_for_match(str(session.match_id)))
+		return false
+	_shared_bot_match_servers[str(session.match_id)] = match_server
+	return true
+
 func _write_launch_config(session) -> String:
 	var base_dir := ServerPathsScript.get_dedicated_matches_dir()
 	var mkdir_err := DirAccess.make_dir_recursive_absolute(base_dir)
@@ -298,12 +337,11 @@ func _write_launch_config(session) -> String:
 		return ""
 	var config_path := base_dir.path_join("%s.json" % str(session.match_id))
 	session.status_file_path = _get_status_file_path_for_match(str(session.match_id))
-	if session.is_bot_self_play():
-		if _supervisor_heartbeat_path.is_empty():
-			_supervisor_heartbeat_path = base_dir.path_join("supervisor_%s.heartbeat" % str(session.match_id))
-		if not _write_supervisor_heartbeat():
-			return ""
-		session.supervisor_heartbeat_path = _supervisor_heartbeat_path
+	if _supervisor_heartbeat_path.is_empty():
+		_supervisor_heartbeat_path = base_dir.path_join("supervisor_%s.heartbeat" % str(OS.get_process_id()))
+	if not _write_supervisor_heartbeat():
+		return ""
+	session.supervisor_heartbeat_path = _supervisor_heartbeat_path
 	if not JsonStoreScript.save_json(config_path, session.to_launch_config(), "MatchSupervisor"):
 		return ""
 	return config_path
@@ -384,6 +422,11 @@ func _apply_final_status(session, final_status: String) -> void:
 func _shutdown_match_runtime(session, terminate_process: bool) -> void:
 	if session == null:
 		return
+	var match_id := str(session.match_id)
+	var shared_match_server = _shared_bot_match_servers.get(match_id, null)
+	if is_instance_valid(shared_match_server):
+		shared_match_server.queue_free()
+	_shared_bot_match_servers.erase(match_id)
 	if session.is_dedicated_headless() and terminate_process and session.has_spawned_process() and OS.is_process_running(int(session.process_id)):
 		OS.kill(int(session.process_id))
 	_cleanup_launch_config(session)
