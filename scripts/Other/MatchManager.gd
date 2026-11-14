@@ -2103,7 +2103,7 @@ func _resolve_attack(action: CardAction) -> void:
 	if not attacker_can_continue and not partner_can_continue:
 		if actual_target is Card:
 			game_manager._clear_combat_engagement_state(actual_target)
-		last_resolution_text = action.attacker.card_name + "'s attack fizzles — attacker is no longer on the frontline."
+		last_resolution_text = _get_declared_attack_fizzle_reason(action.attacker, action.source_player)
 		return
 
 	if actual_target is Card and actual_target.current_zone != null and actual_target.current_zone.is_board_zone():
@@ -2418,6 +2418,17 @@ func _is_attacker_still_on_frontline(attacker: Card) -> bool:
 func _can_continue_declared_attack(attacker: Card) -> bool:
 	return _is_attacker_still_on_frontline(attacker) \
 		and attacker.creature_mode == Card.CreatureMode.AGGRESSIVE
+
+func _get_declared_attack_fizzle_reason(attacker: Card, attacking_player: Player) -> String:
+	if attacker == null or not is_instance_valid(attacker):
+		return "The attack fizzles because its attacker is no longer available."
+	if attacking_player != null and attacker.get_controller() != attacking_player:
+		return "%s's attack fizzles because it is no longer under the attacking player's control." % attacker.card_name
+	if not _is_attacker_still_on_frontline(attacker):
+		return "%s's attack fizzles because it is no longer on the frontline." % attacker.card_name
+	if attacker.creature_mode != Card.CreatureMode.AGGRESSIVE:
+		return "%s's attack fizzles because it is no longer in aggressive stance." % attacker.card_name
+	return "%s's attack fizzles because it can no longer continue attacking." % attacker.card_name
 
 ## Returns any Askelladen cards in the combat that qualify for Tactical Retreat.
 func _get_retreat_candidates(attacker: Card, defender: Card, _turn_player: Player) -> Array:

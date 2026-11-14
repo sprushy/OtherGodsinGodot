@@ -486,11 +486,14 @@ func request_profile_summary() -> void:
 func set_rank_badge(best_of: int, league: int, portrait: Dictionary) -> void:
 	_send_request(LobbyProtocolScript.SET_RANK_BADGE, {"best_of": best_of, "league": league, "portrait": portrait})
 
-func request_ladder(best_of: int, page: int, request_id: int) -> void:
+func request_ladder(best_of: int, page: int, request_id: int, search_query: String = "") -> void:
 	if not is_authenticated():
 		return
 	if supports_ladder_pages:
-		_send_request(LobbyProtocolScript.REQUEST_BOT_LADDER, {"best_of": best_of, "page": page, "request_id": request_id})
+		_send_request(LobbyProtocolScript.REQUEST_BOT_LADDER, {
+			"best_of": best_of, "page": page, "request_id": request_id,
+			"search_query": search_query.strip_edges().substr(0, 64),
+		})
 	elif supports_bot_ladder:
 		_send_request(LobbyProtocolScript.REQUEST_BOT_LADDER)
 

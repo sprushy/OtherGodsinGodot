@@ -102,6 +102,7 @@ const LOCAL_BOT_MATCH_MEMORY_PER_WORKER := 1024 * 1024 * 1024
 const LOCAL_BOT_MATCH_RESERVED_CORES := 2
 const LOCAL_BOT_MATCH_CORES_PER_WORKER := 2
 const LOCAL_BOT_MATCH_MAX_WORKERS := 8
+const LOCAL_BOT_MATCH_STALE_HEARTBEAT_SECONDS := 15
 const AUTH_TITLE_FONT_SIZE := 28
 const AUTH_BODY_FONT_SIZE := 18
 const AUTH_CONTROL_FONT_SIZE := 18
@@ -3020,6 +3021,7 @@ func _on_local_bot_work_assigned(job: Dictionary) -> void:
 		"poll": poll,
 		"session": session,
 		"continuous": continuous,
+		"last_heartbeat_unix": int(Time.get_unix_time_from_system()),
 	}
 	_continuous_bot_match_ids[session.match_id] = continuous
 	_refresh_seek_list()
@@ -3048,9 +3050,26 @@ func _poll_local_bot_match(match_id: String) -> void:
 	var supervisor = worker.get("supervisor", null)
 	var session = worker.get("session", null)
 	if session == null:
+		_cleanup_failed_local_bot_match(match_id, worker, supervisor, "Bot match worker lost its session.")
 		return
 	var status := JsonStoreScript.load_dictionary(str(session.status_file_path), {}, "LocalBotMatchWorker")
-	if str(status.get("status", "")) != MatchSessionScript.STATUS_FINISHED:
+	var match_status := str(status.get("status", ""))
+	if match_status != MatchSessionScript.STATUS_FINISHED:
+		var process_exited: bool = session.has_spawned_process() and not OS.is_process_running(int(session.process_id))
+		var heartbeat_unix := int(status.get("heartbeat_unix", 0))
+		var heartbeat_stale := match_status == MatchSessionScript.STATUS_ACTIVE \
+			and heartbeat_unix > 0 \
+			and int(Time.get_unix_time_from_system()) - heartbeat_unix >= LOCAL_BOT_MATCH_STALE_HEARTBEAT_SECONDS
+		if match_status == MatchSessionScript.STATUS_ABANDONED or process_exited or heartbeat_stale:
+			var reason := str(status.get("reason", "Bot match stopped responding before recording a result."))
+			_cleanup_failed_local_bot_match(match_id, worker, supervisor, reason)
+			return
+		var now_unix := int(Time.get_unix_time_from_system())
+		if now_unix - int(worker.get("last_heartbeat_unix", 0)) >= 25:
+			if lobby_client != null and lobby_client.is_authenticated():
+				lobby_client.report_bot_work_started(match_id)
+			worker["last_heartbeat_unix"] = now_unix
+			_local_bot_match_workers[match_id] = worker
 		return
 	var review := JsonStoreScript.load_dictionary(ServerPathsScript.get_bot_review_path(match_id), {}, "LocalBotMatchWorker")
 	var continuous := bool(worker.get("continuous", false))
@@ -3070,6 +3089,24 @@ func _poll_local_bot_match(match_id: String) -> void:
 	_update_local_bot_hosting_state()
 	if not _local_bot_match_submitting.has(match_id) and _bot_match_hosting_enabled:
 		_request_continuous_bot_match()
+
+func _cleanup_failed_local_bot_match(match_id: String, worker: Dictionary, supervisor, reason: String) -> void:
+	if lobby_client != null:
+		lobby_client.cancel_bot_work(match_id)
+	if is_instance_valid(supervisor):
+		supervisor.close_match(match_id, MatchSessionScript.STATUS_ABANDONED, true, reason)
+		supervisor.queue_free()
+	var poll: Timer = worker.get("poll", null)
+	if is_instance_valid(poll):
+		poll.queue_free()
+	var continuous := bool(worker.get("continuous", false))
+	_local_bot_match_workers.erase(match_id)
+	_local_bot_match_submitting.erase(match_id)
+	_continuous_bot_match_ids.erase(match_id)
+	_update_local_bot_hosting_state()
+	_refresh_seek_list()
+	if continuous and _bot_match_hosting_enabled:
+		_schedule_continuous_bot_match_retry()
 
 func _on_local_bot_work_result(job_id: String, success: bool, message: String) -> void:
 	if job_id.is_empty():
@@ -10275,6 +10312,7 @@ func _open_bot_ladder() -> void:
 	_bot_ladder_view.close_requested.connect(_close_bot_ladder)
 	_bot_ladder_view.refresh_requested.connect(_request_bot_ladder)
 	_bot_ladder_view.page_requested.connect(_request_bot_ladder)
+	_bot_ladder_view.search_requested.connect(_on_bot_ladder_search_requested)
 	_bot_ladder_view.deck_requested.connect(_request_bot_deck)
 	add_child(_bot_ladder_view)
 	_request_bot_ladder()
@@ -10295,10 +10333,15 @@ func _request_bot_ladder(page: int = -1) -> void:
 	var request_serial := _bot_ladder_request_serial
 	_bot_ladder_view.set_status("Loading ladder…", false)
 	var requested_page := _bot_ladder_view.get_current_page() if page < 0 else page
-	lobby_client.request_ladder(_bot_ladder_view.get_best_of(), requested_page, request_serial)
+	lobby_client.request_ladder(_bot_ladder_view.get_best_of(), requested_page, request_serial, _bot_ladder_view.get_search_query())
 	await get_tree().create_timer(5.0).timeout
 	if is_instance_valid(_bot_ladder_view) and request_serial == _bot_ladder_request_serial:
 		_bot_ladder_view.set_status("The lobby did not respond. Try refreshing.", true)
+
+func _on_bot_ladder_search_requested(_query: String) -> void:
+	if not is_instance_valid(_bot_ladder_view):
+		return
+	_request_bot_ladder(0)
 
 func _on_bot_ladder_received(summary: Dictionary) -> void:
 	if not is_instance_valid(_bot_ladder_view) or not _has_active_lobby_connection():

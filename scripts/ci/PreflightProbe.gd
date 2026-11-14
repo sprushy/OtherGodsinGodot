@@ -933,7 +933,8 @@ func _check_ladder_pages(failures: PackedStringArray) -> void:
 	var names := {}
 	var bot_count := 0
 	var portraits_valid := true
-	var last_page := ceili(float(player_count + 1) / LobbyProtocolScript.LADDER_PAGE_SIZE) - 1
+	var capped_entry_count := mini(player_count + 1, 100)
+	var last_page := ceili(float(capped_entry_count) / LobbyProtocolScript.LADDER_PAGE_SIZE) - 1
 	for page in range(last_page + 1):
 		var summary := lobby._build_ladder_page({"best_of": 1, "request_id": page, "page": page})
 		var message := LobbyProtocolScript.make_message(LobbyProtocolScript.BOT_LADDER, summary)
@@ -953,8 +954,8 @@ func _check_ladder_pages(failures: PackedStringArray) -> void:
 				names[row["name"]] = true
 				var expected := {} if row["name"] in ["Player 000", "Player 001"] else portrait
 				portraits_valid = portraits_valid and row.get("portrait", {}) == expected
-	if names.size() != player_count:
-		failures.append("Ladder pages did not expose every player account")
+	if names.size() != capped_entry_count - 1:
+		failures.append("Ladder pages did not expose the expected top 100 standings")
 	if not portraits_valid:
 		failures.append("Ladder pages did not return valid saved portraits and crops")
 	var bo3 := lobby._build_ladder_page({"best_of": 3, "request_id": 0, "page": 0})
@@ -963,8 +964,8 @@ func _check_ladder_pages(failures: PackedStringArray) -> void:
 	if not bo3["ladder"].any(func(row: Dictionary) -> bool: return row.get("portrait") == portrait):
 		failures.append("Bo3 ladder did not include the player's saved crop")
 	var legacy_summary := lobby._build_ladder_page({})
-	if legacy_summary["ladder"].size() != NetworkManagerScript.MAX_NETWORK_PAYLOAD_ITEMS:
-		failures.append("Legacy ladder response did not fit the network array limit")
+	if legacy_summary["ladder"].size() != 100:
+		failures.append("Legacy ladder response did not cap standings at the top 100")
 	network.free()
 	lobby.free()
 	DirAccess.remove_absolute(account_path)

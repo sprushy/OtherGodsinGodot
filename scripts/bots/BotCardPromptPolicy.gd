@@ -47,7 +47,12 @@ static func build_command(bot, type: String, data: Dictionary) -> Dictionary:
 			command[key] = data[key]
 	if TARGET_COMMANDS.has(type):
 		command["type"] = TARGET_COMMANDS[type]
-		command["target_uid"] = _best_uid(bot, data, "target_uids", type in HARMFUL_TARGET_PROMPTS)
+		if type == "fenrir_devour_impact":
+			command["target_uid"] = _best_reveal_target(bot, source, data.get("target_uids", []), type, true)
+		elif type in ["lailoken_reveal", "masmassu_priest_reveal"]:
+			command["target_uid"] = _best_reveal_target(bot, source, data.get("target_uids", []), type)
+		else:
+			command["target_uid"] = _best_uid(bot, data, "target_uids", type in HARMFUL_TARGET_PROMPTS)
 		return command
 	match type:
 		"blessed_knights_ward":
@@ -65,6 +70,8 @@ static func build_command(bot, type: String, data: Dictionary) -> Dictionary:
 				var score := Strategy.BAD
 				match str(option.get("kind", "")):
 					"return": score = Strategy.value(bot, returned)
+					# Brewing unlocks a power for free, so cancel unlock_score's normal
+					# mana penalty before comparing this option with other free choices.
 					"flip": score = Strategy.unlock_score(bot, power) + Strategy.mana_penalty(bot, power.get_unlock_mana_cost(bot.game_manager)) if power != null else Strategy.BAD
 					"activate", "activate_targeted": score = Strategy.power_score(bot, power, target) if power != null else Strategy.BAD
 				if score > best_score:
@@ -229,6 +236,35 @@ static func build_command(bot, type: String, data: Dictionary) -> Dictionary:
 		_:
 			return {}
 	return command
+
+static func _best_reveal_target(bot, source: Card, target_uids: Array, prompt_type: String, enemy_only: bool = false) -> String:
+	var best_uid := ""
+	var best_score := Strategy.BAD
+	for raw_uid in target_uids:
+		var uid := str(raw_uid)
+		var target: Card = bot.game_manager.get_card_by_uid(uid)
+		if target == null:
+			continue
+		var own: bool = target.get_controller() == bot.bot_player
+		var score := Strategy.value(bot, target)
+		if own:
+			score = Strategy.BAD if enemy_only else -score
+		else:
+			# These reveal abilities destroy their target. Prefer a legal, high
+			# value opposing target and avoid wasting the trigger into protection.
+			if bot.game_manager.is_immune_to_source(target, source) \
+					or bot.game_manager.is_guardian_protected(target, source) \
+					or Strategy.destruction_guard(target) \
+					or (target.card_type == Card.CardType.CREATURE and bot.game_manager.has_turn_destruction_ward(target.get_controller())):
+				score = Strategy.BAD
+			else:
+				score += 1000
+				if prompt_type == "masmassu_priest_reveal" and (target.has_type("Demon") or target.has_type("Spirit")):
+					score += 1000
+		if score > best_score:
+			best_score = score
+			best_uid = uid
+	return best_uid
 
 static func _best_uid(bot, data: Dictionary, key: String, harmful: bool) -> String:
 	var ranked := _ranked_uids(bot, data, key, harmful)

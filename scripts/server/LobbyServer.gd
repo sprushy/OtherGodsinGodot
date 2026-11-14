@@ -118,6 +118,7 @@ func _process(delta: float) -> void:
 		return
 	_seek_timeout_check_elapsed = 0.0
 	_expire_stale_seeks()
+	_expire_client_bot_jobs()
 	_expire_disconnected_room_members()
 	_expire_abandoned_player_host_matches()
 	_ensure_server_bot_seeks()
@@ -1040,6 +1041,7 @@ func _handle_request_bot_work(peer_id: int) -> void:
 	var job_id := _generate_id(32)
 	_client_bot_jobs[job_id] = {
 		"account_id": str(session["account_id"]),
+		"session_id": str(session.get("session_id", "")),
 		"deck_a": deck_a,
 		"deck_b": deck_b,
 		"expires_unix": int(Time.get_unix_time_from_system()) + 600,
@@ -1183,10 +1185,51 @@ func _handle_report_bot_work_started(peer_id: int, payload: Dictionary) -> void:
 			or str(job.get("account_id", "")) != str(session.get("account_id", "")) \
 			or int(job.get("expires_unix", 0)) < Time.get_unix_time_from_system():
 		return
+	var was_running := str(job.get("status", "")) == "running"
+	if not was_running:
+		job["started_unix"] = int(Time.get_unix_time_from_system())
+	if str(job.get("session_id", "")).is_empty():
+		job["session_id"] = str(session.get("session_id", ""))
 	job["status"] = "running"
-	job["started_unix"] = int(Time.get_unix_time_from_system())
-	job["expires_unix"] = int(Time.get_unix_time_from_system()) + 1800
+	var heartbeat_unix := int(Time.get_unix_time_from_system())
+	job["heartbeat_unix"] = heartbeat_unix
+	job["expires_unix"] = heartbeat_unix + 90
 	_client_bot_jobs[job_id] = job
+	if not was_running:
+		_broadcast_bot_match_history()
+
+func _expire_client_bot_jobs() -> void:
+	var now_unix := int(Time.get_unix_time_from_system())
+	var expired: Array[String] = []
+	for job_id_variant in _client_bot_jobs.keys():
+		var job_id := str(job_id_variant)
+		var job: Dictionary = _client_bot_jobs.get(job_id, {})
+		var heartbeat_unix := int(job.get("heartbeat_unix", job.get("started_unix", 0)))
+		var stalled_running_job := str(job.get("status", "")) == "running" \
+			and heartbeat_unix > 0 \
+			and now_unix - heartbeat_unix >= 90
+		if int(job.get("expires_unix", 0)) <= now_unix or stalled_running_job:
+			expired.append(job_id)
+	if expired.is_empty():
+		return
+	for job_id in expired:
+		_client_bot_jobs.erase(job_id)
+	_broadcast_bot_match_history()
+
+func _cancel_client_bot_jobs_for_session(session_id: String) -> void:
+	var resolved_session_id := session_id.strip_edges()
+	if resolved_session_id.is_empty():
+		return
+	var cancelled: Array[String] = []
+	for job_id_variant in _client_bot_jobs.keys():
+		var job_id := str(job_id_variant)
+		var job: Dictionary = _client_bot_jobs.get(job_id, {})
+		if str(job.get("session_id", "")) == resolved_session_id:
+			cancelled.append(job_id)
+	if cancelled.is_empty():
+		return
+	for job_id in cancelled:
+		_client_bot_jobs.erase(job_id)
 	_broadcast_bot_match_history()
 
 func _handle_cancel_bot_work(peer_id: int, payload: Dictionary) -> void:
@@ -1407,8 +1450,19 @@ func _build_ladder_page(request: Dictionary) -> Dictionary:
 	ladder.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		return a["name"].nocasecmp_to(b["name"]) < 0 if a["points"] == b["points"] else int(a["points"]) > int(b["points"])
 	)
+	for index in range(ladder.size()):
+		ladder[index]["ladder_position"] = index + 1
+	var search_query := str(request.get("search_query", "")).strip_edges().to_lower()
+	if not search_query.is_empty():
+		var matching_rows: Array[Dictionary] = []
+		for row in ladder:
+			if str(row.get("name", "")).to_lower().contains(search_query):
+				matching_rows.append(row)
+		ladder = matching_rows
+	if search_query.is_empty() and ladder.size() > 100:
+		ladder.resize(100)
 	if not is_paged:
-		return {"ladder": _public_ladder_rows(ladder.slice(0, NetworkManagerScript.MAX_NETWORK_PAYLOAD_ITEMS))}
+		return {"ladder": _public_ladder_rows(ladder)}
 	var last_page := maxi(0, ceili(float(ladder.size()) / LobbyProtocolScript.LADDER_PAGE_SIZE) - 1)
 	var page := mini(int(request["page"]), last_page)
 	var start := page * LobbyProtocolScript.LADDER_PAGE_SIZE
@@ -3169,6 +3223,7 @@ func _on_peer_disconnected(peer_id: int) -> void:
 	session["peer_id"] = 0
 	session["connected"] = false
 	sessions_by_id[session_id] = session
+	_cancel_client_bot_jobs_for_session(session_id)
 
 	var room_id: String = str(room_id_by_session.get(session_id, ""))
 	if not room_id.is_empty() and rooms_by_id.has(room_id):

@@ -210,6 +210,10 @@ static func validate_request(message: Dictionary) -> String:
 				var page = payload.get("page")
 				if not request_id is int or not page is int or page < 0 or payload.get("best_of") not in [1, 3]:
 					return "Invalid ladder page request."
+			if payload.has("search_query"):
+				var search_query = payload["search_query"]
+				if not search_query is String or search_query.length() > 64:
+					return "Invalid ladder search query."
 		REQUEST_BOT_DECK:
 			var list_id = payload.get("list_id", "")
 			if not list_id is String or list_id.is_empty() or list_id.length() > 64:

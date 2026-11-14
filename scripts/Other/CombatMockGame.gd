@@ -1479,7 +1479,7 @@ func _get_visible_priority_toggle_targets() -> Dictionary:
 	var hand_player := _get_visible_hand_player()
 	if hand_player == owner:
 		for hand_vc in _hand_visual_cards:
-			var vc := hand_vc as VisualCard
+			var vc := _get_valid_visual_card(hand_vc)
 			if vc == null \
 					or not is_instance_valid(vc) \
 					or not vc.visible \
@@ -3003,7 +3003,7 @@ func _get_hand_drag_drop_position(vc: VisualCard) -> Vector2:
 func _get_hand_drag_selection_cursor_mode() -> String:
 	var cursor_mode := ""
 	for hand_vc in _hand_visual_cards:
-		var vc := hand_vc as VisualCard
+		var vc := _get_valid_visual_card(hand_vc)
 		if vc == null or not is_instance_valid(vc):
 			continue
 		var target_ui := _get_hand_drag_target_zone_ui(vc)
@@ -8304,7 +8304,7 @@ func _get_hand_context_menu_source_vc() -> VisualCard:
 	if source_uid == "":
 		return null
 	for hand_vc in _hand_visual_cards:
-		var vc := hand_vc as VisualCard
+		var vc := _get_valid_visual_card(hand_vc)
 		if vc != null \
 				and is_instance_valid(vc) \
 				and vc.card_data != null \
@@ -10623,7 +10623,7 @@ func _can_refresh_hand_in_place(signature: String, entries: Array[Dictionary]) -
 			or _hand_visual_cards.size() != entries.size():
 		return false
 	for i in range(entries.size()):
-		var vc := _hand_visual_cards[i] as VisualCard
+		var vc := _get_valid_visual_card(_hand_visual_cards[i])
 		var card := entries[i].get("card", null) as Card
 		if vc == null \
 				or not is_instance_valid(vc) \
@@ -10641,7 +10641,7 @@ func _refresh_hand_visual_states(
 	for i in range(entries.size()):
 		var entry := entries[i]
 		var card := entry.get("card", null) as Card
-		var vc := _hand_visual_cards[i] as VisualCard
+		var vc := _get_valid_visual_card(_hand_visual_cards[i])
 		if card == null or vc == null or not is_instance_valid(vc):
 			continue
 		vc.set_hover_viewer(viewer)
@@ -11532,10 +11532,19 @@ func _any_hand_card_interacting() -> bool:
 	return _any_hand_card_list_interacting(_hand_visual_cards) \
 		or _any_hand_card_list_interacting(_enemy_hand_visual_cards)
 
+func _get_valid_visual_card(value: Variant) -> VisualCard:
+	if value == null or not value is Object or not is_instance_valid(value):
+		return null
+	if not value is VisualCard:
+		return null
+	return value as VisualCard
+
 func _any_hand_card_list_interacting(cards: Array) -> bool:
 	for hand_vc in cards:
-		var vc := hand_vc as VisualCard
-		if vc != null and is_instance_valid(vc) and vc.is_hand_interacting():
+		var vc := _get_valid_visual_card(hand_vc)
+		if vc == null:
+			continue
+		if vc.is_hand_interacting():
 			return true
 	return false
 
@@ -11561,7 +11570,7 @@ func _find_hand_hover_card_at(global_pos: Vector2) -> VisualCard:
 
 func _find_hand_hover_card_in_list(cards: Array, global_pos: Vector2) -> VisualCard:
 	for i in range(cards.size() - 1, -1, -1):
-		var vc := cards[i] as VisualCard
+		var vc := _get_valid_visual_card(cards[i])
 		if vc != null \
 				and is_instance_valid(vc) \
 				and _get_live_hand_hover_source_side(vc) != 0 \
@@ -16888,7 +16897,7 @@ func _cancel_hand_card_context_menu(card: Card) -> void:
 	if placement_container != null:
 		placement_container.visible = false
 	for hand_vc in _hand_visual_cards:
-		var vc := hand_vc as VisualCard
+		var vc := _get_valid_visual_card(hand_vc)
 		if vc != null and is_instance_valid(vc):
 			vc.set_highlighted(false)
 	_set_action_label_text(card.card_name + " deselected")
@@ -22020,7 +22029,7 @@ func _try_handle_hand_creature_drag_preview_modifier(event: InputEvent) -> bool:
 	if not apply_defensive and not apply_stealth:
 		return false
 	for hand_vc in _hand_visual_cards:
-		var vc := hand_vc as VisualCard
+		var vc := _get_valid_visual_card(hand_vc)
 		if vc == null or not is_instance_valid(vc):
 			continue
 		var handled := vc.apply_creature_drag_stealth_preview() if apply_stealth else vc.apply_creature_drag_defensive_preview()

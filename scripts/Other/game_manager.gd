@@ -2137,34 +2137,34 @@ func creature_attack(attacker: Card, target) -> void:
 	if attacker_controller == null:
 		return
 	if is_first_turn_attack_blocked_by_weather(attacker):
-		print(attacker.card_name + " cannot attack on the turn it enters play while Heavy Snow is active.")
+		note_player_feedback(attacker.card_name + " cannot attack this turn because Heavy Snow blocks creatures on the turn they enter play.")
 		return
 	if attacker.summoned_after_first_attack_this_turn:
-		print(attacker.card_name + " cannot attack because it was summoned after the first attack resolved this turn.")
+		note_player_feedback(attacker.card_name + " cannot attack because it was summoned after the first attack resolved this turn.")
 		return
 	if attack_restrictions.has(attacker_controller):
-		print(attacker_controller.player_name + " cannot attack! Restricted for " + str(attack_restrictions[attacker_controller].turns) + " more turns")
+		note_player_feedback(attacker_controller.player_name + " cannot attack for " + str(attack_restrictions[attacker_controller].turns) + " more turn(s).")
 		return
 	var cannot_attack_status := attacker.get_status_effect("cannot_attack")
 	if not cannot_attack_status.is_empty():
 		var source_name := str(cannot_attack_status.get("source", "an effect"))
-		print(attacker.card_name + " cannot attack because of " + source_name + ".")
+		note_player_feedback(attacker.card_name + " cannot attack because of " + source_name + ".")
 		return
 	
 	if not attacker.can_take_major_creature_action():
-		print("Creature has already acted this turn")
+		note_player_feedback(attacker.card_name + " cannot attack because it has already used its major action this turn.")
 		return
 	
 	if attacker.current_zone.zone_type != Zone.ZoneType.FRONTLINE:
-		print("Only frontline creatures can attack")
+		note_player_feedback(attacker.card_name + " cannot attack from the reserve row; move it to the frontline first.")
 		return
 
 	var attacker_was_stealth := attacker.is_stealth
 	if attacker.creature_mode == Card.CreatureMode.DEFENSIVE and not attacker_was_stealth:
-		print(attacker.card_name + " is in defensive stance and cannot attack")
+		note_player_feedback(attacker.card_name + " cannot attack while in defensive stance.")
 		return
 	if not can_pay_creature_action_mana_cost(attacker, "attack"):
-		print(attacker.card_name + " cannot attack because its controller cannot pay the action tax.")
+		note_player_feedback(attacker.card_name + " cannot attack because its controller cannot pay the action cost.")
 		return
 	if not pay_creature_action_mana_cost(attacker, "attack"):
 		return
@@ -2211,6 +2211,7 @@ func resolve_followers_attack(attackers: Array[Card], defending_player: Player) 
 	if active_attackers.is_empty():
 		return 0
 	if is_followers_attack_blocked_by_active_structure(active_attackers[0], defending_player, active_attackers.slice(1)):
+		note_player_feedback("The attack on %s's followers was stopped by an active structure." % defending_player.player_name)
 		return 0
 
 	for combatant in active_attackers:
