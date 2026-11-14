@@ -2,6 +2,7 @@ extends Node
 class_name PreflightProbe
 
 const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
+const BotCardStrategyScript = preload("res://scripts/bots/BotCardStrategy.gd")
 const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
 const DefaultMatchSetupScript = preload("res://scripts/server/DefaultMatchSetup.gd")
 const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
@@ -63,6 +64,7 @@ func run() -> bool:
 	_check_bot_main_phase_combat_order(failures)
 	_check_bot_hermes_speed(failures)
 	_check_bot_combat_buff_value(failures)
+	_check_bot_jiang_counterstroke(failures)
 	_check_bot_reveal_defense(failures)
 	_check_bot_next_turn_lethal(failures)
 	_check_standing_bot_seeks(failures)
@@ -1139,6 +1141,74 @@ func _check_bot_combat_buff_value(failures: PackedStringArray) -> void:
 	opponent.followers = 8
 	if int(bot._score_priority_card(second, attack, -1)["score"]) <= 0:
 		failures.append("Bot did not value a second Fifa when the extra damage was lethal")
+	bot.detach()
+
+func _check_bot_jiang_counterstroke(failures: PackedStringArray) -> void:
+	var game := GameManager.new()
+	var player := Player.new()
+	var opponent := Player.new()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 2
+	game._upkeep_resolved_turn = game.turn_number
+	var manager := MatchManager.new(game)
+	var bot := PracticeFuzzPlayerBot.new()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var jiang := JiangZiyaFisherOfKings.new()
+	jiang.card_owner = player
+	jiang.tactic_counters = JiangZiyaFisherOfKings.TACTIC_COUNTER_COST
+	player.frontline_zones[0].add_card(jiang)
+	var attacker := Enkidu.new()
+	attacker.card_owner = opponent
+	attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
+	opponent.frontline_zones[0].add_card(attacker)
+	var attack := CardAction.new()
+	attack.type = CardAction.Type.ATTACK
+	attack.source_player = opponent
+	attack.attacker = attacker
+	attack.target = jiang
+	game.push_to_stack(attack)
+	if not game.get_priority_responses(player).has(jiang) \
+			or int(bot._score_priority_card(jiang, attack, -1)["score"]) <= 0 \
+			or bot._choose_priority_response() != jiang:
+		failures.append("Bot did not recognize or choose Jiang's Counterstroke when Jiang was attacked")
+	jiang.activate(game)
+	if attack in game.action_stack or jiang.tactic_counters != 0 or attacker.current_zone != opponent.graveyard_zone:
+		failures.append("Jiang's Counterstroke did not negate the attack and destroy its attacker")
+	bot.detach()
+
+	game = GameManager.new()
+	player = Player.new()
+	opponent = Player.new()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 2
+	game._upkeep_resolved_turn = game.turn_number
+	manager = MatchManager.new(game)
+	bot = PracticeFuzzPlayerBot.new()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	jiang = JiangZiyaFisherOfKings.new()
+	jiang.card_owner = opponent
+	jiang.tactic_counters = JiangZiyaFisherOfKings.TACTIC_COUNTER_COST
+	opponent.frontline_zones[0].add_card(jiang)
+	attacker = Enkidu.new()
+	attacker.card_owner = player
+	attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
+	player.frontline_zones[0].add_card(attacker)
+	var targeted_effect := SpellCard.new()
+	targeted_effect.card_owner = player
+	targeted_effect.targets = true
+	if not BotCardStrategyScript.counterstroke_can_answer(bot, jiang, targeted_effect):
+		failures.append("Bot did not recognize an enemy Jiang that can counter a targeted effect")
+	if not BotCardStrategyScript.counterstroke_can_answer(bot, jiang, attacker, null, true) \
+			or not bot._is_attack_target_tactically_bad(attacker, jiang):
+		failures.append("Bot did not account for enemy Jiang's Counterstroke when choosing an attacker")
+	jiang.tactic_counters = 0
+	if BotCardStrategyScript.counterstroke_can_answer(bot, jiang, attacker, null, true) \
+			or bot._is_attack_target_tactically_bad(attacker, jiang):
+		failures.append("Bot still avoided enemy Jiang after its Counterstroke counters were spent")
 	bot.detach()
 
 func _check_bot_reveal_defense(failures: PackedStringArray) -> void:

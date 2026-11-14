@@ -349,14 +349,11 @@ func _start_trial(pool: Dictionary, challenger: Dictionary) -> void:
 	var lists: Array = pool["lists"]
 	_name_list(challenger, lists)
 	var weakest: Dictionary = {}
-	var weakest_is_distinct := false
-	# Quarantine the weakest list among those with overlapping alternatives first.
+	# Record strength chooses the incumbent. Deck uniqueness only decides whether
+	# the challenger replaces this weakest list after its seven-match trial.
 	for list: Dictionary in lists:
-		var is_distinct := _is_distinct(list, challenger, lists)
-		if weakest.is_empty() or (weakest_is_distinct and not is_distinct) \
-				or (weakest_is_distinct == is_distinct and _is_stronger(weakest, list)):
+		if weakest.is_empty() or _is_stronger(weakest, list):
 			weakest = list
-			weakest_is_distinct = is_distinct
 	pool["quarantined_id"] = weakest["list_id"]
 	pool["challenger"] = challenger
 
@@ -419,7 +416,9 @@ func _resolve_trial(pool: Dictionary) -> void:
 	other_lists.remove_at(incumbent_index)
 	var challenger_unique := _is_distinct(challenger, incumbent, other_lists)
 	var incumbent_unique := _is_distinct(incumbent, challenger, other_lists)
-	var replace := challenger_unique if challenger_unique != incumbent_unique else _is_stronger(challenger, incumbent)
+	var replace := _is_stronger(challenger, incumbent)
+	if challenger_unique != incumbent_unique:
+		replace = challenger_unique
 	if replace:
 		lists[incumbent_index] = challenger
 	pool["quarantined_id"] = ""

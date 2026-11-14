@@ -141,6 +141,8 @@ static func removal_score(bot, source: Card, target: Card, action: CardAction = 
 	if target == null or target.get_controller() != bot.opponent:
 		return BAD
 	var gm: GameManager = bot.game_manager
+	if counterstroke_can_answer(bot, target, source, action, false):
+		return BAD
 	if visible(bot, target):
 		if gm.is_immune_to_source(target, source):
 			return BAD
@@ -157,6 +159,46 @@ static func removal_score(bot, source: Card, target: Card, action: CardAction = 
 	else:
 		score += CARD_VALUE / 5
 	return score
+
+static func counterstroke_can_answer(
+	bot,
+	target: Card,
+	source: Card,
+	action: CardAction = null,
+	is_attack: bool = false
+) -> bool:
+	if not (target is JiangZiyaFisherOfKings) or source == null or bot == null or bot.game_manager == null:
+		return false
+	if target.get_controller() != bot.opponent or not visible(bot, target):
+		return false
+	if target.tactic_counters < JiangZiyaFisherOfKings.TACTIC_COUNTER_COST \
+			or not target._can_use_counter_abilities(bot.game_manager):
+		return false
+	if source.get_controller() != bot.bot_player:
+		return false
+	if is_attack and bot.game_manager.is_immune_to_source(source, target):
+		return false
+	if not is_attack and not bot.game_manager.is_targeting_source(source):
+		return false
+	var threat := action if action != null else CardAction.new()
+	if action == null:
+		if is_attack:
+			threat.type = CardAction.Type.ATTACK
+		elif source.card_type == Card.CardType.SPELL:
+			threat.type = CardAction.Type.SPELL
+		elif source.card_type == Card.CardType.CHARM:
+			threat.type = CardAction.Type.CHARM
+		else:
+			threat.type = CardAction.Type.ABILITY
+		threat.source_player = source.get_controller()
+		threat.target = target
+		if is_attack:
+			threat.attacker = source
+		else:
+			threat.card = source
+	if not is_attack and source.has_method("can_be_negated") and not source.can_be_negated(threat):
+		return false
+	return true
 
 static func destruction_guard(target: Card) -> bool:
 	return target.has_status_effect("berserker_mead_guard") or target.has_status_effect("berserker_rage_guard") or target.has_status_effect("en_hedu_anna_exaltation_guard")
@@ -340,6 +382,8 @@ static func target_score(bot, card: Card, target: Card, action: CardAction = nul
 		return BAD
 	var own: bool = target.get_controller() == bot.bot_player
 	var enemy: bool = target.get_controller() == bot.opponent
+	if enemy and counterstroke_can_answer(bot, target, card, action):
+		return BAD
 	if visible(bot, target) and (bot.game_manager.is_immune_to_source(target, card) or bot.game_manager.is_guardian_protected(target, card)):
 		return BAD
 	match key(card):
@@ -525,7 +569,7 @@ static func effect_score(bot, card: Card, target: Card = null, action: CardActio
 				return BAD
 			if action.type == CardAction.Type.ATTACK:
 				return maxi(1800, removal_score(bot, card, action.attacker, action))
-			return 3500
+			return maxi(1800, removal_score(bot, card, action.card, action))
 		"Drought", "HeavySnow", "Storm":
 			if action != null:
 				return BAD

@@ -875,12 +875,54 @@ func _plan_creature_summon(danger: int = -1, attacks: Array[Dictionary] = [], ba
 					if not stealth and danger > 0:
 						safety = _score_summon_removal(creature, danger, change, safety)
 					candidate += safety
+					candidate -= _estimate_projected_summon_casualty_cost(
+						creature, summon_zone, projected_defensive, removed
+					)
 					if candidate > best_score:
 						best = {"command": command.duplicate(), "score": candidate, "combat_score": combat_score}
 						best["command"]["stealth"] = stealth
 						best["command"].erase("payment_penalty")
 						best_score = candidate
 	return best
+
+func _estimate_projected_summon_casualty_cost(
+	creature: Card,
+	zone: Zone,
+	defensive: bool,
+	removed: Array
+) -> int:
+	if creature == null or zone == null or zone not in bot_player.frontline_zones:
+		return 0
+	var restriction: Dictionary = game_manager.attack_restrictions.get(opponent, {})
+	if not restriction.is_empty() and restriction.get("source") not in removed:
+		return 0
+	var budget := opponent.mana + game_manager.get_automatic_upkeep_mana_gain(opponent, game_manager.turn_number + 1) \
+		+ game_manager.get_effective_upkeep_mana_gain(game_manager.get_base_upkeep_mana_gain(), opponent)
+	var greatest_loss := 0
+	for attacker in _get_board_creatures(opponent):
+		if attacker in removed or not CardStrategy.visible(self, attacker) \
+				or attacker.current_zone == null or attacker.current_zone not in opponent.frontline_zones \
+				or (attacker.creature_mode != Card.CreatureMode.AGGRESSIVE and not attacker.is_stealth) \
+				or attacker.is_petrified() or _status_persists_to_next_turn(attacker, "sleep", removed) \
+				or _status_persists_to_next_turn(attacker, "cannot_attack", removed) \
+				or game_manager.get_creature_action_mana_cost(attacker, "attack") > budget \
+				or not game_manager.can_cards_engage_each_other(attacker, creature):
+			continue
+		var action := CardAction.new()
+		action.type = CardAction.Type.ATTACK
+		action.attacker = attacker
+		action.target = creature
+		var result := _estimate_raw_attack_economy(
+			action, {}, Card.CreatureMode.DEFENSIVE if defensive else Card.CreatureMode.AGGRESSIVE
+		)
+		if creature not in result.get("casualties", []):
+			continue
+		var loss := _get_card_economic_value(creature)
+		for casualty: Card in result.get("casualties", []):
+			if casualty != creature and casualty.get_controller() == opponent:
+				loss -= _get_card_economic_value(casualty)
+		greatest_loss = maxi(greatest_loss, maxi(0, loss))
+	return greatest_loss
 
 func _score_summon_removal(creature: Card, danger: int, change: Dictionary, baseline: int) -> int:
 	var options: Array[Dictionary] = []
@@ -2539,6 +2581,8 @@ func _get_best_supported_attack(attackers: Array[Card], opposing_creatures: Arra
 		for defender in opposing_creatures:
 			if not CardStrategy.visible(self, defender) or not _can_attack_creature(attacker, defender):
 				continue
+			if CardStrategy.counterstroke_can_answer(self, defender, attacker, null, true):
+				continue
 			if not match_manager._get_possible_interceptors(attacker, defender).is_empty():
 				continue
 			var action := CardAction.new()
@@ -2693,6 +2737,8 @@ func _is_reasonable_askelladen_trade(attacker: Card, target: Card) -> bool:
 
 func _is_attack_target_tactically_bad(attacker: Card, target: Card) -> bool:
 	if attacker == null or target == null:
+		return true
+	if CardStrategy.counterstroke_can_answer(self, target, attacker, null, true):
 		return true
 	if _is_stone_monkey(target) and not attacker.can_destroy_combat_protected_creatures(target):
 		return true
