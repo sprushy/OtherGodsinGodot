@@ -3371,10 +3371,13 @@ func _watch_local_bot_match(match_id: String) -> void:
 
 func _on_watch_next_local_bot_match_requested() -> void:
 	var active_game := _get_active_embedded_game()
-	if active_game == null or not bool(active_game.get("_is_local_hosted_bot_observer")):
+	if active_game == null:
 		return
 	var current_match_info = active_game.get("_current_match_info")
-	var current_match_id := str(current_match_info.get("match_id", "")) if current_match_info is Dictionary else ""
+	if not (current_match_info is Dictionary) \
+			or not bool(current_match_info.get("local_volunteer_host", false)):
+		return
+	var current_match_id := str(current_match_info.get("match_id", ""))
 	var available_match_ids: Array[String] = []
 	for raw_match_id in _local_bot_match_workers.keys():
 		var match_id := str(raw_match_id)

@@ -3581,7 +3581,8 @@ func _add_equipment_affordances(overlay: Control, card: Card) -> void:
 		var affordance_size := affordance.custom_minimum_size
 		if affordance_size == Vector2.ZERO:
 			affordance_size = EquipmentCard.EQUIPPED_AFFORDANCE_SIZE
-		affordance.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		affordance.mouse_filter = Control.MOUSE_FILTER_PASS
+		_connect_badge_hover(affordance, "", equip)
 		affordance.set_anchors_preset(Control.PRESET_TOP_LEFT)
 		affordance.offset_left = badge_left
 		affordance.offset_top = badge_top
@@ -3682,6 +3683,10 @@ func _add_debuff_affordances(overlay: Control, card: Card) -> void:
 		if preview == null:
 			continue
 		var badge := DebuffBadgeScript.create(preview, int(entry.get("count", 1)))
+		var source_card := entry.get("source_card", null) as Card
+		if source_card != null:
+			badge.mouse_filter = Control.MOUSE_FILTER_PASS
+			_connect_badge_hover(badge, "", source_card)
 		badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 		badge.offset_left = badge_right - DEBUFF_BADGE_SIZE
 		badge.offset_top = badge_top

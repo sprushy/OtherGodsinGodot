@@ -91,17 +91,19 @@ func build_random_deck(seed_value: int, forced_god_name: String = "", ranked: bo
 			continue
 		var special_setup := {}
 		if TiamatThePrimordial.is_tiamat_god(god):
-			var brood_count := TiamatThePrimordial.POWER_SLOT_COUNT
-			if ranked and rng.randi_range(0, 2) == 0:
-				deck_cards["Take the Field"] = 1
-				brood_count -= 1
+			var brood_count := rng.randi_range(1, TiamatThePrimordial.POWER_SLOT_COUNT)
 			special_setup = _build_tiamat_brood_setup(rng, brood_count)
+			if not _fill_safe_powers_for_god(
+				deck_cards, god, rng, ranked,
+				TiamatThePrimordial.POWER_SLOT_COUNT - brood_count
+			):
+				continue
 		else:
 			if not _fill_safe_powers_for_god(deck_cards, god, rng, ranked):
 				continue
 		var validation := _validator.validate_deck(deck_cards, special_setup)
 		if bool(validation.get("is_valid", false)):
-			return {
+			var built := {
 				"name": "%s Autofill %d" % [god.card_name, seed_value],
 				"deck_name": "%s Autofill %d" % [god.card_name, seed_value],
 				"cards": (validation.get("cards", {}) as Dictionary).duplicate(true),
@@ -109,6 +111,7 @@ func build_random_deck(seed_value: int, forced_god_name: String = "", ranked: bo
 				"seed": deck_seed,
 				"god_name": god.card_name,
 			}
+			return audit_ranked_bot_deck(built) if ranked else built
 	return {}
 
 # Builds a deterministic, deck-validator-legal Thor deck that contains the
@@ -271,24 +274,35 @@ func _build_tiamat_brood_setup(rng: RandomNumberGenerator, brood_count: int) -> 
 		slots.append(slot)
 	return TiamatThePrimordial.build_special_setup(slots)
 
-func _fill_safe_powers_for_god(deck_cards: Dictionary, god: GodCard, rng: RandomNumberGenerator, ranked: bool = false) -> bool:
-	var desired_powers := rng.randi_range(0, MAX_POWERS)
-	if ranked:
+func _fill_safe_powers_for_god(
+	deck_cards: Dictionary,
+	god: GodCard,
+	rng: RandomNumberGenerator,
+	ranked: bool = false,
+	requested_power_count: int = -1
+) -> bool:
+	var desired_powers := rng.randi_range(0, MAX_POWERS) if requested_power_count < 0 else requested_power_count
+	if ranked and requested_power_count < 0:
 		# Ranked bot decks use every available power slot. The old minimum of two
 		# made half of generated ranked decks stop at exactly two powers.
 		desired_powers = MAX_POWERS
-	for _power_index in range(desired_powers):
+	desired_powers = clampi(desired_powers, 0, MAX_POWERS)
+	var power_count := _count_power_cards(deck_cards)
+	while power_count < desired_powers:
 		var candidates := _get_power_candidates(god, deck_cards, ranked)
 		if candidates.is_empty():
 			return not ranked
 		var chosen := candidates[rng.randi_range(0, candidates.size() - 1)]
 		deck_cards[chosen.card_name] = int(deck_cards.get(chosen.card_name, 0)) + 1
+		power_count += 1
 	return true
 
 func complete_ranked_power_slots(deck: Dictionary) -> Dictionary:
 	if deck.is_empty():
 		return deck.duplicate(true)
-	var completed := deck.duplicate(true)
+	var completed := audit_ranked_bot_deck(deck)
+	if completed.is_empty():
+		return {}
 	var deck_cards: Dictionary = completed.get("cards", {}).duplicate(true)
 	var god := _cards_by_name.get(str(completed.get("god_name", "")), null) as GodCard
 	if god == null:
@@ -320,6 +334,249 @@ func complete_ranked_power_slots(deck: Dictionary) -> Dictionary:
 	completed["special_setup"] = validation.get("special_setup", {}).duplicate(true)
 	completed["reinforcements"] = validation.get("reinforcements", {}).duplicate(true)
 	return completed
+
+# Repairs historical ranked lists as well as newly built ranked decks. The
+# method is deterministic for a given list/deck identity, so replaying match
+# history produces the same audited list every time.
+func audit_ranked_bot_deck(deck: Dictionary) -> Dictionary:
+	if deck.is_empty():
+		return {}
+	var audited := deck.duplicate(true)
+	var god := _cards_by_name.get(str(audited.get("god_name", "")), null) as GodCard
+	if god == null:
+		return {}
+	var cards: Dictionary = audited.get("cards", {}).duplicate(true)
+	if cards.is_empty():
+		return {}
+	# Remove ineligible cards until the remaining deck no longer has dangling
+	# support relationships (e.g. a payoff removed with its last enabler).
+	for _pass in range(6):
+		var removed := false
+		for raw_name in cards.keys():
+			var card_name := str(raw_name)
+			var template: Card = _cards_by_name.get(card_name, null)
+			if template == null or card_name == god.card_name:
+				continue
+			if not _has_deckbuilding_requirements(template, cards, god):
+				cards.erase(card_name)
+				removed = true
+		if not removed:
+			break
+	var rng := RandomNumberGenerator.new()
+	rng.seed = absi(hash(str(audited.get("god_name", "")) + JSON.stringify(audited.get("cards", {}))))
+	# Restore the standard forty-card non-power portion after pruning.
+	var regular_count := _count_regular_cards(cards)
+	var legendary_count := _count_legendary_cards(cards)
+	var attempts := 0
+	while regular_count < DEFAULT_REGULAR_CARD_COUNT and attempts < MAX_RANDOM_PICK_ATTEMPTS:
+		attempts += 1
+		var candidates: Array[Card] = []
+		for candidate in _get_regular_candidates(god, cards, false, true):
+			if _has_deckbuilding_requirements(candidate, cards, god):
+				candidates.append(candidate)
+		if candidates.is_empty() and legendary_count < int(DEFAULT_REGULAR_CARD_COUNT / 10.0):
+			for candidate in _get_regular_candidates(god, cards, true, true):
+				if _has_deckbuilding_requirements(candidate, cards, god):
+					candidates.append(candidate)
+		if candidates.is_empty():
+			return {}
+		var chosen: Card = candidates[rng.randi_range(0, candidates.size() - 1)]
+		var added := mini(_get_copy_count_to_add(chosen, cards), DEFAULT_REGULAR_CARD_COUNT - regular_count)
+		if chosen.is_legendary:
+			added = 1
+			if legendary_count + added > int(DEFAULT_REGULAR_CARD_COUNT / 10.0):
+				continue
+		cards[chosen.card_name] = int(cards.get(chosen.card_name, 0)) + added
+		regular_count += added
+		if chosen.is_legendary:
+			legendary_count += added
+	# Tiamat shares the three power slots between powers and brood slots. Repair
+	# historical lists to that combined limit before filling any remaining slots.
+	var power_slot_capacity := MAX_POWERS
+	if TiamatThePrimordial.is_tiamat_god(god):
+		power_slot_capacity -= _get_tiamat_occupied_slot_count(audited.get("special_setup", {}))
+	var power_count := _count_power_cards(cards)
+	var excess_power_names: Array[String] = []
+	for raw_name in cards.keys():
+		var template: Card = _cards_by_name.get(str(raw_name), null)
+		if template != null and template.is_power and not template.is_god:
+			excess_power_names.append(str(raw_name))
+	while power_count > power_slot_capacity and not excess_power_names.is_empty():
+		var remove_index := rng.randi_range(0, excess_power_names.size() - 1)
+		var remove_name := excess_power_names[remove_index]
+		var remove_count := int(cards.get(remove_name, 0))
+		if remove_count <= 1:
+			cards.erase(remove_name)
+			excess_power_names.remove_at(remove_index)
+		else:
+			cards[remove_name] = remove_count - 1
+		power_count -= 1
+	while power_count < power_slot_capacity:
+		var power_candidates := _get_power_candidates(god, cards, true)
+		if power_candidates.is_empty():
+			break
+		var chosen_power: Card = power_candidates[rng.randi_range(0, power_candidates.size() - 1)]
+		cards[chosen_power.card_name] = 1
+		power_count += 1
+	var validation := _validator.validate_deck(
+		cards,
+		audited.get("special_setup", {}),
+		audited.get("reinforcements", {})
+	)
+	if not bool(validation.get("is_valid", false)):
+		return {}
+	audited["cards"] = (validation.get("cards", {}) as Dictionary).duplicate(true)
+	audited["special_setup"] = (validation.get("special_setup", {}) as Dictionary).duplicate(true)
+	audited["reinforcements"] = (validation.get("reinforcements", {}) as Dictionary).duplicate(true)
+	return audited
+
+func _get_tiamat_occupied_slot_count(special_setup) -> int:
+	var occupied := 0
+	for slot_cards in TiamatThePrimordial.get_slot_card_names_from_setup(special_setup):
+		if slot_cards is Array and not slot_cards.is_empty():
+			occupied += 1
+	return occupied
+
+func _count_regular_cards(cards: Dictionary) -> int:
+	var total := 0
+	for name in cards:
+		var card: Card = _cards_by_name.get(str(name), null)
+		if card != null and not card.is_god and not card.is_power:
+			total += int(cards[name])
+	return total
+
+func _count_legendary_cards(cards: Dictionary) -> int:
+	var total := 0
+	for name in cards:
+		var card: Card = _cards_by_name.get(str(name), null)
+		if card != null and card.is_legendary and not card.is_god:
+			total += int(cards[name])
+	return total
+
+func _count_power_cards(cards: Dictionary) -> int:
+	var total := 0
+	for name in cards:
+		var card: Card = _cards_by_name.get(str(name), null)
+		if card != null and card.is_power and not card.is_god:
+			total += int(cards[name])
+	return total
+
+func _has_deckbuilding_requirements(card: Card, cards: Dictionary, god: GodCard) -> bool:
+	if card == null:
+		return false
+	var name := card.card_name
+	match name:
+		"Fourth Sage Enmegalamma":
+			return _count_other_matching(cards, card, ["Mer", "Sage"]) >= 3
+		"Byggvir":
+			return _count_tagged(cards, "Mead") > 0
+		"Tatzelwurm":
+			return _count_other_matching(cards, card, ["Dragon"]) > 0
+		"Caleuche, the Ghost Ship":
+			return _count_other_matching(cards, card, ["Spirit"]) >= 2 or (god.card_name == "Freyja" and _count_matching(cards, ["Norse", "Warrior"]) >= 2)
+		"E2-abzu":
+			return _deck_has_mer_mage(cards)
+		"Walk of the Sage":
+			return _walk_of_the_sage_has_payoff(cards)
+		"Huginn": return _count_tagged(cards, "Hex") > 0
+		"Muninn": return _count_tagged(cards, "Charm") > 0
+		"Wild Magic": return _count_matching(cards, ["Magic"]) > 0
+		"Allfather's Sacrifice": return _count_tagged(cards, "Spell") > 0
+		"Giant Master Architect": return _count_tagged(cards, "Structure") > 0
+		"Wolf Cub": return _count_other_matching(cards, card, ["Lupine"], 4) > 0
+		"Wolf Adolescent": return _count_other_matching(cards, card, ["Lupine"], 5) > 0
+		"Hringhorni": return _count_other_matching(cards, card, ["Norse", "Warrior"]) > 0
+		"Harii Jarl": return _count_other_matching(cards, card, ["Harii"]) > 0
+		"Harii Shaman": return _count_matching(cards, ["Norse", "Warrior"]) + _count_matching(cards, ["Animal"]) > 0
+		"Gungnir, the Spear of Odin": return _count_matching(cards, ["Norse", "Warrior"]) > 0
+		"Gambanteinn": return _count_matching(cards, ["Mage"]) + _count_matching(cards, ["Shaman"]) > 0
+		"Breidablik": return _count_matching(cards, ["Priest"]) > 0
+		"Tonal Extraction": return _count_matching(cards, ["Shapeshifter"]) > 0
+		"Fire and Gold": return _count_matching(cards, ["Tian", "Dragon"]) > 0 and _count_tagged(cards, "Structure") > 0
+		"Call of the Valkyrie": return _count_matching(cards, ["Norse", "Warrior"]) > 0
+		"Myrkwood": return _count_matching(cards, ["Animal"]) >= 2
+		"Hunting Tactics": return _has_hunting_tactics_pair(cards)
+		"Norse Bloodlust": return _count_matching(cards, ["Norse", "Warrior"]) > 0 and _count_matching(cards, ["Lupine"]) > 0
+		"Rally the Troops": return _count_matching(cards, ["Warrior"]) >= 6 and _count_matching(cards, ["Warrior"], 5) > 0
+		"Raven Storm": return _count_matching(cards, ["Norse", "Warrior"]) + _count_matching(cards, ["Lupine"]) > 0
+		"Fifa the Magical Arrow": return _count_matching(cards, ["Warrior"]) > 0
+	if card.is_power and BotCardStrategyScript.PASSIVE_TYPES.has(BotCardStrategyScript.key(card)) \
+			and name not in ["Rally the Troops", "Norse Bloodlust", "Hunting Tactics", "Myrkwood"]:
+		var matching_creatures := 0
+		for candidate_name in cards:
+			var candidate: Card = _cards_by_name.get(str(candidate_name), null)
+			if candidate == null or candidate.card_type != Card.CardType.CREATURE or candidate.is_god:
+				continue
+			for type in BotCardStrategyScript.PASSIVE_TYPES[BotCardStrategyScript.key(card)]:
+				if candidate.has_type(str(type)):
+					matching_creatures += int(cards[candidate_name])
+					break
+		if matching_creatures < 6:
+			return false
+	return true
+
+func _count_tagged(cards: Dictionary, tag: String) -> int:
+	var total := 0
+	for name in cards:
+		var candidate: Card = _cards_by_name.get(str(name), null)
+		if candidate != null and not candidate.is_god and candidate.has_type(tag):
+			total += int(cards[name])
+	return total
+
+func _count_matching(cards: Dictionary, tags: Array, minimum_level: int = 0) -> int:
+	var total := 0
+	for name in cards:
+		var candidate: Card = _cards_by_name.get(str(name), null)
+		if candidate == null or candidate.card_type != Card.CardType.CREATURE or candidate.is_god or candidate.level < minimum_level:
+			continue
+		var matches := true
+		for tag in tags:
+			if not candidate.has_type(str(tag)):
+				matches = false
+				break
+		if matches:
+			total += int(cards[name])
+	return total
+
+func _count_other_matching(cards: Dictionary, source: Card, tags: Array, maximum_level: int = 0) -> int:
+	var total := 0
+	for name in cards:
+		var candidate: Card = _cards_by_name.get(str(name), null)
+		if candidate == null or candidate.card_type != Card.CardType.CREATURE or candidate.is_god or candidate == source:
+			continue
+		if maximum_level > 0 and candidate.level > maximum_level:
+			continue
+		var matches := true
+		for tag in tags:
+			if not candidate.has_type(str(tag)):
+				matches = false
+				break
+		if matches:
+			total += int(cards[name])
+	return total
+
+func _walk_of_the_sage_has_payoff(cards: Dictionary) -> bool:
+	var has_mage := _count_matching(cards, ["Mage"]) > 0
+	if not has_mage:
+		return false
+	var has_abzu_payoff := int(cards.get("E2-abzu", 0)) > 0 and _deck_has_mer_mage(cards)
+	var has_sage_payoff := int(cards.get("Seventh Sage Utuabzu", 0)) > 0 and _count_matching(cards, ["Ancient", "Mage", "Sage"]) > 1
+	var has_vision_payoff := int(cards.get("Vision of Tartarus", 0)) > 0 and _count_matching(cards, ["Mage"]) > 0
+	return has_abzu_payoff or has_sage_payoff or has_vision_payoff
+
+func _has_hunting_tactics_pair(cards: Dictionary) -> bool:
+	var attackers := 0
+	var supporters := 0
+	for name in cards:
+		var candidate: Card = _cards_by_name.get(str(name), null)
+		if candidate == null or candidate.card_type != Card.CardType.CREATURE or candidate.is_god:
+			continue
+		var count := int(cards[name])
+		if candidate.has_type("Lupine") or (candidate.has_type("Norse") and candidate.has_type("Human") and candidate.has_type("Warrior")):
+			attackers += count
+		if candidate.card_name == "Huginn" or candidate.card_name == "Muninn" or candidate.has_type("Lupine"):
+			supporters += count
+	return attackers > 0 and supporters > 0 and (attackers > 1 or supporters > 1)
 
 func _get_regular_candidates(god: GodCard, deck_cards: Dictionary, legendary_only: bool, ranked: bool = false) -> Array[Card]:
 	var candidates: Array[Card] = []
@@ -355,18 +612,8 @@ func _get_power_candidates(god: GodCard, deck_cards: Dictionary, ranked: bool = 
 			continue
 		if template is TakeTheField and not _can_use_take_the_field(god):
 			continue
-		if ranked and BotCardStrategyScript.PASSIVE_TYPES.has(BotCardStrategyScript.key(template)):
-			var matches := 0
-			for name in deck_cards:
-				var candidate: Card = _cards_by_name.get(name)
-				if candidate == null or candidate.card_type != Card.CardType.CREATURE:
-					continue
-				for type in BotCardStrategyScript.PASSIVE_TYPES[BotCardStrategyScript.key(template)]:
-					if candidate.has_type(type):
-						matches += int(deck_cards[name])
-						break
-			if matches < 6:
-				continue
+		if ranked and not _has_deckbuilding_requirements(template, deck_cards, god):
+			continue
 		candidates.append(template)
 	return candidates
 
@@ -384,12 +631,24 @@ func _is_safe_regular_card(card: Card, god: GodCard, deck_cards: Dictionary, leg
 	if ranked:
 		if card.card_type != Card.CardType.CREATURE and not BotCardStrategyScript.supports_ranked_deck_card(card):
 			return false
+		if not _has_deckbuilding_requirements(card, deck_cards, god):
+			return false
 		return _is_card_compatible_with_god(card, god)
 	if _prompt_heavy_lookup.has(CardCatalogScript.to_lookup_key(str(card.card_name))):
 		return false
 	if card.card_type != Card.CardType.CREATURE and not _safe_non_creature_lookup.has(CardCatalogScript.to_lookup_key(str(card.card_name))):
 		return false
 	return _is_card_compatible_with_god(card, god)
+
+func _deck_has_mer_mage(deck_cards: Dictionary) -> bool:
+	for card_name in deck_cards:
+		if int(deck_cards[card_name]) <= 0:
+			continue
+		var card: Card = _cards_by_name.get(str(card_name))
+		if card != null and card.card_type == Card.CardType.CREATURE \
+				and card.has_type("Mer") and card.has_type("Mage"):
+			return true
+	return false
 
 func _is_card_compatible_with_god(card: Card, god: GodCard) -> bool:
 	if card == null or god == null or card.is_god:

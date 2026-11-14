@@ -32,6 +32,10 @@ const NAME_EPITHETS := [
 var _by_god: Dictionary = {}
 var _replayed_match_count := -1
 var _last_replayed_id := ""
+var _deck_auditor: Callable
+
+func set_deck_auditor(auditor: Callable) -> void:
+	_deck_auditor = auditor
 
 func refresh(results: Array[Dictionary]) -> void:
 	if _replayed_match_count == results.size():
@@ -298,7 +302,22 @@ func _apply_result(result: Dictionary) -> void:
 	if outcome != "win" and not bool(result.get("is_self_play", false)):
 		return
 
-	var fingerprint := _fingerprint(result)
+	var audited_result := result.duplicate(true)
+	if _deck_auditor.is_valid():
+		var audited_deck: Dictionary = _deck_auditor.call({
+			"list_id": str(result.get("match_id", "")),
+			"deck_name": str(result.get("bot_name", "")),
+			"god_name": god_name,
+			"cards": result.get("cards", {}).duplicate(true),
+			"reinforcements": result.get("reinforcements", {}).duplicate(true),
+			"special_setup": result.get("special_setup", {}).duplicate(true),
+		})
+		if audited_deck.is_empty():
+			return
+		audited_result["cards"] = audited_deck.get("cards", {}).duplicate(true)
+		audited_result["reinforcements"] = audited_deck.get("reinforcements", {}).duplicate(true)
+		audited_result["special_setup"] = audited_deck.get("special_setup", {}).duplicate(true)
+	var fingerprint := _fingerprint(audited_result)
 	for list: Dictionary in lists:
 		if list["fingerprint"] == fingerprint:
 			_update_record(list, outcome)
@@ -321,9 +340,9 @@ func _apply_result(result: Dictionary) -> void:
 		"fingerprint": fingerprint,
 		"god_name": god_name,
 		"deck_name": "%s: Challenger" % display_god_name(god_name),
-		"cards": result["cards"],
-		"reinforcements": result["reinforcements"],
-		"special_setup": result["special_setup"],
+		"cards": audited_result["cards"],
+		"reinforcements": audited_result["reinforcements"],
+		"special_setup": audited_result["special_setup"],
 		"wins": 0,
 		"losses": 0,
 		"draws": 0,

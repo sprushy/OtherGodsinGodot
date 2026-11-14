@@ -4818,6 +4818,8 @@ func _setup_action_log() -> void:
 	log_shell.visible = SHOW_MATCH_INFO_PANELS
 	log_shell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	log_shell.size_flags_vertical = 0
+	log_shell.z_as_relative = false
+	log_shell.z_index = TRANSIENT_UI_Z_INDEX - 10
 	log_shell.custom_minimum_size.x = ACTION_LOG_MIN_WIDTH + ACTION_LOG_LEFT_INSET
 	log_shell.add_theme_constant_override("margin_left", ACTION_LOG_LEFT_INSET)
 	log_shell.add_child(log_box)
@@ -29519,7 +29521,8 @@ func _show_game_result_overlay(result_message: String, winner = null, loser = nu
 		game_manager.match_result_stats if game_manager != null else {},
 		game_manager.game_end_reason if game_manager != null else "",
 		_can_offer_lobby_rematch(), not _match_replay_entries.is_empty(), auto_return,
-		true, _ranked_match_result, _is_local_hosted_bot_observer
+		true, _ranked_match_result,
+		bool(_current_match_info.get("local_volunteer_host", false))
 	)
 	if winner != null and winner == _get_result_viewer() and not _is_observer_mode:
 		overlay.play_victory_sound()

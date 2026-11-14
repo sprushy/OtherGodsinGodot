@@ -379,6 +379,14 @@ func _choose_priority_response() -> Card:
 	var top_action: CardAction = game_manager.action_stack.back() if not game_manager.action_stack.is_empty() else null
 	if top_action != null:
 		var danger := _forecast_incoming_follower_loss() if game_manager.current_player == bot_player else -1
+		if top_action.type == CardAction.Type.ATTACK:
+			for response_card in responses:
+				if response_card is JiangZiyaFisherOfKings \
+						and (top_action.target == response_card or top_action.interceptor == response_card):
+					return response_card
+		for response_card in responses:
+			if response_card is E2Abzu and int(_score_priority_card(response_card, top_action, danger)["score"]) > 0:
+				return response_card
 		for response_card in responses:
 			if response_card is MeadOfPoetry and _target_includes_card(top_action.target, response_card):
 				return response_card
@@ -402,6 +410,13 @@ func _choose_priority_response() -> Card:
 	return null
 
 func _score_priority_card(card: Card, action: CardAction, danger: int) -> Dictionary:
+	if card is E2Abzu:
+		var best := {"score": CardStrategy.BAD, "target": null}
+		for target: Card in card.get_priority_field_targets(game_manager, action):
+			var score := _score_e2_abzu_dodge(card, target, action)
+			if score > int(best["score"]):
+				best = {"score": score, "target": target}
+		return best
 	var targets := CardStrategy.targets(self, card, action)
 	if targets.is_empty():
 		targets = [null]
@@ -432,6 +447,24 @@ func _score_priority_card(card: Card, action: CardAction, danger: int) -> Dictio
 		if score > int(best["score"]):
 			best = {"score": score, "target": target}
 	return best
+
+func _score_e2_abzu_dodge(source: E2Abzu, target: Card, action: CardAction) -> int:
+	if source == null or target == null or action == null or action.source_player != opponent:
+		return CardStrategy.BAD
+	if target not in source.get_priority_field_targets(game_manager, action):
+		return CardStrategy.BAD
+	if action.type == CardAction.Type.ATTACK:
+		if action.target != target:
+			return CardStrategy.BAD
+		var combat := _estimate_attack_economy(action, null, 0, 0)
+		if target not in combat.get("casualties", []):
+			return CardStrategy.BAD
+	else:
+		if not _target_includes_card(action.target, target) and not _target_includes_card(action.event_data, target):
+			return CardStrategy.BAD
+		if action.card != null and game_manager.is_immune_to_source(target, action.card):
+			return CardStrategy.BAD
+	return maxi(0, _get_card_economic_value(target) - E2Abzu.VOID_AND_RETURN_COST * ECON_MANA_VALUE)
 
 func _target_includes_card(target_value, card: Card) -> bool:
 	if target_value is Card:
@@ -1063,6 +1096,12 @@ func _get_best_strategy_action(attacks: Array[Dictionary], attack: Dictionary, d
 	var cards: Array = bot_player.hand_zone.cards.duplicate()
 	cards.append_array(game_manager.get_field_cards(bot_player))
 	for card in cards:
+		if card is E2Abzu:
+			var abzu_plan := _plan_e2_abzu_return(card as E2Abzu)
+			if int(abzu_plan.get("score", 0)) > best_score:
+				best_score = int(abzu_plan["score"])
+				best_plan = abzu_plan
+			continue
 		if card is BlotSacrifice or card is KeyOfSolomon:
 			var paid_plan := _plan_sacrifice_spell(card, danger)
 			if int(paid_plan.get("score", 0)) > best_score:
@@ -1170,6 +1209,31 @@ func _get_best_strategy_action(attacks: Array[Dictionary], attack: Dictionary, d
 				if conversion_score > best_score:
 					best_score = conversion_score
 					best_plan = {"command": {"type": "activate_card_ability", "source_uid": card.uid, "option": {"mode": "convert"}}, "score": conversion_score}
+	return best_plan
+
+func _plan_e2_abzu_return(abzu: E2Abzu) -> Dictionary:
+	if abzu == null or abzu.current_zone == null or not abzu.current_zone.is_board_zone() \
+			or not abzu.can_activate(game_manager) or not game_manager.can_player_add_to_hand_now(bot_player):
+		return {}
+	var best_plan: Dictionary = {}
+	var best_score := 0
+	var mana_after_return := bot_player.mana - E2Abzu.RETURN_TO_HAND_COST
+	var summon_zone := _get_first_open_summon_zone(bot_player)
+	for mage: Card in abzu.get_valid_void_targets(game_manager):
+		var score := _get_hand_value(mage) * 100 - E2Abzu.RETURN_TO_HAND_COST * ECON_MANA_VALUE
+		if summon_zone != null and _score_creature_play_in_zone(mage, summon_zone, mana_after_return) > 0:
+			score += 2500
+		if score <= best_score:
+			continue
+		best_score = score
+		best_plan = {
+			"score": score,
+			"command": {
+				"type": "activate_card_ability",
+				"source_uid": abzu.uid,
+				"target_uid": mage.uid,
+			},
+		}
 	return best_plan
 
 func _effect_follower_safety_gain(card: Card, target: Card, danger: int) -> int:
@@ -2762,7 +2826,23 @@ func _is_clean_creature_kill(attacker: Card, target: Card) -> bool:
 	return _would_attacker_survive_battle(attacker, target)
 
 func _score_standard_attack_plan(attacker: Card, target: Card) -> int:
-	if not _can_attack_creature(attacker, target):
+	if match_manager == null or not _can_attack_creature(attacker, target):
+		return -1000000
+	var possible_interceptors := match_manager._get_possible_interceptors(attacker, target)
+	if not possible_interceptors.is_empty():
+		# This fallback scorer used to value the declared target as if the attack
+		# could not be intercepted. Score the combat the defender can actually
+		# choose instead, including the option to let the attack through.
+		for candidate in _get_attack_candidates(attacker, null):
+			if candidate.get("target", null) != target:
+				continue
+			var projected_result := _project_attack(candidate)
+			if projected_result.is_empty():
+				return -1000000
+			var projected_score := _score_attack_economy(projected_result)
+			if projected_score <= 0:
+				return -1000000
+			return projected_score + attacker.get_effective_speed() * 30
 		return -1000000
 	if not _is_attack_safe_from_interceptors(attacker, target):
 		return -1000000

@@ -19,7 +19,7 @@ const TACTICAL_CARDS := [
 const ACTIVE_POWERS := ["AcceleratedFate", "OraclesSight", "BerserkerMead", "MechFactory", "Palisade", "ManaGuard"]
 const BOARD_ABILITIES := ["Alu", "Lindwyrm", "Lamashatu", "ClayEaters", "AncientPyre", "Watchtower", "Gawain", "Beyla", "Nimue", "JiangZiyaFisherOfKings"]
 const EQUIPMENT := ["BeardedAxe", "RunicShortsword", "ReedBow", "SharurTheFlyingMace", "SevenLeagueBoots", "DraupnirTheMultiplying"]
-const STRUCTURES := ["AncientPyre", "Watchtower", "WardingStone", "DoorwayToTheVoid"]
+const STRUCTURES := ["AncientPyre", "Watchtower", "WardingStone", "DoorwayToTheVoid", "E2Abzu"]
 const PASSIVE_TYPES := {
 	"AncientWisdom": ["Mage"],
 	"GiantsDisdain": ["Giant"], "SummonedSap": ["Plant", "Animal", "Hybrid"],
@@ -718,6 +718,18 @@ static func structure_score(bot, structure: Card) -> int:
 				if visible(bot, creature) and not creature.is_sleeping and not creature.has_status_effect("cannot_attack"):
 					gain += value(bot, creature) / 2
 			gain += 2500 if bot.bot_player.followers < 50 else 0
+		"E2Abzu":
+			var mer_mage_count := 0
+			var candidate_zones: Array = [bot.bot_player.hand_zone, bot.bot_player.deck_zone, bot.bot_player.graveyard_zone, bot.bot_player.abyss_zone]
+			candidate_zones.append_array(bot.bot_player.frontline_zones)
+			candidate_zones.append_array(bot.bot_player.reserve_zones)
+			for zone: Zone in candidate_zones:
+				for candidate: Card in zone.cards:
+					if candidate.card_type == Card.CardType.CREATURE and candidate.has_type("Mer") and candidate.has_type("Mage"):
+						mer_mage_count += 1
+			if mer_mage_count == 0:
+				return BAD
+			gain = 6500 + mini(3, mer_mage_count - 1) * 1000
 		_: return BAD
 	return gain - CARD_VALUE - mana_penalty(bot, activation_cost(bot, structure))
 

@@ -712,10 +712,26 @@ func _check_ranked_bot_deck_generation(failures: PackedStringArray) -> void:
 	if deck.is_empty() or not DeckBuilder.new().build_deck(player, _cards_from_counts(deck["cards"]), deck["special_setup"]):
 		failures.append("Ranked bot generator did not produce a legal Tiamat deck")
 		return
+	var brood_slot_count := 0
+	var power_card_count := 0
 	for zone in player.power_zones:
-		if zone.cards.is_empty() or not zone.cards.all(TiamatThePrimordial.is_valid_slot_creature):
-			failures.append("Ranked Tiamat did not fill all three Brood slots")
+		if zone.cards.is_empty():
+			failures.append("Ranked Tiamat left a shared power/Brood slot empty")
 			return
+		var zone_has_brood := false
+		for slot_card: Card in zone.cards:
+			if TiamatThePrimordial.is_valid_slot_creature(slot_card):
+				zone_has_brood = true
+			elif slot_card.is_power and not slot_card.is_god:
+				power_card_count += 1
+			else:
+				failures.append("Ranked Tiamat put an invalid card in a shared power/Brood slot")
+				return
+		if zone_has_brood:
+			brood_slot_count += 1
+	if brood_slot_count + power_card_count != TiamatThePrimordial.POWER_SLOT_COUNT:
+		failures.append("Ranked Tiamat did not fill all three shared power/Brood slots")
+		return
 
 	var game_manager := GameManager.new()
 	var opponent := Player.new()
@@ -754,12 +770,24 @@ func _check_ranked_bot_manifestations(failures: PackedStringArray) -> void:
 	var mixed_tiamat_deck := false
 	for seed_value in range(12):
 		var deck := factory.build_random_deck(seed_value, TiamatThePrimordial.TIAMAT_CARD_NAME, true)
-		if deck.get("cards", {}).get("Take the Field", 0) == 1:
-			var slots := TiamatThePrimordial.get_slot_card_names_from_setup(deck["special_setup"])
-			mixed_tiamat_deck = not slots[0].is_empty() and not slots[1].is_empty() and slots[2].is_empty()
+		if deck.is_empty():
+			continue
+		var slots := TiamatThePrimordial.get_slot_card_names_from_setup(deck["special_setup"])
+		var brood_slots := 0
+		for slot_cards in slots:
+			if not slot_cards.is_empty():
+				brood_slots += 1
+		var deck_powers := 0
+		for card_name in deck.get("cards", {}):
+			var template: Card = CardCatalogScript.instantiate_card_by_name(str(card_name))
+			if template != null and template.is_power and not template.is_god:
+				deck_powers += int(deck["cards"][card_name])
+		if brood_slots > 0 and deck_powers > 0 \
+				and brood_slots + deck_powers == TiamatThePrimordial.POWER_SLOT_COUNT:
+			mixed_tiamat_deck = true
 			break
 	if not mixed_tiamat_deck:
-		failures.append("Ranked Tiamat did not generate a legal deck with two Brood slots and Take the Field")
+		failures.append("Ranked Tiamat did not generate a legal deck with mixed Brood and power slots")
 
 	var gods: Array[GodCard] = [Thor.new(), GuanYu.new(), TiamatThePrimordial.new(), TezcatlipocaTheSmokingMirror.new()]
 	for god in gods:

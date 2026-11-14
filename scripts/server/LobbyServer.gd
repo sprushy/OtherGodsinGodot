@@ -105,6 +105,7 @@ func _ready() -> void:
 	_ensure_friend_store()
 	_ensure_deck_validator()
 	_ensure_match_history_store()
+	_ensure_server_bot_deck_factory()
 	_ensure_match_supervisor()
 	_ensure_network_manager()
 
@@ -1023,7 +1024,7 @@ func _handle_request_bot_work(peer_id: int) -> void:
 			"message": "This account already has the maximum number of volunteer matches running.",
 		})
 		return
-	_ranked_bot_deck_pool.refresh(match_history_store.get_bot_deck_results())
+	_refresh_ranked_bot_deck_pool()
 	var pair := _ranked_bot_deck_pool.select_self_play_pair(busy, _bot_deck_rng)
 	var deck_a := _validate_server_bot_deck(pair[0]) if pair.size() == 2 else _build_fresh_bot_deck_submission()
 	var deck_b := _validate_server_bot_deck(pair[1]) if pair.size() == 2 else _build_fresh_bot_deck_submission()
@@ -1280,7 +1281,7 @@ func _get_recent_match_activity_notifications() -> Array[Dictionary]:
 	var activities: Array[Dictionary] = match_history_store.get_recent_match_activities(12)
 	if activities.is_empty():
 		return activities
-	_ranked_bot_deck_pool.refresh(match_history_store.get_bot_deck_results())
+	_refresh_ranked_bot_deck_pool()
 	var usernames: Dictionary = account_store.get_ladder_usernames()
 	var ladders := {
 		1: match_history_store.get_human_ladder(usernames, 1),
@@ -1405,7 +1406,7 @@ func _handle_request_bot_ladder(peer_id: int, message_type: String, payload: Dic
 		return
 	_ensure_match_history_store()
 	if message_type == LobbyProtocolScript.REQUEST_BOT_DECK:
-		_ranked_bot_deck_pool.refresh(match_history_store.get_bot_deck_results())
+		_refresh_ranked_bot_deck_pool()
 		var list_id: String = payload["list_id"]
 		_ensure_server_bot_deck_factory()
 		var deck_details := _ranked_bot_deck_pool.get_deck_details(list_id)
@@ -1430,7 +1431,7 @@ func _build_ladder_page(request: Dictionary) -> Dictionary:
 	var best_of := int(request["best_of"]) if is_paged else 1
 	var ladder: Array[Dictionary] = match_history_store.get_human_ladder(account_store.get_ladder_usernames(), best_of)
 	if best_of == 1:
-		_ranked_bot_deck_pool.refresh(match_history_store.get_bot_deck_results())
+		_refresh_ranked_bot_deck_pool()
 		for god: Dictionary in _ranked_bot_deck_pool.get_ladder_summary()["gods"]:
 			var lists: Array = god["lists"].duplicate()
 			if not god["challenger"].is_empty():
@@ -1874,7 +1875,7 @@ func _match_server_bot_to_player(room: LobbyRoom) -> bool:
 
 func _find_rank_matched_bot_deck(best_of: int, account_id: String) -> Dictionary:
 	_ensure_match_history_store()
-	_ranked_bot_deck_pool.refresh(match_history_store.get_bot_deck_results())
+	_refresh_ranked_bot_deck_pool()
 	var progress: Dictionary = match_history_store.get_current_ranked_progress(account_id, best_of)
 	var target_stars := int(progress.get("points", 0))
 	var unavailable := _busy_bot_list_ids()
@@ -1943,9 +1944,14 @@ func _validate_server_bot_deck(deck: Dictionary) -> Dictionary:
 	}
 
 func _ensure_server_bot_deck_factory() -> void:
-	if server_bot_deck_factory != null:
-		return
-	server_bot_deck_factory = PracticeAutofillDeckFactoryScript.new()
+	if server_bot_deck_factory == null:
+		server_bot_deck_factory = PracticeAutofillDeckFactoryScript.new()
+	_ranked_bot_deck_pool.set_deck_auditor(Callable(server_bot_deck_factory, "audit_ranked_bot_deck"))
+
+func _refresh_ranked_bot_deck_pool() -> void:
+	_ensure_match_history_store()
+	_ensure_server_bot_deck_factory()
+	_ranked_bot_deck_pool.refresh(match_history_store.get_bot_deck_results())
 
 func _duplicate_dictionary(value) -> Dictionary:
 	if value is Dictionary:
@@ -2008,7 +2014,7 @@ func _maintain_bot_self_play() -> void:
 	_launch_bot_self_play()
 
 func _launch_bot_self_play() -> void:
-	_ranked_bot_deck_pool.refresh(match_history_store.get_bot_deck_results())
+	_refresh_ranked_bot_deck_pool()
 	var pair := _ranked_bot_deck_pool.select_self_play_pair(_busy_bot_list_ids(), _bot_deck_rng)
 	var first := _build_fresh_bot_deck_submission() if pair.is_empty() else _validate_server_bot_deck(pair[0])
 	var second := _build_fresh_bot_deck_submission() if pair.is_empty() else _validate_server_bot_deck(pair[1])
