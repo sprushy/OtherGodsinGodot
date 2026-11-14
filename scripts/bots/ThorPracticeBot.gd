@@ -289,6 +289,11 @@ func _choose_brood_card(zone: Zone, upkeep_choice: String) -> Card:
 		best_score += 900
 	for card in brood_cards:
 		var score := _score_creature_play_in_zone(card, zone, bot_player.mana)
+		if not _opponent_board_is_empty() and _choose_creature_summon_mode(card) == Card.CreatureMode.DEFENSIVE:
+			var block_value := _estimate_defensive_summon_value(card, zone)
+			if block_value <= 0:
+				continue
+			score += int(block_value * 0.5)
 		if score > best_score:
 			best_card = card
 			best_score = score
@@ -683,7 +688,66 @@ func _plan_creature_summon() -> Dictionary:
 		score += 1500
 	if _board_creature_count(bot_player) == 0:
 		score += 2200
+	if mode == Card.CreatureMode.DEFENSIVE and not _opponent_board_is_empty():
+		var block_value := _estimate_defensive_summon_value(creature, zone)
+		# The forecast prices both followers saved and the blocker if it dies.
+		# Ignore defensive development whose projected interception is a net loss.
+		if block_value <= 0:
+			return {}
+		# It is a future block, so discount for the opponent's choice of attack.
+		score += int(block_value * 0.5)
 	return {"command": command, "score": maxi(1, score)}
+
+func _opponent_board_is_empty() -> bool:
+	return _get_board_creatures(opponent).is_empty()
+
+
+func _estimate_defensive_summon_value(card: Card, zone: Zone) -> int:
+	if card == null or zone == null or zone not in bot_player.frontline_zones + bot_player.reserve_zones:
+		return 0
+	var best_gain := 0
+	for attacker in _get_board_creatures(opponent):
+		if attacker == null or attacker.creature_mode != Card.CreatureMode.AGGRESSIVE \
+				or attacker.has_status_effect("cannot_attack") \
+				or not game_manager.can_cards_engage_each_other(card, attacker) \
+				or not game_manager.can_interceptor_engage_attacker(card, attacker):
+			continue
+		if game_manager.is_followers_attack_blocked_by_active_structure(attacker, bot_player, []):
+			continue
+		var projected_speed := attacker.get_effective_speed()
+		var partner := match_manager._get_declared_attack_partner(attacker)
+		if partner != null:
+			projected_speed = mini(projected_speed, partner.get_effective_speed())
+		if card.get_effective_speed() + card.get_intercept_speed_bonus_against_attacker(game_manager, attacker, bot_player) < projected_speed:
+			continue
+		var row_distance := 2 if zone in bot_player.frontline_zones else 1
+		var minimum_distance := 1 - card.get_intercept_reach_bonus(game_manager, attacker, bot_player)
+		if row_distance < maxi(0, minimum_distance):
+			continue
+		var action := CardAction.new()
+		action.type = CardAction.Type.ATTACK
+		action.attacker = attacker
+		action.united_front_partner = partner
+		action.target = bot_player
+		var best_existing_score := _score_attack_economy(_estimate_attack_economy(action, null, 0, 0))
+		for existing in match_manager._get_possible_interceptors(attacker, bot_player):
+			action.interceptor = existing
+			best_existing_score = maxi(best_existing_score, _score_attack_economy(_estimate_attack_economy(action, null, 0, 0)))
+		action.interceptor = card
+		var candidate_score := _score_attack_economy(_estimate_attack_economy(action, null, 0, 0))
+		best_gain = maxi(best_gain, candidate_score - best_existing_score)
+	return best_gain
+
+func _is_enemy_creature_answer(card: Card, target: Card, score: int) -> bool:
+	if card == null or target == null or score <= 0 or target.get_controller() != opponent:
+		return false
+	if target.card_type != Card.CardType.CREATURE:
+		return false
+	return CardStrategy.key(card) in [
+		"DivineLightning", "RunicSpellbreaker", "BitMeseri", "ClayEaters", "Alu", "Nimue",
+		"Dromi", "Gleipnir", "Snowball", "SapStrength", "VisionOfTartarus", "Absence",
+		"Sap", "SepLemutti", "Lindwyrm", "GungnirTheSpearOfOdin",
+	]
 
 func _try_summon_askelladen_answer() -> bool:
 	if game_manager == null or bot_player.has_summoned_this_turn:
@@ -742,6 +806,10 @@ func _get_best_strategy_action(attacks: Array[Dictionary], attack: Dictionary) -
 			var targets := CardStrategy.targets(self, card)
 			var target := CardStrategy.best_target(self, card, targets)
 			var score := CardStrategy.effect_score(self, card, target)
+			if _is_enemy_creature_answer(card, target, score):
+				# Removal should beat routine board development when an enemy
+				# creature is already demanding an answer.
+				score += 6500 + _score_follower_loss(opponent, target.get_effective_strength()) / 4
 			if CardStrategy.key(card) in ["BitMeseri", "DivineLightning"]:
 				for alternative in targets:
 					var candidate := CardStrategy.effect_score(self, card, alternative)

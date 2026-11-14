@@ -13,7 +13,6 @@ const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
 const ReinforcementCardTileScript = preload("res://scripts/ui/ReinforcementCardTile.gd")
 const ReinforcementDropAreaScript = preload("res://scripts/ui/ReinforcementDropArea.gd")
 const UIHoverSfxScript = preload("res://scripts/core/UIHoverSfx.gd")
-const FeedbackEmailScript = preload("res://scripts/ui/FeedbackEmail.gd")
 const MANA_ORB_TEXTURE := preload("res://images/ui/ManaOrb.png")
 
 signal back_pressed
@@ -124,6 +123,8 @@ var _send_friend_dialog: ConfirmationDialog
 var _send_friend_option: OptionButton
 var _submit_bot_button: Button
 var _bot_submission_overlay: Control
+var _bot_submission_status: Label
+var _bot_submission_button: Button
 var _search_edit:      LineEdit
 var _tiamat_panel:     PanelContainer
 var _tiamat_hint_lbl:  Label
@@ -269,6 +270,9 @@ func configure_profile_store(profile_store, profile_id: String, player_name: Str
 
 func configure_online_sync(lobby_client) -> void:
 	_online_lobby_client = lobby_client
+	if _online_lobby_client != null and _online_lobby_client.has_signal("bot_proposal_result") \
+			and not _online_lobby_client.bot_proposal_result.is_connected(_on_bot_proposal_result):
+		_online_lobby_client.bot_proposal_result.connect(_on_bot_proposal_result)
 
 func configure_account_decks(decks: Array, use_remote: bool = false, preferred_deck_id: String = "") -> bool:
 	# Change-detection gate: identical account_deck_list responses (the common
@@ -3332,7 +3336,7 @@ func _open_bot_submission() -> void:
 	title.add_theme_font_size_override("font_size", 22)
 	content.add_child(title)
 	var instructions := Label.new()
-	instructions.text = "Suggest how a future bot should play this deck. Your email will include the deck list and an import code."
+	instructions.text = "Suggest how a future bot should play this deck. Your strategy, deck list, and import code will be submitted to the Other Gods team."
 	instructions.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	content.add_child(instructions)
 	var preview := TextEdit.new()
@@ -3347,10 +3351,10 @@ func _open_bot_submission() -> void:
 	strategy.custom_minimum_size.y = 132
 	content.add_child(strategy)
 
-	var status := Label.new()
-	status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	status.hide()
-	content.add_child(status)
+	_bot_submission_status = Label.new()
+	_bot_submission_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_bot_submission_status.hide()
+	content.add_child(_bot_submission_status)
 	var actions := HBoxContainer.new()
 	actions.alignment = BoxContainer.ALIGNMENT_END
 	content.add_child(actions)
@@ -3358,20 +3362,25 @@ func _open_bot_submission() -> void:
 	close_button.text = "Close"
 	close_button.pressed.connect(_close_bot_submission)
 	actions.add_child(close_button)
-	var email_button := Button.new()
-	email_button.text = "Open Email Draft"
-	email_button.disabled = true
-	email_button.pressed.connect(func() -> void:
-		var body := "Strategy\n%s\n\n%s\n\nDeck import code\n%s" % [
-			strategy.text.strip_edges(), deck_list, _encode_deck_share_code(deck),
-		]
-		status.text = FeedbackEmailScript.open_draft("Other Gods bot submission", body)
-		status.show()
+	_bot_submission_button = Button.new()
+	_bot_submission_button.text = "Submit Suggestion"
+	_bot_submission_button.disabled = true
+	_bot_submission_button.pressed.connect(func() -> void:
+		if _online_lobby_client == null or not _online_lobby_client.is_authenticated():
+			_set_bot_submission_status("Connect to the lobby and sign in before submitting a bot suggestion.")
+			return
+		_bot_submission_button.disabled = true
+		_bot_submission_button.text = "Submitting..."
+		_set_bot_submission_status("Submitting suggestion...")
+		_online_lobby_client.submit_bot_proposal(
+			strategy.text.strip_edges(), deck_list, _encode_deck_share_code(deck)
+		)
 	)
-	actions.add_child(email_button)
+	actions.add_child(_bot_submission_button)
 	strategy.text_changed.connect(func() -> void:
-		email_button.disabled = strategy.text.strip_edges().is_empty()
-		status.hide()
+		_bot_submission_button.disabled = strategy.text.strip_edges().is_empty()
+		_bot_submission_button.text = "Submit Suggestion"
+		_bot_submission_status.hide()
 	)
 	_apply_hover_to_all_buttons(overlay)
 	strategy.grab_focus()
@@ -3384,6 +3393,18 @@ func _close_bot_submission() -> bool:
 	_bot_submission_overlay = null
 	_submit_bot_button.grab_focus()
 	return true
+
+func _set_bot_submission_status(message: String) -> void:
+	if not is_instance_valid(_bot_submission_status):
+		return
+	_bot_submission_status.text = message
+	_bot_submission_status.show()
+
+func _on_bot_proposal_result(success: bool, message: String) -> void:
+	_set_bot_submission_status(message)
+	if is_instance_valid(_bot_submission_button):
+		_bot_submission_button.disabled = success
+		_bot_submission_button.text = "Submitted" if success else "Submit Suggestion"
 
 func _format_bot_submission_deck(deck: Dictionary) -> String:
 	var lines := PackedStringArray([str(deck["name"])])

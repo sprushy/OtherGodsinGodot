@@ -46,6 +46,7 @@ const RESPOND_DECK_SHARE := "respond_deck_share"
 const REQUEST_RECONNECT_LOBBY := "request_reconnect_lobby"
 const REPORT_HOST_VIABILITY := "report_host_viability"
 const SUBMIT_ISSUE_REPORT := "submit_issue_report"
+const SUBMIT_BOT_PROPOSAL := "submit_bot_proposal"
 
 const HELLO_OK := "hello_ok"
 const ROOM_LIST := "room_list"
@@ -70,6 +71,7 @@ const ACCOUNT_SETTINGS_UPDATED := "account_settings_updated"
 const PASSWORD_RESET_RESULT := "password_reset_result"
 const MATCH_HOST_VIABILITY_REQUEST := "match_host_viability_request"
 const ISSUE_REPORT_RESULT := "issue_report_result"
+const BOT_PROPOSAL_RESULT := "bot_proposal_result"
 
 static func make_message(message_type: String, payload: Dictionary = {}) -> Dictionary:
 	return {
@@ -244,6 +246,16 @@ static func validate_request(message: Dictionary) -> String:
 				return "Enter what happened (at most 1200 characters)."
 			if not screenshot_jpeg is String or screenshot_jpeg.length() > 16000:
 				return "The screenshot is too large. Choose a smaller image."
+		SUBMIT_BOT_PROPOSAL:
+			var strategy = payload.get("strategy", "")
+			var deck_code = payload.get("deck_code", "")
+			var deck_text = payload.get("deck_text", "")
+			if not strategy is String or strategy.strip_edges().is_empty() or strategy.length() > 2000:
+				return "Describe the strategy in at most 2000 characters."
+			if not deck_code is String or not deck_code.begins_with("OGDECK1:") or deck_code.length() > 12000:
+				return "The deck import code is invalid or too large."
+			if not deck_text is String or deck_text.strip_edges().is_empty() or deck_text.length() > 12000:
+				return "The deck list is invalid or too large."
 		_:
 			return "Unknown lobby message type: %s" % message_type
 

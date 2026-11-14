@@ -54,6 +54,7 @@ signal friends_state_received(state: Dictionary)
 signal account_settings_updated(account: Dictionary)
 signal password_reset_result(completed: bool, success: bool, message: String)
 signal issue_report_result(success: bool, message: String)
+signal bot_proposal_result(success: bool, message: String)
 signal connection_failed(message: String)
 signal disconnected_from_lobby()
 signal match_host_viability_requested()
@@ -533,6 +534,18 @@ func submit_issue_report(expected: String, actual: String, screenshot_jpeg: Stri
 		"platform": OS.get_name(),
 	})
 
+func submit_bot_proposal(strategy: String, deck_text: String, deck_code: String) -> void:
+	if not is_authenticated():
+		bot_proposal_result.emit(false, "Connect to the lobby and sign in before submitting a bot suggestion.")
+		return
+	_send_request(LobbyProtocolScript.SUBMIT_BOT_PROPOSAL, {
+		"strategy": strategy,
+		"deck_text": deck_text,
+		"deck_code": deck_code,
+		"client_version": AppReleaseInfoScript.get_display_version(),
+		"platform": OS.get_name(),
+	})
+
 func request_friends() -> void:
 	_send_request(LobbyProtocolScript.REQUEST_FRIENDS)
 
@@ -722,6 +735,8 @@ func lobby_event(message: Dictionary) -> void:
 				bot_work_result_received.emit(str(payload.get("job_id", "")), bool(payload.get("success", false)), str(payload.get("message", "")))
 		LobbyProtocolScript.ISSUE_REPORT_RESULT:
 			issue_report_result.emit(bool(payload.get("success", false)), str(payload.get("message", "")))
+		LobbyProtocolScript.BOT_PROPOSAL_RESULT:
+			bot_proposal_result.emit(bool(payload.get("success", false)), str(payload.get("message", "")))
 		LobbyProtocolScript.FRIENDS_STATE:
 			friends_state_received.emit(payload)
 		LobbyProtocolScript.ACCOUNT_SETTINGS_UPDATED:

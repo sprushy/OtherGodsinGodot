@@ -152,6 +152,7 @@ var _bot_match_hosting_enabled := false
 var _pending_local_bot_match_modes: Array[bool] = []
 var _local_bot_match_workers: Dictionary = {}
 var _local_bot_match_submitting: Dictionary = {}
+var _bot_match_retry_timer: Timer
 var _continuous_bot_match_ids: Dictionary = {}
 var _lobby_session_id: String = ""
 var _lobby_reconnect_token: String = ""
@@ -2876,6 +2877,17 @@ func _request_continuous_bot_match() -> void:
 		return
 	_request_local_bot_match(true)
 
+func _schedule_continuous_bot_match_retry(delay_seconds: float = 15.0) -> void:
+	if not _bot_match_hosting_enabled:
+		return
+	if not is_instance_valid(_bot_match_retry_timer):
+		_bot_match_retry_timer = Timer.new()
+		_bot_match_retry_timer.name = "ContinuousBotMatchRetry"
+		_bot_match_retry_timer.one_shot = true
+		_bot_match_retry_timer.timeout.connect(_request_continuous_bot_match)
+		add_child(_bot_match_retry_timer)
+	_bot_match_retry_timer.start(maxf(1.0, delay_seconds))
+
 func _request_local_bot_match(continuous: bool) -> void:
 	if lobby_client == null or not lobby_client.is_authenticated():
 		_bot_match_hosting_enabled = false if continuous else _bot_match_hosting_enabled
@@ -2885,6 +2897,8 @@ func _request_local_bot_match(continuous: bool) -> void:
 	var maximum_matches := _get_local_bot_match_capacity()
 	if maximum_matches <= _get_local_bot_match_count() + _pending_local_bot_match_modes.size():
 		status_label.text = "No additional bot match slots are available on this computer."
+		if continuous and _bot_match_hosting_enabled:
+			_schedule_continuous_bot_match_retry()
 		return
 	if not lobby_client.bot_work_assignment_received.is_connected(_on_local_bot_work_assigned):
 		lobby_client.bot_work_assignment_received.connect(_on_local_bot_work_assigned)
@@ -2952,7 +2966,8 @@ func _on_local_bot_work_assigned(job: Dictionary) -> void:
 		return
 	if _get_local_bot_match_count() >= _get_local_bot_match_capacity():
 		lobby_client.cancel_bot_work(str(job.get("job_id", "")))
-		_bot_match_hosting_enabled = false if continuous else _bot_match_hosting_enabled
+		if continuous:
+			_schedule_continuous_bot_match_retry()
 		_update_local_bot_hosting_state()
 		return
 	var decks: Array = job.get("decks", [])
@@ -2972,7 +2987,8 @@ func _on_local_bot_work_assigned(job: Dictionary) -> void:
 	var match_port := _allocate_local_bot_match_port()
 	if match_port <= 0:
 		lobby_client.cancel_bot_work(str(job["job_id"]))
-		_bot_match_hosting_enabled = false if continuous else _bot_match_hosting_enabled
+		if continuous:
+			_schedule_continuous_bot_match_retry()
 		_update_local_bot_hosting_state()
 		return
 	var session := MatchSessionScript.new(str(job["job_id"]), str(job["job_id"]), "127.0.0.1", match_port, players, submissions, identities)
@@ -2987,7 +3003,8 @@ func _on_local_bot_work_assigned(job: Dictionary) -> void:
 	if not supervisor._launch_dedicated_match(session, true):
 		supervisor.queue_free()
 		lobby_client.cancel_bot_work(session.match_id)
-		_bot_match_hosting_enabled = false if continuous else _bot_match_hosting_enabled
+		if continuous:
+			_schedule_continuous_bot_match_retry()
 		_update_local_bot_hosting_state()
 		return
 	var poll := Timer.new()
@@ -3057,8 +3074,9 @@ func _on_local_bot_work_result(job_id: String, success: bool, message: String) -
 		var continuous_request := false
 		if not _pending_local_bot_match_modes.is_empty():
 			continuous_request = _pending_local_bot_match_modes.pop_front()
-		if continuous_request:
-			_bot_match_hosting_enabled = false
+		if continuous_request and _bot_match_hosting_enabled \
+				and lobby_client != null and lobby_client.is_authenticated():
+			_schedule_continuous_bot_match_retry()
 		_update_host_bot_match_button()
 		return
 	status_label.text = message if success else "Local bot match result was not accepted."
@@ -3074,6 +3092,8 @@ func _on_local_bot_work_result(job_id: String, success: bool, message: String) -
 
 func _stop_local_bot_match_worker() -> void:
 	_bot_match_hosting_enabled = false
+	if is_instance_valid(_bot_match_retry_timer):
+		_bot_match_retry_timer.stop()
 	_pending_local_bot_match_modes.clear()
 	for match_id in _local_bot_match_submitting.keys():
 		if lobby_client != null:

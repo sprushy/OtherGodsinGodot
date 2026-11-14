@@ -22,6 +22,11 @@ const NAME_POOLS := {
 	"Tiamat": ["Salt Tide", "Deep Coil", "First Sea", "Abyssal Crown", "Chaos Brood", "Black Current", "World Serpent", "Primordial Surge"],
 }
 const DEFAULT_NAMES := ["Bloodaxe", "Moon", "Iron Crown", "Ember", "Oathkeeper", "Nightfall", "Stormcall", "Northwind"]
+const NAME_EPITHETS := [
+	"of the First Dawn", "of the Hidden Road", "of the Long Winter", "of the Silver Oath",
+	"of the Far Shore", "of the Quiet Flame", "of the Last Star", "of the Deep Rune",
+	"of the Red Horizon", "of the Hollow Crown", "of the High Branch", "of the Still Sea",
+]
 
 var _by_god: Dictionary = {}
 var _replayed_match_count := -1
@@ -66,41 +71,41 @@ func _ensure_unique_deck_names() -> void:
 		return str(first_deck.get("list_id", "")) < str(second_deck.get("list_id", ""))
 	)
 	var used_names := {}
-	var challenger_entries: Array[Dictionary] = []
 	for entry: Dictionary in decks:
 		var deck: Dictionary = entry["deck"]
 		var base_name := str(deck.get("deck_name", "")).strip_edges()
-		if base_name.is_empty():
-			base_name = "%s: Challenger" % str(entry["god_name"])
 		var deck_god := display_god_name(str(entry["god_name"]))
-		if base_name == "%s: Challenger" % deck_god and str(deck.get("self_play_name", "")).is_empty():
-			challenger_entries.append(entry)
-			continue
-		var unique_existing_name := base_name
-		var suffix := 2
-		while used_names.has(unique_existing_name.to_lower()):
-			unique_existing_name = "%s (%d)" % [base_name, suffix]
-			suffix += 1
-		deck["deck_name"] = unique_existing_name
-		used_names[unique_existing_name.to_lower()] = true
-	for challenger_entry: Dictionary in challenger_entries:
-		var challenger_deck: Dictionary = challenger_entry["deck"]
-		var challenger_god := display_god_name(str(challenger_entry["god_name"]))
-		var names: Array = NAME_POOLS.get(challenger_god, DEFAULT_NAMES)
-		var unique_challenger_name := ""
-		for name_suffix in names:
-			var candidate := "%s: %s" % [challenger_god, str(name_suffix)]
+		var self_play_name := str(deck.get("self_play_name", "")).strip_edges()
+		if not self_play_name.is_empty():
+			base_name = self_play_name
+		if _is_generic_bot_name(base_name) or used_names.has(base_name.to_lower()):
+			base_name = _make_unique_bot_name(deck_god, deck, used_names)
+		deck["deck_name"] = base_name
+		used_names[base_name.to_lower()] = true
+
+func _is_generic_bot_name(name: String) -> bool:
+	var normalized := name.strip_edges().to_lower()
+	return normalized.is_empty() or normalized.contains("challenger")
+
+func _make_unique_bot_name(god_name: String, deck: Dictionary, used_names: Dictionary) -> String:
+	var names: Array = NAME_POOLS.get(god_name, DEFAULT_NAMES)
+	var candidate := ""
+	for name_part in names:
+		candidate = "%s: %s" % [god_name, str(name_part)]
+		if not used_names.has(candidate.to_lower()):
+			return candidate
+	for name_part in names:
+		for epithet in NAME_EPITHETS:
+			candidate = "%s: %s %s" % [god_name, str(name_part), str(epithet)]
 			if not used_names.has(candidate.to_lower()):
-				unique_challenger_name = candidate
-				break
-		if unique_challenger_name.is_empty():
-			var challenger_suffix := 2
-			unique_challenger_name = "%s: Challenger" % challenger_god
-			while used_names.has(unique_challenger_name.to_lower()):
-				unique_challenger_name = "%s: Challenger %d" % [challenger_god, challenger_suffix]
-				challenger_suffix += 1
-		challenger_deck["deck_name"] = unique_challenger_name
-		used_names[unique_challenger_name.to_lower()] = true
+				return candidate
+	var identity := str(deck.get("list_id", deck.get("fingerprint", "bot"))).sha256_text().substr(0, 8)
+	candidate = "%s: %s · %s" % [god_name, str(names[0]) if not names.is_empty() else "Wanderer", identity]
+	var suffix := 1
+	while used_names.has(candidate.to_lower()):
+		candidate = "%s: %s · %s-%d" % [god_name, str(names[0]) if not names.is_empty() else "Wanderer", identity, suffix]
+		suffix += 1
+	return candidate
 
 func get_ladder_summary() -> Dictionary:
 	var gods: Array[Dictionary] = []

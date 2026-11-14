@@ -38,6 +38,7 @@ const BOT_SELF_PLAY_MEMORY_RESERVE := 512 * 1024 * 1024
 const BOT_SELF_PLAY_MEMORY_PER_WORKER := 256 * 1024 * 1024
 const BOT_SELF_PLAY_RETRY_SECONDS := 30
 const ISSUE_REPORT_COOLDOWN_SECONDS := 60
+const BOT_PROPOSAL_COOLDOWN_SECONDS := 60
 const ALLOW_INSECURE_ACCOUNT_AUTH_ENV := "OTHERGODS_ALLOW_INSECURE_ACCOUNT_AUTH"
 const ALLOW_INSECURE_ACCOUNT_AUTH_SETTING := "application/config/allow_insecure_account_auth"
 
@@ -87,6 +88,7 @@ var _lobby_frame_seconds := 0.0
 var _next_bot_self_play_msec := 0
 var _client_bot_jobs: Dictionary = {}
 var _issue_report_last_submit_by_peer: Dictionary = {}
+var _bot_proposal_last_submit_by_account: Dictionary = {}
 
 static func get_dedicated_bot_self_play_limit(launch_args: Dictionary) -> int:
 	var default_limit := MAX_BOT_SELF_PLAY
@@ -370,6 +372,8 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 			_handle_request_bot_work(peer_id)
 		LobbyProtocolScript.SUBMIT_ISSUE_REPORT:
 			_handle_submit_issue_report(peer_id, payload)
+		LobbyProtocolScript.SUBMIT_BOT_PROPOSAL:
+			_handle_submit_bot_proposal(peer_id, payload)
 		LobbyProtocolScript.REPORT_BOT_WORK_STARTED:
 			_handle_report_bot_work_started(peer_id, payload)
 		LobbyProtocolScript.CANCEL_BOT_WORK:
@@ -1120,6 +1124,55 @@ func _handle_submit_issue_report(peer_id: int, payload: Dictionary) -> void:
 	_send_to_peer(peer_id, LobbyProtocolScript.ISSUE_REPORT_RESULT, {
 		"success": true,
 		"message": "Report submitted. Thank you.",
+	})
+
+func _handle_submit_bot_proposal(peer_id: int, payload: Dictionary) -> void:
+	var session := _get_session_for_peer(peer_id)
+	if session.is_empty():
+		_send_to_peer(peer_id, LobbyProtocolScript.BOT_PROPOSAL_RESULT, {
+			"success": false,
+			"message": "Sign in to the lobby before submitting a bot suggestion.",
+		})
+		return
+	var account_id := str(session.get("account_id", ""))
+	var now_unix := int(Time.get_unix_time_from_system())
+	var last_submit := int(_bot_proposal_last_submit_by_account.get(account_id, 0))
+	if now_unix - last_submit < BOT_PROPOSAL_COOLDOWN_SECONDS:
+		_send_to_peer(peer_id, LobbyProtocolScript.BOT_PROPOSAL_RESULT, {
+			"success": false,
+			"message": "Please wait a minute before sending another bot suggestion.",
+		})
+		return
+	var submission_id := "%d_%d_%d" % [now_unix, peer_id, Time.get_ticks_usec() % 1000000]
+	var submission := {
+		"submission_id": submission_id,
+		"submitted_unix": now_unix,
+		"account_id": account_id,
+		"username": str(session.get("username", session.get("player_name", "Player"))),
+		"strategy": str(payload.get("strategy", "")).strip_edges(),
+		"deck_text": str(payload.get("deck_text", "")).strip_edges(),
+		"deck_code": str(payload.get("deck_code", "")).strip_edges(),
+		"client_version": str(payload.get("client_version", "")).substr(0, 80),
+		"platform": str(payload.get("platform", "")).substr(0, 40),
+	}
+	var submission_dir := ServerPathsScript.get_server_data_file_path("bot_submissions")
+	DirAccess.make_dir_recursive_absolute(submission_dir)
+	var submission_path := submission_dir.path_join("%s.json" % submission_id)
+	var file := FileAccess.open(submission_path, FileAccess.WRITE)
+	if file == null:
+		_send_to_peer(peer_id, LobbyProtocolScript.BOT_PROPOSAL_RESULT, {
+			"success": false,
+			"message": "The server could not save the suggestion. Please try again later.",
+		})
+		return
+	file.store_string(JSON.stringify(submission, "\t"))
+	file.flush()
+	file.close()
+	_bot_proposal_last_submit_by_account[account_id] = now_unix
+	print("LobbyServer: bot suggestion received id=%s account=%s" % [submission_id, account_id])
+	_send_to_peer(peer_id, LobbyProtocolScript.BOT_PROPOSAL_RESULT, {
+		"success": true,
+		"message": "Bot suggestion submitted. Thank you.",
 	})
 
 func _handle_report_bot_work_started(peer_id: int, payload: Dictionary) -> void:
