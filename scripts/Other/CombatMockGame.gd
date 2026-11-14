@@ -10198,6 +10198,8 @@ func _has_followers_attack_target_highlight() -> bool:
 	return false
 
 func _should_show_followers_target_highlight() -> bool:
+	if _is_observer_mode:
+		return false
 	return _bdrag_followers_target_preview_active \
 		or _can_selected_attacker_target_followers() \
 		or _has_followers_attack_target_highlight() \

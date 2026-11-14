@@ -468,6 +468,8 @@ func _has_deckbuilding_requirements(card: Card, cards: Dictionary, god: GodCard)
 	match name:
 		"Fourth Sage Enmegalamma":
 			return _count_other_matching(cards, card, ["Mer", "Sage"]) >= 3
+		"Beyla":
+			return _count_named(cards, ["Berserker", "Gidim Ensi"]) >= 3 or int(cards.get("Berserker Mead", 0)) > 0
 		"Byggvir":
 			return _count_tagged(cards, "Mead") > 0
 		"Tatzelwurm":
@@ -521,6 +523,12 @@ func _count_tagged(cards: Dictionary, tag: String) -> int:
 		var candidate: Card = _cards_by_name.get(str(name), null)
 		if candidate != null and not candidate.is_god and candidate.has_type(tag):
 			total += int(cards[name])
+	return total
+
+func _count_named(cards: Dictionary, names: Array) -> int:
+	var total := 0
+	for name in names:
+		total += int(cards.get(name, 0))
 	return total
 
 func _count_matching(cards: Dictionary, tags: Array, minimum_level: int = 0) -> int:

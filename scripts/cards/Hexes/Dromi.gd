@@ -88,6 +88,18 @@ func on_turn_start(game_manager: GameManager) -> void:
 		attached_target._emit_visual_state_changed()
 	print("%s drains %d followers from %s." % [card_name, FOLLOWER_LOSS, controller.player_name])
 
+func get_projected_upkeep_follower_loss(
+	game_manager: GameManager,
+	turn_player: Player,
+	affected_player: Player,
+	removed: Array = []
+) -> int:
+	if game_manager == null or self in removed or attached_target == null or attached_target in removed \
+			or get_controller() != turn_player or attached_target.get_controller() != affected_player \
+			or not _is_target_still_bound() or game_manager.is_immune_to_source(attached_target, self):
+		return 0
+	return FOLLOWER_LOSS
+
 func get_serialized_state() -> Dictionary:
 	var state := super.get_serialized_state()
 	state["follower_drain_count"] = follower_drain_count

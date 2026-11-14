@@ -151,6 +151,7 @@ static func removal_score(bot, source: Card, target: Card, action: CardAction = 
 		if destruction and target.card_type == Card.CardType.CREATURE and gm.has_turn_destruction_ward(bot.opponent):
 			return BAD
 	var score := value(bot, target)
+	score += _attached_debuff_release_value(bot, target)
 	# Removing a combatant cancels this attack. Credit only the improvement
 	# over letting the existing combat finish, including profitable trades.
 	if action != null and action.type == CardAction.Type.ATTACK:
@@ -159,6 +160,41 @@ static func removal_score(bot, source: Card, target: Card, action: CardAction = 
 	else:
 		score += CARD_VALUE / 5
 	return score
+
+static func _attached_debuff_release_value(bot, source: Card) -> int:
+	if not (source is PermanentHexCard):
+		return 0
+	var attached := (source as PermanentHexCard).attached_target
+	if attached == null or not visible(bot, attached) or attached.current_zone == null \
+			or not attached.current_zone.is_board_zone() or attached.get_controller() != bot.bot_player:
+		return 0
+	var weight := 0.0
+	for status in attached._get_effective_statuses():
+		if status.get("source_card", null) != source:
+			continue
+		match str(status.get("name", "")):
+			"cannot_attack":
+				# Scale by the creature's own value so freeing a large body is worth
+				# more than freeing a small one.
+				weight += 0.65
+			"cannot_intercept":
+				weight += 0.35
+			"activation_locked":
+				weight += 0.4
+			"petrified":
+				weight += 0.8
+			"sleep":
+				weight += 0.25
+			"ability_negated", "muted":
+				weight += 0.4
+	for buff in attached._get_effective_buffs():
+		if buff.get("source_card", null) != source:
+			continue
+		var weakened_stats := maxi(0, -int(buff.get("str", 0))) \
+			+ maxi(0, -int(buff.get("res", 0))) \
+			+ maxi(0, -int(buff.get("spd", 0))) * 2
+		weight += minf(0.5, float(weakened_stats) / 30.0)
+	return int(float(value(bot, attached)) * minf(weight, 1.0))
 
 static func counterstroke_can_answer(
 	bot,

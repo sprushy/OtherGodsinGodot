@@ -1730,9 +1730,14 @@ func _follower_safety_gain(danger: int, change: Dictionary) -> int:
 	return difference * (600 if bot_player.followers < 25 else 200)
 
 func _forecast_incoming_follower_loss(change: Dictionary = {}) -> int:
-	if not bot_player.followers_enabled or opponent == null or bool(change.get("block_attacks", false)):
+	if not bot_player.followers_enabled or opponent == null:
 		return 0
 	var removed: Array = change.get("removed", []).duplicate()
+	var followers := int(change.get("followers", bot_player.followers))
+	var upkeep_loss := _projected_upkeep_follower_loss(removed, followers)
+	var followers_after_upkeep := maxi(0, followers - upkeep_loss)
+	if bool(change.get("block_attacks", false)) or followers_after_upkeep <= 0:
+		return mini(followers, upkeep_loss)
 	if game_manager.current_player == bot_player:
 		for creature in _get_board_creatures(bot_player):
 			if creature is RedCap and not creature.abilities_suppressed() and not creature._resolved_attack_this_turn \
@@ -1741,10 +1746,10 @@ func _forecast_incoming_follower_loss(change: Dictionary = {}) -> int:
 				removed.append(creature)
 	var restriction: Dictionary = game_manager.attack_restrictions.get(opponent, {})
 	if not restriction.is_empty() and restriction.get("source") not in removed:
-		return 0
+		return mini(followers, upkeep_loss)
 	var prevention: Dictionary = game_manager.turn_follower_loss_preventions.get(bot_player, {})
 	if int(prevention.get("expires_turn", -1)) > game_manager.turn_number and prevention.get("source_card") not in removed:
-		return 0
+		return mini(followers, upkeep_loss)
 
 	var targets: Array = [bot_player]
 	var defenders := _get_board_creatures(bot_player)
@@ -1821,16 +1826,15 @@ func _forecast_incoming_follower_loss(change: Dictionary = {}) -> int:
 				replies[interceptor] = _forecast_incoming_combat(action, interceptor_stance, defensive and interceptor == stance, projected_stealth, removed)
 			attack_lines.append({"attacker": attacker, "target": target, "replies": replies, "barriers": barriers, "cost": cost})
 	if attack_lines.is_empty():
-		return 0
+		return mini(followers, upkeep_loss)
 	var guard := int(change.get("guard", bot_player.guard))
-	var followers := int(change.get("followers", bot_player.followers))
 	var most_damage := 0
 	# The opponent chooses the attack and the bot chooses whether to intercept.
 	# Recheck a second attack after each reply, with spent Guard and casualties carried forward.
 	for line in attack_lines:
 		if not line["barriers"].is_empty():
 			continue
-		var least_damage := followers
+		var least_damage := followers_after_upkeep
 		for first: Dictionary in line["replies"].values():
 			var first_loss := _forecast_follower_damage(first, guard)
 			if first_loss >= least_damage:
@@ -1853,9 +1857,26 @@ func _forecast_incoming_follower_loss(change: Dictionary = {}) -> int:
 					break
 			least_damage = mini(least_damage, first_loss + followup)
 		most_damage = maxi(most_damage, least_damage)
-		if most_damage >= followers:
+		if upkeep_loss + most_damage >= followers:
 			break
-	return most_damage
+	return mini(followers, upkeep_loss + most_damage)
+
+func _projected_upkeep_follower_loss(removed: Array, projected_followers: int) -> int:
+	if game_manager == null or opponent == null:
+		return 0
+	var prevention: Dictionary = game_manager.turn_follower_loss_preventions.get(bot_player, {})
+	if int(prevention.get("expires_turn", -1)) > game_manager.turn_number \
+			and prevention.get("source_card") not in removed:
+		return 0
+	var total := 0
+	for source in game_manager.get_field_cards(opponent):
+		if source == null or source in removed or not CardStrategy.visible(self, source) \
+				or not source.has_method("get_projected_upkeep_follower_loss"):
+			continue
+		total += int(source.call(
+			"get_projected_upkeep_follower_loss", game_manager, opponent, bot_player, removed
+		))
+	return mini(maxi(0, projected_followers), total)
 
 func _status_persists_to_next_turn(card: Card, status_name: String, removed: Array = []) -> bool:
 	for status in card._get_effective_statuses():
