@@ -242,20 +242,46 @@ static func stat_changes(bot, card: Card, target: Card) -> Dictionary:
 	return {}
 
 static func stat_gain(bot, card: Card, target: Card, action: CardAction = null) -> int:
+	if target.negates_external_effects() and card != target:
+		return 0
 	var changes := stat_changes(bot, card, target)
-	var combat_action := action if action != null and action.type == CardAction.Type.ATTACK else null
-	return combat_gain(bot, target, int(changes.get("str", 0)), int(changes.get("res", 0)), combat_action, int(changes.get("spd", 0)))
+	return combat_gain(bot, target, int(changes.get("str", 0)), int(changes.get("res", 0)), action, int(changes.get("spd", 0)))
 
-static func combat_gain(bot, target: Card, str_delta: int, res_delta: int = 0, action: CardAction = null, speed_delta: int = 0) -> int:
+static func combat_gain(bot, target: Card, str_delta: int, res_delta: int = 0, action: CardAction = null, speed_delta: int = 0, followup: Dictionary = {}) -> int:
 	if not visible(bot, target):
 		return 0
+	var pending := {}
+	if action != null and action in bot.game_manager.action_stack:
+		var stack: Array[CardAction] = bot.game_manager.action_stack
+		var negated: Array[CardAction] = []
+		for index in range(stack.find(action), -1, -1):
+			var queued := stack[index]
+			if queued in negated or queued in bot.game_manager.resolving_stack_actions:
+				continue
+			if queued.type == CardAction.Type.ATTACK:
+				action = queued
+				break
+			if queued.card is Banishment or queued.card is SpellDemolition:
+				# Local actions carry the link. Snapshots keep the stack in resolution order.
+				var countered := queued.response_to
+				if countered == null and index > 0:
+					countered = stack[index - 1]
+				negated.append(countered)
+				continue
+			var changes := _pending_stat_changes(bot, queued)
+			if changes != Vector3i.ZERO:
+				pending[queued.target] = pending.get(queued.target, Vector3i.ZERO) + changes
+	var proposed := pending.duplicate()
+	proposed[target] = pending.get(target, Vector3i.ZERO) + Vector3i(str_delta, res_delta, speed_delta)
+	for recipient in followup:
+		proposed[recipient] = proposed.get(recipient, Vector3i.ZERO) + followup[recipient]
 	if action != null:
-		if action.type != CardAction.Type.ATTACK or action.united_front_partner != null or not visible(bot, action.attacker):
+		if action.type == CardAction.Type.ATTACK:
+			if not combat_visible(bot, action) or (action.united_front_partner != null and not visible(bot, action.united_front_partner)):
+				return 0
+			return _projected_combat_score(bot, action, proposed) - _projected_combat_score(bot, action, pending)
+		if pending.is_empty():
 			return 0
-		var defender: Card = bot._get_attack_defender_card(action)
-		if defender != null and not visible(bot, defender):
-			return 0
-		return bot._score_attack_economy(bot._estimate_attack_economy(action, target, str_delta, speed_delta, res_delta)) - bot._score_attack_economy(bot._estimate_attack_economy(action, null, 0, 0))
 	# These forecasts concern attacks later this turn, not next-turn value from
 	# temporary buffs that expire during the opponent's turn.
 	if bot.game_manager.current_player != bot.bot_player:
@@ -275,23 +301,39 @@ static func combat_gain(bot, target: Card, str_delta: int, res_delta: int = 0, a
 		for defender in defenders:
 			if defender is Card and (not visible(bot, defender) or not bot._can_attack_creature(attacker, defender)):
 				continue
-			if defender is Player and not bot._can_attack_followers_after_modifier(attacker, target, speed_delta):
-				continue
 			var planned := CardAction.new()
 			planned.type = CardAction.Type.ATTACK
 			planned.attacker = attacker
 			planned.target = defender
 			planned.halve_follower_damage = attacker.halves_follower_damage_inflicted()
-			var before: int = bot._score_attack_economy(bot._estimate_attack_economy(planned, null, 0, 0))
-			if defender is Player and not bot._can_attack_followers_safely(attacker):
-				before = 0
-			var after: int = bot._score_attack_economy(bot._estimate_attack_economy(planned, target, str_delta, speed_delta, res_delta))
+			var before := _projected_combat_score(bot, planned, pending, true)
+			var after := _projected_combat_score(bot, planned, proposed, true)
 			# A buff must create an attack the bot would actually want to take.
 			if after > 0:
 				best = maxi(best, after - maxi(0, before))
-	if bot._can_win_followers_after_modifier(target, str_delta, speed_delta) and not bot._can_win_followers_after_modifier(null, 0, 0):
+	if bot._can_win_followers_after_modifiers(proposed) and not bot._can_win_followers_after_modifiers(pending):
 		best = maxi(best, CARD_VALUE * 20)
 	return best
+
+static func _pending_stat_changes(bot, action: CardAction) -> Vector3i:
+	return additive_combat_stats(bot, action.card, action.target as Card)
+
+static func additive_combat_stats(bot, source: Card, target: Card) -> Vector3i:
+	# These effects add stats without replacing a previous modifier or moving a card.
+	if not (source is FifaTheMagicalArrow or source is Snowball or source is SapStrength \
+			or source is VisionOfOdin or source is VisionOfTartarus or source is Hermes):
+		return Vector3i.ZERO
+	if not visible(bot, target) or target.current_zone == null or not target.current_zone.is_board_zone() \
+			or target.negates_external_effects() or bot.game_manager.is_immune_to_source(target, source) \
+			or bot.game_manager.is_guardian_protected(target, source):
+		return Vector3i.ZERO
+	var changes := stat_changes(bot, source, target)
+	return Vector3i(int(changes.get("str", 0)), int(changes.get("res", 0)), int(changes.get("spd", 0)))
+
+static func _projected_combat_score(bot, action: CardAction, stats: Dictionary, check_interceptors: bool = false) -> int:
+	if check_interceptors and action.target is Player and not bot._can_attack_followers_after_modifiers(action.attacker, stats):
+		return 0
+	return bot._score_attack_economy(bot._estimate_projected_attack_economy(action, stats))
 
 static func target_score(bot, card: Card, target: Card, action: CardAction = null) -> int:
 	if target == null:

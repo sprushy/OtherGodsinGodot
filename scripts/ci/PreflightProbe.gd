@@ -62,6 +62,7 @@ func run() -> bool:
 	_check_bot_summon_and_intercept(failures)
 	_check_bot_main_phase_combat_order(failures)
 	_check_bot_hermes_speed(failures)
+	_check_bot_combat_buff_value(failures)
 	_check_bot_reveal_defense(failures)
 	_check_bot_next_turn_lethal(failures)
 	_check_standing_bot_seeks(failures)
@@ -1063,6 +1064,81 @@ func _check_bot_hermes_speed(failures: PackedStringArray) -> void:
 	attacks = bot._get_combat_candidates()
 	if not bot._plan_hermes_speed(attacks, bot._plan_combat(attacks)).is_empty():
 		failures.append("Hermes paid for speed even though the attacker already outran Void Shield")
+	bot.detach()
+
+func _check_bot_combat_buff_value(failures: PackedStringArray) -> void:
+	var game := GameManager.new()
+	var player := Player.new()
+	var opponent := Player.new()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	var manager := MatchManager.new(game)
+	var bot := PracticeFuzzPlayerBot.new()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var enkidu := Enkidu.new()
+	enkidu.card_owner = player
+	enkidu.creature_mode = Card.CreatureMode.AGGRESSIVE
+	player.frontline_zones[0].add_card(enkidu)
+	var asaruludu := Asaruludu.new()
+	asaruludu.card_owner = opponent
+	asaruludu.creature_mode = Card.CreatureMode.AGGRESSIVE
+	opponent.frontline_zones[0].add_card(asaruludu)
+	var first := FifaTheMagicalArrow.new()
+	first.card_owner = player
+	player.hand_zone.add_card(first)
+	var second := FifaTheMagicalArrow.new()
+	second.card_owner = player
+	player.hand_zone.add_card(second)
+	var attack := CardAction.new()
+	attack.type = CardAction.Type.ATTACK
+	attack.source_player = player
+	attack.attacker = enkidu
+	attack.target = asaruludu
+	if int(bot._score_priority_card(first, attack, -1)["score"]) <= 0:
+		failures.append("Bot did not value Fifa turning Enkidu's loss into a win")
+	asaruludu.strength = 34
+	var planned := bot._get_best_supported_attack([enkidu], [asaruludu])
+	if planned.get("target") != asaruludu:
+		failures.append("Bot did not see the two-Fifa combat line before declaring the attack")
+	game.push_to_stack(attack)
+	game.pass_priority()
+	if bot._choose_priority_response() not in [first, second]:
+		failures.append("Bot would not start the predicted two-Fifa combat line")
+	game.action_stack.clear()
+	asaruludu.strength = 28
+	var pending := CardAction.new()
+	pending.type = CardAction.Type.SPELL
+	pending.source_player = player
+	pending.card = first
+	pending.target = enkidu
+	game.push_to_stack(pending)
+	game.pass_priority()
+	if bot._choose_priority_response() != null:
+		failures.append("Bot stacked another Fifa before the first one resolved")
+	game.action_stack.push_front(attack)
+	pending.response_to = attack
+	opponent.followers = 8
+	if bot._choose_priority_response() != second:
+		failures.append("Bot did not anticipate lethal from both Fifas while the first was pending")
+	if enkidu.get_effective_strength() != enkidu.strength:
+		failures.append("Projecting pending buffs changed Enkidu's live stats")
+	opponent.followers = 100
+	asaruludu.strength = 34
+	if bot._choose_priority_response() != second:
+		failures.append("Bot did not anticipate that stacking two Fifas would flip the fight")
+	asaruludu.strength = 28
+	if bot._choose_priority_response() != null:
+		failures.append("Bot stacked a second Fifa for nonlethal damage in a pending attack")
+	game.action_stack.clear()
+	first.resolve(game, enkidu)
+	if int(bot._score_priority_card(second, attack, -1)["score"]) > 0:
+		failures.append("Bot spent a second Fifa for five nonlethal followers after the fight was already won")
+	opponent.followers = 8
+	if int(bot._score_priority_card(second, attack, -1)["score"]) <= 0:
+		failures.append("Bot did not value a second Fifa when the extra damage was lethal")
 	bot.detach()
 
 func _check_bot_reveal_defense(failures: PackedStringArray) -> void:
