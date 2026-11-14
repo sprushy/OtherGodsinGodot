@@ -932,13 +932,14 @@ func _plan_creature_summon(danger: int = -1, attacks: Array[Dictionary] = [], ba
 			if payment_forecast >= 0:
 				prior_payment_penalty = int(_build_creature_summon_payment_plan(creature).get("penalty", 0))
 			var face_up_block_value := _estimate_defensive_summon_value(creature, summon_zone) / 2
-			var reveal_defender := _estimate_reveal_trigger_value(creature) > 0
+			var reveal_value := _estimate_reveal_trigger_value(creature)
+			var reveal_defender := reveal_value > 0
 			var stealth_block_value := 0
 			if reveal_defender:
 				stealth_block_value = _estimate_defensive_summon_value(creature, summon_zone, true) / 2
 			var block_value := maxi(face_up_block_value, stealth_block_value)
 			var mode := _choose_creature_summon_mode(creature, enemies)
-			if block_value > 0 and removed_by_setup.is_empty():
+			if (block_value > 0 or reveal_defender) and removed_by_setup.is_empty():
 				mode = Card.CreatureMode.DEFENSIVE
 			var modes := [mode]
 			var summon_attacks := _get_summon_attack_candidates(creature, summon_zone, available_mana)
@@ -966,6 +967,8 @@ func _plan_creature_summon(danger: int = -1, attacks: Array[Dictionary] = [], ba
 				for stealth: bool in stealth_options:
 					var defensive_value := stealth_block_value if stealth and reveal_defender else face_up_block_value
 					var candidate := score + (defensive_value if projected_defensive and removed_by_setup.is_empty() else 0) + attack_value
+					if defensive and stealth and reveal_defender:
+						candidate += reveal_value
 					candidate += prior_payment_penalty - int(command.get("payment_penalty", 0))
 					var change := {
 						"removed": removed, "summon": creature, "zone": summon_zone, "stance": creature,
@@ -1021,6 +1024,8 @@ func _estimate_projected_summon_casualty_cost(
 		for casualty: Card in result.get("casualties", []):
 			if casualty != creature and casualty.get_controller() == opponent:
 				loss -= _get_card_economic_value(casualty)
+		loss += _score_follower_loss(bot_player, int(result.get("bot_followers_lost", 0)))
+		loss -= _score_follower_loss(opponent, int(result.get("opponent_followers_lost", 0)))
 		greatest_loss = maxi(greatest_loss, maxi(0, loss))
 	return greatest_loss
 
