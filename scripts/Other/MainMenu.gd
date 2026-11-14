@@ -3036,7 +3036,7 @@ func _on_local_bot_work_assigned(job: Dictionary) -> void:
 		return
 	var continuous := false
 	continuous = _pending_local_bot_match_modes.pop_front()
-	var custom_bot_id := _custom_bot_ids_pending.pop_front() if not _custom_bot_ids_pending.is_empty() else ""
+	var custom_bot_id: String = _custom_bot_ids_pending.pop_front() if not _custom_bot_ids_pending.is_empty() else ""
 	if (continuous and not _bot_match_hosting_enabled) or lobby_client == null or not lobby_client.is_authenticated():
 		if lobby_client != null:
 			lobby_client.cancel_bot_work(str(job.get("job_id", "")))
