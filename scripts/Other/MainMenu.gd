@@ -7818,7 +7818,7 @@ func _get_interactive_tutorial_steps(lesson_id: String, mode: String) -> Array[D
 				},
 				{
 					"title": "Choose Upkeep",
-					"body": "Choose the mana well for more mana, or open your deck and choose +1 card.",
+					"body": "Choose the mana well for more mana, or click your deck to draw a card.",
 					"check": "choose_upkeep"
 				},
 				{
@@ -12336,9 +12336,16 @@ func _run_practice_thor_smoke() -> void:
 		return
 
 	var player_one_mana_before_draw: int = practice_game.player1.mana
-	if not practice_game.game_input.submit_action({type = "upkeep_choice", choice = "draw"}):
-		_complete_practice_thor_smoke(false, "practice_thor_upkeep_choice_failed")
+	var inspect_click := InputEventMouseButton.new()
+	inspect_click.button_index = MOUSE_BUTTON_RIGHT
+	inspect_click.pressed = true
+	practice_game.draw_button.gui_input.emit(inspect_click)
+	if practice_game._deck_overlay_zone != practice_game.player1.deck_zone \
+			or practice_game.game_manager.has_resolved_turn_upkeep():
+		_complete_practice_thor_smoke(false, "practice_thor_upkeep_deck_inspection_failed")
 		return
+	practice_game._dismiss_zone_overlay()
+	practice_game.draw_button.pressed.emit()
 	if not await _wait_for_practice_thor_smoke_condition(
 		func() -> bool:
 			return practice_game.game_manager.current_player == practice_game.player1 \

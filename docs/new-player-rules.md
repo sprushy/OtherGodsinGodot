@@ -168,9 +168,9 @@ The most important beginner habit is to use Main Phase to build a board before m
 During the Upkeep window, you usually choose one of these resource options:
 
 - Gain 4 mana.
-- Open your deck and choose **+1 card**.
+- Click your deck to draw 1 card.
 
-Select either deck to inspect it in draw order. Both players can see primed and shelved cards in their current positions until the deck is shuffled. A primed card on top is also face up on the board. Unknown cards appear face down.
+Click either deck to inspect it in draw order. While you can choose **+1 card** during upkeep, right-click your deck to inspect it. Both players can see primed and shelved cards in their current positions until the deck is shuffled. A primed card on top is also face up on the board. Unknown cards appear face down.
 
 At the start of upkeep, you normally gain 1 automatic mana immediately, before choosing a resource option. Choosing mana then adds 4 more mana; choosing a card adds no further mana.
 

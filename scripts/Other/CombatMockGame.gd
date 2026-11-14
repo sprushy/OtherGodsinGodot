@@ -2605,7 +2605,8 @@ func _ready() -> void:
 	_promote_transient_ui(_observer_perspective_button, TRANSIENT_UI_Z_INDEX + 100)
 	resized.connect(_layout_board_art_background)
 
-	draw_button.pressed.connect(_on_deck_pressed.bind(false))
+	draw_button.pressed.connect(_on_local_deck_pressed)
+	draw_button.inspect_requested.connect(_show_deck_contents.bind(false))
 	mana_button.pressed.connect(_on_mana_button_pressed)
 	draw_button.mouse_entered.connect(_clear_locked_power_cursor_hover)
 	mana_button.mouse_entered.connect(_clear_locked_power_cursor_hover)
@@ -6574,7 +6575,8 @@ func _setup_turn_choice_buttons() -> void:
 	add_child(_opponent_draw_deck)
 	_opponent_draw_deck.set_opponent_view(true)
 	_opponent_draw_deck.set_card_protector_enabled(true)
-	_opponent_draw_deck.pressed.connect(_on_deck_pressed.bind(true))
+	_opponent_draw_deck.pressed.connect(_show_deck_contents.bind(true))
+	_opponent_draw_deck.inspect_requested.connect(_show_deck_contents.bind(true))
 	_local_deck_badge = _add_deck_rank_badge("LocalDeckRankBadge")
 	_opponent_deck_badge = _add_deck_rank_badge("OpponentDeckRankBadge")
 	_setup_match_identity_panels()
@@ -6794,8 +6796,6 @@ func _sync_turn_start_props() -> void:
 		local_top = null
 	draw_button.set_primed_top_card(local_top)
 	_opponent_draw_deck.set_primed_top_card(opponent.deck_zone.get_primed_top_card())
-	if is_instance_valid(_deck_overlay_draw_button):
-		_deck_overlay_draw_button.visible = _can_choose_turn_start_option() and _deck_overlay_zone == display_player.deck_zone
 	_opponent_draw_deck.set_opponent_draw_available(not _game_finished \
 		and game_manager.current_player == opponent \
 		and game_manager.is_player_in_upkeep_window(opponent) \
@@ -14010,7 +14010,6 @@ var _deck_overlay_zone: Zone
 var _deck_overlay_cards: Array[Card] = []
 var _deck_overlay_title: Label
 var _deck_overlay_grid: HFlowContainer
-var _deck_overlay_draw_button: Button
 
 func _create_centered_overlay_panel(overlay: Control, width_ratio: float = 0.90, height_ratio: float = 0.42, card_display: bool = false) -> PanelContainer:
 	var panel := PanelContainer.new()
@@ -14101,18 +14100,11 @@ func _show_zone_contents(zone_name: String, zone: Zone) -> void:
 		_deck_overlay_grid.add_theme_constant_override("h_separation", 8)
 		_deck_overlay_grid.add_theme_constant_override("v_separation", 8)
 		scroll.add_child(_deck_overlay_grid)
-		var buttons := HBoxContainer.new()
-		buttons.alignment = BoxContainer.ALIGNMENT_CENTER
-		vbox.add_child(buttons)
-		_deck_overlay_draw_button = Button.new()
-		_deck_overlay_draw_button.text = "+1 card"
-		_deck_overlay_draw_button.visible = zone == _get_display_player().deck_zone and _can_choose_turn_start_option()
-		_deck_overlay_draw_button.pressed.connect(_on_draw_button_pressed)
-		buttons.add_child(_deck_overlay_draw_button)
 		var close_button := Button.new()
 		close_button.text = "Close"
+		close_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		close_button.pressed.connect(_dismiss_zone_overlay)
-		buttons.add_child(close_button)
+		vbox.add_child(close_button)
 		_refresh_deck_overlay()
 	else:
 		var fan := CardOverlayFanScript.new()
@@ -14488,7 +14480,6 @@ func _dismiss_zone_overlay() -> void:
 	_deck_overlay_cards.clear()
 	_deck_overlay_title = null
 	_deck_overlay_grid = null
-	_deck_overlay_draw_button = null
 	_overlay_card_selected = Callable()
 	_overlay_card_dismissed = Callable()
 	_card_selection_overlay_active = false
@@ -28247,7 +28238,13 @@ func _is_attacker_on_board(attacker: Card, owning_player: Player) -> bool:
 		return false
 	return attacker.current_zone != null and attacker.current_zone.zone_type == Zone.ZoneType.FRONTLINE
 
-func _on_deck_pressed(opponent: bool) -> void:
+func _on_local_deck_pressed() -> void:
+	if _can_choose_turn_start_option():
+		_on_draw_button_pressed()
+	else:
+		_show_deck_contents(false)
+
+func _show_deck_contents(opponent: bool) -> void:
 	if not _turn_start_props_are_ready() or is_instance_valid(_zone_overlay):
 		return
 	var player := _get_display_opponent() if opponent else _get_display_player()
@@ -28267,8 +28264,6 @@ func _on_draw_button_pressed() -> void:
 	if _skoll_prompt_panel != null or _pending_skoll_summon != null:
 		_set_action_label_text("Finish resolving Sun Hunt or cancel it before choosing another upkeep option.")
 		return
-	if _deck_overlay_zone != null:
-		_dismiss_zone_overlay()
 	_set_turn_choice_controls_disabled(true)
 	if _upkeep_hint_completed_choices < UPKEEP_HINT_CHOICE_LIMIT:
 		_upkeep_hint_pending_turn = game_manager.turn_number

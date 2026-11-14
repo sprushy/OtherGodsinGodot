@@ -1,5 +1,7 @@
 extends Button
 
+signal inspect_requested
+
 const CARD_BACK := preload("res://images/cardbackAI.png")
 const CARD_PROTECTOR := preload("res://images/ui/zones/snow_gargoyle_card_protector_cw45.png")
 const OPPONENT_CARD_PROTECTOR := preload("res://images/ui/zones/snow_gargoyle_card_protector_opponent_v7.png")
@@ -66,6 +68,12 @@ func _ready() -> void:
 	_stack_shadow_style.shadow_size = 4
 	_stack_shadow_style.shadow_offset = Vector2(2.0, 3.0)
 	resized.connect(queue_redraw)
+	gui_input.connect(_on_gui_input)
+
+func _on_gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_RIGHT:
+		accept_event()
+		inspect_requested.emit()
 
 func set_deck_count(count: int) -> void:
 	var next_count := maxi(0, count)
@@ -80,11 +88,12 @@ func set_deck_count(count: int) -> void:
 	queue_redraw()
 
 func _update_tooltip() -> void:
-	tooltip_text = "Inspect deck (%d cards)" % _deck_count
+	if _draw_available and not _opponent_view:
+		tooltip_text = "Draw 1 card\nRight-click to inspect deck (%d cards)" % _deck_count
+	else:
+		tooltip_text = "Inspect deck (%d cards)" % _deck_count
 	if not _top_card_name.is_empty():
 		tooltip_text += "\nPrimed: " + _top_card_name
-	if _draw_available and not _opponent_view:
-		tooltip_text += "\n+1 card available"
 
 func set_primed_top_card(card: Card) -> void:
 	var next_name := card.get_display_name_for_control(self) if card != null else ""
