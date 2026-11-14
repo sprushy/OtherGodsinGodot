@@ -6259,7 +6259,7 @@ func start_game(
 	_observer_perspective_player_index = 0
 	_observer_feedback_viewer = Player.new() if _is_observer_mode else null
 	if is_instance_valid(_action_log_shell):
-		_action_log_shell.visible = SHOW_MATCH_INFO_PANELS or _observer_reveals_bot_hands
+		_action_log_shell.visible = false
 	_restore_corner_action_button()
 	
 	_clear_god_dialogue_bubbles()

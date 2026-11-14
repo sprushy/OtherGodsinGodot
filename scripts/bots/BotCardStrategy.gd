@@ -730,6 +730,28 @@ static func equipment_score(bot, equipment: Card, bearer: Card) -> int:
 			gain = maxi(gain, combat_gain(bot, bearer, equipment.strength_modifier + 8, 0, action))
 	return gain + 2000 - CARD_VALUE - mana_penalty(bot, activation_cost(bot, equipment))
 
+static func equipment_pickup_score(bot, equipment: EquipmentCard, bearer: Card) -> int:
+	if equipment == null or bearer == null or not equipment.can_equip_to(bearer):
+		return BAD
+	if key(equipment) == "DraupnirTheMultiplying":
+		var remaining := maxi(0, DraupnirTheMultiplying.MAX_ACTIVATIONS - equipment.activations_used)
+		var safety_bonus := 500 if bearer.current_zone in bot.bot_player.reserve_zones else 0
+		return remaining * DraupnirTheMultiplying.MANA_GAIN * MANA_VALUE + safety_bonus
+	# The item is already on the board, so its original card cost is sunk. Give
+	# even low-impact gear a baseline value over passing, then account for its
+	# stat changes and any special combat benefit.
+	var gain := stat_gain(bot, equipment, bearer)
+	if key(equipment) == "BeardedAxe" and bearer.culture == "Norse" and bearer.has_type("Warrior"):
+		for defender in bot._get_board_creatures(bot.opponent):
+			if not visible(bot, defender) or defender.creature_mode != Card.CreatureMode.DEFENSIVE or bearer not in bot._get_attack_ready_creatures() or not bot._can_attack_creature(bearer, defender):
+				continue
+			var action := CardAction.new()
+			action.type = CardAction.Type.ATTACK
+			action.attacker = bearer
+			action.target = defender
+			gain = maxi(gain, combat_gain(bot, bearer, equipment.strength_modifier + 8, 0, action))
+	return 2500 + gain
+
 static func structure_score(bot, structure: Card) -> int:
 	var gain := 0
 	match key(structure):

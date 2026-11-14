@@ -36,6 +36,7 @@ var _current_card_prompt_id: int = -1
 var _last_submitted_prompt_id: int = -1
 var _strategy_activation_turns: Dictionary = {}
 var _pending_power_activation_uid := ""
+var _dellingr_revealed_target_uids: Dictionary = {}
 
 func attach(
 	p_game_manager: GameManager,
@@ -68,6 +69,7 @@ func detach() -> void:
 	_retry_poll_queued = false
 	_answered_prompt_ids.clear()
 	_strategy_activation_turns.clear()
+	_dellingr_revealed_target_uids.clear()
 	_pending_power_activation_uid = ""
 	_current_card_prompt_id = -1
 	_last_submitted_prompt_id = -1
@@ -563,6 +565,7 @@ func _take_main_phase_action() -> bool:
 	var defenses := [
 		play, manifestation, unlock, _plan_defensive_stance(danger), _plan_removal_god_ability(danger),
 		summon, _plan_power_activation(null, danger), _plan_strategy_support(danger), _plan_hermes_speed(attacks, attack),
+		_plan_equipment_pickup(),
 	]
 	if danger >= bot_player.followers:
 		defenses.append(_plan_defensive_attack(attacks, danger))
@@ -671,14 +674,78 @@ func _try_activate_best_god_ability() -> bool:
 			})
 	if god is DellingrTheDayspring:
 		var dellingr := god as DellingrTheDayspring
-		var reveal_target := _choose_best_enemy_target_for_source(dellingr, dellingr.get_valid_targets(game_manager))
+		var reveal_target := _choose_dellingr_reveal_target(dellingr, dellingr.get_valid_targets(game_manager))
 		if reveal_target != null:
-			return _submit_action({
+			var submitted := _submit_action({
 				"type": "god_ability",
 				"god_uid": dellingr.uid,
 				"target_uid": reveal_target.uid,
 			})
+			if submitted:
+				_dellingr_revealed_target_uids[reveal_target.uid] = true
+			return submitted
 	return false
+
+func _choose_dellingr_reveal_target(_source: DellingrTheDayspring, targets: Array) -> Card:
+	var best_target: Card = null
+	var best_score := -1000000
+	for raw_target in targets:
+		var target := raw_target as Card
+		if target == null or target.get_controller() != opponent:
+			continue
+		var score := _score_enemy_target(target)
+		if _dellingr_revealed_target_uids.has(target.uid):
+			# A second reveal only matters when this prepared magical card can
+			# answer a strong attack or summon line this turn.
+			if not _dellingr_can_interrupt_strong_line(target):
+				continue
+			score += ECON_CARD_VALUE
+		if best_target == null or score > best_score:
+			best_target = target
+			best_score = score
+	return best_target
+
+func _dellingr_can_interrupt_strong_line(target: Card) -> bool:
+	if target == null or not target.is_prepared or not target.is_magical_card() \
+			or target.is_muted or target.is_activation_locked(game_manager):
+		return false
+	var activation_cost := game_manager.get_prepared_card_activation_mana_cost(opponent, target)
+	if opponent.mana < activation_cost:
+		return false
+	var attacks := _get_combat_candidates()
+	var attack := _plan_combat(attacks)
+	if int(attack.get("score", 0)) >= ECON_CARD_VALUE:
+		var action := CardAction.new()
+		action.type = CardAction.Type.ATTACK
+		action.attacker = attack.get("attacker") as Card
+		action.target = attack.get("target")
+		if _dellingr_card_can_answer_action(target, action):
+			return true
+	var summon := _plan_creature_summon(_forecast_incoming_follower_loss(), attacks, attack)
+	if int(summon.get("score", 0)) < ECON_CARD_VALUE:
+		return false
+	var command: Dictionary = summon.get("command", {})
+	var creature := game_manager.get_card_by_uid(str(command.get("card_uid", "")))
+	if creature == null:
+		return false
+	for event_name in ["summon", "frontline_entry"]:
+		var action := CardAction.new()
+		action.type = CardAction.Type.EVENT
+		action.source_player = bot_player
+		action.card = creature
+		action.event_name = event_name
+		if _dellingr_card_can_answer_action(target, action):
+			return true
+	return false
+
+func _dellingr_card_can_answer_action(card: Card, action: CardAction) -> bool:
+	if card == null or action == null:
+		return false
+	if card.has_method("can_respond_to_action") and bool(card.call("can_respond_to_action", action)):
+		return true
+	return action.event_name == "frontline_entry" \
+		and card.has_method("can_respond_to_frontline_entry") \
+		and bool(card.call("can_respond_to_frontline_entry", action))
 
 func _plan_hermes_speed(attacks: Array[Dictionary], baseline: Dictionary) -> Dictionary:
 	var hermes := _find_player_god() as Hermes
@@ -1464,6 +1531,52 @@ func _plan_strategy_support(danger: int = -1) -> Dictionary:
 	if best_card == null:
 		return {}
 	return {"score": best_score, "command": {"type": "play_card", "card_uid": best_card.uid, "player_index": player_index, "zone_type": best_zone.zone_type, "zone_index": best_zone.zone_index}}
+
+func _plan_equipment_pickup() -> Dictionary:
+	var best: Dictionary = {}
+	for bearer in _get_board_creatures(bot_player):
+		if bearer.current_zone == null or not bearer.can_receive_equipment():
+			continue
+		var reachable := game_manager.get_reachable_board_zones(bearer)
+		for player in game_manager.players:
+			if player == null:
+				continue
+			for zone in player.frontline_zones + player.reserve_zones:
+				for card in zone.cards:
+					var equipment := card as EquipmentCard
+					if equipment == null or equipment.equipped_on != null or not equipment.can_equip_to(bearer):
+						continue
+					var is_enemy := zone.zone_owner != bot_player
+					var in_range := zone in reachable
+					if is_enemy and not in_range and bearer.current_zone.zone_type != Zone.ZoneType.FRONTLINE:
+						continue
+					if bearer.has_method("can_pick_up_equipment_action") \
+							and not bearer.can_pick_up_equipment_action(game_manager, is_enemy):
+						continue
+					var action_cost_kind := game_manager.get_equipment_pickup_action_cost_kind(bearer, equipment, is_enemy)
+					if action_cost_kind == Card.ACTION_COST_MINOR and not bearer.can_take_minor_creature_action():
+						continue
+					if action_cost_kind == Card.ACTION_COST_MAJOR and not bearer.can_take_major_creature_action():
+						continue
+					var mana_cost := game_manager.get_creature_action_mana_cost(bearer, "pick up equipment")
+					if bot_player.mana < mana_cost:
+						continue
+					var action := "steal" if is_enemy else "pick_up"
+					if is_enemy and not match_manager._get_possible_interceptors(bearer, equipment).is_empty():
+						continue
+					var score := CardStrategy.equipment_pickup_score(self, equipment, bearer)
+					if action_cost_kind == Card.ACTION_COST_MINOR:
+						score -= 700
+					elif action_cost_kind == Card.ACTION_COST_MAJOR:
+						score -= 1400
+					score -= mana_cost * ECON_MANA_VALUE
+					if score <= int(best.get("score", 0)):
+						continue
+					best = {
+						"score": score,
+						"command": {"type": "equip_action", "card_uid": bearer.uid, "equipment_uid": equipment.uid, "action": action},
+					}
+	return best
 
 func _try_cast_fall_of_the_mighty() -> bool:
 	var fall := _find_hand_fall_of_the_mighty()
