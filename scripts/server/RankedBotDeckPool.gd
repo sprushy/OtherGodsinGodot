@@ -4,24 +4,24 @@ const RankedProgressionScript = preload("res://scripts/server/RankedProgression.
 const LISTS_PER_GOD := 7
 const TRIAL_MATCHES := 7
 const EXPLORATION_CHANCE := 0.25
-const SELF_PLAY_MAX_STAR_GAP := 3
+const MATCHMAKING_LEAGUE_TIER_WINDOW := 2
 const NAME_POOLS := {
-	"Thor": ["Bloodaxe", "Moon", "Stormbreaker", "Thunderhead", "Iron Ram", "Cloudsplitter", "Red Hammer"],
-	"Odin": ["Ravenwatch", "Runeweaver", "Grey Wanderer", "Gallows Tree", "Spear of Oaths", "Winter King", "Last Wisdom"],
-	"Baldr": ["Daystar", "Goldbranch", "White Flame", "Dream of Dawn", "Summer Shield", "Bright Oath", "Sunwake"],
-	"Freyja": ["Amber Tears", "Falcon Mantle", "Goldweaver", "Battlefield Rose", "Witchlight", "Boar's Charge", "Hall of the Slain"],
-	"Dellingr": ["First Light", "Sunrise Gate", "Crimson Sky", "Dawn Watch", "Horizon", "Daybreak", "Eastern Flame"],
-	"Cernunnos": ["Black Stag", "Briar Crown", "Green Hunt", "Antler Throne", "Hollow Oak", "Wildwood", "Winter Herd"],
-	"Guan Yu": ["Jade Dragon", "Red Hare", "Green Crescent", "Iron Oath", "Peach Garden", "Long March", "Banner of Shu"],
-	"Aphrodite Areia": ["Rose of War", "Crimson Kiss", "Seafoam", "Gilded Spear", "Thorn Crown", "Velvet Blade", "Bronze Mirror"],
-	"Hermes": ["Winged Sandal", "Crossroads", "Golden Road", "Quickstep", "Night Courier", "Herald", "Thief's Star"],
-	"Manannán mac Lir": ["Sea Mist", "Silver Bough", "Wave Rider", "Tidewalker", "Hidden Isle", "White Sail", "Deepwater"],
-	"Nusku": ["Emberguard", "Night Lantern", "Red Hearth", "Kindling", "Cinder Crown", "Watchfire", "Dawn Torch"],
-	"Mummu": ["First Whisper", "Black Water", "Still Depths", "Entropy", "Sunken Word", "Deep Counsel", "Silent Tide"],
-	"Tezcatlipoca": ["Obsidian", "Night Jaguar", "Smoking Glass", "Black Wind", "Starless Sky", "Shadow Step", "Broken Reflection"],
-	"Tiamat": ["Salt Tide", "Deep Coil", "First Sea", "Abyssal Crown", "Chaos Brood", "Black Current", "World Serpent"],
+	"Thor": ["Bloodaxe", "Moon", "Stormbreaker", "Thunderhead", "Iron Ram", "Cloudsplitter", "Red Hammer", "Mjolnir's Wake"],
+	"Odin": ["Ravenwatch", "Runeweaver", "Grey Wanderer", "Gallows Tree", "Spear of Oaths", "Winter King", "Last Wisdom", "Hanged One"],
+	"Baldr": ["Daystar", "Goldbranch", "White Flame", "Dream of Dawn", "Summer Shield", "Bright Oath", "Sunwake", "Mistletoe Oath"],
+	"Freyja": ["Amber Tears", "Falcon Mantle", "Goldweaver", "Battlefield Rose", "Witchlight", "Boar's Charge", "Hall of the Slain", "Brisingamen"],
+	"Dellingr": ["First Light", "Sunrise Gate", "Crimson Sky", "Dawn Watch", "Horizon", "Daybreak", "Eastern Flame", "Morning Star"],
+	"Cernunnos": ["Black Stag", "Briar Crown", "Green Hunt", "Antler Throne", "Hollow Oak", "Wildwood", "Winter Herd", "Horned Guardian"],
+	"Guan Yu": ["Jade Dragon", "Red Hare", "Green Crescent", "Iron Oath", "Peach Garden", "Long March", "Banner of Shu", "Five Passes"],
+	"Aphrodite Areia": ["Rose of War", "Crimson Kiss", "Seafoam", "Gilded Spear", "Thorn Crown", "Velvet Blade", "Bronze Mirror", "Spartan Grace"],
+	"Hermes": ["Winged Sandal", "Crossroads", "Golden Road", "Quickstep", "Night Courier", "Herald", "Thief's Star", "Caduceus Run"],
+	"Manannán mac Lir": ["Sea Mist", "Silver Bough", "Wave Rider", "Tidewalker", "Hidden Isle", "White Sail", "Deepwater", "Land of Youth"],
+	"Nusku": ["Emberguard", "Night Lantern", "Red Hearth", "Kindling", "Cinder Crown", "Watchfire", "Dawn Torch", "Everflame"],
+	"Mummu": ["First Whisper", "Black Water", "Still Depths", "Entropy", "Sunken Word", "Deep Counsel", "Silent Tide", "Apsu's Dream"],
+	"Tezcatlipoca": ["Obsidian", "Night Jaguar", "Smoking Glass", "Black Wind", "Starless Sky", "Shadow Step", "Broken Reflection", "Tezcatl's Mirror"],
+	"Tiamat": ["Salt Tide", "Deep Coil", "First Sea", "Abyssal Crown", "Chaos Brood", "Black Current", "World Serpent", "Primordial Surge"],
 }
-const DEFAULT_NAMES := ["Bloodaxe", "Moon", "Iron Crown", "Ember", "Oathkeeper", "Nightfall", "Stormcall"]
+const DEFAULT_NAMES := ["Bloodaxe", "Moon", "Iron Crown", "Ember", "Oathkeeper", "Nightfall", "Stormcall", "Northwind"]
 
 var _by_god: Dictionary = {}
 var _replayed_match_count := -1
@@ -29,6 +29,7 @@ var _last_replayed_id := ""
 
 func refresh(results: Array[Dictionary]) -> void:
 	if _replayed_match_count == results.size():
+		_ensure_unique_deck_names()
 		return
 	var start := _replayed_match_count
 	if start <= 0 or start > results.size() or str(results[start - 1]["match_id"]) != _last_replayed_id:
@@ -37,8 +38,69 @@ func refresh(results: Array[Dictionary]) -> void:
 		_by_god.clear()
 	for index in range(start, results.size()):
 		_apply_result(results[index])
+	_ensure_unique_deck_names()
 	_replayed_match_count = results.size()
 	_last_replayed_id = str(results.back()["match_id"]) if not results.is_empty() else ""
+
+func _ensure_unique_deck_names() -> void:
+	var decks: Array[Dictionary] = []
+	for god_name in _by_god:
+		var pool: Dictionary = _by_god[god_name]
+		for list: Dictionary in pool["lists"]:
+			decks.append({"god_name": str(god_name), "deck": list})
+		var challenger: Dictionary = pool["challenger"]
+		if not challenger.is_empty():
+			decks.append({"god_name": str(god_name), "deck": challenger})
+	decks.sort_custom(func(first: Dictionary, second: Dictionary) -> bool:
+		var first_deck: Dictionary = first["deck"]
+		var second_deck: Dictionary = second["deck"]
+		var first_name := str(first_deck.get("deck_name", ""))
+		var second_name := str(second_deck.get("deck_name", ""))
+		var name_order := first_name.nocasecmp_to(second_name)
+		if name_order != 0:
+			return name_order < 0
+		if first_name != second_name:
+			return first_name < second_name
+		if str(first["god_name"]) != str(second["god_name"]):
+			return str(first["god_name"]) < str(second["god_name"])
+		return str(first_deck.get("list_id", "")) < str(second_deck.get("list_id", ""))
+	)
+	var used_names := {}
+	var challenger_entries: Array[Dictionary] = []
+	for entry: Dictionary in decks:
+		var deck: Dictionary = entry["deck"]
+		var base_name := str(deck.get("deck_name", "")).strip_edges()
+		if base_name.is_empty():
+			base_name = "%s: Challenger" % str(entry["god_name"])
+		var deck_god := display_god_name(str(entry["god_name"]))
+		if base_name == "%s: Challenger" % deck_god and str(deck.get("self_play_name", "")).is_empty():
+			challenger_entries.append(entry)
+			continue
+		var unique_existing_name := base_name
+		var suffix := 2
+		while used_names.has(unique_existing_name.to_lower()):
+			unique_existing_name = "%s (%d)" % [base_name, suffix]
+			suffix += 1
+		deck["deck_name"] = unique_existing_name
+		used_names[unique_existing_name.to_lower()] = true
+	for challenger_entry: Dictionary in challenger_entries:
+		var challenger_deck: Dictionary = challenger_entry["deck"]
+		var challenger_god := display_god_name(str(challenger_entry["god_name"]))
+		var names: Array = NAME_POOLS.get(challenger_god, DEFAULT_NAMES)
+		var unique_challenger_name := ""
+		for name_suffix in names:
+			var candidate := "%s: %s" % [challenger_god, str(name_suffix)]
+			if not used_names.has(candidate.to_lower()):
+				unique_challenger_name = candidate
+				break
+		if unique_challenger_name.is_empty():
+			var challenger_suffix := 2
+			unique_challenger_name = "%s: Challenger" % challenger_god
+			while used_names.has(unique_challenger_name.to_lower()):
+				unique_challenger_name = "%s: Challenger %d" % [challenger_god, challenger_suffix]
+				challenger_suffix += 1
+		challenger_deck["deck_name"] = unique_challenger_name
+		used_names[unique_challenger_name.to_lower()] = true
 
 func get_ladder_summary() -> Dictionary:
 	var gods: Array[Dictionary] = []
@@ -85,16 +147,23 @@ func get_deck_details(list_id: String) -> Dictionary:
 
 func _deck_details(list: Dictionary) -> Dictionary:
 	return {
+		"list_id": list["list_id"],
 		"name": list["deck_name"],
+		"deck_name": list["deck_name"],
+		"god_name": list["god_name"],
+		"wins": int(list.get("wins", 0)),
+		"losses": int(list.get("losses", 0)),
+		"draws": int(list.get("draws", 0)),
+		"stars": int(list.get("stars", 0)),
 		"cards": list["cards"].duplicate(),
 		"reinforcements": list["reinforcements"].duplicate(),
 		"special_setup": list["special_setup"].duplicate(true),
 	}
 
 func select_deck(busy_list_ids: Dictionary, rng: RandomNumberGenerator, target_stars: int) -> Dictionary:
-	var closest: Array[Dictionary] = []
-	var closest_trials: Array[Dictionary] = []
-	var closest_gap := target_stars # A fresh list starts at zero stars.
+	var target_rank := RankedProgressionScript.summarize_bot_stars(target_stars)
+	var target_league := int(target_rank["league"])
+	var decks_by_league: Dictionary = {}
 	for pool: Dictionary in _by_god.values():
 		var challenger: Dictionary = pool["challenger"]
 		var lists: Array = pool["lists"].duplicate()
@@ -103,21 +172,31 @@ func select_deck(busy_list_ids: Dictionary, rng: RandomNumberGenerator, target_s
 		for list: Dictionary in lists:
 			if list["list_id"] == pool["quarantined_id"] or busy_list_ids.has(list["list_id"]):
 				continue
-			var gap := absi(int(list["stars"]) - target_stars)
-			if gap > closest_gap:
-				continue
-			if gap < closest_gap:
-				closest.clear()
-				closest_trials.clear()
-				closest_gap = gap
-			if list == challenger:
-				closest_trials.append(list)
-			else:
-				closest.append(list)
-	var candidates := closest_trials if not closest_trials.is_empty() else closest
-	if candidates.is_empty():
+			var rank := RankedProgressionScript.summarize_bot_stars(int(list["stars"]))
+			var league := int(rank["league"])
+			var candidates: Array = decks_by_league.get(league, [])
+			candidates.append(list)
+			decks_by_league[league] = candidates
+	var eligible_leagues: Array[int] = []
+	for raw_league in decks_by_league.keys():
+		var league := int(raw_league)
+		if absi(league - target_league) <= MATCHMAKING_LEAGUE_TIER_WINDOW:
+			eligible_leagues.append(league)
+	if eligible_leagues.is_empty() and not decks_by_league.is_empty():
+		var nearest_gap := 1 << 30
+		for raw_league in decks_by_league.keys():
+			var league := int(raw_league)
+			var gap := absi(league - target_league)
+			if gap < nearest_gap:
+				eligible_leagues.clear()
+				nearest_gap = gap
+			if gap == nearest_gap:
+				eligible_leagues.append(league)
+	if eligible_leagues.is_empty():
 		return {}
-	return candidates[rng.randi_range(0, candidates.size() - 1)].duplicate(true)
+	var selected_league: int = eligible_leagues[rng.randi_range(0, eligible_leagues.size() - 1)]
+	var candidates: Array = decks_by_league[selected_league]
+	return (candidates[rng.randi_range(0, candidates.size() - 1)] as Dictionary).duplicate(true)
 
 func select_self_play_pair(busy_list_ids: Dictionary, rng: RandomNumberGenerator) -> Array[Dictionary]:
 	var available: Array[Dictionary] = []
@@ -162,7 +241,9 @@ func select_self_play_pair(busy_list_ids: Dictionary, rng: RandomNumberGenerator
 	return selected
 
 static func can_self_play_pair(first: Dictionary, second: Dictionary) -> bool:
-	if abs(int(first.get("stars", 0)) - int(second.get("stars", 0))) > SELF_PLAY_MAX_STAR_GAP:
+	var first_rank := RankedProgressionScript.summarize_bot_stars(int(first.get("stars", 0)))
+	var second_rank := RankedProgressionScript.summarize_bot_stars(int(second.get("stars", 0)))
+	if absi(int(first_rank["league"]) - int(second_rank["league"])) > MATCHMAKING_LEAGUE_TIER_WINDOW:
 		return false
 	var first_id := str(first.get("list_id", ""))
 	return first_id.is_empty() or first_id != str(second.get("list_id", ""))
@@ -247,6 +328,7 @@ func _apply_result(result: Dictionary) -> void:
 
 func _start_trial(pool: Dictionary, challenger: Dictionary) -> void:
 	var lists: Array = pool["lists"]
+	_name_list(challenger, lists)
 	var weakest: Dictionary = {}
 	var weakest_is_distinct := false
 	# Quarantine the weakest list among those with overlapping alternatives first.
@@ -287,7 +369,6 @@ func _resolve_trial(pool: Dictionary) -> void:
 	var incumbent_unique := _is_distinct(incumbent, challenger, other_lists)
 	var replace := challenger_unique if challenger_unique != incumbent_unique else _is_stronger(challenger, incumbent)
 	if replace:
-		_name_list(challenger, other_lists)
 		lists[incumbent_index] = challenger
 	pool["quarantined_id"] = ""
 	pool["challenger"] = {}

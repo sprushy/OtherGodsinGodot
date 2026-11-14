@@ -97,6 +97,11 @@ const MENU_INPUT_FONT_SIZE := 20
 const MENU_INPUT_MIN_HEIGHT := 44.0
 const MENU_USERNAME_FONT_SIZE := 32
 const MENU_ACCOUNT_IDENTITY_FONT_SIZE := 20
+const LOCAL_BOT_MATCH_MIN_AVAILABLE_BYTES := 2 * 1024 * 1024 * 1024
+const LOCAL_BOT_MATCH_MEMORY_PER_WORKER := 1024 * 1024 * 1024
+const LOCAL_BOT_MATCH_RESERVED_CORES := 2
+const LOCAL_BOT_MATCH_CORES_PER_WORKER := 2
+const LOCAL_BOT_MATCH_MAX_WORKERS := 8
 const AUTH_TITLE_FONT_SIZE := 28
 const AUTH_BODY_FONT_SIZE := 18
 const AUTH_CONTROL_FONT_SIZE := 18
@@ -143,7 +148,6 @@ var _seek_action_row: HBoxContainer
 var _ladder_button: Button
 var _host_bot_match_button: Button
 var _host_another_bot_match_button: Button
-var _stop_hosting_bot_matches_button: Button
 var _bot_match_hosting_enabled := false
 var _pending_local_bot_match_modes: Array[bool] = []
 var _local_bot_match_workers: Dictionary = {}
@@ -209,6 +213,9 @@ var _ranked_ladder_button: Button = null
 var _ranked_ladder_view: RankedLadderViewScript = null
 var _bot_ladder_view: BotLadderViewScript = null
 var _bot_ladder_request_serial: int = 0
+var _recent_activity_panel: PanelContainer = null
+var _recent_activity_rows: VBoxContainer = null
+var _recent_activity_timer: Timer = null
 var _account_decks_cache: Array[Dictionary] = []
 var _auth_onboarding_overlay: Control = null
 var _auth_onboarding_selected_mode: String = AUTH_MODE_LOGIN
@@ -457,6 +464,7 @@ func _ready() -> void:
 	_startup_trace("_ready: auth prefs restored")
 	_build_profile_summary_controls()
 	_build_seek_tabs()
+	_build_recent_activity_panel()
 	_build_account_identity_controls()
 	_build_friends_controls()
 	_build_resume_controls()
@@ -1173,6 +1181,20 @@ func _apply_main_menu_text_sizing() -> void:
 		_account_identity_label.custom_minimum_size.x = maxf(_account_identity_label.custom_minimum_size.x, MENU_PRIMARY_BUTTON_MIN_WIDTH)
 		_account_identity_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		_account_identity_label.add_theme_font_size_override("font_size", MENU_ACCOUNT_IDENTITY_FONT_SIZE)
+	_apply_seek_action_button_sizing()
+
+func _apply_seek_action_button_sizing() -> void:
+	if not is_instance_valid(_seek_action_row):
+		return
+	_seek_action_row.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	_seek_action_row.alignment = BoxContainer.ALIGNMENT_BEGIN
+	for child in _seek_action_row.get_children():
+		if not child is Button:
+			continue
+		var button := child as Button
+		button.add_theme_font_size_override("font_size", 16)
+		button.custom_minimum_size = Vector2(0.0, 36.0)
+		button.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 
 func _apply_main_menu_text_sizing_recursive(root: Node) -> void:
 	if root == null:
@@ -1369,6 +1391,7 @@ func _fit_to_viewport() -> void:
 	position = Vector2.ZERO
 	size = get_viewport().get_visible_rect().size
 	_center_main_menu_container()
+	_layout_recent_activity_panel()
 	_layout_startup_splash_background()
 	for node_name in _get_embedded_game_node_names():
 		var game = get_node_or_null("GameContainer/" + node_name)
@@ -1864,6 +1887,9 @@ func _open_multiplayer_screen() -> void:
 		_refresh_profile_summary_from_local_history(_local_profile_id)
 	_refresh_seek_list()
 	_refresh_multiplayer_action_state()
+	_request_recent_match_activity()
+	if is_instance_valid(_recent_activity_timer):
+		_recent_activity_timer.start()
 	if not _background_lobby_auth_error.is_empty():
 		var auth_message := _background_lobby_auth_error
 		_background_lobby_auth_error = ""
@@ -2708,11 +2734,118 @@ func _build_seek_tabs() -> void:
 	_host_another_bot_match_button.pressed.connect(_on_host_another_bot_match_pressed)
 	_seek_action_row.add_child(_host_another_bot_match_button)
 	_host_another_bot_match_button.hide()
-	_stop_hosting_bot_matches_button = Button.new()
-	_stop_hosting_bot_matches_button.text = "Stop Hosting Bot Matches"
-	_stop_hosting_bot_matches_button.pressed.connect(_stop_local_bot_match_worker)
-	_seek_action_row.add_child(_stop_hosting_bot_matches_button)
-	_stop_hosting_bot_matches_button.hide()
+	_apply_seek_action_button_sizing()
+
+func _build_recent_activity_panel() -> void:
+	if is_instance_valid(_recent_activity_panel):
+		return
+	_recent_activity_panel = PanelContainer.new()
+	_recent_activity_panel.name = "RecentMatchActivity"
+	_recent_activity_panel.mouse_filter = Control.MOUSE_FILTER_PASS
+	var panel_style := StyleBoxFlat.new()
+	panel_style.bg_color = Color(0.035, 0.045, 0.065, 0.94)
+	panel_style.border_color = Color("c7a35a", 0.78)
+	panel_style.set_border_width_all(1)
+	panel_style.set_corner_radius_all(12)
+	panel_style.content_margin_left = 14
+	panel_style.content_margin_right = 14
+	panel_style.content_margin_top = 12
+	panel_style.content_margin_bottom = 12
+	_recent_activity_panel.add_theme_stylebox_override("panel", panel_style)
+	var content := VBoxContainer.new()
+	content.add_theme_constant_override("separation", 8)
+	_recent_activity_panel.add_child(content)
+	var title := Label.new()
+	title.text = "Recent Results"
+	title.add_theme_font_size_override("font_size", 21)
+	title.add_theme_color_override("font_color", Color("eac67d"))
+	content.add_child(title)
+	var subtitle := Label.new()
+	subtitle.text = "Ranked match activity"
+	subtitle.add_theme_font_size_override("font_size", 13)
+	subtitle.add_theme_color_override("font_color", Color("a7b3c8"))
+	content.add_child(subtitle)
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	content.add_child(scroll)
+	_recent_activity_rows = VBoxContainer.new()
+	_recent_activity_rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_recent_activity_rows.add_theme_constant_override("separation", 7)
+	scroll.add_child(_recent_activity_rows)
+	add_child(_recent_activity_panel)
+	_recent_activity_timer = Timer.new()
+	_recent_activity_timer.name = "RecentMatchActivityRefresh"
+	_recent_activity_timer.wait_time = 30.0
+	_recent_activity_timer.timeout.connect(_request_recent_match_activity)
+	add_child(_recent_activity_timer)
+	_render_recent_match_activities([])
+	_layout_recent_activity_panel()
+
+func _layout_recent_activity_panel() -> void:
+	if not is_instance_valid(_recent_activity_panel):
+		return
+	var viewport_size := get_viewport().get_visible_rect().size
+	var panel_width := minf(320.0, maxf(250.0, viewport_size.x * 0.26))
+	var panel_height := minf(500.0, maxf(300.0, viewport_size.y - 48.0))
+	_recent_activity_panel.position = Vector2(24.0, (viewport_size.y - panel_height) * 0.5).floor()
+	_recent_activity_panel.size = Vector2(panel_width, panel_height)
+	_recent_activity_panel.visible = multiplayer_container != null and multiplayer_container.visible \
+		and viewport_size.x >= 1180.0 and viewport_size.y >= 560.0
+
+func _render_recent_match_activities(raw_activities: Variant) -> void:
+	if not is_instance_valid(_recent_activity_rows):
+		return
+	for child in _recent_activity_rows.get_children():
+		_recent_activity_rows.remove_child(child)
+		child.queue_free()
+	var activities: Array = raw_activities if raw_activities is Array else []
+	if activities.is_empty():
+		_add_recent_activity_label("No recent ranked results yet.", Color("a7b3c8"))
+		return
+	for raw_activity in activities:
+		if not raw_activity is Dictionary:
+			continue
+		var activity: Dictionary = raw_activity
+		var announcement := str(activity.get("message", "")).strip_edges()
+		var achievement := str(activity.get("achievement", "")).strip_edges()
+		if not achievement.is_empty():
+			announcement += " and " if not announcement.is_empty() else ""
+			announcement += achievement
+		if announcement.is_empty():
+			continue
+		var card := PanelContainer.new()
+		var card_style := StyleBoxFlat.new()
+		card_style.bg_color = Color(1.0, 1.0, 1.0, 0.035)
+		card_style.set_corner_radius_all(7)
+		card_style.content_margin_left = 9
+		card_style.content_margin_right = 9
+		card_style.content_margin_top = 8
+		card_style.content_margin_bottom = 8
+		card.add_theme_stylebox_override("panel", card_style)
+		var label := Label.new()
+		label.text = announcement
+		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		label.add_theme_font_size_override("font_size", 15)
+		label.add_theme_color_override("font_color", Color("f1eee6"))
+		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		card.add_child(label)
+		_recent_activity_rows.add_child(card)
+
+func _add_recent_activity_label(message: String, tint: Color) -> void:
+	var label := Label.new()
+	label.text = message
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.add_theme_font_size_override("font_size", 15)
+	label.add_theme_color_override("font_color", tint)
+	_recent_activity_rows.add_child(label)
+
+func _request_recent_match_activity() -> void:
+	if multiplayer_container == null or not multiplayer_container.is_visible_in_tree() \
+			or lobby_client == null or not _has_active_lobby_connection() \
+			or not lobby_client.is_authenticated() or not lobby_client.supports_bot_ladder:
+		return
+	lobby_client.request_bot_match_history()
 
 func _on_seek_tab_changed(tab: int) -> void:
 	if is_instance_valid(_host_bot_match_button):
@@ -2765,7 +2898,7 @@ func _request_local_bot_match(continuous: bool) -> void:
 func _update_host_bot_match_button() -> void:
 	if not is_instance_valid(_host_bot_match_button):
 		return
-	_host_bot_match_button.text = "Stop Hosting Bot Matches" if _bot_match_hosting_enabled else "Host Bot Matches"
+	_host_bot_match_button.text = "Stop Hosting" if _bot_match_hosting_enabled else "Host Bot Matches"
 	_host_bot_match_button.disabled = lobby_client == null or not lobby_client.is_authenticated() \
 		or (not _bot_match_hosting_enabled and _get_local_bot_match_capacity() <= 0)
 	var local_match_count := _get_local_bot_match_count() + _pending_local_bot_match_modes.size()
@@ -2774,20 +2907,24 @@ func _update_host_bot_match_button() -> void:
 		_host_another_bot_match_button.visible = is_instance_valid(_seek_tabs) \
 			and _seek_tabs.current_tab == 1 and _get_local_bot_match_count() > 0
 		_host_another_bot_match_button.disabled = lobby_client == null or not lobby_client.is_authenticated() or not has_capacity
-	if is_instance_valid(_stop_hosting_bot_matches_button):
-		_stop_hosting_bot_matches_button.visible = is_instance_valid(_seek_tabs) \
-			and _seek_tabs.current_tab == 1 and (local_match_count > 0 or not _local_bot_match_submitting.is_empty())
 
 func _get_local_bot_match_capacity() -> int:
 	if OS.get_name() not in ["Windows", "macOS", "Linux"] or OS.get_processor_count() < 4:
 		return 0
 	var memory := OS.get_memory_info()
 	var available_bytes := int(memory.get("available", 0))
-	if available_bytes < 2 * 1024 * 1024 * 1024:
+	if available_bytes < LOCAL_BOT_MATCH_MIN_AVAILABLE_BYTES:
 		return 0
-	if OS.get_processor_count() >= 8 and available_bytes >= 4 * 1024 * 1024 * 1024:
-		return 2
-	return 1
+	var processor_count := OS.get_processor_count()
+	var processor_capacity := maxi(
+		1,
+		int((processor_count - LOCAL_BOT_MATCH_RESERVED_CORES) / float(LOCAL_BOT_MATCH_CORES_PER_WORKER))
+	)
+	var memory_capacity := maxi(
+		1,
+		int((available_bytes - LOCAL_BOT_MATCH_MIN_AVAILABLE_BYTES) / LOCAL_BOT_MATCH_MEMORY_PER_WORKER)
+	)
+	return mini(LOCAL_BOT_MATCH_MAX_WORKERS, mini(processor_capacity, memory_capacity))
 
 func _get_local_bot_match_count() -> int:
 	return _local_bot_match_workers.size()
@@ -2841,6 +2978,7 @@ func _on_local_bot_work_assigned(job: Dictionary) -> void:
 	var session := MatchSessionScript.new(str(job["job_id"]), str(job["job_id"]), "127.0.0.1", match_port, players, submissions, identities)
 	session.is_ranked = true
 	session.configure_series_format(1)
+	session.set_spectator_visible_player_indices("local_volunteer_host", [0, 1])
 	var supervisor = MatchSupervisorScript.new()
 	supervisor.name = "LocalBotMatchWorker_%s" % session.match_id.validate_node_name()
 	add_child(supervisor)
@@ -2864,6 +3002,7 @@ func _on_local_bot_work_assigned(job: Dictionary) -> void:
 		"continuous": continuous,
 	}
 	_continuous_bot_match_ids[session.match_id] = continuous
+	_refresh_seek_list()
 	status_label.text = "Running %d bot match%s on this computer." % [
 		_get_local_bot_match_count(), "es" if _get_local_bot_match_count() != 1 else "",
 	]
@@ -2961,6 +3100,7 @@ func _update_local_bot_hosting_state() -> void:
 
 func _on_bot_match_history_received(history: Dictionary) -> void:
 	_bot_match_live = history.get("live_matches", [])
+	_render_recent_match_activities(history.get("activities", []))
 	_refresh_seek_list()
 
 func _refresh_seek_list() -> void:
@@ -2996,14 +3136,36 @@ func _refresh_seek_list() -> void:
 			seek_list.set_item_metadata(action_index, request_next_match_id)
 			seek_list.set_item_tooltip(action_index, "Tell the player in this match you'd like to play them next.")
 	if tab == 1:
+		var listed_live_job_ids := {}
 		for match_entry: Dictionary in _bot_match_live:
 			var live_players: Array = match_entry.get("players", [])
 			if live_players.size() != 2:
 				continue
 			var job_id := str(match_entry.get("match_id", "")).trim_prefix("volunteer_")
-			var live_label := "Live on this computer" if _local_bot_match_workers.has(job_id) or _local_bot_match_submitting.has(job_id) else "Live · volunteer"
+			listed_live_job_ids[job_id] = true
+			if _local_bot_match_submitting.has(job_id):
+				continue
+			var local_match := _local_bot_match_workers.has(job_id)
+			var live_label := "Watch on this computer" if local_match else "Live · volunteer"
 			seek_list.add_item("%s vs %s  ·  %s" % [live_players[0].get("name", "Bot"), live_players[1].get("name", "Bot"), live_label])
-			seek_list.set_item_disabled(seek_list.get_item_count() - 1, true)
+			var live_index: int = seek_list.get_item_count() - 1
+			if local_match:
+				seek_list.set_item_metadata(live_index, {"local_bot_match_id": job_id})
+			else:
+				seek_list.set_item_disabled(live_index, true)
+		for raw_match_id in _local_bot_match_workers.keys():
+			var local_job_id := str(raw_match_id)
+			if listed_live_job_ids.has(local_job_id) or _local_bot_match_submitting.has(local_job_id):
+				continue
+			var worker: Dictionary = _local_bot_match_workers[raw_match_id]
+			var session = worker.get("session", null)
+			if session == null:
+				continue
+			var local_players: Array = session.get_public_player_names()
+			if local_players.size() != 2:
+				continue
+			var local_index: int = seek_list.add_item("%s vs %s  ·  Watch on this computer" % [local_players[0], local_players[1]])
+			seek_list.set_item_metadata(local_index, {"local_bot_match_id": local_job_id})
 	if seek_list.get_item_count() == 0:
 		seek_list.add_item("No live bot matches right now." if tab == 1 else "No open seeks or live matches right now.")
 		seek_list.set_item_disabled(0, true)
@@ -3090,6 +3252,9 @@ func _on_seek_item_clicked(index: int, _at_position: Vector2, _mouse_button_inde
 	if seek_list.is_item_disabled(index):
 		return
 	var room_entry = seek_list.get_item_metadata(index)
+	if room_entry is Dictionary and (room_entry as Dictionary).has("local_bot_match_id"):
+		_watch_local_bot_match(str((room_entry as Dictionary)["local_bot_match_id"]))
+		return
 	if room_entry is String:
 		if _has_active_lobby_connection():
 			lobby_client.request_next(room_entry)
@@ -3118,6 +3283,17 @@ func _on_seek_item_clicked(index: int, _at_position: Vector2, _mouse_button_inde
 		status_label.text = "Choose a saved legal deck before joining a seek."
 		return
 	_on_join_seek_requested(room_id, bool(room_data.get("host_is_bot", false)))
+
+func _watch_local_bot_match(match_id: String) -> void:
+	var worker: Dictionary = _local_bot_match_workers.get(match_id, {})
+	var session = worker.get("session", null)
+	if worker.is_empty() or session == null:
+		status_label.text = "That hosted bot match has already finished."
+		_refresh_seek_list()
+		return
+	var match_info: Dictionary = session.to_spectator_match_info("local_volunteer_host")
+	status_label.text = "Watching your hosted bot match..."
+	_launch_assigned_match(false, "127.0.0.1", int(session.match_port), match_info)
 
 func _on_request_next_received(requester_name: String) -> void:
 	_show_request_next_notice("%s would like to play you next." % requester_name)
@@ -9876,6 +10052,7 @@ func _on_profile_summary_received(summary) -> void:
 		return
 	_current_profile_summary = (summary as Dictionary).duplicate(true)
 	_refresh_profile_summary_label()
+	_request_recent_match_activity()
 
 func _on_account_settings_updated(account: Dictionary) -> void:
 	var account_email := str(account.get("email", "")).strip_edges().to_lower()
@@ -10057,7 +10234,15 @@ func _close_ranked_ladder() -> void:
 
 func _on_ladder_lobby_visibility_changed() -> void:
 	if not multiplayer_container.is_visible_in_tree():
+		if is_instance_valid(_recent_activity_timer):
+			_recent_activity_timer.stop()
+		_layout_recent_activity_panel()
 		_close_bot_ladder()
+	else:
+		_layout_recent_activity_panel()
+		_request_recent_match_activity()
+		if is_instance_valid(_recent_activity_timer):
+			_recent_activity_timer.start()
 
 func _open_bot_ladder() -> void:
 	if not multiplayer_container.is_visible_in_tree() or is_instance_valid(_bot_ladder_view):

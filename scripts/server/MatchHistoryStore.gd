@@ -287,6 +287,71 @@ func get_recent_bot_matches(limit: int = 50, before_match_id: String = "") -> Di
 		matches.append({"match_id": match_id, "played_unix": entry["played_unix"], "players": seats, "battle": entry.get("bot_battle", {})})
 	return {"matches": matches, "next_cursor": next_cursor}
 
+func get_recent_match_activities(limit: int = 12) -> Array[Dictionary]:
+	_ensure_loaded()
+	_load_dedicated_results()
+	var activities: Array[Dictionary] = []
+	var match_ids := _get_sorted_match_ids(_matches_by_id.keys())
+	for index in range(match_ids.size() - 1, -1, -1):
+		if activities.size() >= maxi(1, limit):
+			break
+		var entry: Dictionary = _matches_by_id[match_ids[index]]
+		var has_bot_results: bool = not entry.get("bot_deck_results", []).is_empty()
+		if not bool(entry.get("advances_rank", false)) and not has_bot_results:
+			continue
+		var winner: Dictionary = {}
+		var loser: Dictionary = {}
+		for player: Dictionary in entry.get("players", []):
+			if str(player.get("result", "")) == "win":
+				winner = player
+			elif str(player.get("result", "")) == "loss":
+				loser = player
+		if winner.is_empty() or loser.is_empty():
+			continue
+		var winner_name := _activity_player_name(winner)
+		var loser_name := _activity_player_name(loser)
+		var activity := {
+			"match_id": str(entry["match_id"]),
+			"played_unix": int(entry.get("played_unix", 0)),
+			"best_of": int(entry.get("best_of", 1)),
+			"message": "%s defeated %s" % [winner_name, loser_name],
+			"achievement": "",
+			"winner_account_id": str(winner.get("account_id", "")),
+			"winner_bot_list_id": "",
+			"winner_before_points": -1,
+			"winner_after_points": -1,
+		}
+		var winner_bot_result: Dictionary = {}
+		for bot_result: Dictionary in entry.get("bot_deck_results", []):
+			if int(bot_result.get("player_index", -1)) == int(winner.get("player_index", -2)):
+				winner_bot_result = bot_result
+				break
+		if not winner_bot_result.is_empty():
+			var previous_bot_rank := RankedProgressionScript.summarize_bot_stars(int(winner.get("bot_stars", 0)))
+			var after_bot_rank := RankedProgressionScript.summarize_bot_stars(int(winner.get("bot_stars", 0)) + 1)
+			if previous_bot_rank["name"] != after_bot_rank["name"]:
+				activity["achievement"] = "reached %s" % str(after_bot_rank["name"])
+			activity["winner_before_points"] = int(winner.get("bot_stars", 0))
+			activity["winner_after_points"] = int(winner.get("bot_stars", 0)) + 1
+			activity["winner_bot_list_id"] = str(winner_bot_result.get("list_id", ""))
+		elif bool(entry.get("advances_rank", false)):
+			var ranked_results := get_ranked_match_results(entry)
+			var result: Dictionary = ranked_results.get(int(winner.get("player_index", -1)), {})
+			var previous_rank := str(result.get("previous_rank_name", ""))
+			var rank_name := str(result.get("rank_name", ""))
+			if not previous_rank.is_empty() and previous_rank != rank_name:
+				activity["achievement"] = "reached %s" % rank_name
+			activity["winner_before_points"] = int(result.get("previous_points", -1))
+			activity["winner_after_points"] = int(result.get("points", -1))
+		activities.append(activity)
+	return activities
+
+func _activity_player_name(player: Dictionary) -> String:
+	var player_name := str(player.get("player_name", "Player")).strip_edges()
+	if str(player.get("account_id", "")).is_empty():
+		player_name = player_name.replace(": ", " ")
+	return player_name if not player_name.is_empty() else "Player"
+
 func get_human_ladder(usernames: Dictionary, best_of: int) -> Array[Dictionary]:
 	_ensure_loaded()
 	_load_dedicated_results()
@@ -332,10 +397,12 @@ func get_ranked_match_results(entry: Dictionary) -> Dictionary:
 		var after := RankedProgressionScript.summarize(progress, season)
 		results[int(player_entry["player_index"])] = {
 			"best_of": best_of,
+			"previous_points": int(before["points"]),
 			"previous_rank_name": before["rank_name"],
 			"previous_stars": before["stars"],
 			"previous_stars_required": before["stars_required"],
 			"rank_name": after["rank_name"],
+			"points": int(after["points"]),
 			"stars": after["stars"],
 			"stars_required": after["stars_required"],
 			"star_delta": after["last_delta"],

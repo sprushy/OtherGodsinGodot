@@ -371,6 +371,7 @@ func to_match_info(session_id: String = "") -> Dictionary:
 		"player_names": get_public_player_names(),
 		"rank_badges": get_public_rank_badges(),
 		"has_bot": get_human_player_count() < player_session_ids.size(),
+		"is_bot_self_play": is_bot_self_play(),
 		"status": status,
 		"server_mode": server_mode,
 		"is_ranked": is_ranked,
@@ -440,6 +441,7 @@ func to_spectator_match_info(observer_session_id: String = "") -> Dictionary:
 	var match_info := to_match_info("")
 	match_info["observer_mode"] = true
 	match_info["player_index"] = -1
+	match_info["is_bot_self_play"] = is_bot_self_play()
 	var resolved_observer_session_id := observer_session_id.strip_edges()
 	match_info["observer_session_id"] = resolved_observer_session_id
 	match_info["observer_match_token"] = get_spectator_match_token(resolved_observer_session_id)

@@ -240,6 +240,11 @@ func show_deck(list_id: String, deck: Dictionary) -> void:
 	_deck_contents.push_color(GOLD)
 	_deck_contents.add_text(str(deck["name"]) + "\n\n")
 	_deck_contents.pop()
+	_deck_contents.push_color(MUTED)
+	_deck_contents.add_text("Record: %d wins · %d losses · %d draws\n\n" % [
+		int(deck.get("wins", 0)), int(deck.get("losses", 0)), int(deck.get("draws", 0)),
+	])
+	_deck_contents.pop()
 	_add_card_section("Main deck", deck["cards"])
 	var reinforcements: Dictionary = deck["reinforcements"]
 	if not reinforcements.is_empty():

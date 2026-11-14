@@ -180,6 +180,7 @@ var prompt_router = null
 var match_client = null
 var _is_networked_client: bool = false
 var _is_observer_mode: bool = false
+var _observer_reveals_bot_hands: bool = false
 var _observer_feedback_viewer: Player = null
 var selected_card: Card = null
 var selected_attacker: Card:
@@ -6246,8 +6247,11 @@ func start_game(
 	_local_match_result_recorded = false
 	_current_match_info = match_info.duplicate(true)
 	_is_observer_mode = bool(match_info.get("observer_mode", false))
+	_observer_reveals_bot_hands = _is_observer_mode and bool(match_info.get("is_bot_self_play", false))
 	_observer_perspective_player_index = 0
 	_observer_feedback_viewer = Player.new() if _is_observer_mode else null
+	if is_instance_valid(_action_log_shell):
+		_action_log_shell.visible = SHOW_MATCH_INFO_PANELS or _observer_reveals_bot_hands
 	_restore_corner_action_button()
 	
 	_clear_god_dialogue_bubbles()
@@ -6433,6 +6437,7 @@ func _prepare_for_match_launch(status_message: String = "Connecting to match..."
 	player1 = null
 	player2 = null
 	_is_observer_mode = false
+	_observer_reveals_bot_hands = false
 	_observer_perspective_player_index = 0
 	_observer_feedback_viewer = null
 	selected_card = null
@@ -8347,17 +8352,20 @@ func _get_display_opponent() -> Player:
 func _get_enemy_hand_overlay_card_count(enemy_player: Player) -> int:
 	if enemy_player == null or enemy_player.hand_zone == null:
 		return 0
+	if _observer_reveals_bot_hands:
+		return enemy_player.hand_zone.cards.size()
 	return mini(enemy_player.hand_zone.cards.size(), ENEMY_HAND_PEEK_MAX_CARDS)
 
 func _get_enemy_hand_overlay_rect() -> Rect2:
+	var dock_height := ENEMY_HAND_CARD_HEIGHT + 8.0 if _observer_reveals_bot_hands else ENEMY_HAND_DOCK_HEIGHT
 	if center_panel == null:
-		return Rect2(Vector2.ZERO, Vector2(180.0, ENEMY_HAND_DOCK_HEIGHT))
+		return Rect2(Vector2.ZERO, Vector2(180.0, dock_height))
 	var center_rect: Rect2 = center_panel.get_global_rect()
 	var local_top_left: Vector2 = get_global_transform().affine_inverse() * center_rect.position
 	var overlay_width: float = maxf(180.0, center_rect.size.x - ENEMY_HAND_OVERLAY_SIDE_PADDING * 2.0)
 	var overlay_x: float = local_top_left.x + (center_rect.size.x - overlay_width) * 0.5
 	var overlay_y: float = local_top_left.y + ENEMY_HAND_OVERLAY_TOP_PADDING
-	return Rect2(Vector2(overlay_x, overlay_y), Vector2(overlay_width, ENEMY_HAND_DOCK_HEIGHT))
+	return Rect2(Vector2(overlay_x, overlay_y), Vector2(overlay_width, dock_height))
 
 func _get_enemy_hand_render_signature(enemy_player: Player, display_cards: Array[Card]) -> String:
 	if enemy_player == null:
@@ -8406,7 +8414,7 @@ func draw_enemy_hand_overlay() -> void:
 
 	var next_overlay := Control.new()
 	next_overlay.name = "EnemyHandOverlay"
-	next_overlay.custom_minimum_size = Vector2(180.0, ENEMY_HAND_DOCK_HEIGHT)
+	next_overlay.custom_minimum_size = Vector2(180.0, _get_enemy_hand_overlay_rect().size.y)
 	next_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	next_overlay.clip_contents = true
 	next_overlay.z_index = TRANSIENT_UI_Z_INDEX - 20
@@ -8433,6 +8441,9 @@ func _get_enemy_hand_overlay_display_cards(enemy_player: Player) -> Array[Card]:
 	for card in enemy_player.hand_zone.cards:
 		if card == null:
 			continue
+		if _observer_reveals_bot_hands:
+			display_cards.append(card)
+			continue
 		if _is_mopsus_hand_selection_active():
 			display_cards.append(card)
 			continue
@@ -8446,7 +8457,7 @@ func _get_enemy_hand_overlay_display_cards(enemy_player: Player) -> Array[Card]:
 func _make_enemy_hand_overlay_card(card: Card) -> Control:
 	var selectable := _is_mopsus_hand_selection_target(card)
 	var selected: bool = card != null and card.uid in _pending_mopsus_selected_uids
-	if _is_enemy_hand_card_revealed(card) or selected:
+	if _observer_reveals_bot_hands or _is_enemy_hand_card_revealed(card) or selected:
 		var revealed_card := _make_enemy_hand_overlay_revealed_card(card)
 		if selectable or selected:
 			revealed_card.modulate = Color(0.72, 1.3, 0.72, 1.0)
@@ -8536,7 +8547,7 @@ func _layout_enemy_hand_overlay() -> void:
 		var cx: float = start_x + float(i) * spacing
 		card_back.position = Vector2(
 			cx - ENEMY_HAND_CARD_WIDTH * 0.5,
-			-ENEMY_HAND_CARD_HEIGHT + ENEMY_HAND_DOCK_HEIGHT - 2.0 - absf(t) * 5.0
+			-ENEMY_HAND_CARD_HEIGHT + overlay_rect.size.y - 2.0 - absf(t) * 5.0
 		)
 		card_back.rotation_degrees = -t * ENEMY_HAND_PEEK_ROTATION
 		if card_back.has_meta("mopsus_flip_in"):

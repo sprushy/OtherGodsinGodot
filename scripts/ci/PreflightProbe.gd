@@ -760,6 +760,11 @@ func _check_ranked_bot_manifestations(failures: PackedStringArray) -> void:
 		game_manager.other_player = opponent
 		game_manager.start_turn()
 		game_manager.player_chooses_upkeep_only()
+		# Ranked bots now reserve Active God manifestations for a turn where
+		# the resulting creature can take a meaningful attack.
+		game_manager.turn_number = 2
+		game_manager._upkeep_started_turn = game_manager.turn_number
+		game_manager._upkeep_resolved_turn = game_manager.turn_number
 		var match_manager := MatchManager.new(game_manager)
 		var bot := PracticeFuzzPlayerBot.new()
 		bot.attach(game_manager, match_manager, ServerBotGameInput.new(match_manager, 0), 0)
@@ -998,9 +1003,13 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 	writer.record_completed_match(human_win, 0, 1, "Thor", "Odin")
 	var matched_after := lobby._match_server_bot_to_player(seek)
 	var after_win := seek.get_deck_submission(seek.host_session_id)
-	if not matched_before or not matched_after or before_win.get("bot_stars") != 0 \
-			or after_win.get("bot_list_id") != "bot_win" or after_win.get("bot_stars") != 1:
-		failures.append("Bot challenge did not use the player's current ladder points to select their opponent")
+	var before_bot_rank := RankedProgressionScript.summarize_bot_stars(int(before_win.get("bot_stars", -1)))
+	var after_bot_rank := RankedProgressionScript.summarize_bot_stars(int(after_win.get("bot_stars", -1)))
+	if not matched_before or not matched_after \
+			or absi(int(before_bot_rank["league"])) > 2 \
+			or after_win.get("bot_list_id") != "bot_win" \
+			or absi(int(after_bot_rank["league"]) - int(RankedProgressionScript.summarize_bot_stars(1)["league"])) > 2:
+		failures.append("Bot challenge did not select an available deck within two leagues of the player's rank")
 	lobby.free()
 	var self_play := MatchSessionScript.new("bot_self_play", "preflight_room", "127.0.0.1", 12345, ["BOT_A", "BOT_B"], {
 		"BOT_A": {"bot_god_name": "Thor", "bot_list_id": "bot_win", "bot_stars": 1, "cards": {"Thor": 1, "Berserker": 3}},
@@ -1021,9 +1030,10 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 			failures.append("Self-play history lost the names or battle summary")
 	if (not RankedBotDeckPoolScript.can_self_play_pair({"stars": 14}, {"stars": 17})
 			or RankedBotDeckPoolScript.can_self_play_pair({"stars": 0}, {"stars": 90})
-			or RankedBotDeckPoolScript.can_self_play_pair({"stars": 5}, {"stars": 9})
+			or RankedBotDeckPoolScript.can_self_play_pair({"stars": 14}, {"stars": 45})
+			or not RankedBotDeckPoolScript.can_self_play_pair({"stars": 5}, {"stars": 9})
 			or RankedBotDeckPoolScript.can_self_play_pair({"stars": 5, "list_id": "same"}, {"stars": 5, "list_id": "same"})):
-		failures.append("Bot matchmaking did not enforce the three-total-star gap and distinct seats")
+		failures.append("Bot matchmaking did not enforce the two-league gap and distinct seats")
 	var result_dir := ServerPathsScript.get_server_data_file_path(storage_file).get_basename() + "_results"
 	DirAccess.remove_absolute(result_dir.path_join("%s.json" % session.match_id.sha256_text()))
 	DirAccess.remove_absolute(result_dir.path_join("%s.json" % human_win.match_id.sha256_text()))
@@ -1037,8 +1047,8 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 	var first_list := pool.select_deck({}, rng, 1)
 	if first_list.get("deck_name") != "Thor: Bloodaxe" or first_list.get("stars") != 1:
 		failures.append("A winning bot list did not return with its permanent name and star")
-	if not pool.select_deck({}, rng, 0).is_empty():
-		failures.append("Bot matchmaking did not prefer a fresh list for a player at zero stars")
+	if pool.select_deck({}, rng, 0).is_empty():
+		failures.append("Bot matchmaking did not allow a same-tier bot for a player at zero stars")
 	pool.refresh(self_play_results)
 	var after_self_play: Dictionary = pool.get_ladder_summary()
 	if after_self_play["gods"].size() != 2:
@@ -1056,8 +1066,8 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 	pool.refresh(results)
 	var candidate := pool.select_deck({}, rng, 1)
 	if pool.can_play_list("Thor", "list_0") or not pool.can_play_list("Thor", "list_1") \
-			or candidate.get("list_id") != "candidate" or candidate.get("deck_name") != "Thor: Challenger":
-		failures.append("The eighth bot list did not quarantine an incumbent and get trial priority at equal rank")
+			or candidate.is_empty() or candidate.get("stars") != 1:
+		failures.append("The eighth bot list did not quarantine an incumbent while preserving same-tier matching")
 	var high_rank_results := results.duplicate()
 	for i in range(14):
 		high_rank_results.append(_bot_pool_result("ranked_%d" % i, "list_1", {}, "win"))
@@ -1065,9 +1075,13 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 		high_rank_results.append(_bot_pool_result("quarantined_%d" % i, "list_0", {}, "win"))
 	var high_rank_pool := RankedBotDeckPoolScript.new()
 	high_rank_pool.refresh(high_rank_results)
-	if high_rank_pool.select_deck({}, rng, 16).get("list_id") != "list_1" \
-			or high_rank_pool.select_deck({"list_1": true}, rng, 16).get("stars") != 1:
-		failures.append("Bot matchmaking did not prefer the closest total stars across leagues among available lists")
+	var high_rank_match := high_rank_pool.select_deck({}, rng, 16)
+	var high_rank_alternative := high_rank_pool.select_deck({"list_1": true}, rng, 16)
+	if high_rank_match.is_empty() or high_rank_alternative.is_empty() \
+			or abs(int(RankedProgressionScript.summarize_bot_stars(int(high_rank_match["stars"]))["league"]) - 1) > 2 \
+			or abs(int(RankedProgressionScript.summarize_bot_stars(int(high_rank_alternative["stars"]))["league"]) - 1) > 2 \
+			or high_rank_alternative.get("list_id") == "list_1":
+		failures.append("Bot matchmaking did not sample the same two-tier range while skipping busy lists")
 	for i in range(6):
 		results.append(_bot_pool_result("trial_%d" % i, "candidate", {}, "loss"))
 	pool.refresh(results)

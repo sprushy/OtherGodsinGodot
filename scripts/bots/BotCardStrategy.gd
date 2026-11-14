@@ -66,7 +66,20 @@ static func value(bot, card: Card) -> int:
 		return 0
 	if not visible(bot, card):
 		return CARD_VALUE
-	return CARD_VALUE + maxi(0, card.get_effective_strength()) * 80 + maxi(0, card.get_effective_resilience()) * 25 + maxi(0, card.mana_cost) * 200
+	var score := CARD_VALUE + maxi(0, card.get_effective_strength()) * 80 + maxi(0, card.get_effective_resilience()) * 25 + maxi(0, card.mana_cost) * 200
+	if card.is_god and _would_destroying_god_cause_god_death(bot, card):
+		var owner := card.get_controller()
+		score += bot._score_follower_loss(owner, GameManager.GOD_DEATH_FOLLOWER_LOSS) + MANA_VALUE
+	return score
+
+static func _would_destroying_god_cause_god_death(bot, god: Card) -> bool:
+	if bot == null or bot.game_manager == null or god == null or not god.is_god:
+		return false
+	var owner := god.get_controller()
+	return owner != null \
+		and god.current_zone == owner.god_zone \
+		and owner.has_had_god_in_play \
+		and not bot.game_manager.player_has_face_up_awake_active_god(owner)
 
 static func combat_visible(bot, action: CardAction) -> bool:
 	if action == null or not visible(bot, action.attacker):

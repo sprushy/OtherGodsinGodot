@@ -97,7 +97,8 @@ func build_random_deck(seed_value: int, forced_god_name: String = "", ranked: bo
 				brood_count -= 1
 			special_setup = _build_tiamat_brood_setup(rng, brood_count)
 		else:
-			_fill_safe_powers_for_god(deck_cards, god, rng, ranked)
+			if not _fill_safe_powers_for_god(deck_cards, god, rng, ranked):
+				continue
 		var validation := _validator.validate_deck(deck_cards, special_setup)
 		if bool(validation.get("is_valid", false)):
 			return {
@@ -270,16 +271,55 @@ func _build_tiamat_brood_setup(rng: RandomNumberGenerator, brood_count: int) -> 
 		slots.append(slot)
 	return TiamatThePrimordial.build_special_setup(slots)
 
-func _fill_safe_powers_for_god(deck_cards: Dictionary, god: GodCard, rng: RandomNumberGenerator, ranked: bool = false) -> void:
+func _fill_safe_powers_for_god(deck_cards: Dictionary, god: GodCard, rng: RandomNumberGenerator, ranked: bool = false) -> bool:
 	var desired_powers := rng.randi_range(0, MAX_POWERS)
 	if ranked:
-		desired_powers = maxi(2, desired_powers)
+		# Ranked bot decks use every available power slot. The old minimum of two
+		# made half of generated ranked decks stop at exactly two powers.
+		desired_powers = MAX_POWERS
 	for _power_index in range(desired_powers):
 		var candidates := _get_power_candidates(god, deck_cards, ranked)
 		if candidates.is_empty():
-			return
+			return not ranked
 		var chosen := candidates[rng.randi_range(0, candidates.size() - 1)]
 		deck_cards[chosen.card_name] = int(deck_cards.get(chosen.card_name, 0)) + 1
+	return true
+
+func complete_ranked_power_slots(deck: Dictionary) -> Dictionary:
+	if deck.is_empty():
+		return deck.duplicate(true)
+	var completed := deck.duplicate(true)
+	var deck_cards: Dictionary = completed.get("cards", {}).duplicate(true)
+	var god := _cards_by_name.get(str(completed.get("god_name", "")), null) as GodCard
+	if god == null:
+		return {}
+	if TiamatThePrimordial.is_tiamat_god(god):
+		return completed
+	var power_count := 0
+	for card_name in deck_cards:
+		var template: Card = _cards_by_name.get(str(card_name), null)
+		if template != null and template.is_power and not template.is_god:
+			power_count += int(deck_cards[card_name])
+	var rng := RandomNumberGenerator.new()
+	rng.seed = absi(hash(str(completed.get("list_id", "")) + JSON.stringify(deck_cards)))
+	while power_count < MAX_POWERS:
+		var candidates := _get_power_candidates(god, deck_cards, true)
+		if candidates.is_empty():
+			return {}
+		var chosen := candidates[rng.randi_range(0, candidates.size() - 1)]
+		deck_cards[chosen.card_name] = int(deck_cards.get(chosen.card_name, 0)) + 1
+		power_count += 1
+	var validation := _validator.validate_deck(
+		deck_cards,
+		completed.get("special_setup", {}),
+		completed.get("reinforcements", {})
+	)
+	if not bool(validation.get("is_valid", false)):
+		return {}
+	completed["cards"] = validation.get("cards", {}).duplicate(true)
+	completed["special_setup"] = validation.get("special_setup", {}).duplicate(true)
+	completed["reinforcements"] = validation.get("reinforcements", {}).duplicate(true)
+	return completed
 
 func _get_regular_candidates(god: GodCard, deck_cards: Dictionary, legendary_only: bool, ranked: bool = false) -> Array[Card]:
 	var candidates: Array[Card] = []

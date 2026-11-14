@@ -1060,6 +1060,8 @@ func _get_attack_candidates(attacker: Card, partner: Card) -> Array[Dictionary]:
 				replies[interceptor] = _estimate_attack_economy(action, null, 0, 0)
 			else:
 				replies[interceptor] = {}
+		for response in _get_known_attack_response_cards(action):
+			replies[response] = _estimate_known_attack_response(response, action)
 		for hidden in _get_board_creatures(opponent):
 			if not CardStrategy.visible(self, hidden) and not hidden.has_status_effect("cannot_intercept") and not hidden.is_sleeping:
 				replies[hidden] = {}
@@ -1069,6 +1071,39 @@ func _get_attack_candidates(attacker: Card, partner: Card) -> Array[Dictionary]:
 			"mana_cost": game_manager.get_creature_action_mana_cost(attacker, "attack"),
 		})
 	return candidates
+
+func _get_known_attack_response_cards(action: CardAction) -> Array[Card]:
+	var responses: Array[Card] = []
+	if action == null or opponent == null:
+		return responses
+	for zone in opponent.frontline_zones + opponent.reserve_zones:
+		for card in zone.cards:
+			if not (card is HexCard) or not CardStrategy.visible(self, card):
+				continue
+			if game_manager.can_card_respond_to_action(card, action, opponent):
+				responses.append(card)
+	return responses
+
+func _estimate_known_attack_response(response: Card, action: CardAction) -> Dictionary:
+	var result := {
+		"casualties": [],
+		"bot_cards_lost": 0,
+		"opponent_cards_lost": 0,
+		"bot_followers_lost": 0,
+		"opponent_followers_lost": 0,
+		"bot_wins": false,
+		"opponent_wins": false,
+	}
+	if not (response is TheInferno) or action == null:
+		return result
+	for zone in bot_player.frontline_zones:
+		for card in zone.cards:
+			if card == null or game_manager.is_immune_to_source(card, response) or CardStrategy.destruction_guard(card):
+				continue
+			if card.card_type == Card.CardType.CREATURE and game_manager.has_turn_destruction_ward(bot_player):
+				continue
+			_add_destroyed_card_to_economy(result, card)
+	return result
 
 func _plan_united_front(attacks: Array[Dictionary], baseline: Dictionary) -> Dictionary:
 	var best := {}
@@ -1804,7 +1839,9 @@ func _score_standard_attack_plan(attacker: Card, target: Card) -> int:
 		return -1000000
 	if not _would_destroy_target_in_battle(attacker, target):
 		return -1000000
-	var score := _score_enemy_target(target) * 12
+	var target_reward_multiplier := 1 if target is WardingStone \
+			and target.get_attack_restriction_turns_remaining(game_manager) <= 0 else 12
+	var score := _score_enemy_target(target) * target_reward_multiplier
 	if _is_askelladen(target):
 		score -= attacker.get_effective_strength() * 40
 		score -= int(float(_score_projected_card(attacker)) / 4.0)
@@ -1813,7 +1850,8 @@ func _score_standard_attack_plan(attacker: Card, target: Card) -> int:
 		else:
 			score += 500
 	elif _would_attacker_survive_battle(attacker, target):
-		score += 2400
+		if not (target is WardingStone and target.get_attack_restriction_turns_remaining(game_manager) <= 0):
+			score += 2400
 	else:
 		score -= 1800
 	score += attacker.get_effective_speed() * 30
@@ -2466,6 +2504,8 @@ func _should_activate_untargeted_power(power: PowerCard) -> bool:
 	return bot_player != null and bot_player.hand_zone != null and bot_player.hand_zone.cards.size() <= 1
 
 func _score_god_manifestation(manifestation: Card, mana_paid: int, mode: Card.CreatureMode) -> int:
+	if game_manager == null or not _has_good_manifestation_attack(manifestation, mode):
+		return -1000000
 	var opposing_creatures := _get_board_creatures(opponent)
 	var score := ECON_CARD_VALUE + _score_projected_card(manifestation) - mana_paid * 350
 	if opposing_creatures.is_empty():
@@ -2486,6 +2526,33 @@ func _score_god_manifestation(manifestation: Card, mana_paid: int, mode: Card.Cr
 	if best_hand != null and _get_play_cost(best_hand, false) > bot_player.mana - mana_paid:
 		score -= int(_score_projected_card(best_hand) * 0.7)
 	return score
+
+func _has_good_manifestation_attack(manifestation: Card, mode: Card.CreatureMode) -> bool:
+	if manifestation == null or game_manager == null or match_manager == null \
+			or game_manager.current_player != bot_player \
+			or game_manager.turn_number <= 1 \
+			or game_manager.has_resolved_attack_this_turn \
+			or game_manager.attack_restrictions.has(bot_player) \
+			or (mode != Card.CreatureMode.AGGRESSIVE and not manifestation.is_stealth) \
+			or game_manager.is_first_turn_attack_blocked_by_weather(manifestation):
+		return false
+	for target in game_manager.get_field_cards(opponent):
+		if target == null or target.card_type not in [Card.CardType.CREATURE, Card.CardType.STRUCTURE] \
+				or not CardStrategy.visible(self, target) \
+				or not game_manager.can_cards_engage_each_other(manifestation, target):
+			continue
+		if not _would_destroy_target_in_battle(manifestation, target) \
+				or not _would_attacker_survive_battle(manifestation, target):
+			continue
+		if match_manager._get_possible_interceptors(manifestation, target).is_empty():
+			return true
+	if not game_manager.is_followers_attack_blocked_by_active_structure(manifestation, opponent, []) \
+			and match_manager._get_possible_interceptors(manifestation, opponent).is_empty():
+		var damage := manifestation.get_effective_strength()
+		if manifestation.halves_follower_damage_inflicted():
+			damage = GameManager.round_down_divide(damage, 2)
+		return damage > 0
+	return false
 
 func _choose_creature_summon_mode(card: Card, opposing_creatures: Array[Card] = []) -> Card.CreatureMode:
 	if card == null or card.card_type != Card.CardType.CREATURE:
@@ -2886,7 +2953,34 @@ func _get_vision_adjusted_strength_vs_defense(card: Card, modified_card: Card, s
 func _get_card_economic_value(card: Card) -> int:
 	if card == null:
 		return 0
+	if card is WardingStone and card.get_attack_restriction_turns_remaining(game_manager) <= 0:
+		return _get_inactive_warding_stone_value(card)
 	return ECON_CARD_VALUE + maxi(0, int(float(_score_projected_card(card)) / 2.0))
+
+func _get_inactive_warding_stone_value(stone: WardingStone) -> int:
+	return ECON_MANA_VALUE if _opponent_can_use_mummu_on_warding_stone(stone) else ECON_CARD_VALUE / 5 - 1
+
+func _opponent_can_use_mummu_on_warding_stone(stone: WardingStone) -> bool:
+	var mummu := _get_opponent_mummu()
+	if stone == null or opponent == null or game_manager == null or mummu == null \
+			or stone.get_controller() != opponent \
+			or stone.is_face_down \
+			or stone.current_zone == null \
+			or not stone.current_zone.is_board_zone() \
+			or not game_manager.can_player_use_powers(opponent) \
+			or mummu.is_muted \
+			or mummu.current_zone != opponent.god_zone \
+			or game_manager.is_immune_to_source(stone, mummu):
+		return false
+	return true
+
+func _get_opponent_mummu() -> Mummu:
+	if opponent == null or opponent.god_zone == null:
+		return null
+	for card in opponent.god_zone.cards:
+		if card is Mummu:
+			return card as Mummu
+	return null
 
 func _score_follower_loss(player: Player, amount: int) -> int:
 	if player == null or amount <= 0:
@@ -3087,6 +3181,8 @@ func _score_graveyard_target(target: Card) -> int:
 	return score
 
 func _score_enemy_target(target: Card) -> int:
+	if target is WardingStone and target.get_attack_restriction_turns_remaining(game_manager) <= 0:
+		return _get_inactive_warding_stone_value(target)
 	var score := _score_projected_card(target)
 	if target.is_magical_card():
 		score += 1200
@@ -3152,6 +3248,8 @@ func _score_creature_play_in_zone(card: Card, zone: Zone, available_mana: int) -
 	if card.card_type != Card.CardType.CREATURE or zone == null:
 		return -1000000
 	if card is ActiveGodCard:
+		if zone not in bot_player.frontline_zones or not _has_good_manifestation_attack(card, Card.CreatureMode.AGGRESSIVE):
+			return -1000000
 		var god := _find_player_god()
 		if god == null or god.get_active_god_deck_role(card) != GodCard.ACTIVE_GOD_DECK_ROLE_ALLOWED:
 			return -1000000
@@ -3166,6 +3264,8 @@ func _score_creature_play_in_zone(card: Card, zone: Zone, available_mana: int) -
 	var score := _score_projected_card(card)
 	score -= mana_cost * 120
 	score -= int(payment_plan.get("penalty", 0))
+	if zone in bot_player.frontline_zones and _opponent_has_known_board_wipe(card, zone):
+		score -= _get_card_economic_value(card)
 	if card is Askelladen and _get_askelladen_problem_creature() != null:
 		score += 1600
 	if card is HariiFransiscan:
@@ -3181,6 +3281,56 @@ func _score_creature_play_in_zone(card: Card, zone: Zone, available_mana: int) -
 			if field_card is HeavySnow and not field_card.is_face_down and not field_card.abilities_suppressed():
 				return -1000000
 	return score
+
+func _opponent_has_known_board_wipe(projected_card: Card = null, projected_zone: Zone = null) -> bool:
+	if opponent == null or opponent.hand_zone == null:
+		return false
+	for zone in opponent.frontline_zones + opponent.reserve_zones:
+		for card in zone.cards:
+			if not CardStrategy.visible(self, card) or not card.is_prepared or CardStrategy.key(card) not in [
+				"TheInferno", "FiresOfJudgment", "TheDeluge", "Earthquake", "Famine",
+				"OccultSingularity", "FalloftheMighty", "BaneOfTheSvartalfar",
+			]:
+				continue
+			if opponent.mana >= game_manager.get_prepared_card_activation_mana_cost(opponent, card):
+				if card is TheInferno:
+					if projected_zone in bot_player.frontline_zones:
+						return true
+					for bot_frontline in bot_player.frontline_zones:
+						if not bot_frontline.cards.is_empty():
+							return true
+				else:
+					for target in CardStrategy.wipe_cards(self, card):
+						if target.get_controller() == bot_player and not game_manager.is_immune_to_source(target, card):
+							return true
+					if _known_wipe_hits_projected_card(card, projected_card, projected_zone):
+						return true
+	for card in opponent.hand_zone.cards:
+		if not CardStrategy.visible(self, card) or CardStrategy.key(card) not in [
+			"FiresOfJudgment", "TheDeluge", "Earthquake", "Famine", "OccultSingularity",
+			"FalloftheMighty", "BaneOfTheSvartalfar",
+		]:
+			continue
+		if opponent.mana < game_manager.get_card_play_mana_cost(opponent, card, false):
+			continue
+		for target in CardStrategy.wipe_cards(self, card):
+			if target.get_controller() == bot_player and not game_manager.is_immune_to_source(target, card):
+				return true
+		if _known_wipe_hits_projected_card(card, projected_card, projected_zone):
+			return true
+	return false
+
+func _known_wipe_hits_projected_card(wipe: Card, projected_card: Card, projected_zone: Zone) -> bool:
+	if wipe == null or projected_card == null or projected_zone == null or projected_zone not in bot_player.frontline_zones:
+		return false
+	if game_manager.is_immune_to_source(projected_card, wipe):
+		return false
+	match CardStrategy.key(wipe):
+		"FiresOfJudgment":
+			return projected_card.card_type in [Card.CardType.CREATURE, Card.CardType.STRUCTURE, Card.CardType.EQUIPMENT]
+		"TheDeluge":
+			return projected_card.is_physical_card()
+	return false
 
 func _build_creature_summon_payment_plan(card: Card, available_mana: int = -1) -> Dictionary:
 	var result := {

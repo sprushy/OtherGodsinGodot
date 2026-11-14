@@ -31,6 +31,7 @@ const BOT_SESSION_PREFIX := "BOT_"
 const SERVER_BOT_AUTH_MODE := "bot"
 const SERVER_BOT_TYPE_FUZZ := "practice_fuzz"
 const MAX_BOT_SELF_PLAY := 10
+const MAX_CLIENT_BOT_WORKERS_PER_ACCOUNT := 8
 const BOT_SELF_PLAY_LIMIT_ENV := "OTHERGODS_BOT_SELF_PLAY_LIMIT"
 const BOT_SELF_PLAY_FRAME_LIMIT := 0.055
 const BOT_SELF_PLAY_MEMORY_RESERVE := 512 * 1024 * 1024
@@ -363,6 +364,7 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 				var page: Dictionary = match_history_store.get_recent_bot_matches(50, cursor)
 				page["before_match_id"] = cursor
 				page["live_matches"] = _get_live_bot_work_matches()
+				page["activities"] = _get_recent_match_activity_notifications()
 				_send_to_peer(peer_id, LobbyProtocolScript.BOT_MATCH_HISTORY, page)
 		LobbyProtocolScript.REQUEST_BOT_WORK:
 			_handle_request_bot_work(peer_id)
@@ -1009,11 +1011,11 @@ func _handle_request_bot_work(peer_id: int) -> void:
 				account_job_count += 1
 			busy[str(job.get("deck_a", {}).get("bot_list_id", ""))] = true
 			busy[str(job.get("deck_b", {}).get("bot_list_id", ""))] = true
-	if account_job_count >= 2:
+	if account_job_count >= MAX_CLIENT_BOT_WORKERS_PER_ACCOUNT:
 		_send_to_peer(peer_id, LobbyProtocolScript.BOT_WORK_RESULT, {
 			"job_id": "",
 			"success": false,
-			"message": "This account already has two volunteer matches running.",
+			"message": "This account already has the maximum number of volunteer matches running.",
 		})
 		return
 	_ranked_bot_deck_pool.refresh(match_history_store.get_bot_deck_results())
@@ -1171,11 +1173,91 @@ func _broadcast_bot_match_history() -> void:
 	var page: Dictionary = match_history_store.get_recent_bot_matches(50)
 	page["before_match_id"] = ""
 	page["live_matches"] = _get_live_bot_work_matches()
+	page["activities"] = _get_recent_match_activity_notifications()
 	for raw_peer_id in session_id_by_peer.keys():
 		var peer_id := int(raw_peer_id)
 		var session := _get_session_for_peer(peer_id)
 		if not str(session.get("account_id", "")).is_empty():
 			_send_to_peer(peer_id, LobbyProtocolScript.BOT_MATCH_HISTORY, page)
+
+func _get_recent_match_activity_notifications() -> Array[Dictionary]:
+	var activities: Array[Dictionary] = match_history_store.get_recent_match_activities(12)
+	if activities.is_empty():
+		return activities
+	_ranked_bot_deck_pool.refresh(match_history_store.get_bot_deck_results())
+	var usernames: Dictionary = account_store.get_ladder_usernames()
+	var ladders := {
+		1: match_history_store.get_human_ladder(usernames, 1),
+		3: match_history_store.get_human_ladder(usernames, 3),
+	}
+	for god: Dictionary in _ranked_bot_deck_pool.get_ladder_summary()["gods"]:
+		var bots: Array = god["lists"].duplicate()
+		if not god["challenger"].is_empty():
+			bots.append(god["challenger"])
+		for bot: Dictionary in bots:
+			ladders[1].append({"name": bot["name"], "list_id": bot["list_id"], "account_id": "", "points": int(bot["stars"])})
+	for best_of in [1, 3]:
+		ladders[best_of].sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+			return a["name"].nocasecmp_to(b["name"]) < 0 if int(a["points"]) == int(b["points"]) else int(a["points"]) > int(b["points"])
+		)
+	for activity: Dictionary in activities:
+		var best_of := int(activity.get("best_of", 1))
+		var ladder: Array = ladders.get(best_of, ladders[1])
+		var list_id := str(activity.get("winner_bot_list_id", ""))
+		var account_id := str(activity.get("winner_account_id", ""))
+		var before_points := int(activity.get("winner_before_points", -1))
+		var after_points := int(activity.get("winner_after_points", -1))
+		if (list_id.is_empty() and account_id.is_empty()) or before_points < 0 or after_points < 0:
+			continue
+		var current_place := -1
+		var current_points := -1
+		for index in range(ladder.size()):
+			var matches_current_winner := str(ladder[index].get("list_id", "")) == list_id if not list_id.is_empty() \
+				else str(ladder[index].get("account_id", "")) == account_id
+			if matches_current_winner:
+				current_place = index
+				current_points = int(ladder[index].get("points", -1))
+				break
+		if current_place < 0 or current_place >= 20 or current_points != after_points:
+			continue
+		var ladder_before := ladder.duplicate(true)
+		for row: Dictionary in ladder_before:
+			var matches_previous_winner := str(row.get("list_id", "")) == list_id if not list_id.is_empty() \
+				else str(row.get("account_id", "")) == account_id
+			if matches_previous_winner:
+				row["points"] = before_points
+				break
+		ladder_before.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+			return a["name"].nocasecmp_to(b["name"]) < 0 if int(a["points"]) == int(b["points"]) else int(a["points"]) > int(b["points"])
+		)
+		var previous_place := -1
+		for index in range(ladder_before.size()):
+			var matches_previous_row := str(ladder_before[index].get("list_id", "")) == list_id if not list_id.is_empty() \
+				else str(ladder_before[index].get("account_id", "")) == account_id
+			if matches_previous_row:
+				previous_place = index
+				break
+		var achievement := str(activity.get("achievement", ""))
+		var top_twenty_update := ""
+		if previous_place >= 20:
+			top_twenty_update = "entered the top 20"
+		elif current_place != previous_place:
+			top_twenty_update = "moved up to rank %d" % (current_place + 1) if current_place < previous_place \
+				else "is now rank %d" % (current_place + 1)
+		if current_place < 20 and (not top_twenty_update.is_empty() or not achievement.is_empty()):
+			if not top_twenty_update.is_empty():
+				achievement += " and " if not achievement.is_empty() else ""
+				achievement += top_twenty_update
+			if not achievement.contains("rank %d" % (current_place + 1)):
+				achievement += " and " if not achievement.is_empty() else ""
+				achievement += "is rank %d" % (current_place + 1)
+			activity["achievement"] = achievement
+	for activity: Dictionary in activities:
+		activity.erase("winner_account_id")
+		activity.erase("winner_bot_list_id")
+		activity.erase("winner_before_points")
+		activity.erase("winner_after_points")
+	return activities
 
 func _handle_submit_bot_work_result(peer_id: int, payload: Dictionary) -> void:
 	var job_id := str(payload.get("job_id", "")).strip_edges()
@@ -1229,9 +1311,20 @@ func _handle_request_bot_ladder(peer_id: int, message_type: String, payload: Dic
 	if message_type == LobbyProtocolScript.REQUEST_BOT_DECK:
 		_ranked_bot_deck_pool.refresh(match_history_store.get_bot_deck_results())
 		var list_id: String = payload["list_id"]
+		_ensure_server_bot_deck_factory()
+		var deck_details := _ranked_bot_deck_pool.get_deck_details(list_id)
+		var completed_deck: Dictionary = server_bot_deck_factory.complete_ranked_power_slots(deck_details)
+		if not completed_deck.is_empty():
+			completed_deck.merge({
+				"wins": int(deck_details.get("wins", 0)),
+				"losses": int(deck_details.get("losses", 0)),
+				"draws": int(deck_details.get("draws", 0)),
+				"stars": int(deck_details.get("stars", 0)),
+			}, false)
+			deck_details = completed_deck
 		_send_to_peer(peer_id, LobbyProtocolScript.BOT_DECK, {
 			"list_id": list_id,
-			"deck": _ranked_bot_deck_pool.get_deck_details(list_id),
+			"deck": deck_details,
 		})
 		return
 	_send_to_peer(peer_id, LobbyProtocolScript.BOT_LADDER, _build_ladder_page(payload))
@@ -1249,7 +1342,8 @@ func _build_ladder_page(request: Dictionary) -> Dictionary:
 			for bot: Dictionary in lists:
 				var rank := RankedProgressionScript.summarize_bot_stars(int(bot["stars"]))
 				ladder.append({"name": bot["name"], "list_id": bot["list_id"], "points": bot["stars"],
-					"rank": rank["name"], "stars": rank["stars"], "is_bot": true})
+					"rank": rank["name"], "stars": rank["stars"], "is_bot": true,
+					"wins": int(bot.get("wins", 0)), "losses": int(bot.get("losses", 0)), "draws": int(bot.get("draws", 0))})
 	ladder.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		return a["name"].nocasecmp_to(b["name"]) < 0 if a["points"] == b["points"] else int(a["points"]) > int(b["points"])
 	)
@@ -1702,10 +1796,14 @@ func _build_fresh_bot_deck_submission() -> Dictionary:
 func _validate_server_bot_deck(deck: Dictionary) -> Dictionary:
 	if deck.is_empty():
 		return {}
+	_ensure_server_bot_deck_factory()
+	var completed_deck: Dictionary = server_bot_deck_factory.complete_ranked_power_slots(deck)
+	if completed_deck.is_empty():
+		return {}
 	var validation: Dictionary = deck_validator.validate_deck(
-		deck.get("cards", {}),
-		deck.get("special_setup", {}),
-		deck.get("reinforcements", {})
+		completed_deck.get("cards", {}),
+		completed_deck.get("special_setup", {}),
+		completed_deck.get("reinforcements", {})
 	)
 	if not bool(validation.get("is_valid", false)):
 		return {}
@@ -1714,9 +1812,11 @@ func _validate_server_bot_deck(deck: Dictionary) -> Dictionary:
 	var validation_special_setup := _duplicate_dictionary(validation.get("special_setup", {}))
 	if validation_cards.is_empty():
 		return {}
-	var god_name: String = deck["god_name"]
-	var list_id := str(deck.get("list_id", ""))
-	var deck_name := str(deck["deck_name"]) if not list_id.is_empty() else "%s: Challenger" % RankedBotDeckPoolScript.display_god_name(god_name)
+	var god_name: String = str(completed_deck.get("god_name", ""))
+	var list_id := str(completed_deck.get("list_id", ""))
+	var deck_name := str(completed_deck.get("deck_name", completed_deck.get("name", "")))
+	if deck_name.is_empty() or list_id.is_empty():
+		deck_name = "%s: Challenger" % RankedBotDeckPoolScript.display_god_name(god_name)
 	return {
 		"deck_name": deck_name,
 		"list_id": list_id,

@@ -254,6 +254,11 @@ func _cleanup_stale_stack_action(action: CardAction) -> void:
 		return
 	if action.type != CardAction.Type.ATTACK:
 		return
+	# A declared attack still counts as finalized if an effect removes every
+	# attacker before combat resolves (for example, The Inferno destroying the
+	# attacking player's Frontline). This also prevents queued turn actions from
+	# treating the attack as if it never happened.
+	note_attack_resolved()
 	var declared_target: Card = action.interceptor
 	if declared_target == null and action.target is Card:
 		declared_target = action.target as Card
