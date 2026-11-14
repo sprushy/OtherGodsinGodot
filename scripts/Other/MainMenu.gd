@@ -9431,12 +9431,16 @@ func _return_to_lobby_for_rematch() -> void:
 		_maybe_connect_authenticated_lobby("Restoring lobby session for rematch...")
 
 func _return_to_menu() -> void:
+	var active_game := _get_active_embedded_game()
+	var return_to_multiplayer: bool = (
+		game_container.visible and active_game != null and active_game.name == &"MockGame"
+	)
 	var room_to_leave := _get_active_match_room_id()
 	_pending_rematch_room_id = ""
 	_pending_rematch_ready_submitted = false
 	_suppress_active_match_auto_resume_from_embedded_games()
 	_release_player_host_port_mapping()
-	multiplayer_container.visible = false
+	multiplayer_container.visible = return_to_multiplayer
 	show_menu()
 	_match_launch_queued = false
 	_pending_leave_room_id = room_to_leave
@@ -9453,7 +9457,6 @@ func _return_to_menu() -> void:
 	if db:
 		db.queue_free()
 	_refresh_server_version_overlay_visibility()
-	multiplayer_container.visible = false
 	# Reuse the lobby when available, or restore it after offline practice.
 	if lobby_client != null and lobby_client.is_authenticated():
 		if not _pending_leave_room_id.is_empty():

@@ -2,6 +2,9 @@
 extends Card
 class_name BaseCard
 
+const SACRIFICE_COST_ICON_PATH := "res://images/ui/cursors/BloodySacrificeCursor.png"
+const SACRIFICE_COST_ICON_TEXTURE := preload(SACRIFICE_COST_ICON_PATH)
+
 var uid: String = ""
 
 static var _uid_counter: int = 0
@@ -57,12 +60,12 @@ const KEYWORD_HINTS = {
 	"Shift": "Switch this card between its listed forms.",
 	"Incorporeal": "Can only be engaged by Spirits or Mages. Can only engage Spirits or Mages.",
 	"Slay": "This effect triggers when this card destroys another creature in combat.",
-	"Slain": "This card was destroyed in combat.",
+	"Slain": "This card was destroyed in combat and sent to the graveyard.",
 	"Trollskap": "If this card is destroyed by an effect, return it to your hand instead.",
 	"Champion's Call": "Summon this god's matching Active God. You may Shelve cards from your hand to pay 4 mana each toward its summon cost.",
 	"Brood Slots": "Instead of powers, these slots can hold face-up Ancient Demons or Dragons up to the listed total level.",
 	"Stone Infant": "Token creature with 17 STR, 17 RES, 1 SPD, and the types Token, Human, Stone, and Golem.",
-	"Stone Skin": "This creature cannot be destroyed in combat.",
+	"Stone Skin": "This creature cannot be sent to the graveyard by combat destruction.",
 	"Terror": "When this card enters the field, return a lower-level opposing creature to its owner's hand.",
 	"God Death": "After you have had a God in play, if you control no face-up, awake God on the field, you gain 1 less upkeep mana, cannot use powers, and lose 7 followers at upkeep.",
 	"Status": "A status is an ongoing condition on a card, such as Sleep, Petrified, or Cannot Attack. Removing status changes clears those active statuses.",
@@ -93,6 +96,12 @@ static func apply_action_cost_symbols(text: String, card = null) -> String:
 			line = _get_action_symbol_bbcode(cost_kind, 18) + line
 		decorated.append(line)
 	return "\n".join(decorated)
+
+static func apply_cost_symbols(text: String, icon_size: int = 14) -> String:
+	var decorated := apply_mana_cost_symbols(text, icon_size)
+	var sacrifice_shorthand := RegEx.create_from_string("\\b([1-9][0-9]*)S\\b")
+	var sacrifice_icon := "[img=%dx%d]%s[/img]" % [icon_size, icon_size, SACRIFICE_COST_ICON_PATH]
+	return sacrifice_shorthand.sub(decorated, "$1 " + sacrifice_icon, true)
 
 static func apply_mana_cost_symbols(text: String, icon_size: int = 14) -> String:
 	if text.strip_edges() == "":

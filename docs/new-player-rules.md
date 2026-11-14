@@ -455,7 +455,8 @@ Cards explain their own rules text, and keyword hints appear in card detail view
 - Dodge: cannot be attacked by lower-speed Creatures.
 - Incorporeal: has special engagement restrictions.
 - Slay and Fatality are combat-destruction triggers.
-- Slain means a card was destroyed in combat.
+- Slain means a card was destroyed in combat and sent to the Graveyard. Combat destruction also includes cards sent to the Abyss by effects such as Asag's Class Rend.
+- Stone Skin prevents a creature from being Slain. Asag's Class Rend can still Void it in combat.
 - Destroyed triggers require destruction; sacrificing a card is not destruction.
 - Perish triggers whenever a card is sent from the field to the Graveyard, including when it is sacrificed.
 - Status: an ongoing condition on a card.

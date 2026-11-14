@@ -1721,8 +1721,8 @@ func spells_must_be_prepared() -> bool:
 				return true
 	return false
 
-func is_first_turn_attack_blocked_by_weather(creature: Card) -> bool:
-	if creature == null or creature.card_type != Card.CardType.CREATURE or not creature.summoned_this_turn:
+func is_first_turn_attack_blocked_by_weather(creature: Card, projecting_summon: bool = false) -> bool:
+	if creature == null or creature.card_type != Card.CardType.CREATURE or (not projecting_summon and not creature.summoned_this_turn):
 		return false
 	for card in get_field_cards():
 		if not (card is HeavySnow) or card.is_face_down or card.abilities_suppressed():

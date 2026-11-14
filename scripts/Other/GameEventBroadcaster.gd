@@ -195,7 +195,7 @@ func _on_ui_refresh_requested() -> void:
 			"full_state",
 			_build_full_state_event_data(
 				GameState.SPECTATOR_VIEWER_INDEX,
-				"Watching live match.",
+				"",
 				network_manager.get_spectator_visible_player_indices(int(peer_id))
 			)
 		)
@@ -929,6 +929,9 @@ func _label_for_move(move: Dictionary, viewer: Player = null) -> String:
 				return "%s chooses %s for %s." % [_card_label_for_viewer(mummu, viewer), placement, _card_label_for_viewer(chosen, viewer)]
 			return ("%s resolves Entropy." % _card_label_for_viewer(mummu, viewer)) if mummu != null else "Entropy resolves."
 		"prepare_card":
+			var prepared_card := game_manager.get_card_by_uid(move.get("card_uid", ""))
+			if prepared_card != null and prepared_card.get_controller() != null:
+				return "%s prepared a card face-down." % prepared_card.get_controller().player_name
 			return "A card was prepared face-down."
 		"creature_move":
 			var card := game_manager.get_card_by_uid(move.get("card_uid", ""))

@@ -31,6 +31,7 @@ Read this first on a fresh thread, then inspect the files relevant to the user's
 - `scripts/cards/CardCatalog.gd` has an explicit `CARD_SCRIPT_PATHS` list. When adding a card script, add it there or the deck builder/catalog will not reliably see it.
 - Card art is mostly under `images/card_art/...`; Godot `.import` files are tracked. Avoid deleting import artifacts casually.
 - Deck construction rules are in `docs/new-player-rules.md` and enforced in `Player.validate_deck()` and `scripts/server/DeckValidator.gd`: 1 God, up to 3 Powers, at least 35 regular cards, normal copy/legendary limits, and power/culture restrictions.
+- Keep `Slain` distinct from `destroyed in combat` in card text and rules logic. `Slain` requires combat destruction and arrival in the Graveyard. Combat destruction also covers cases where the victim is sent to the Abyss, such as Asag's Class Rend. Use `Cannot be Slain` for Stone Skin and `Cannot be destroyed in combat` for protection that also covers those Abyss cases.
 
 ## Lobby, Server, And Persistence
 

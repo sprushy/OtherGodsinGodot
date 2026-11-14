@@ -14,6 +14,7 @@ const ServerPathsScript = preload("res://scripts/server/ServerPaths.gd")
 const INITIAL_JOIN_TIMEOUT_SECONDS := 120
 const ABANDONED_MATCH_SHUTDOWN_DELAY_SECONDS := 0.25
 const GAME_END_SHUTDOWN_DELAY_SECONDS := 3.0
+const WATCHED_BOT_STEP_DELAY_SECONDS := 1.0
 const STATUS_HEARTBEAT_INTERVAL_SECONDS := 1.0
 const RANKED_TURN_TIMEOUT_MSEC := 180_000
 const RANKED_TIMEOUT_RESOLUTION_GRACE_MSEC := 8_000
@@ -298,6 +299,8 @@ func _attach_server_bots_for_match() -> void:
 			continue
 		var bot_input = ServerBotGameInputScript.new(match_manager, player_index, match_session)
 		var bot = PracticeFuzzPlayerBotScript.new()
+		if match_session.is_bot_self_play():
+			bot.get_step_delay = _get_self_play_step_delay
 		bot.attach(game_manager, match_manager, bot_input, player_index)
 		_server_bot_entries.append({
 			"session_id": session_id,
@@ -305,6 +308,11 @@ func _attach_server_bots_for_match() -> void:
 			"bot": bot,
 			"game_input": bot_input,
 		})
+
+func _get_self_play_step_delay() -> float:
+	if network_manager != null and not network_manager.spectator_peer_ids.is_empty():
+		return WATCHED_BOT_STEP_DELAY_SECONDS
+	return ThorPracticeBot.STEP_DELAY_SECONDS
 
 func _detach_server_bots() -> void:
 	for entry in _server_bot_entries:
@@ -413,8 +421,14 @@ func _on_game_ended(_winner: Player, _loser: Player) -> void:
 	if network_manager != null:
 		for player_index in network_manager.player_peer_ids:
 			_send_series_end_to_player(int(player_index))
+		var spectator_result := _series_end_payload.duplicate()
+		var followers: Array[int] = []
+		for player in game_manager.players:
+			followers.append(player.followers)
+		spectator_result["followers"] = followers
+		spectator_result["turn_number"] = game_manager.turn_number
 		for peer_id in network_manager.spectator_peer_ids:
-			network_manager.broadcast_event_to_peer(int(peer_id), "series_ended", _series_end_payload)
+			network_manager.broadcast_event_to_peer(int(peer_id), "series_ended", spectator_result)
 	var tree := get_tree()
 	if tree == null:
 		return

@@ -1325,7 +1325,7 @@ func _make_field_mana_badge(
 	if prefix != "":
 		row.add_child(_make_field_badge_label(prefix, font_size, font_color))
 	row.add_child(_make_field_badge_label(str(mana_cost), font_size, font_color))
-	row.add_child(_make_field_mana_icon(icon_size))
+	row.add_child(_make_field_cost_icon(MANA_ORB_TEXTURE, icon_size))
 	return badge
 
 func _make_empty_field_badge() -> PanelContainer:
@@ -1359,9 +1359,9 @@ func _make_field_badge_label(text: String, font_size: int, font_color: Color) ->
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return label
 
-func _make_field_mana_icon(icon_size: float) -> TextureRect:
+func _make_field_cost_icon(texture: Texture2D, icon_size: float) -> TextureRect:
 	var icon := TextureRect.new()
-	icon.texture = MANA_ORB_TEXTURE
+	icon.texture = texture
 	icon.custom_minimum_size = Vector2(icon_size, icon_size)
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
@@ -1381,7 +1381,10 @@ func _populate_cost_text_row(
 		var part := str(raw_part)
 		if part.ends_with("M") and part.length() > 1:
 			row.add_child(_make_field_badge_label(part.substr(0, part.length() - 1), font_size, font_color))
-			row.add_child(_make_field_mana_icon(icon_size))
+			row.add_child(_make_field_cost_icon(MANA_ORB_TEXTURE, icon_size))
+		elif part.ends_with("S") and part.trim_suffix("S").is_valid_int():
+			row.add_child(_make_field_badge_label(part.trim_suffix("S"), font_size, font_color))
+			row.add_child(_make_field_cost_icon(BaseCard.SACRIFICE_COST_ICON_TEXTURE, icon_size))
 		else:
 			row.add_child(_make_field_badge_label(part, font_size, font_color))
 
@@ -5419,12 +5422,17 @@ func _refresh_display() -> void:
 			var show_god_attack_aura := _is_card_attacking_on_stack(card) or _is_card_intercepting_on_stack(card) or _is_card_selected_attacker(card) or _is_card_selected_interceptor(card)
 			var show_god_playing_aura := _should_show_playing_aura(card)
 			var show_god_priority_aura := _is_card_usable_for_priority(card)
+			var scene_root := _get_targeting_scene_root()
+			var is_pyre_convert_target: bool = scene_root != null \
+				and scene_root.has_method("_is_pyre_convert_target") \
+				and scene_root.call("_is_pyre_convert_target", owning_player) == true
 			var show_god_target_aura := _is_card_targeted_on_stack(card) \
-				or _is_card_pending_target(card) \
+				or (not is_pyre_convert_target and _is_card_pending_target(card)) \
 				or _is_card_pending_attack_target(card)
 			var show_god_followers_target_aura := _is_god_targeted_by_followers_attack(card) \
 				or _is_god_pending_followers_attack(card) \
-				or _is_god_attack_candidate(card)
+				or _is_god_attack_candidate(card) \
+				or is_pyre_convert_target
 
 			style.bg_color     = Color(0.35, 0.28, 0.04, 0.9)
 			style.border_color = Color(0.9, 0.75, 0.2)

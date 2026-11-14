@@ -46,6 +46,7 @@ func _run() -> void:
 	await _check_stale_client_disconnect_events()
 	await _check_failed_lobby_transport_cleanup()
 	await _check_lobby_auth_rejection_cleanup()
+	_check_detached_lobby_transport()
 	_check_local_match_transport_cleanup()
 	_check_lobby_restart_recovery()
 	await _check_practice_lobby_suspension()
@@ -238,6 +239,19 @@ func _check_lobby_auth_rejection_cleanup() -> void:
 	if is_instance_valid(lobby) and not lobby.is_queued_for_deletion():
 		lobby.queue_free()
 	await process_frame
+
+func _check_detached_lobby_transport() -> void:
+	var lobby := LobbyClientScript.new()
+	lobby.name = "DetachedLobby"
+	root.add_child(lobby)
+	lobby._transport_connected_signal_received = true
+	lobby._is_authenticated = true
+	lobby.current_session_id = "bot-worker-session"
+	_check(lobby.is_authenticated(), "attached lobby recognizes its connection signal")
+	root.remove_child(lobby)
+	_check(not lobby.is_authenticated(), "detached lobby ignores its cached connection signal")
+	lobby.cancel_bot_work("active-bot-job")
+	lobby.free()
 
 func _check_lobby_restart_recovery() -> void:
 	var lobby := RecoveryLobbyClient.new()

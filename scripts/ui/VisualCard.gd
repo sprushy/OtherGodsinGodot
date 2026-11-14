@@ -97,7 +97,7 @@ var _stats_label: Label = null
 const _DEFAULT_POWER_LOCK_TEXTURE := preload("res://images/Default Power Lock.png")
 const _ANCIENT_POWER_LOCK_TEXTURE := preload("res://images/Ancient Power Lock.png")
 const _NORSE_POWER_LOCK_TEXTURE := preload("res://images/Norse Power Lock.png")
-const _MANA_ORB_ICON_SIZE := 18.0
+const _COST_ICON_SIZE := 18.0
 const _LEVEL_SYMBOL_SIZE := 19.0
 
 func setup(
@@ -324,9 +324,9 @@ func _make_cost_number_label(text: String, display_mana_cost: int = -1) -> Label
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return label
 
-func _make_mana_orb_icon(icon_size: float = _MANA_ORB_ICON_SIZE) -> TextureRect:
+func _make_cost_icon(texture: Texture2D, icon_size: float) -> TextureRect:
 	var icon := TextureRect.new()
-	icon.texture = MANA_ORB_TEXTURE
+	icon.texture = texture
 	icon.custom_minimum_size = Vector2(icon_size, icon_size)
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
@@ -349,9 +349,13 @@ func _make_cost_node(cost_text: String, display_mana_cost: int) -> Control:
 
 	if display_mana_cost > 0:
 		cost_row.add_child(_make_cost_number_label(str(display_mana_cost), display_mana_cost))
-		cost_row.add_child(_make_mana_orb_icon(_MANA_ORB_ICON_SIZE))
+		cost_row.add_child(_make_cost_icon(MANA_ORB_TEXTURE, _COST_ICON_SIZE))
 	for part in card_data.get_cost_shorthand_parts(0):
-		cost_row.add_child(_make_cost_number_label(part))
+		if part.ends_with("S"):
+			cost_row.add_child(_make_cost_number_label(part.trim_suffix("S")))
+			cost_row.add_child(_make_cost_icon(BaseCard.SACRIFICE_COST_ICON_TEXTURE, _COST_ICON_SIZE))
+		else:
+			cost_row.add_child(_make_cost_number_label(part))
 	if cost_row.get_child_count() == 0:
 		cost_row.add_child(_make_cost_number_label(cost_text, display_mana_cost))
 	return cost_row

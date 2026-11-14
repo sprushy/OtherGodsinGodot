@@ -3039,16 +3039,21 @@ func _get_interceptor_row_depth(defender: Card) -> int:
 		_:
 			return -1
 
-func _get_intercept_row_distance(defender: Card, protected_target) -> int:
+func _get_intercept_row_distance(defender: Card, protected_target, projected_defender_zone: Zone = null, projected_target_zone: Zone = null) -> int:
 	var defender_depth := _get_interceptor_row_depth(defender)
 	var target_depth := _get_intercept_target_row_depth(protected_target)
+	if projected_defender_zone != null:
+		defender_depth = 0 if projected_defender_zone.zone_type == Zone.ZoneType.FRONTLINE else 1
+	if projected_target_zone != null:
+		target_depth = 0 if projected_target_zone.zone_type == Zone.ZoneType.FRONTLINE else 1
 	if defender_depth < 0 or target_depth < 0 or target_depth < defender_depth:
 		return -1
 	return target_depth - defender_depth
 
-func _get_minimum_intercept_row_distance(defender: Card, attacker: Card, protected_target) -> int:
+func _get_minimum_intercept_row_distance(defender: Card, attacker: Card, protected_target, projected_mode: int = -1) -> int:
 	var minimum_depth := 1
-	if defender.creature_mode == Card.CreatureMode.AGGRESSIVE:
+	var mode := int(defender.creature_mode) if projected_mode < 0 else projected_mode
+	if mode == Card.CreatureMode.AGGRESSIVE:
 		minimum_depth = 2
 	minimum_depth = max(0, minimum_depth - defender.get_intercept_reach_bonus(game_manager, attacker, protected_target))
 	return minimum_depth
@@ -3065,7 +3070,7 @@ func _get_declared_attack_speed(attacker: Card) -> int:
 		return attacker.get_united_front_attack_speed(game_manager)
 	return attacker.get_effective_speed()
 
-func _can_intercept(defender: Card, attacker: Card, protected_target, modified_card: Card = null, speed_delta: int = 0, projected_attack_speed: int = -1) -> bool:
+func _can_intercept(defender: Card, attacker: Card, protected_target, modified_card: Card = null, speed_delta: int = 0, projected_attack_speed: int = -1, projected_defender_zone: Zone = null, projected_mode: int = -1, projected_target_zone: Zone = null) -> bool:
 	if attacker == null or protected_target == null:
 		return false
 	if protected_target is Card and defender == protected_target:
@@ -3084,11 +3089,8 @@ func _can_intercept(defender: Card, attacker: Card, protected_target, modified_c
 		return false
 	if not game_manager.can_interceptor_engage_attacker(defender, attacker):
 		return false
-	if defender.creature_mode == Card.CreatureMode.AGGRESSIVE:
-		return _get_intercept_row_distance(defender, protected_target) >= _get_minimum_intercept_row_distance(defender, attacker, protected_target)
-	if defender.creature_mode == Card.CreatureMode.DEFENSIVE:
-		return _get_intercept_row_distance(defender, protected_target) >= _get_minimum_intercept_row_distance(defender, attacker, protected_target)
-	return false
+	var minimum_distance := _get_minimum_intercept_row_distance(defender, attacker, protected_target, projected_mode)
+	return _get_intercept_row_distance(defender, protected_target, projected_defender_zone, projected_target_zone) >= minimum_distance
 
 func _get_possible_interceptors(attacker: Card, protected_target, projected_attack_speed: int = -1) -> Array[Card]:
 	var possible_interceptors: Array[Card] = []

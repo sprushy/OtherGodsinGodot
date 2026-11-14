@@ -47,10 +47,13 @@ static func build_command(bot, type: String, data: Dictionary) -> Dictionary:
 			command[key] = data[key]
 	if TARGET_COMMANDS.has(type):
 		command["type"] = TARGET_COMMANDS[type]
-		if type == "fenrir_devour_impact":
-			command["target_uid"] = _best_reveal_target(bot, source, data.get("target_uids", []), type, true)
-		elif type in ["lailoken_reveal", "masmassu_priest_reveal"]:
-			command["target_uid"] = _best_reveal_target(bot, source, data.get("target_uids", []), type)
+		if type == "fenrir_devour_impact" or type == "gugalanna_celestial_charge" or type == "terror_impact":
+			var demon: Card = bot.game_manager.get_card_by_uid(str(data.get("demon_uid", "")))
+			command["target_uid"] = bot._choose_impact_removal_target(source, data.get("target_uids", []), demon)
+		elif type == "masmassu_priest_reveal" and (source is MasmassuPriest or source is Grindylow):
+			command["target_uid"] = bot._choose_removal_reveal_target_uid(source, data.get("target_uids", []))
+		elif type == "lailoken_reveal":
+			command["target_uid"] = _best_reveal_target(bot, source, data.get("target_uids", []))
 		else:
 			command["target_uid"] = _best_uid(bot, data, "target_uids", type in HARMFUL_TARGET_PROMPTS)
 		return command
@@ -70,9 +73,7 @@ static func build_command(bot, type: String, data: Dictionary) -> Dictionary:
 				var score := Strategy.BAD
 				match str(option.get("kind", "")):
 					"return": score = Strategy.value(bot, returned)
-					# Brewing unlocks a power for free, so cancel unlock_score's normal
-					# mana penalty before comparing this option with other free choices.
-					"flip": score = Strategy.unlock_score(bot, power) + Strategy.mana_penalty(bot, power.get_unlock_mana_cost(bot.game_manager)) if power != null else Strategy.BAD
+					"flip": score = Strategy.unlock_score(bot, power, 0) if power != null else Strategy.BAD
 					"activate", "activate_targeted": score = Strategy.power_score(bot, power, target) if power != null else Strategy.BAD
 				if score > best_score:
 					best_score = score
@@ -219,7 +220,7 @@ static func build_command(bot, type: String, data: Dictionary) -> Dictionary:
 		"habrok_breakout":
 			command.merge({"type": "habrok_breakout_choice", "do_breakout": true})
 		"hati_moon_hunt":
-			command.merge({"type": "hati_moon_hunt", "decline": true})
+			command.merge(bot._plan_moon_hunt(source as Hati))
 		"en_hedu_anna_exaltation":
 			if not (source is EnHeduAnna):
 				return {}
@@ -237,7 +238,7 @@ static func build_command(bot, type: String, data: Dictionary) -> Dictionary:
 			return {}
 	return command
 
-static func _best_reveal_target(bot, source: Card, target_uids: Array, prompt_type: String, enemy_only: bool = false) -> String:
+static func _best_reveal_target(bot, source: Card, target_uids: Array, enemy_only: bool = false) -> String:
 	var best_uid := ""
 	var best_score := Strategy.BAD
 	for raw_uid in target_uids:
@@ -259,8 +260,6 @@ static func _best_reveal_target(bot, source: Card, target_uids: Array, prompt_ty
 				score = Strategy.BAD
 			else:
 				score += 1000
-				if prompt_type == "masmassu_priest_reveal" and (target.has_type("Demon") or target.has_type("Spirit")):
-					score += 1000
 		if score > best_score:
 			best_score = score
 			best_uid = uid

@@ -7,6 +7,8 @@ const PLAQUE_TEXTURE := preload("res://images/ui/clocktower/stone_plaque.png")
 # Solid stone bounds; get_used_rect() also includes faint alpha far outside it.
 const PLAQUE_REGION := Rect2(12.0, 148.0, 1960.0, 492.0)
 const BELL_SOUND := preload("res://audio/turn_bell.mp3")
+const SETTINGS_PATH := "user://settings.cfg"
+const BELL_MUTED_KEY := "turn_bell_muted"
 const ART_SIZE := Vector2(168.0, 252.0)
 const ROOF_SPLIT_Y := 86.0
 const NAME_BAND_HEIGHT := 30.0
@@ -28,6 +30,8 @@ var _name_panel: PanelContainer
 var _name_label: Label
 var _name_style: StyleBoxTexture
 var _bell_player: AudioStreamPlayer
+var _mute_button: Button
+var _bell_muted := false
 var _ring_tween: Tween
 var _remaining_msec: int = -1
 var _budget_msec: int = 180000
@@ -99,6 +103,30 @@ func _ready() -> void:
 	_bell_player.stream = BELL_SOUND
 	_bell_player.bus = "SFX"
 	add_child(_bell_player)
+	var settings := ConfigFile.new()
+	if settings.load(SETTINGS_PATH) == OK:
+		_bell_muted = bool(settings.get_value("audio", BELL_MUTED_KEY, false))
+	_mute_button = Button.new()
+	_mute_button.name = "BellMuteButton"
+	_mute_button.position = Vector2(126.0, BELL_RECT.position.y + 4.0)
+	_mute_button.size = Vector2(40.0, 38.0)
+	_mute_button.toggle_mode = true
+	_mute_button.set_pressed_no_signal(_bell_muted)
+	_mute_button.add_theme_font_size_override("font_size", 10)
+	_mute_button.add_theme_color_override("font_color", GOLD)
+	_mute_button.add_theme_color_override("font_pressed_color", SILVER)
+	_mute_button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	var mute_style := StyleBoxFlat.new()
+	mute_style.bg_color = Color(0.12, 0.11, 0.10, 0.88)
+	mute_style.border_color = GOLD
+	mute_style.set_border_width_all(1)
+	mute_style.set_corner_radius_all(5)
+	_mute_button.add_theme_stylebox_override("normal", mute_style)
+	_mute_button.add_theme_stylebox_override("hover", mute_style)
+	_mute_button.add_theme_stylebox_override("pressed", mute_style)
+	_mute_button.toggled.connect(_set_bell_muted)
+	add_child(_mute_button)
+	_refresh_mute_button()
 	_update_display()
 
 
@@ -146,6 +174,26 @@ func bind_end_turn_button(button: Button) -> void:
 	_button.position = click_rect.position
 	_button.size = click_rect.size
 	_button.move_to_front()
+	if is_instance_valid(_mute_button):
+		_mute_button.move_to_front()
+
+
+func _set_bell_muted(muted: bool) -> void:
+	_bell_muted = muted
+	if muted:
+		_bell_player.stop()
+	_refresh_mute_button()
+	var settings := ConfigFile.new()
+	settings.load(SETTINGS_PATH)
+	settings.set_value("audio", BELL_MUTED_KEY, muted)
+	var error := settings.save(SETTINGS_PATH)
+	if error != OK:
+		push_warning("Could not save bell mute setting: %s" % str(error))
+
+
+func _refresh_mute_button() -> void:
+	_mute_button.text = "Bell\nOff" if _bell_muted else "Bell\nOn"
+	_mute_button.tooltip_text = "Unmute turn bell" if _bell_muted else "Mute turn bell"
 
 
 func set_turn_state(remaining_msec: int, budget_msec: int, running: bool, status: String, player_name: String, opponent_turn: bool, turn_number: int) -> void:
@@ -227,7 +275,7 @@ func _set_hovered(hovered: bool) -> void:
 
 
 func ring_bell() -> void:
-	if is_visible_in_tree() and DisplayServer.get_name() != "headless":
+	if not _bell_muted and is_visible_in_tree() and DisplayServer.get_name() != "headless":
 		_bell_player.play()
 	if is_instance_valid(_ring_tween):
 		_ring_tween.kill()

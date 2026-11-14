@@ -354,10 +354,10 @@ func disconnect_from_server() -> void:
 		network_manager.disconnect_client()
 
 func is_transport_connected() -> bool:
+	if not is_instance_valid(network_manager) or not network_manager.is_inside_tree():
+		return false
 	if _transport_connected_signal_received and not _ignore_network_events:
 		return true
-	if network_manager == null:
-		return false
 	var multiplayer_api: MultiplayerAPI = network_manager.multiplayer
 	if multiplayer_api == null:
 		return false

@@ -377,8 +377,11 @@ func _refresh_match(match_id: String, now_unix: int) -> void:
 		return
 	var status_close_reason := _get_status_file_close_reason(session, now_unix)
 	if not status_close_reason.is_empty():
-		if session.is_bot_self_play() and status_close_reason == MatchSessionScript.STATUS_FINISHED and OS.is_process_running(int(session.process_id)):
-			return
+		if session.is_bot_self_play() and status_close_reason == MatchSessionScript.STATUS_FINISHED:
+			# Let the match server deliver its final state before cleanup.
+			if is_instance_valid(_shared_bot_match_servers.get(match_id)) \
+					or (session.has_spawned_process() and OS.is_process_running(int(session.process_id))):
+				return
 		close_match(match_id, status_close_reason, status_close_reason != MatchSessionScript.STATUS_FINISHED)
 		return
 	if session.has_reconnect_timed_out(now_unix):

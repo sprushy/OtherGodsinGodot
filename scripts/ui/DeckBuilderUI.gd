@@ -1181,7 +1181,7 @@ func _get_card_stat_summary_parts(card: Card, include_level: bool = true, includ
 		stat_parts.append("SPD:%d" % card.speed)
 
 	if include_cost and card.has_listed_play_costs():
-		stat_parts.append("Cost: " + BaseCard.apply_mana_cost_symbols(card.get_cost_shorthand(), 14))
+		stat_parts.append("Cost: " + BaseCard.apply_cost_symbols(card.get_cost_shorthand(), 14))
 
 	return stat_parts
 
@@ -1768,6 +1768,8 @@ func _make_collection_cost_badge(card: Card) -> PanelContainer:
 		badge_width += 25
 	for part in cost_parts:
 		badge_width += 6 + part.length() * 6
+		if part.ends_with("S"):
+			badge_width += 9
 	badge_width = maxi(22, badge_width)
 
 	var badge := PanelContainer.new()
@@ -1794,9 +1796,13 @@ func _make_collection_cost_badge(card: Card) -> PanelContainer:
 
 	if card.mana_cost > 0:
 		row.add_child(_make_collection_cost_label(str(card.mana_cost)))
-		row.add_child(_make_collection_mana_icon(14.0))
+		row.add_child(_make_collection_cost_icon(MANA_ORB_TEXTURE, 14.0))
 	for part in cost_parts:
-		row.add_child(_make_collection_cost_label(part))
+		if part.ends_with("S"):
+			row.add_child(_make_collection_cost_label(part.trim_suffix("S")))
+			row.add_child(_make_collection_cost_icon(BaseCard.SACRIFICE_COST_ICON_TEXTURE, 14.0))
+		else:
+			row.add_child(_make_collection_cost_label(part))
 	return badge
 
 func _make_collection_cost_label(text: String) -> Label:
@@ -1809,9 +1815,9 @@ func _make_collection_cost_label(text: String) -> Label:
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return label
 
-func _make_collection_mana_icon(icon_size: float) -> TextureRect:
+func _make_collection_cost_icon(texture: Texture2D, icon_size: float) -> TextureRect:
 	var icon := TextureRect.new()
-	icon.texture = MANA_ORB_TEXTURE
+	icon.texture = texture
 	icon.custom_minimum_size = Vector2(icon_size, icon_size)
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED

@@ -472,6 +472,8 @@ func _on_game_event_received(event_type: String, data: Dictionary) -> void:
 		_match_completed = false
 	elif event_type == "series_ended":
 		_series_between_games = false
+		if bool(_match_info.get("observer_mode", false)):
+			_match_completed = true
 	elif event_type == "game_ended":
 		_match_completed = true
 	elif event_type == "full_state":

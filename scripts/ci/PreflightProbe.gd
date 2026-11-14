@@ -58,6 +58,12 @@ func run() -> bool:
 	_check_ranked_bot_pool(failures)
 	_check_ranked_bot_deck_generation(failures)
 	_check_ranked_bot_manifestations(failures)
+	_check_bot_power_followthrough(failures)
+	_check_bot_summon_and_intercept(failures)
+	_check_bot_main_phase_combat_order(failures)
+	_check_bot_hermes_speed(failures)
+	_check_bot_reveal_defense(failures)
+	_check_bot_next_turn_lethal(failures)
 	_check_standing_bot_seeks(failures)
 	_check_ladder_pages(failures)
 	_check_request_next(failures)
@@ -384,9 +390,11 @@ func _check_full_state_event_payload_budget(failures: PackedStringArray) -> void
 		return
 	game_manager.start_turn()
 	var network_manager = NetworkManagerScript.new()
-	for viewer_index in [0, 1, GameState.SPECTATOR_VIEWER_INDEX]:
+	for view in [[0, []], [1, []], [GameState.SPECTATOR_VIEWER_INDEX, []], [GameState.SPECTATOR_VIEWER_INDEX, [0, 1]]]:
+		var viewer_index: int = view[0]
+		var visible_indices: Array = view[1]
 		var event_payload := {
-			"state": GameState.serialize(game_manager, viewer_index),
+			"state": GameState.serialize(game_manager, viewer_index, visible_indices),
 			"action_message": "preflight payload budget",
 		}
 		var rejection_reason: String = network_manager.get_game_event_payload_rejection_reason("full_state", event_payload)
@@ -798,14 +806,22 @@ func _check_ranked_bot_manifestations(failures: PackedStringArray) -> void:
 			if not bot._get_board_creatures(player).has(birth_target):
 				failures.append("Ranked Tiamat did not use Birth after Take the Field")
 		elif god is TezcatlipocaTheSmokingMirror:
-			for i in range(TezcatlipocaTheSmokingMirror.REQUIRED_NECOC_YAOTL_SACRIFICES):
+			var offerings: Array[Card] = []
+			for i in range(TezcatlipocaTheSmokingMirror.REQUIRED_NECOC_YAOTL_SACRIFICES + 1):
 				var offering := Asakku.new()
 				offering.card_owner = player
 				player.reserve_zones[i].add_card(offering)
 				offering.spend_major_creature_action()
+				offerings.append(offering)
 			var victim := BrownBear.new()
 			victim.card_owner = opponent
 			opponent.frontline_zones[0].add_card(victim)
+			for offering in offerings.slice(2):
+				offering.current_zone.remove_card(offering)
+			if not bot._plan_god_manifestation().is_empty():
+				failures.append("Necoc Yaotl sacrificed an ordinary creature without spare board presence")
+			for i in range(2, offerings.size()):
+				player.reserve_zones[i].add_card(offerings[i])
 			for _action in range(TezcatlipocaTheSmokingMirror.REQUIRED_NECOC_YAOTL_SACRIFICES + 1):
 				bot._submit_strategy_plan(bot._plan_god_manifestation())
 				for _step in range(8):
@@ -824,6 +840,459 @@ func _check_ranked_bot_manifestations(failures: PackedStringArray) -> void:
 				for card in zone.cards.duplicate():
 					zone.remove_card(card)
 				zone.zone_owner = null
+
+func _check_bot_power_followthrough(failures: PackedStringArray) -> void:
+	var game := GameManager.new()
+	var player := Player.new()
+	var opponent := Player.new()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.start_turn()
+	game.player_chooses_upkeep_only()
+	var manager := MatchManager.new(game)
+	var bot := PracticeFuzzPlayerBot.new()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var factory := MechFactory.new()
+	factory.card_owner = player
+	player.power_zones[0].add_card(factory)
+
+	player.mana = MechFactory.UNLOCK_COST + MechFactory.ACTIVATION_COST - 1
+	if not bot._plan_power_unlock().is_empty():
+		failures.append("Bot planned to unlock Mech Factory without enough mana to build a Mech")
+
+	player.mana += 1
+	var plan := bot._plan_power_unlock()
+	if plan.get("activate_after_unlock_uid") != factory.uid or not bot._submit_strategy_plan(plan):
+		failures.append("Bot did not plan a funded Mech Factory unlock and activation")
+	elif not bot._take_main_phase_action():
+		failures.append("Bot did not follow through after unlocking Mech Factory")
+	else:
+		for _step in range(8):
+			manager.advance_priority()
+		if factory.activations_this_turn != 1 or player.mana != 0:
+			failures.append("Bot's Mech Factory follow-up did not resolve through the match command path")
+
+	var palisade := PalisadePower.new()
+	palisade.card_owner = player
+	player.power_zones[1].add_card(palisade)
+	player.mana = PalisadePower.UNLOCK_COST + PalisadePower.ACTIVATION_COST
+	if not bot._plan_power_unlock().is_empty():
+		failures.append("Bot unlocked Palisade with no enemy attack pressure")
+	bot.detach()
+
+func _check_bot_summon_and_intercept(failures: PackedStringArray) -> void:
+	var game := GameManager.new()
+	var player := Player.new()
+	var opponent := Player.new()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 2
+	var manager := MatchManager.new(game)
+	var bot := PracticeFuzzPlayerBot.new()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var enki := EnkiLordOfEridu.new()
+	enki.card_owner = opponent
+	enki.creature_mode = Card.CreatureMode.AGGRESSIVE
+	opponent.frontline_zones[0].add_card(enki)
+	var berserker := Berserker.new()
+	berserker.card_owner = opponent
+	berserker.creature_mode = Card.CreatureMode.AGGRESSIVE
+	opponent.frontline_zones[1].add_card(berserker)
+	var mech := DevastatorMech.new()
+	mech.card_owner = player
+	player.hand_zone.add_card(mech)
+	var plan := bot._plan_creature_summon()
+	var command: Dictionary = plan.get("command", {})
+	if command.get("card_uid") != mech.uid or command.get("mode") != Card.CreatureMode.AGGRESSIVE:
+		failures.append("Bot overlooked a Devastator Mech summon with Berserker available to attack alongside Enki")
+	player.hand_zone.remove_card(mech)
+	player.frontline_zones[0].add_card(mech)
+	mech.creature_mode = Card.CreatureMode.AGGRESSIVE
+	var attack := bot._plan_combat(bot._get_combat_candidates())
+	if attack.get("target") != berserker:
+		failures.append("Bot did not choose Berserker over Enki and a less valuable direct attack")
+	var intercept := {"attacker_uid": enki.uid, "target_uid": "0", "interceptor_uids": [mech.uid]}
+	player.followers = 12
+	if bot._choose_interceptor(intercept) != mech.uid:
+		failures.append("Bot declined to lose its Mech to intercept a lethal follower attack it could survive")
+	player.followers = 8
+	if not bot._choose_interceptor(intercept).is_empty():
+		failures.append("Bot chose a losing interception that still allowed lethal follower damage")
+	bot.detach()
+
+func _check_bot_main_phase_combat_order(failures: PackedStringArray) -> void:
+	var game := GameManager.new()
+	var player := Player.new()
+	var opponent := Player.new()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	player.mana = 5
+	var manager := MatchManager.new(game)
+	var bot := PracticeFuzzPlayerBot.new()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var veteran := CreatureCard.new()
+	veteran.card_owner = player
+	veteran.strength = 20
+	veteran.speed = 4
+	veteran.creature_mode = Card.CreatureMode.AGGRESSIVE
+	player.frontline_zones[0].add_card(veteran)
+	var recruit := CreatureCard.new()
+	recruit.card_owner = player
+	recruit.strength = 8
+	recruit.speed = 3
+	recruit.mana_cost = 1
+	player.hand_zone.add_card(recruit)
+	var blocker := CreatureCard.new()
+	blocker.card_owner = opponent
+	blocker.strength = 10
+	blocker.resilience = 12
+	blocker.speed = 5
+	blocker.creature_mode = Card.CreatureMode.DEFENSIVE
+	opponent.frontline_zones[0].add_card(blocker)
+	if not bot._take_main_phase_action() or recruit.current_zone not in player.frontline_zones \
+			or recruit.creature_mode != Card.CreatureMode.AGGRESSIVE or game.has_resolved_attack_this_turn:
+		failures.append("Bot attacked before summoning a second creature that could hit followers after the blocker fell")
+	else:
+		for _step in range(8):
+			manager.advance_priority()
+		var fight := bot._plan_combat(bot._get_combat_candidates())
+		if fight.get("attacker") != veteran or fight.get("target") != blocker:
+			failures.append("Bot did not use the stronger creature to clear the blocker after summoning")
+		elif not bot._take_main_phase_action():
+			failures.append("Bot did not submit the attack that clears the blocker")
+		else:
+			for _step in range(8):
+				manager.advance_priority()
+			var followers := opponent.followers
+			if blocker.current_zone != opponent.graveyard_zone or not bot._take_main_phase_action():
+				failures.append("Bot did not follow up with the newly summoned creature")
+			else:
+				for _step in range(8):
+					manager.advance_priority()
+				if opponent.followers != followers - recruit.strength:
+					failures.append("Summoning first did not deliver the projected follower damage")
+	bot.detach()
+
+	game = GameManager.new()
+	player = Player.new()
+	opponent = Player.new()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	player.mana = 5
+	manager = MatchManager.new(game)
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	recruit = CreatureCard.new()
+	recruit.card_owner = player
+	recruit.strength = 15
+	recruit.resilience = 25
+	recruit.mana_cost = 2
+	player.hand_zone.add_card(recruit)
+	blocker = CreatureCard.new()
+	blocker.card_owner = opponent
+	blocker.strength = 22
+	blocker.speed = 5
+	blocker.creature_mode = Card.CreatureMode.AGGRESSIVE
+	opponent.frontline_zones[0].add_card(blocker)
+	var fall := FallOfTheMighty.new()
+	fall.card_owner = player
+	player.hand_zone.add_card(fall)
+	if not bot._take_main_phase_action() or recruit.current_zone != player.hand_zone:
+		failures.append("Bot summoned before Fall of the Mighty could clear the stronger creature")
+	else:
+		for _step in range(8):
+			manager.advance_priority()
+		if blocker.current_zone != opponent.graveyard_zone or not bot._take_main_phase_action() \
+				or recruit.current_zone not in player.frontline_zones or recruit.creature_mode != Card.CreatureMode.AGGRESSIVE:
+			failures.append("Bot did not follow Fall of the Mighty with a summon ready to attack")
+	bot.detach()
+
+func _check_bot_hermes_speed(failures: PackedStringArray) -> void:
+	var game := GameManager.new()
+	var player := Player.new()
+	var opponent := Player.new()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	player.mana = 2
+	var manager := MatchManager.new(game)
+	var bot := PracticeFuzzPlayerBot.new()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var hermes := Hermes.new()
+	hermes.card_owner = player
+	player.god_zone.add_card(hermes)
+	var attacker := CreatureCard.new()
+	attacker.card_owner = player
+	attacker.strength = 20
+	attacker.speed = 2
+	attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
+	player.frontline_zones[0].add_card(attacker)
+	var blocker := CreatureCard.new()
+	blocker.card_owner = opponent
+	blocker.strength = 8
+	blocker.speed = 3
+	blocker.creature_mode = Card.CreatureMode.AGGRESSIVE
+	opponent.frontline_zones[0].add_card(blocker)
+	var attacks := bot._get_combat_candidates()
+	if not bot._plan_hermes_speed(attacks, bot._plan_combat(attacks)).is_empty():
+		failures.append("Hermes paid for a faster follower attack when the unbuffed frontline attack was already better")
+	var shield := VoidShield.new()
+	shield.card_owner = opponent
+	shield.is_face_down = true
+	shield.is_prepared = true
+	opponent.reserve_zones[0].add_card(shield)
+	game.prepared_hexes[shield] = game.turn_number - 1
+	attacks = bot._get_combat_candidates()
+	if not bot._plan_hermes_speed(attacks, bot._plan_combat(attacks)).is_empty():
+		failures.append("Hermes used private information to outrun an unidentified prepared card")
+	shield.add_status_effect("publicly_revealed", "Preflight")
+	attacks = bot._get_combat_candidates()
+	var speed_plan := bot._plan_hermes_speed(attacks, bot._plan_combat(attacks))
+	if speed_plan.get("command", {}).get("target_uid") != attacker.uid:
+		failures.append("Hermes did not outrun a known Void Shield when that improved the attack line")
+	attacker.speed = 4
+	attacks = bot._get_combat_candidates()
+	if not bot._plan_hermes_speed(attacks, bot._plan_combat(attacks)).is_empty():
+		failures.append("Hermes paid for speed even though the attacker already outran Void Shield")
+	bot.detach()
+
+func _check_bot_reveal_defense(failures: PackedStringArray) -> void:
+	var game := GameManager.new()
+	var player := Player.new()
+	var opponent := Player.new()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game.has_resolved_attack_this_turn = true
+	player.followers = 15
+	var manager := MatchManager.new(game)
+	var bot := PracticeFuzzPlayerBot.new()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var priest := MasmassuPriest.new()
+	priest.card_owner = player
+	player.hand_zone.add_card(priest)
+	var chump := CreatureCard.new()
+	chump.card_owner = player
+	chump.strength = 14
+	chump.resilience = 6
+	chump.speed = 2
+	player.hand_zone.add_card(chump)
+	var first := CreatureCard.new()
+	first.card_owner = opponent
+	first.creature_mode = Card.CreatureMode.AGGRESSIVE
+	first.strength = 24
+	first.speed = 1
+	opponent.frontline_zones[0].add_card(first)
+	var second := CreatureCard.new()
+	second.card_owner = opponent
+	second.creature_mode = Card.CreatureMode.AGGRESSIVE
+	second.strength = 20
+	second.speed = 1
+	opponent.frontline_zones[1].add_card(second)
+	var danger := bot._forecast_incoming_follower_loss()
+	var command: Dictionary = bot._plan_creature_summon(danger).get("command", {})
+	if danger < player.followers or command.get("card_uid") != priest.uid or not command.get("stealth", false):
+		failures.append("Bot failed to choose the Stealth Priest over a plain blocker against two lethal attackers")
+	first.speed = 2
+	second.speed = 2
+	command = bot._plan_creature_summon(danger).get("command", {})
+	if command.get("card_uid") != chump.uid:
+		failures.append("Bot credited the Priest with an interception against attackers it could not catch")
+	player.hand_zone.remove_card(priest)
+	player.frontline_zones[0].add_card(priest)
+	var action := CardAction.new()
+	action.type = CardAction.Type.ATTACK
+	action.attacker = first
+	action.target = player
+	action.interceptor = priest
+	manager.pending_combat_reveal_linger_action = action
+	var reveal_command := BotCardPromptPolicy.build_command(bot, "masmassu_priest_reveal", {
+		"source_uid": priest.uid, "target_uids": [first.uid, second.uid],
+	})
+	if reveal_command.get("target_uid") != second.uid:
+		failures.append("Bot targeted the committed attacker with Dalkhu Break instead of stopping the lethal follow-up")
+	player.frontline_zones[0].remove_card(priest)
+	player.hand_zone.remove_card(chump)
+	var beast := PictishBeast.new()
+	beast.card_owner = player
+	player.hand_zone.add_card(beast)
+	opponent.frontline_zones[1].remove_card(second)
+	first.speed = 1
+	command = bot._plan_creature_summon(bot._forecast_incoming_follower_loss()).get("command", {})
+	if command.get("card_uid") != beast.uid or not command.get("stealth", false):
+		failures.append("Bot failed to include Pictish Beast's Mana Boon in its defensive summon")
+	bot.detach()
+
+func _check_bot_next_turn_lethal(failures: PackedStringArray) -> void:
+	var game := GameManager.new()
+	var player := Player.new()
+	var opponent := Player.new()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	player.followers = 10
+	player.mana = 3
+	var manager := MatchManager.new(game)
+	var bot := PracticeFuzzPlayerBot.new()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var attacker := CreatureCard.new()
+	attacker.card_owner = opponent
+	attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
+	attacker.strength = 20
+	opponent.frontline_zones[0].add_card(attacker)
+	var weak := CreatureCard.new()
+	weak.card_owner = player
+	weak.creature_mode = Card.CreatureMode.AGGRESSIVE
+	weak.strength = 5
+	player.frontline_zones[0].add_card(weak)
+	var defender := CreatureCard.new()
+	defender.card_owner = player
+	defender.creature_mode = Card.CreatureMode.DEFENSIVE
+	defender.resilience = 25
+	player.frontline_zones[1].add_card(defender)
+	var mummu := Mummu.new()
+	mummu.card_owner = player
+	player.god_zone.add_card(mummu)
+	var danger := bot._forecast_incoming_follower_loss()
+	if danger < player.followers or bot._forecast_incoming_follower_loss({"removed": [weak]}) >= player.followers:
+		failures.append("Bot did not distinguish lethal through a weak aggressive creature from a covered direct attack")
+	var stance: Dictionary = bot._plan_defensive_stance(danger).get("command", {})
+	if stance.get("card_uid") != weak.uid:
+		failures.append("Bot did not identify a defensive stance change that prevents lethal")
+	weak.creature_major_action_used = true
+	weak.creature_minor_actions_used = weak.get_max_minor_creature_actions_per_turn()
+	var entropic: Dictionary = bot._plan_removal_god_ability(danger).get("command", {})
+	if entropic.get("target_uid") != weak.uid:
+		failures.append("Mummu failed to shelve the exposed creature when it could not change stance")
+	elif not bot._take_main_phase_action():
+		failures.append("Mummu did not submit the Entropic Force survival plan")
+	else:
+		for _step in range(8):
+			manager.advance_priority()
+		if weak.current_zone != player.deck_zone:
+			failures.append("Entropic Force survival plan did not resolve through the match command path")
+		else:
+			player.move_card(weak, player.frontline_zones[0])
+			weak.creature_mode = Card.CreatureMode.AGGRESSIVE
+			weak.creature_major_action_used = true
+			weak.creature_minor_actions_used = weak.get_max_minor_creature_actions_per_turn()
+	player.god_zone.remove_card(mummu)
+	var tez := TezcatlipocaTheSmokingMirror.new()
+	tez.card_owner = player
+	player.god_zone.add_card(tez)
+	var offering: Dictionary = bot._plan_god_manifestation({}, danger).get("command", {})
+	if offering.get("target_uid") != weak.uid:
+		failures.append("Necoc Yaotl failed to sacrifice the creature exposing its followers to lethal")
+	player.god_zone.remove_card(tez)
+	var spell := BitMeseri.new()
+	spell.card_owner = player
+	player.hand_zone.add_card(spell)
+	var alternative := CreatureCard.new()
+	alternative.card_owner = opponent
+	alternative.creature_mode = Card.CreatureMode.AGGRESSIVE
+	alternative.strength = 15
+	opponent.frontline_zones[1].add_card(alternative)
+	var bit_meseri: Dictionary = bot._get_best_strategy_action([], {}, danger).get("command", {})
+	if bit_meseri.get("target_uid") != weak.uid:
+		failures.append("Bot failed to consider voiding its own creature when removing either individual attacker still leaves lethal")
+	player.guard = 15
+	if bot._forecast_incoming_follower_loss() >= player.followers:
+		failures.append("Bot forecast lethal even though Guard and the defensive creature cover both attacks")
+	player.guard = 0
+	if not bot._take_main_phase_action():
+		failures.append("Bot did not submit the Bit Meseri survival plan")
+	else:
+		for _step in range(8):
+			manager.advance_priority()
+		if weak.current_zone != player.abyss_zone:
+			failures.append("Bit Meseri survival plan did not resolve through the match command path")
+		else:
+			player.move_card(weak, player.frontline_zones[0])
+			weak.creature_mode = Card.CreatureMode.AGGRESSIVE
+			weak.creature_major_action_used = true
+			weak.creature_minor_actions_used = weak.get_max_minor_creature_actions_per_turn()
+	var nimue := Nimue.new()
+	player.mana = 3
+	player.god_zone.add_card(mummu)
+	mummu.is_muted = true
+	nimue.card_owner = player
+	nimue.creature_mode = Card.CreatureMode.DEFENSIVE
+	player.reserve_zones[0].add_card(nimue)
+	var entomb_plan := bot._get_best_strategy_action([], {}, danger)
+	var entomb: Dictionary = entomb_plan.get("command", {})
+	if entomb.get("source_uid") != nimue.uid or entomb.get("target_uid") != weak.uid:
+		failures.append("Nimue did not consider shelving her own exposed creature")
+	elif not bot._submit_strategy_plan(entomb_plan):
+		failures.append("Nimue's Entomb survival plan was rejected")
+	else:
+		for _step in range(8):
+			manager.advance_priority()
+		if weak.current_zone != player.deck_zone:
+			failures.append("Nimue's Entomb survival plan did not resolve")
+		else:
+			player.move_card(weak, player.frontline_zones[0])
+			weak.creature_mode = Card.CreatureMode.AGGRESSIVE
+			weak.creature_major_action_used = true
+			weak.creature_minor_actions_used = weak.get_max_minor_creature_actions_per_turn()
+	player.reserve_zones[0].remove_card(nimue)
+	var pyre := AncientPyre.new()
+	pyre.card_owner = player
+	player.frontline_zones[2].add_card(pyre)
+	weak.resilience = AncientPyre.EFFECT_AMOUNT
+	var flame: Dictionary = bot._get_best_strategy_action([], {}, danger).get("command", {})
+	if flame.get("source_uid") != pyre.uid or flame.get("target_uid") != weak.uid:
+		failures.append("Ancient Pyre did not consider destroying its own exposed creature")
+	weak.resilience += 1
+	if bot._effect_follower_safety_gain(pyre, weak, danger) != 0:
+		failures.append("Ancient Pyre was credited with destroying a creature above its damage threshold")
+	weak.resilience -= 1
+	weak.add_status_effect("berserker_mead_guard", "Preflight")
+	if bot._effect_follower_safety_gain(pyre, weak, danger) != 0:
+		failures.append("Ancient Pyre was credited with destroying a protected creature")
+	weak.remove_status_effects_by_name("berserker_mead_guard")
+	player.frontline_zones[2].remove_card(pyre)
+	weak.card_types.append("Animal")
+	var offering_bear := BrownBear.new()
+	offering_bear.card_owner = player
+	player.reserve_zones[1].add_card(offering_bear)
+	var demon := Asakku.new()
+	demon.card_owner = player
+	player.graveyard_zone.add_card(demon)
+	var key := KeyOfSolomon.new()
+	key.card_owner = player
+	player.hand_zone.add_card(key)
+	var sacrifice_plan: Dictionary = bot._plan_sacrifice_spell(key, danger).get("command", {})
+	if sacrifice_plan.get("sacrifice_uid") != weak.uid:
+		failures.append("A sacrifice spell did not choose the friendly payment that prevents lethal")
+	player.hand_zone.remove_card(key)
+	player.reserve_zones[1].remove_card(offering_bear)
+	var fenrir := Fenrir.new()
+	fenrir.card_owner = player
+	player.reserve_zones[0].add_card(fenrir)
+	var impact := bot._choose_impact_removal_target(fenrir, [weak.uid, attacker.uid, alternative.uid])
+	if impact != weak.uid:
+		failures.append("Fenrir's removal prompt did not choose the friendly target that prevents lethal")
+	player.reserve_zones[0].remove_card(fenrir)
+	var ragnarok := Ragnarok.new()
+	ragnarok.card_owner = player
+	player.power_zones[0].add_card(ragnarok)
+	player.mana = ragnarok.get_unlock_mana_cost(game)
+	var wipe: Dictionary = bot._plan_power_unlock(danger).get("command", {})
+	if wipe.get("power_uid") != ragnarok.uid:
+		failures.append("Bot overlooked a legal Ragnarok unlock that prevents lethal")
+	bot.detach()
 
 func _check_standing_bot_seeks(failures: PackedStringArray) -> void:
 	var lobby := LobbyServerScript.new()

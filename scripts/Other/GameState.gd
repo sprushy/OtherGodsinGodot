@@ -66,9 +66,11 @@ static func serialize(gm: GameManager, viewer_player_index: int = -1, visible_pl
 		var reveal_private_cards := i == viewer_player_index or bool(visible_lookup.get(i, false))
 		var hide_hand := viewer != null and not reveal_private_cards
 		var hide_deck := viewer != null and not reveal_private_cards
-		var deck_cards := _serialize_zone_cards(player.deck_zone, viewer, false, reveal_private_cards)
-		if hide_deck:
-			deck_cards = _serialize_visible_opponent_deck_cards_for_viewer(gm, player, viewer)
+		# The spectator deck counter only needs the count, even in open-hand bot matches.
+		var deck_cards: Array = []
+		if viewer_player_index != SPECTATOR_VIEWER_INDEX:
+			deck_cards = _serialize_visible_opponent_deck_cards_for_viewer(gm, player, viewer) if hide_deck \
+				else _serialize_zone_cards(player.deck_zone, viewer, false, reveal_private_cards)
 		var pdata := {
 			player_name = player.player_name,
 			mana = player.mana,

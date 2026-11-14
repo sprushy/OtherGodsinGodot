@@ -228,7 +228,7 @@ func _on_match_join_requested(join_request: Dictionary, sender_info: Dictionary)
 		var spectator_state := GameState.serialize(game_manager, GameState.SPECTATOR_VIEWER_INDEX, visible_player_indices)
 		network_manager.broadcast_event_to_peer(peer_id, "full_state", {
 			state = spectator_state,
-			action_message = "Observing live match.",
+			action_message = game_manager.get_game_result_message() if game_manager.is_game_over else "Observing live match.",
 		})
 		return
 	var was_reconnect: bool = match_session.is_session_waiting_for_reconnect(session_id)
