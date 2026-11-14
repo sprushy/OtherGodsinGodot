@@ -29,6 +29,21 @@ static func get_cards(league: int) -> Dictionary:
 		_cards_by_league[league] = cards
 	return _cards_by_league[league]
 
+static func portrait_from_deck(league: int, cards: Dictionary, reinforcements: Dictionary = {}) -> Dictionary:
+	var owned_cards := {}
+	for card_name in cards:
+		owned_cards[str(card_name)] = int(cards[card_name])
+	for card_name in reinforcements:
+		owned_cards[str(card_name)] = int(owned_cards.get(str(card_name), 0)) + int(reinforcements[card_name])
+	var eligible_names: Array[String] = []
+	for card_name in get_cards(league).keys():
+		if int(owned_cards.get(str(card_name), 0)) > 0:
+			eligible_names.append(str(card_name))
+	if eligible_names.is_empty():
+		return {}
+	eligible_names.sort()
+	return validate_portrait(league, {"card": eligible_names[0]})
+
 static func art_paths(card: Card) -> Array[String]:
 	var paths := card.get_art_variant_paths()
 	if card.art_path not in paths:

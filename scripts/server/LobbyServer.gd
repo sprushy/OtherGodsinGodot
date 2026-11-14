@@ -1394,8 +1394,15 @@ func _build_ladder_page(request: Dictionary) -> Dictionary:
 				lists.append(god["challenger"])
 			for bot: Dictionary in lists:
 				var rank := RankedProgressionScript.summarize_bot_stars(int(bot["stars"]))
+				var bot_deck := _ranked_bot_deck_pool.get_deck_details(str(bot["list_id"]))
+				var portrait := RankBadgeCatalog.portrait_from_deck(
+					int(rank["league"]),
+					bot_deck.get("cards", {}),
+					bot_deck.get("reinforcements", {})
+				)
 				ladder.append({"name": bot["name"], "list_id": bot["list_id"], "points": bot["stars"],
 					"rank": rank["name"], "stars": rank["stars"], "is_bot": true,
+					"portrait": portrait,
 					"wins": int(bot.get("wins", 0)), "losses": int(bot.get("losses", 0)), "draws": int(bot.get("draws", 0))})
 	ladder.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		return a["name"].nocasecmp_to(b["name"]) < 0 if a["points"] == b["points"] else int(a["points"]) > int(b["points"])

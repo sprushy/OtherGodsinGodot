@@ -1788,12 +1788,14 @@ func show_menu() -> void:
 	_refresh_multiplayer_action_state()
 	_fit_main_menu_container_to_contents()
 	menu_container.visible = true
+	_layout_recent_activity_panel()
 	_refresh_server_version_overlay_visibility()
 	_refresh_sound_mute_button()
 
 func show_game() -> void:
 	_set_startup_splash_background_visible(false)
 	menu_container.visible = false
+	_layout_recent_activity_panel()
 	game_container.visible = true
 	get_tree().call_group("combat_mock_game", "_sync_drought_weather_visuals")
 	_hide_multiplayer_deck_popup()
@@ -2791,7 +2793,8 @@ func _layout_recent_activity_panel() -> void:
 	var panel_height := minf(500.0, maxf(300.0, viewport_size.y - 48.0))
 	_recent_activity_panel.position = Vector2(24.0, (viewport_size.y - panel_height) * 0.5).floor()
 	_recent_activity_panel.size = Vector2(panel_width, panel_height)
-	_recent_activity_panel.visible = multiplayer_container != null and multiplayer_container.visible \
+	_recent_activity_panel.visible = menu_container != null and menu_container.visible \
+		and multiplayer_container != null and multiplayer_container.visible \
 		and viewport_size.x >= 1180.0 and viewport_size.y >= 560.0
 
 func _render_recent_match_activities(raw_activities: Variant) -> void:

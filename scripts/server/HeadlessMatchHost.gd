@@ -201,7 +201,18 @@ func _on_match_join_requested(join_request: Dictionary, sender_info: Dictionary)
 		var observer_session_id := str(join_request.get("observer_session_id", "")).strip_edges()
 		var observer_match_token := str(join_request.get("observer_match_token", "")).strip_edges()
 		_refresh_spectator_visibility_from_launch_config()
-		if not match_session.authenticate_spectator(observer_session_id, observer_match_token, peer_id):
+		var spectator_authenticated: bool = match_session.authenticate_spectator(
+			observer_session_id,
+			observer_match_token,
+			peer_id
+		)
+		# Bot self-play matches are public entries in the live bot-match list and
+		# contain no human seats or private hands. Keep watching them read-only,
+		# even if a dynamically issued spectator token was not refreshed yet.
+		if not spectator_authenticated and match_session.is_bot_self_play():
+			match_session.add_spectator_peer(peer_id)
+			spectator_authenticated = true
+		if not spectator_authenticated:
 			network_manager.deny_match_join(peer_id, "Observer authentication failed.")
 			return
 		var visible_player_indices: Array[int] = match_session.get_spectator_visible_player_indices(observer_session_id)

@@ -59,25 +59,19 @@ func _ensure_unique_deck_names() -> void:
 	decks.sort_custom(func(first: Dictionary, second: Dictionary) -> bool:
 		var first_deck: Dictionary = first["deck"]
 		var second_deck: Dictionary = second["deck"]
-		var first_name := str(first_deck.get("deck_name", ""))
-		var second_name := str(second_deck.get("deck_name", ""))
-		var name_order := first_name.nocasecmp_to(second_name)
-		if name_order != 0:
-			return name_order < 0
-		if first_name != second_name:
-			return first_name < second_name
 		if str(first["god_name"]) != str(second["god_name"]):
 			return str(first["god_name"]) < str(second["god_name"])
-		return str(first_deck.get("list_id", "")) < str(second_deck.get("list_id", ""))
+		var first_id := str(first_deck.get("list_id", first_deck.get("fingerprint", "")))
+		var second_id := str(second_deck.get("list_id", second_deck.get("fingerprint", "")))
+		if first_id != second_id:
+			return first_id < second_id
+		return str(first_deck.get("fingerprint", "")) < str(second_deck.get("fingerprint", ""))
 	)
 	var used_names := {}
 	for entry: Dictionary in decks:
 		var deck: Dictionary = entry["deck"]
 		var base_name := str(deck.get("deck_name", "")).strip_edges()
 		var deck_god := display_god_name(str(entry["god_name"]))
-		var self_play_name := str(deck.get("self_play_name", "")).strip_edges()
-		if not self_play_name.is_empty():
-			base_name = self_play_name
 		if _is_generic_bot_name(base_name) or used_names.has(base_name.to_lower()):
 			base_name = _make_unique_bot_name(deck_god, deck, used_names)
 		deck["deck_name"] = base_name
@@ -214,7 +208,6 @@ func select_self_play_pair(busy_list_ids: Dictionary, rng: RandomNumberGenerator
 				available.append(list)
 	var pairs: Array[Array] = []
 	var trials: Array[Array] = []
-	var remaining_pairs := {}
 	for i in available.size():
 		for j in range(i + 1, available.size()):
 			var first := available[i]
@@ -223,27 +216,34 @@ func select_self_play_pair(busy_list_ids: Dictionary, rng: RandomNumberGenerator
 				continue
 			var pair := [first, second]
 			pairs.append(pair)
-			remaining_pairs[first["list_id"]] = int(remaining_pairs.get(first["list_id"], 0)) + 1
-			remaining_pairs[second["list_id"]] = int(remaining_pairs.get(second["list_id"], 0)) + 1
 			if _by_god[first["god_name"]]["challenger"] == first or _by_god[second["god_name"]]["challenger"] == second:
 				trials.append(pair)
 	var candidates := trials if not trials.is_empty() else pairs
 	if candidates.is_empty() or (trials.is_empty() and rng.randf() < EXPLORATION_CHANCE):
 		return []
-	var selected: Array[Dictionary] = []
-	var preferred: Array[Array] = []
-	var best_connections := 1 << 30
+	var total_weight := 0.0
+	var pair_weights: Array[float] = []
 	for pair in candidates:
-		var connections := int(remaining_pairs[pair[0]["list_id"]]) + int(remaining_pairs[pair[1]["list_id"]])
-		if connections < best_connections:
-			preferred.clear()
-			best_connections = connections
-		if connections == best_connections:
-			preferred.append(pair)
-	selected.assign(preferred[rng.randi_range(0, preferred.size() - 1)].duplicate(true))
+		var first_games := _get_played_match_count(pair[0])
+		var second_games := _get_played_match_count(pair[1])
+		var weight := 1.0 / sqrt(float((first_games + 1) * (second_games + 1)))
+		pair_weights.append(weight)
+		total_weight += weight
+	var selection := rng.randf() * total_weight
+	var selected_pair: Array = candidates.back()
+	for index in range(candidates.size()):
+		selection -= pair_weights[index]
+		if selection <= 0.0:
+			selected_pair = candidates[index]
+			break
+	var selected: Array[Dictionary] = []
+	selected.assign(selected_pair.duplicate(true))
 	if rng.randi_range(0, 1) == 1:
 		selected.reverse()
 	return selected
+
+func _get_played_match_count(list: Dictionary) -> int:
+	return int(list.get("wins", 0)) + int(list.get("losses", 0)) + int(list.get("draws", 0))
 
 static func can_self_play_pair(first: Dictionary, second: Dictionary) -> bool:
 	var first_rank := RankedProgressionScript.summarize_bot_stars(int(first.get("stars", 0)))

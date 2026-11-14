@@ -359,6 +359,7 @@ const FAN_ARC_HEIGHT  := 22.0   # px the arc dips at centre
 const FAN_CARD_SPACING := 130   # px between card pivot centres
 const STACK_ACTION_LINGER_SECONDS := 1.2
 const POST_GAME_RETURN_DELAY_SECONDS := 1.6
+const INITIAL_MATCH_STATE_TIMEOUT_SECONDS := 45.0
 const CARD_PLAY_TIME_BONUS_MSEC := 2000
 const PRIORITY_IDLE_AUTO_PASS_MSEC := 10000
 const UNRANKED_PRIORITY_IDLE_AUTO_PASS_MSEC := PRIORITY_IDLE_AUTO_PASS_MSEC * 2
@@ -862,6 +863,7 @@ var _post_game_board_refresh_locked: bool = false
 var _match_reconnect_waiting: bool = false
 var _match_reconnect_wait_message: String = "Waiting for opponent to reconnect..."
 var _awaiting_initial_full_state: bool = false
+var _initial_state_sync_generation: int = 0
 var _network_well_of_fire_choosing_player_index: int = -1
 var _network_action_clock_context: Dictionary = {}
 var _well_of_fire_timeout_choice: Dictionary = {}
@@ -6344,6 +6346,10 @@ func start_game(
 		game_manager.feedback_viewer = game_manager.players[0]
 	if _is_networked_client:
 		_awaiting_initial_full_state = true
+		var sync_generation := _initial_state_sync_generation
+		get_tree().create_timer(INITIAL_MATCH_STATE_TIMEOUT_SECONDS).timeout.connect(
+			_on_initial_match_state_timeout.bind(sync_generation), CONNECT_ONE_SHOT
+		)
 		_sync_priority_preferences_to_match(true)
 		_set_action_label_text("Joining match. Waiting for server state...")
 		update_ui()
@@ -6370,6 +6376,7 @@ func _build_initial_match_players(default_match_setup, server_match_session = nu
 	return match_players
 
 func _prepare_for_match_launch(status_message: String = "Connecting to match...") -> void:
+	_initial_state_sync_generation += 1
 	_pending_visual_game_result.clear()
 	_ranked_match_result.clear()
 	_clear_resolution_effects()
@@ -29642,7 +29649,8 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 		"match_join_denied":
 			_awaiting_initial_full_state = false
 			_set_match_reconnect_wait(false)
-			_set_action_label_text(str(data.get("reason", "Match authentication failed.")))
+			var denial_reason := str(data.get("reason", "Match authentication failed."))
+			_set_action_label_text(denial_reason)
 			match_session_cleared.emit()
 			update_ui()
 			_update_waiting_overlay()
@@ -30713,6 +30721,18 @@ func _update_waiting_overlay() -> void:
 				return
 
 	_update_waiting_status(false)
+
+func _on_initial_match_state_timeout(generation: int) -> void:
+	if generation != _initial_state_sync_generation or not _match_launch_loading:
+		return
+	if game_manager == null or game_manager.turn_number > 0 or game_manager.is_game_over:
+		return
+	var reason := "The match server connected but did not send a playable game state."
+	_awaiting_initial_full_state = false
+	_set_action_label_text(reason)
+	update_ui()
+	# MainMenu may clean up this game synchronously from this signal.
+	match_connection_lost.emit(reason)
 
 func _should_show_opponent_priority_waiting(priority_player: Player, priority_idx: int, local_idx: int) -> bool:
 	if game_manager == null or priority_player == null:
