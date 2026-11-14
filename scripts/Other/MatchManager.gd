@@ -1051,6 +1051,19 @@ func _string_uid_list(values: Array) -> Array[String]:
 			uids.append(uid)
 	return uids
 
+func _get_command_discards(command: Dictionary, valid_cards: Array[Card], cost: int) -> Array[Card]:
+	var selected: Array[Card] = []
+	var uids = command.get("discard_uids")
+	if not uids is Array or uids.size() != cost:
+		return selected
+	for uid in uids:
+		var card := game_manager.get_card_by_uid(str(uid))
+		if card == null or card not in valid_cards or card in selected:
+			selected.clear()
+			return selected
+		selected.append(card)
+	return selected
+
 func _validate_end_turn_discards(player: Player, discard_uids: Array) -> Dictionary:
 	var result := {
 		"ok": false,
@@ -4753,6 +4766,12 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if not play_failure_reason.is_empty():
 				move_failed.emit(play_failure_reason)
 				return false
+			if card.discard_cost > 0 and command.has("discard_uids"):
+				var payment := _get_command_discards(command, card.get_valid_play_discards(acting_player), card.discard_cost)
+				if payment.size() != card.discard_cost:
+					move_failed.emit(card.card_name + " requires a valid discard from hand.")
+					return false
+				card.set_pending_chosen_discards(payment)
 			game_manager.play_card(acting_player, card, zone)
 			move_validated.emit(command)
 			return true
@@ -5254,6 +5273,14 @@ func _process_command_impl(command: Dictionary) -> bool:
 					move_failed.emit(_get_move_activation_failure_reason(power_card, false, power_card.card_owner))
 					return false
 				var activation_command := command.duplicate(true)
+				var activation_discards: Array[Card] = []
+				var activation_discard_cost: int = power_card.get_activation_discard_cost()
+				var has_activation_discards := activation_discard_cost > 0 and command.has("discard_uids")
+				if has_activation_discards:
+					activation_discards = _get_command_discards(command, power_card.get_valid_activation_discards(), activation_discard_cost)
+					if activation_discards.size() != activation_discard_cost:
+						move_failed.emit(power_card.card_name + " requires a valid activation discard from hand.")
+						return false
 				if power_card is Breidablik:
 					var breidablik := power_card as Breidablik
 					act_target = breidablik.resolve_harbor_target(act_target)
@@ -5310,10 +5337,19 @@ func _process_command_impl(command: Dictionary) -> bool:
 					power_card,
 					act_target,
 					func() -> void:
+						if has_activation_discards:
+							var valid_discards: Array[Card] = power_card.get_valid_activation_discards()
+							for discard in activation_discards:
+								if discard not in valid_discards:
+									game_manager.note_player_feedback(power_card.card_name + " lost its chosen discard.")
+									return
+							power_card.set_pending_activation_discards(activation_discards)
 						if power_card.has_method("activate_from_command"):
 							power_card.call("activate_from_command", game_manager, activation_command)
 						else:
 							power_card.activate(game_manager, act_target)
+						if has_activation_discards:
+							power_card.clear_pending_activation_discards()
 				)
 				_advance_authoritative_priority()
 			move_validated.emit(command)

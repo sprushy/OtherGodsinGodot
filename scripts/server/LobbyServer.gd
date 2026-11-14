@@ -1050,8 +1050,12 @@ func _handle_request_bot_work(peer_id: int, payload: Dictionary = {}) -> void:
 		deck_b = _validate_server_bot_deck(available) if not available.is_empty() else _build_fresh_bot_deck_submission()
 	else:
 		var pair := _ranked_bot_deck_pool.select_self_play_pair(busy, _bot_deck_rng)
-		deck_a = _validate_server_bot_deck(pair[0]) if pair.size() == 2 else _build_fresh_bot_deck_submission()
-		deck_b = _validate_server_bot_deck(pair[1]) if pair.size() == 2 else _build_fresh_bot_deck_submission()
+		if pair.size() == 2:
+			deck_a = _validate_server_bot_deck(pair[0])
+			deck_b = _validate_server_bot_deck(pair[1])
+		else:
+			deck_a = _build_fresh_bot_deck_submission()
+			deck_b = _build_fresh_bot_deck_submission({str(deck_a.get("god_name", "")): 1})
 	if deck_a.is_empty() or deck_b.is_empty():
 		_send_to_peer(peer_id, LobbyProtocolScript.BOT_WORK_RESULT, {
 			"job_id": "",
@@ -1443,7 +1447,10 @@ func _broadcast_bot_match_history() -> void:
 
 func _get_recent_match_activity_notifications() -> Array[Dictionary]:
 	_refresh_ranked_bot_deck_pool()
-	var activities: Array[Dictionary] = match_history_store.get_recent_match_activities(12)
+	var activities: Array[Dictionary] = match_history_store.get_recent_match_activities(
+		12,
+		_ranked_bot_deck_pool.get_eliminated_bot_match_ids()
+	)
 	if activities.is_empty():
 		return activities
 	var usernames: Dictionary = account_store.get_ladder_usernames()
@@ -1456,10 +1463,19 @@ func _get_recent_match_activity_notifications() -> Array[Dictionary]:
 		if not god["challenger"].is_empty():
 			bots.append(god["challenger"])
 		for bot: Dictionary in bots:
-			ladders[1].append({"name": bot["name"], "list_id": bot["list_id"], "account_id": "", "points": int(bot["stars"])})
+			ladders[1].append({"name": bot["name"], "list_id": bot["list_id"], "account_id": "", "points": int(bot["stars"]),
+				"wins": int(bot.get("wins", 0)), "losses": int(bot.get("losses", 0))})
 	for best_of in [1, 3]:
 		ladders[best_of].sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-			return a["name"].nocasecmp_to(b["name"]) < 0 if int(a["points"]) == int(b["points"]) else int(a["points"]) > int(b["points"])
+			if int(a["points"]) != int(b["points"]):
+				return int(a["points"]) > int(b["points"])
+			var a_games := int(a.get("wins", 0)) + int(a.get("losses", 0))
+			var b_games := int(b.get("wins", 0)) + int(b.get("losses", 0))
+			var a_record_score := int(a.get("wins", 0)) * b_games
+			var b_record_score := int(b.get("wins", 0)) * a_games
+			if a_record_score != b_record_score:
+				return a_record_score > b_record_score
+			return a["name"].nocasecmp_to(b["name"]) < 0
 		)
 	for activity: Dictionary in activities:
 		var best_of := int(activity.get("best_of", 1))
@@ -1489,7 +1505,15 @@ func _get_recent_match_activity_notifications() -> Array[Dictionary]:
 				row["points"] = before_points
 				break
 		ladder_before.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-			return a["name"].nocasecmp_to(b["name"]) < 0 if int(a["points"]) == int(b["points"]) else int(a["points"]) > int(b["points"])
+			if int(a["points"]) != int(b["points"]):
+				return int(a["points"]) > int(b["points"])
+			var a_games := int(a.get("wins", 0)) + int(a.get("losses", 0))
+			var b_games := int(b.get("wins", 0)) + int(b.get("losses", 0))
+			var a_record_score := int(a.get("wins", 0)) * b_games
+			var b_record_score := int(b.get("wins", 0)) * a_games
+			if a_record_score != b_record_score:
+				return a_record_score > b_record_score
+			return a["name"].nocasecmp_to(b["name"]) < 0
 		)
 		var previous_place := -1
 		for index in range(ladder_before.size()):
@@ -1498,21 +1522,14 @@ func _get_recent_match_activity_notifications() -> Array[Dictionary]:
 			if matches_previous_row:
 				previous_place = index
 				break
-		var achievement := str(activity.get("achievement", ""))
 		var rank_update := ""
 		if current_place < 100 and previous_place >= 100:
-			rank_update = "entered the top 100"
+			rank_update = "enters the top 100"
 		for band in range(90, 0, -10):
 			if previous_place >= band and current_place < band:
-				rank_update = (rank_update + " and " if not rank_update.is_empty() else "") + "entered the top %d" % band
-		if current_place < 100 and (not rank_update.is_empty() or not achievement.is_empty()):
-			if not rank_update.is_empty():
-				achievement += " and " if not achievement.is_empty() else ""
-				achievement += rank_update
-			if not achievement.contains("rank %d" % (current_place + 1)):
-				achievement += " and " if not achievement.is_empty() else ""
-				achievement += "is rank %d" % (current_place + 1)
-			activity["achievement"] = achievement
+				rank_update = "enters the top %d" % band
+		if current_place < 100 and not rank_update.is_empty():
+			activity["ladder_update"] = "%s at position #%d" % [rank_update, current_place + 1]
 	for activity: Dictionary in activities:
 		activity.erase("winner_account_id")
 		activity.erase("winner_bot_list_id")
@@ -1611,7 +1628,9 @@ func _build_ladder_page(request: Dictionary) -> Dictionary:
 				ladder.append({"name": bot["name"], "list_id": bot["list_id"], "points": bot["stars"],
 					"rank": rank["name"], "stars": rank["stars"], "is_bot": true,
 					"portrait": portrait,
-					"wins": int(bot.get("wins", 0)), "losses": int(bot.get("losses", 0)), "draws": int(bot.get("draws", 0))})
+					"wins": int(bot.get("wins", 0)), "losses": int(bot.get("losses", 0)), "draws": int(bot.get("draws", 0)),
+					"main_gods": [str(god.get("god_name", ""))],
+					"recent_matches": match_history_store.get_recent_ranked_bot_matches_for_list(str(bot["list_id"]), 10)})
 	ladder.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		if int(a["points"]) != int(b["points"]):
 			return int(a["points"]) > int(b["points"])
@@ -1654,8 +1673,6 @@ func _public_ladder_rows(rows: Array[Dictionary]) -> Array[Dictionary]:
 	for row in rows:
 		var account_id := str(row.get("account_id", ""))
 		row.erase("account_id")
-		row.erase("wins")
-		row.erase("losses")
 		if account_id.is_empty():
 			continue
 		var portrait := _get_public_rank_portrait(account_id, row["rank"])
@@ -2079,12 +2096,49 @@ func _busy_bot_list_ids() -> Dictionary:
 				busy[list_id] = true
 	return busy
 
-func _build_fresh_bot_deck_submission() -> Dictionary:
+func _build_fresh_bot_deck_submission(extra_reserved: Dictionary = {}) -> Dictionary:
 	_ensure_server_bot_deck_factory()
+	_refresh_ranked_bot_deck_pool()
 	_server_bot_seed_counter += 1
 	var deck_seed := int(Time.get_unix_time_from_system()) + _server_bot_seed_counter
+	var reserved := _get_reserved_fresh_bot_god_counts()
+	for god_name in extra_reserved:
+		reserved[god_name] = int(reserved.get(god_name, 0)) + int(extra_reserved[god_name])
+	var preferred_gods := _ranked_bot_deck_pool.rank_underrepresented_gods(
+		server_bot_deck_factory.get_ranked_god_names(), _bot_deck_rng, reserved
+	)
+	for god_name in preferred_gods:
+		var preferred_deck: Dictionary = server_bot_deck_factory.build_random_deck(deck_seed, god_name, true)
+		var preferred_submission := _validate_server_bot_deck(preferred_deck)
+		if not preferred_submission.is_empty():
+			return preferred_submission
 	var fresh_deck: Dictionary = server_bot_deck_factory.build_random_deck(deck_seed, "", true)
 	return _validate_server_bot_deck(fresh_deck)
+
+func _get_reserved_fresh_bot_god_counts() -> Dictionary:
+	var reserved := {}
+	for room: LobbyRoom in rooms_by_id.values():
+		for session_id in room.members:
+			if not _is_server_bot_session(session_id):
+				continue
+			var submission := room.get_deck_submission(session_id)
+			if not str(submission.get("bot_list_id", "")).is_empty():
+				continue
+			var god_name := str(submission.get("bot_god_name", ""))
+			if not god_name.is_empty():
+				reserved[god_name] = int(reserved.get(god_name, 0)) + 1
+	var now_unix := int(Time.get_unix_time_from_system())
+	for job: Dictionary in _client_bot_jobs.values():
+		if int(job.get("expires_unix", 0)) <= now_unix:
+			continue
+		for deck_key in ["deck_a", "deck_b"]:
+			var deck: Dictionary = job.get(deck_key, {})
+			if not str(deck.get("list_id", "")).is_empty():
+				continue
+			var god_name := str(deck.get("god_name", ""))
+			if not god_name.is_empty():
+				reserved[god_name] = int(reserved.get(god_name, 0)) + 1
+	return reserved
 
 func _validate_server_bot_deck(deck: Dictionary) -> Dictionary:
 	if deck.is_empty():
@@ -2195,7 +2249,7 @@ func _launch_bot_self_play() -> void:
 	_refresh_ranked_bot_deck_pool()
 	var pair := _ranked_bot_deck_pool.select_self_play_pair(_busy_bot_list_ids(), _bot_deck_rng)
 	var first := _build_fresh_bot_deck_submission() if pair.is_empty() else _validate_server_bot_deck(pair[0])
-	var second := _build_fresh_bot_deck_submission() if pair.is_empty() else _validate_server_bot_deck(pair[1])
+	var second := _build_fresh_bot_deck_submission({str(first.get("god_name", "")): 1}) if pair.is_empty() else _validate_server_bot_deck(pair[1])
 	if first.is_empty() or second.is_empty() or not RankedBotDeckPoolScript.can_self_play_pair(first, second):
 		return
 	if first["cards"] == second["cards"] and first["special_setup"] == second["special_setup"]:

@@ -168,7 +168,9 @@ The most important beginner habit is to use Main Phase to build a board before m
 During the Upkeep window, you usually choose one of these resource options:
 
 - Gain 4 mana.
-- Draw 1 card.
+- Open your deck and choose **+1 card**.
+
+Select either deck to inspect it in draw order. Both players can see primed and shelved cards in their current positions until the deck is shuffled. A primed card on top is also face up on the board. Unknown cards appear face down.
 
 At the start of upkeep, you normally gain 1 automatic mana immediately, before choosing a resource option. Choosing mana then adds 4 more mana; choosing a card adds no further mana.
 
@@ -449,6 +451,7 @@ Cards explain their own rules text, and keyword hints appear in card detail view
 - Unlock: pay to turn on a Power.
 - Relock: turn an unlocked Power face-down again.
 - Resurrect: return a destroyed card from Graveyard to field.
+- Prime: put a card on top of a deck and reveal its identity to both players.
 - Shelve: put a card on the bottom of its owner's deck.
 - Mill: put cards from the top of a deck into the Graveyard.
 - Search: look through your deck for a card, then shuffle.

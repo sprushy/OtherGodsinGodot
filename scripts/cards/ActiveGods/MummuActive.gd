@@ -64,12 +64,11 @@ func resolve_entropy_choice(game_manager: GameManager, destroyed_card: Card, pla
 
 	var resolved_placement := ENTROPY_SHELVE if placement == ENTROPY_SHELVE else ENTROPY_PRIME
 	var owner := destroyed_card.card_owner
-	owner.move_card(destroyed_card, owner.deck_zone)
 	if resolved_placement == ENTROPY_SHELVE:
-		owner.deck_zone.shelve_deck_card(destroyed_card)
+		owner.move_card(destroyed_card, owner.deck_zone, Zone.DeckPlacement.SHELVED)
 		return "%s shelved %s." % [card_name, destroyed_card.get_target_log_display_name(game_manager.get_feedback_viewer())]
 
-	owner.deck_zone.prime_card(destroyed_card)
+	owner.move_card(destroyed_card, owner.deck_zone, Zone.DeckPlacement.PRIMED)
 	return "%s primed %s." % [card_name, destroyed_card.get_target_log_display_name(game_manager.get_feedback_viewer())]
 
 func on_removed(game_manager: GameManager) -> void:

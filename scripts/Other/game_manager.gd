@@ -102,6 +102,8 @@ const INTERCEPT_COUNT_VALUE_META := "intercept_count_value"
 # Priority system
 var priority_player: Player = null
 var consecutive_passes: int = 0
+var has_authoritative_priority_response_snapshot: bool = false
+var authoritative_priority_response_uids: Dictionary = {}
 var _effect_source_card_stack: Array[Card] = []
 var resolving_stack_actions: Array[CardAction] = []
 
@@ -696,6 +698,13 @@ func can_card_respond_to_priority(card: Card, player: Player = null) -> bool:
 	if action_stack.is_empty():
 		return false
 	return can_card_respond_to_action(card, action_stack.back(), player)
+
+func has_authoritative_priority_response(card: Card) -> bool:
+	if not has_authoritative_priority_response_snapshot:
+		return false
+	if card == null or not ("uid" in card):
+		return false
+	return bool(authoritative_priority_response_uids.get(str(card.uid), false))
 
 # Also used for read-only planning before an action is placed on the stack.
 func can_card_respond_to_action(card: Card, top: CardAction, player: Player = null) -> bool:
@@ -3993,7 +4002,7 @@ func _send_to_abyss_with_hook(card: Card) -> void:
 func send_to_deck_bottom_with_hook(card: Card) -> void:
 	if card.current_zone != null and card.current_zone.is_board_zone():
 		card.process_board_leave_hooks(self)
-	card.card_owner.move_card(card, card.card_owner.deck_zone)
+	card.card_owner.move_card(card, card.card_owner.deck_zone, Zone.DeckPlacement.SHELVED)
 
 func _on_player_card_moved(card: Card, from_zone: Zone, to_zone: Zone) -> void:
 	if card == null:

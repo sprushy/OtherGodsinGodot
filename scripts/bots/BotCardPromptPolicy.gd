@@ -54,6 +54,16 @@ static func build_command(bot, type: String, data: Dictionary) -> Dictionary:
 			command["target_uid"] = bot._choose_removal_reveal_target_uid(source, data.get("target_uids", []))
 		elif type == "lailoken_reveal":
 			command["target_uid"] = _best_reveal_target(bot, source, data.get("target_uids", []))
+		elif type == "apollyons_demiurge":
+			command["target_uid"] = bot._choose_demiurge_summon(data.get("target_uids", []))
+		elif type == "tonal_extraction" and source is TonalExtraction:
+			var targets: Array[Card] = []
+			for target in source.get_valid_targets(bot.game_manager):
+				if target.uid in data.get("target_uids", []):
+					targets.append(target)
+			var plan: Dictionary = bot._plan_tonal_extraction(source, targets, bot._forecast_incoming_follower_loss())
+			var choice: Dictionary = plan.get("command", {})
+			command["target_uid"] = choice.get("target_uid", targets[0].uid if not targets.is_empty() else "")
 		else:
 			command["target_uid"] = _best_uid(bot, data, "target_uids", type in HARMFUL_TARGET_PROMPTS)
 		if type == "sixth_sage_an_enlilda_impact" and source is SixthSageAnEnlilda:
@@ -212,14 +222,14 @@ static func build_command(bot, type: String, data: Dictionary) -> Dictionary:
 			var pay_cost: bool = source is WheelOfFire and bot._should_pay_wheel_of_fire_upkeep(source as WheelOfFire)
 			command.merge({"type": "wheel_of_fire_turn_start_choice", "pay_cost": pay_cost})
 		"breidablik_turn_start":
-			var target_uid := _best_uid(bot, data, "target_uids", false)
+			var target_uid: String = bot._choose_breidablik_return(source, data.get("target_uids", []))
 			command.merge({"type": "breidablik_turn_start_choice", "return_priest": not target_uid.is_empty(), "target_uid": target_uid})
 		"advanced_building_techniques":
 			var power: Card = bot.game_manager.get_card_by_uid(str(data.get("power_uid", "")))
 			var structure: Card = bot.game_manager.get_card_by_uid(str(data.get("structure_uid", "")))
 			var mana_to_spend := 0
 			if power is AdvancedBuildingTechniques:
-				mana_to_spend = mini(1, power.get_max_structure_bonus_mana(structure, bot.game_manager))
+				mana_to_spend = bot._choose_structure_ward_mana(power, structure)
 			command = {
 				"type": "apply_advanced_building_techniques", "power_uid": str(data.get("power_uid", "")),
 				"structure_uid": str(data.get("structure_uid", "")), "mana_to_spend": mana_to_spend,

@@ -434,7 +434,7 @@ func _ready() -> void:
 		multiplayer_container.visibility_changed.connect(_refresh_sound_mute_button)
 	get_viewport().size_changed.connect(_fit_to_viewport)
 	if ip_line_edit != null:
-		ip_line_edit.visible = true
+		ip_line_edit.visible = false
 		ip_line_edit.text = _get_project_default_lobby_host()
 		ip_line_edit.placeholder_text = "Dedicated lobby IP or hostname"
 
@@ -1197,6 +1197,13 @@ func _apply_main_menu_text_sizing() -> void:
 	_apply_seek_action_button_sizing()
 
 func _apply_seek_action_button_sizing() -> void:
+	if is_instance_valid(_ladder_button) and deck_picker_option != null:
+		deck_picker_option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_ladder_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_ladder_button.custom_minimum_size = Vector2(
+			deck_picker_option.custom_minimum_size.x,
+			maxf(36.0, deck_picker_option.get_combined_minimum_size().y)
+		)
 	if not is_instance_valid(_seek_action_row):
 		return
 	_seek_action_row.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
@@ -2742,7 +2749,10 @@ func _build_seek_tabs() -> void:
 	_ladder_button = Button.new()
 	_ladder_button.text = "Ladder"
 	_ladder_button.pressed.connect(_open_bot_ladder)
-	_seek_action_row.add_child(_ladder_button)
+	_ladder_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	multiplayer_container.add_child(_ladder_button)
+	if ip_line_edit != null:
+		multiplayer_container.move_child(_ladder_button, ip_line_edit.get_index())
 	_host_bot_match_button = Button.new()
 	_host_bot_match_button.text = "Host Bot Matches"
 	_host_bot_match_button.pressed.connect(_on_host_bot_match_pressed)
@@ -2838,10 +2848,17 @@ func _render_recent_match_activities(raw_activities: Variant) -> void:
 			continue
 		var activity: Dictionary = raw_activity
 		var announcement := str(activity.get("message", "")).strip_edges()
-		var achievement := str(activity.get("achievement", "")).strip_edges()
-		if not achievement.is_empty():
-			announcement += " and " if not announcement.is_empty() else ""
-			announcement += achievement
+		var winner_name := str(activity.get("winner_name", "")).strip_edges()
+		var loser_name := str(activity.get("loser_name", "")).strip_edges()
+		var rank_achievement := str(activity.get("rank_achievement", "")).strip_edges()
+		var ladder_update := str(activity.get("ladder_update", "")).strip_edges()
+		if not winner_name.is_empty() and not loser_name.is_empty() and not announcement.contains("has been eliminated"):
+			if not rank_achievement.is_empty():
+				announcement = "%s reached %s by defeating %s" % [winner_name, rank_achievement, loser_name]
+			else:
+				announcement = "%s defeated %s" % [winner_name, loser_name]
+		if not ladder_update.is_empty():
+			announcement += ", and %s" % ladder_update
 		if announcement.is_empty():
 			continue
 		var card := PanelContainer.new()
@@ -7801,7 +7818,7 @@ func _get_interactive_tutorial_steps(lesson_id: String, mode: String) -> Array[D
 				},
 				{
 					"title": "Choose Upkeep",
-					"body": "Use the upkeep buttons on the left. Mana lets you play cards now; draw improves your hand.",
+					"body": "Choose the mana well for more mana, or open your deck and choose +1 card.",
 					"check": "choose_upkeep"
 				},
 				{

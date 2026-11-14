@@ -391,6 +391,9 @@ const MATCH_REPLAY_MULTI_DESTROY_THRESHOLD := 2
 var _opponent_draw_deck = null
 var _local_deck_badge: RankBadgeScript
 var _opponent_deck_badge: RankBadgeScript
+var _match_identity_panels: Array[PanelContainer] = []
+var _match_identity_names: Array[Label] = []
+var _match_identity_badges: Array[RankBadgeScript] = []
 var _upkeep_hint_completed_choices: int = 0
 # Retain the saved hint preference as the glow mode; text teaches automatically.
 var _upkeep_hint_mode: String = "always"
@@ -2602,7 +2605,7 @@ func _ready() -> void:
 	_promote_transient_ui(_observer_perspective_button, TRANSIENT_UI_Z_INDEX + 100)
 	resized.connect(_layout_board_art_background)
 
-	draw_button.pressed.connect(_on_draw_button_pressed)
+	draw_button.pressed.connect(_on_deck_pressed.bind(false))
 	mana_button.pressed.connect(_on_mana_button_pressed)
 	draw_button.mouse_entered.connect(_clear_locked_power_cursor_hover)
 	mana_button.mouse_entered.connect(_clear_locked_power_cursor_hover)
@@ -6567,13 +6570,14 @@ func _setup_turn_choice_buttons() -> void:
 	draw_button.set_card_protector_enabled(true)
 	_opponent_draw_deck = DrawDeckButtonScript.new()
 	_opponent_draw_deck.name = "OpponentDrawDeck"
-	_opponent_draw_deck.disabled = true
 	_opponent_draw_deck.visible = false
 	add_child(_opponent_draw_deck)
 	_opponent_draw_deck.set_opponent_view(true)
 	_opponent_draw_deck.set_card_protector_enabled(true)
+	_opponent_draw_deck.pressed.connect(_on_deck_pressed.bind(true))
 	_local_deck_badge = _add_deck_rank_badge("LocalDeckRankBadge")
 	_opponent_deck_badge = _add_deck_rank_badge("OpponentDeckRankBadge")
+	_setup_match_identity_panels()
 	choice_container.reparent(self, false)
 	choice_container.z_index = 1
 	# Reuse the existing hint as an overlay between the table props.
@@ -6689,7 +6693,71 @@ func _sync_deck_rank_badge(badge: RankBadgeScript, player: Player) -> void:
 	if _is_observer_mode:
 		badge.tooltip_text = _get_player_display_name_for_index(index)
 
+func _setup_match_identity_panels() -> void:
+	for player_index in range(2):
+		var panel := PanelContainer.new()
+		panel.name = "MatchPlayerIdentity%d" % (player_index + 1)
+		panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		panel.custom_minimum_size = Vector2(250.0, 58.0)
+		panel.set_anchors_preset(Control.PRESET_TOP_LEFT if player_index == 0 else Control.PRESET_TOP_RIGHT)
+		panel.offset_left = 18.0 if player_index == 0 else -268.0
+		panel.offset_right = 268.0 if player_index == 0 else -18.0
+		panel.offset_top = 18.0
+		panel.offset_bottom = 76.0
+		var style := StyleBoxFlat.new()
+		style.bg_color = Color("101722", 0.90)
+		style.border_color = Color("d2b477", 0.60)
+		style.set_border_width_all(1)
+		style.set_corner_radius_all(8)
+		style.content_margin_left = 7.0
+		style.content_margin_right = 7.0
+		style.content_margin_top = 4.0
+		style.content_margin_bottom = 4.0
+		panel.add_theme_stylebox_override("panel", style)
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
+		panel.add_child(row)
+		var badge := RankBadgeScript.new()
+		badge.custom_minimum_size = Vector2(48.0, 48.0)
+		badge.size = Vector2(48.0, 48.0)
+		badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(badge)
+		var player_name := Label.new()
+		player_name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		player_name.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		player_name.clip_text = true
+		player_name.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		player_name.add_theme_font_size_override("font_size", 15)
+		player_name.add_theme_color_override("font_color", Color("f4e8cd"))
+		row.add_child(player_name)
+		add_child(panel)
+		_match_identity_panels.append(panel)
+		_match_identity_names.append(player_name)
+		_match_identity_badges.append(badge)
+
+func _sync_match_identity_panels() -> void:
+	if _match_identity_panels.size() != 2 or game_manager == null or game_manager.players.size() < 2:
+		return
+	var show_identity := _is_observer_mode or bool(_current_match_info.get("has_bot", false))
+	for player_index in range(2):
+		var panel := _match_identity_panels[player_index]
+		panel.visible = show_identity
+		if not show_identity:
+			continue
+		var player_name := _get_player_display_name_for_index(player_index)
+		var name_label := _match_identity_names[player_index]
+		name_label.text = player_name
+		name_label.tooltip_text = player_name
+		var badges: Array = _current_match_info.get("rank_badges", [])
+		var entry: Dictionary = badges[player_index] if player_index < badges.size() else {}
+		var rank_name := str(entry.get("rank_name", ""))
+		var badge := _match_identity_badges[player_index]
+		badge.visible = not rank_name.is_empty()
+		badge.set_badge(rank_name, entry.get("portrait", {}))
+		badge.tooltip_text = "%s · %s" % [player_name, rank_name] if not rank_name.is_empty() else player_name
+
 func _sync_turn_start_props() -> void:
+	_sync_match_identity_panels()
 	if mana_button != null:
 		mana_button.set_board_style(_get_mana_well_board_style())
 	if _opponent_draw_deck == null:
@@ -6721,6 +6789,13 @@ func _sync_turn_start_props() -> void:
 	_sync_deck_rank_badge(_opponent_deck_badge, opponent)
 	draw_button.set_deck_count(display_player.deck_zone.get_card_count())
 	_opponent_draw_deck.set_deck_count(opponent.deck_zone.get_card_count())
+	var local_top := display_player.deck_zone.get_primed_top_card()
+	if local_top != null and _card_shelve_animations.has(local_top.uid):
+		local_top = null
+	draw_button.set_primed_top_card(local_top)
+	_opponent_draw_deck.set_primed_top_card(opponent.deck_zone.get_primed_top_card())
+	if is_instance_valid(_deck_overlay_draw_button):
+		_deck_overlay_draw_button.visible = _can_choose_turn_start_option() and _deck_overlay_zone == display_player.deck_zone
 	_opponent_draw_deck.set_opponent_draw_available(not _game_finished \
 		and game_manager.current_player == opponent \
 		and game_manager.is_player_in_upkeep_window(opponent) \
@@ -7175,6 +7250,7 @@ func _do_update_ui(expected_generation: int = -1) -> void:
 	_ui_update_pending = false
 	if game_manager == null:
 		return
+	_refresh_deck_overlay()
 	_refresh_pending_priority_response_target_selection_from_state()
 	_sync_visual_linger_input_blocker()
 	_hide_power_hover_popup()
@@ -10987,7 +11063,7 @@ func _start_card_shelve_animation(card: Card, source: Dictionary) -> void:
 	_promote_transient_ui(animation, HAND_OVERLAY_Z_INDEX + 10)
 	_card_shelve_animations[card.uid] = animation
 	animation.tree_exited.connect(_release_card_shelve_animation.bind(card.uid, animation), CONNECT_ONE_SHOT)
-	var on_top: bool = not card.card_owner.deck_zone.cards.is_empty() and card.card_owner.deck_zone.cards.front() == card
+	var on_top := card.card_owner.deck_zone.get_primed_top_card() == card
 	var on_insert: Callable = draw_button.show_deck_count_temporarily if on_top else draw_button.insert_shelved_card
 	animation.play_shelve(card, source, _get_shelve_insert_geometry.bind(card.uid, on_top), on_insert, on_top)
 	update_ui()
@@ -13930,6 +14006,11 @@ func _prompt_absence_target_selection() -> void:
 	update_ui()
 
 var _zone_overlay: Control = null
+var _deck_overlay_zone: Zone
+var _deck_overlay_cards: Array[Card] = []
+var _deck_overlay_title: Label
+var _deck_overlay_grid: HFlowContainer
+var _deck_overlay_draw_button: Button
 
 func _create_centered_overlay_panel(overlay: Control, width_ratio: float = 0.90, height_ratio: float = 0.42, card_display: bool = false) -> PanelContainer:
 	var panel := PanelContainer.new()
@@ -13962,7 +14043,8 @@ func _create_centered_overlay_panel(overlay: Control, width_ratio: float = 0.90,
 	return panel
 
 func _show_zone_contents(zone_name: String, zone: Zone) -> void:
-	if zone.cards.is_empty():
+	var is_deck := zone.zone_type == Zone.ZoneType.DECK
+	if zone.cards.is_empty() and not is_deck:
 		_set_action_label_text(zone_name + " is empty.")
 		return
 
@@ -13985,7 +14067,7 @@ func _show_zone_contents(zone_name: String, zone: Zone) -> void:
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	overlay.add_child(bg)
 
-	var panel := _create_centered_overlay_panel(overlay, 0.90, 0.62, true)
+	var panel := _create_centered_overlay_panel(overlay, 0.90, 0.76 if is_deck else 0.62, not is_deck)
 
 	var vbox := VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", 8)
@@ -13995,15 +14077,14 @@ func _show_zone_contents(zone_name: String, zone: Zone) -> void:
 
 	# Title
 	var title := Label.new()
-	title.text = zone_name + " (%d)" % zone.cards.size()
+	title.text = zone_name if is_deck else zone_name + " (%d)" % zone.cards.size()
 	title.add_theme_font_size_override("font_size", 15)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(title)
 
-	# Centered, gently fanned cards; large piles retain scrolling.
 	var scroll := ScrollContainer.new()
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED if is_deck else ScrollContainer.SCROLL_MODE_AUTO
 	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -14011,24 +14092,80 @@ func _show_zone_contents(zone_name: String, zone: Zone) -> void:
 	scroll.mouse_filter = Control.MOUSE_FILTER_STOP
 	vbox.add_child(scroll)
 
-	var fan := CardOverlayFanScript.new()
-	scroll.add_child(fan)
-
-	for card in zone.cards:
-		var vc := VisualCard.new()
-		vc.setup(card)
-		vc.set_hover_viewer(game_manager.get_feedback_viewer())
-		vc.set_hover_use_board_popup(true, game_manager)
-		vc.set_hover_preview_when_disabled(true)
-		vc.set_disabled(true, false)
-		vc.size_flags_vertical = Control.SIZE_EXPAND_FILL
-		fan.add_card(vc)
+	if is_deck:
+		_deck_overlay_zone = zone
+		_deck_overlay_title = title
+		_deck_overlay_grid = HFlowContainer.new()
+		_deck_overlay_grid.alignment = FlowContainer.ALIGNMENT_CENTER
+		_deck_overlay_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_deck_overlay_grid.add_theme_constant_override("h_separation", 8)
+		_deck_overlay_grid.add_theme_constant_override("v_separation", 8)
+		scroll.add_child(_deck_overlay_grid)
+		var buttons := HBoxContainer.new()
+		buttons.alignment = BoxContainer.ALIGNMENT_CENTER
+		vbox.add_child(buttons)
+		_deck_overlay_draw_button = Button.new()
+		_deck_overlay_draw_button.text = "+1 card"
+		_deck_overlay_draw_button.visible = zone == _get_display_player().deck_zone and _can_choose_turn_start_option()
+		_deck_overlay_draw_button.pressed.connect(_on_draw_button_pressed)
+		buttons.add_child(_deck_overlay_draw_button)
+		var close_button := Button.new()
+		close_button.text = "Close"
+		close_button.pressed.connect(_dismiss_zone_overlay)
+		buttons.add_child(close_button)
+		_refresh_deck_overlay()
+	else:
+		var fan := CardOverlayFanScript.new()
+		scroll.add_child(fan)
+		for card in zone.cards:
+			fan.add_card(_make_zone_overlay_card(card))
 
 	# The transparent panel and scroll area also cover empty space beside cards.
 	# Their STOP filters prevent those clicks from reaching the backdrop.
 	panel.gui_input.connect(_on_zone_overlay_background_gui_input)
-	scroll.gui_input.connect(_on_zone_overlay_background_gui_input)
+	if not is_deck:
+		scroll.gui_input.connect(_on_zone_overlay_background_gui_input)
 	overlay.gui_input.connect(_on_zone_overlay_background_gui_input)
+
+func _make_zone_overlay_card(card: Card, compact: bool = false) -> VisualCard:
+	var visual := VisualCard.new()
+	if compact:
+		visual.set_show_rules_text(false)
+		visual.setup(card, 136, 205)
+	else:
+		visual.setup(card)
+	visual.set_hover_viewer(game_manager.get_feedback_viewer())
+	visual.set_hover_use_board_popup(true, game_manager)
+	visual.set_hover_preview_when_disabled(true)
+	visual.set_disabled(true, false)
+	visual.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	return visual
+
+func _refresh_deck_overlay() -> void:
+	if _deck_overlay_zone == null or not is_instance_valid(_deck_overlay_grid):
+		return
+	var count := _deck_overlay_zone.get_card_count()
+	_deck_overlay_title.text = "%s’s Deck (%d) · Top to Bottom" % [_deck_overlay_zone.zone_owner.player_name, count]
+	var known_cards: Array[Card] = []
+	for index in count:
+		known_cards.append(_deck_overlay_zone.get_known_deck_card(index))
+	if known_cards == _deck_overlay_cards:
+		return
+	_deck_overlay_cards = known_cards
+	for child in _deck_overlay_grid.get_children():
+		_deck_overlay_grid.remove_child(child)
+		child.queue_free()
+	for card in known_cards:
+		if card != null:
+			_deck_overlay_grid.add_child(_make_zone_overlay_card(card, true))
+		else:
+			var back := TextureRect.new()
+			back.texture = CardBackTexture
+			back.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			back.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			back.custom_minimum_size = Vector2(136, 205)
+			back.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			_deck_overlay_grid.add_child(back)
 
 func _show_card_selection_overlay(
 	title_text: String,
@@ -14347,6 +14484,11 @@ func _dismiss_zone_overlay() -> void:
 	if _zone_overlay and is_instance_valid(_zone_overlay):
 		_zone_overlay.queue_free()
 	_zone_overlay = null
+	_deck_overlay_zone = null
+	_deck_overlay_cards.clear()
+	_deck_overlay_title = null
+	_deck_overlay_grid = null
+	_deck_overlay_draw_button = null
 	_overlay_card_selected = Callable()
 	_overlay_card_dismissed = Callable()
 	_card_selection_overlay_active = false
@@ -16211,8 +16353,7 @@ func _on_local_player_card_moved(card: Card, from_zone: Zone, to_zone: Zone) -> 
 		return
 	if not _is_networked_client and to_zone != null \
 			and to_zone.zone_type == Zone.ZoneType.DECK and from_zone != to_zone:
-		# Prime effects put the card on top after move_card emits its signal.
-		# Read the final deck order once the effect has finished resolving.
+		# Wait for the full effect in case the card is moved or shuffled again.
 		_start_card_shelve_animation.call_deferred(card, _get_shelve_source(card, from_zone))
 	if not _is_networked_client and from_zone != to_zone:
 		_selection_card_move_sources.erase(card.uid)
@@ -22195,6 +22336,10 @@ func _try_handle_escape_key(event: InputEvent) -> bool:
 		_close_action_log_popup()
 		get_viewport().set_input_as_handled()
 		return true
+	if _deck_overlay_zone != null:
+		_dismiss_zone_overlay()
+		get_viewport().set_input_as_handled()
+		return true
 	if _small_screen_play_view != null and _small_screen_play_view.active:
 		_small_screen_play_view.exit_focus()
 		get_viewport().set_input_as_handled()
@@ -28102,6 +28247,12 @@ func _is_attacker_on_board(attacker: Card, owning_player: Player) -> bool:
 		return false
 	return attacker.current_zone != null and attacker.current_zone.zone_type == Zone.ZoneType.FRONTLINE
 
+func _on_deck_pressed(opponent: bool) -> void:
+	if not _turn_start_props_are_ready() or is_instance_valid(_zone_overlay):
+		return
+	var player := _get_display_opponent() if opponent else _get_display_player()
+	_show_zone_contents("Deck", player.deck_zone)
+
 func _on_draw_button_pressed() -> void:
 	if not _can_choose_turn_start_option():
 		_set_action_label_text("Not Yet")
@@ -28116,6 +28267,8 @@ func _on_draw_button_pressed() -> void:
 	if _skoll_prompt_panel != null or _pending_skoll_summon != null:
 		_set_action_label_text("Finish resolving Sun Hunt or cancel it before choosing another upkeep option.")
 		return
+	if _deck_overlay_zone != null:
+		_dismiss_zone_overlay()
 	_set_turn_choice_controls_disabled(true)
 	if _upkeep_hint_completed_choices < UPKEEP_HINT_CHOICE_LIMIT:
 		_upkeep_hint_pending_turn = game_manager.turn_number
@@ -29800,11 +29953,10 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 			_series_snapshot = (data.get("series", {}) as Dictionary).duplicate(true)
 			_current_match_info["series"] = _series_snapshot.duplicate(true)
 			_series_between_games_active = false
+			_ranked_match_result = (data.get("ranked_result", {}) as Dictionary).duplicate(true)
 			if _is_observer_mode:
 				# The detailed terminal board state normally follows this public result.
 				call_deferred("_present_spectator_series_result", data)
-			else:
-				_ranked_match_result = (data.get("ranked_result", {}) as Dictionary).duplicate(true)
 		"game_ended":
 			if game_manager != null and data.has("match_result_stats"):
 				game_manager.match_result_stats = (data["match_result_stats"] as Dictionary).duplicate(true)

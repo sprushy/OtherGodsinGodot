@@ -172,7 +172,7 @@ func game_over() -> void:
 	print(player_name + " has lost!")
 	defeated.emit(self)
 
-func move_card(card: Card, to_zone: Zone) -> void:
+func move_card(card: Card, to_zone: Zone, deck_placement: Zone.DeckPlacement = Zone.DeckPlacement.UNKNOWN) -> void:
 	var from_zone = card.current_zone
 	var destination_zone := _resolve_destination_zone(card, from_zone, to_zone)
 	var detached_equipment: Array[Card] = []
@@ -229,7 +229,7 @@ func move_card(card: Card, to_zone: Zone) -> void:
 	
 	if from_zone:
 		from_zone.remove_card(card)
-	destination_zone.add_card(card)
+	destination_zone.add_card(card, deck_placement)
 	if destination_zone.is_in_play_zone():
 		card.reset_board_leave_hooks()
 	card_moved.emit(card, from_zone, destination_zone)
@@ -321,7 +321,7 @@ func banish_card(card: Card) -> void:
 
 func shelve_card(card: Card) -> void:
 	if card.current_zone == hand_zone:
-		move_card(card, deck_zone)
+		move_card(card, deck_zone, Zone.DeckPlacement.SHELVED)
 
 func shuffle_card_into_deck(card: Card) -> bool:
 	if card == null:

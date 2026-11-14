@@ -4798,6 +4798,8 @@ func _is_card_usable_for_priority(card: Card) -> bool:
 		return false
 	if _should_suppress_priority_response_visuals():
 		return false
+	if game_manager.has_authoritative_priority_response_snapshot:
+		return game_manager.has_authoritative_priority_response(card)
 	return game_manager.can_card_respond_to_priority(card, game_manager.priority_player)
 
 func _should_show_playing_aura(card: Card) -> bool:

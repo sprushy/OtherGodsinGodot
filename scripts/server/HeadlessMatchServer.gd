@@ -6,6 +6,7 @@ const HeadlessMatchHostScript = preload("res://scripts/server/HeadlessMatchHost.
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const DefaultMatchSetupScript = preload("res://scripts/server/DefaultMatchSetup.gd")
 const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
+const RankedProgressionScript = preload("res://scripts/server/RankedProgression.gd")
 const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
 const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
 const PracticeFuzzPlayerBotScript = preload("res://scripts/bots/PracticeFuzzPlayerBot.gd")
@@ -422,6 +423,9 @@ func _on_game_ended(_winner: Player, _loser: Player) -> void:
 		for player_index in network_manager.player_peer_ids:
 			_send_series_end_to_player(int(player_index))
 		var spectator_result := _series_end_payload.duplicate()
+		var spectator_ranked_result := _get_spectator_bot_ranked_result(winner_index)
+		if not spectator_ranked_result.is_empty():
+			spectator_result["ranked_result"] = spectator_ranked_result
 		var followers: Array[int] = []
 		for player in game_manager.players:
 			followers.append(player.followers)
@@ -678,6 +682,41 @@ func _record_match_result(winner: Player, loser: Player) -> Dictionary:
 			_on_bot_review_move_failed("Failed to save the rated match result.")
 		return {}
 	return _match_history_store.get_ranked_match_results(record_result["entry"])
+
+func _get_spectator_bot_ranked_result(winner_index: int) -> Dictionary:
+	if match_session == null or not match_session.is_ranked or winner_index < 0:
+		return {}
+	var ranked_player_index := winner_index
+	var session_id := str(match_session.player_session_ids[ranked_player_index]).strip_edges()
+	if not match_session.is_bot_session(session_id):
+		var loser_index := 1 - winner_index
+		if loser_index < 0 or loser_index >= match_session.player_session_ids.size():
+			return {}
+		session_id = str(match_session.player_session_ids[loser_index]).strip_edges()
+		if not match_session.is_bot_session(session_id):
+			return {}
+		ranked_player_index = loser_index
+	var submission: Dictionary = match_session.player_decks_by_session.get(session_id, {})
+	var previous_points := maxi(0, int(submission.get("bot_stars", 0)))
+	var previous := RankedProgressionScript.summarize_bot_stars(previous_points)
+	var outcome := "win" if ranked_player_index == winner_index else "loss"
+	var next_points := previous_points + 1 if outcome == "win" else previous_points
+	if outcome == "loss":
+		next_points = maxi(int(previous["floor_points"]), previous_points - 1)
+	var after := RankedProgressionScript.summarize_bot_stars(next_points)
+	return {
+		"best_of": int(match_session.series_best_of),
+		"previous_rank_name": str(previous["name"]),
+		"rank_name": str(after["name"]),
+		"previous_stars": int(previous["stars"]),
+		"previous_stars_required": int(previous["stars_required"]),
+		"stars": int(after["stars"]),
+		"stars_required": int(after["stars_required"]),
+		"previous_points": previous_points,
+		"points": next_points,
+		"star_delta": next_points - previous_points,
+		"loss_protected": outcome == "loss" and next_points == previous_points,
+	}
 
 func _write_status_file(status_override: String = "", reason: String = "") -> void:
 	if match_session == null:

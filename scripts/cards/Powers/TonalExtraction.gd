@@ -27,7 +27,7 @@ func _init() -> void:
 
 func can_unlock(game_manager: GameManager) -> bool:
 	return super.can_unlock(game_manager) \
-		and _find_open_summon_zone() != null \
+		and get_open_summon_zone() != null \
 		and not get_valid_targets(game_manager).is_empty()
 
 func get_unlock_failure_reason(game_manager: GameManager) -> String:
@@ -41,7 +41,7 @@ func get_unlock_failure_reason(game_manager: GameManager) -> String:
 		return card_name + " cannot be unlocked this turn."
 	if card_owner != game_manager.current_player:
 		return "It is not " + card_name + "'s turn to unlock."
-	if _find_open_summon_zone() == null:
+	if get_open_summon_zone() == null:
 		return card_name + " needs an open zone for the Spirit."
 	if get_valid_targets(game_manager).is_empty():
 		return card_name + " needs a friendly Shapeshifter on the field."
@@ -83,13 +83,13 @@ func can_activate(game_manager: GameManager) -> bool:
 		and _pending_unlock_resolution \
 		and _bound_shapeshifter == null \
 		and _spirit_token == null \
-		and _find_open_summon_zone() != null \
+		and get_open_summon_zone() != null \
 		and not get_valid_targets(game_manager).is_empty()
 
 func get_activation_failure_reason(game_manager: GameManager) -> String:
 	if not _pending_unlock_resolution:
 		return card_name + " has no extraction choice pending."
-	if _find_open_summon_zone() == null:
+	if get_open_summon_zone() == null:
 		return card_name + " needs an open zone for the Spirit."
 	if get_valid_targets(game_manager).is_empty():
 		return card_name + " found no friendly Shapeshifter to extract."
@@ -113,7 +113,7 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 	if target == null or target not in get_valid_targets(game_manager):
 		game_manager.note_player_feedback(card_name + " fizzles: choose a friendly Shapeshifter.")
 		return
-	var summon_zone := _find_open_summon_zone()
+	var summon_zone := get_open_summon_zone()
 	if summon_zone == null:
 		game_manager.note_player_feedback(card_name + " needs an open zone for the Spirit.")
 		return
@@ -239,7 +239,7 @@ func _consume_pending_unlock_target(valid_targets: Array[Card]) -> Card:
 			return target
 	return null
 
-func _find_open_summon_zone() -> Zone:
+func get_open_summon_zone() -> Zone:
 	if card_owner == null:
 		return null
 	for zone in card_owner.frontline_zones:

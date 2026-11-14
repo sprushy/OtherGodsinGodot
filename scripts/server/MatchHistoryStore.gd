@@ -288,13 +288,9 @@ func get_recent_bot_matches(limit: int = 50, before_match_id: String = "") -> Di
 		matches.append({"match_id": match_id, "played_unix": entry["played_unix"], "players": seats, "battle": entry.get("bot_battle", {})})
 	return {"matches": matches, "next_cursor": next_cursor}
 
-func get_recent_match_activities(limit: int = 12) -> Array[Dictionary]:
+func get_recent_match_activities(limit: int = 12, eliminated_bot_match_ids: Dictionary = {}) -> Array[Dictionary]:
 	_ensure_loaded()
 	_load_dedicated_results()
-	var eliminated_bot_matches: Dictionary = {}
-	for bot_result: Dictionary in get_bot_deck_results():
-		if bool(bot_result.get("bot_eliminated", false)):
-			eliminated_bot_matches[str(bot_result.get("match_id", ""))] = true
 	var activities: Array[Dictionary] = []
 	var match_ids := _get_sorted_match_ids(_matches_by_id.keys())
 	for index in range(match_ids.size() - 1, -1, -1):
@@ -320,7 +316,9 @@ func get_recent_match_activities(limit: int = 12) -> Array[Dictionary]:
 			"played_unix": int(entry.get("played_unix", 0)),
 			"best_of": int(entry.get("best_of", 1)),
 			"message": "%s defeated %s" % [winner_name, loser_name],
-			"achievement": "",
+			"winner_name": winner_name,
+			"loser_name": loser_name,
+			"rank_achievement": "",
 			"winner_account_id": str(winner.get("account_id", "")),
 			"winner_bot_list_id": "",
 			"winner_before_points": -1,
@@ -334,15 +332,13 @@ func get_recent_match_activities(limit: int = 12) -> Array[Dictionary]:
 			elif int(bot_result.get("player_index", -1)) == int(loser.get("player_index", -2)):
 				loser_bot_result = bot_result
 		var loser_bot_match_id := "%s_%d" % [str(entry["match_id"]), int(loser.get("player_index", -1))] if entry.get("bot_deck_results", []).size() > 1 else str(entry["match_id"])
-		if not loser_bot_result.is_empty() and eliminated_bot_matches.has(loser_bot_match_id):
-			var eliminated_name := _bot_activity_name(loser_bot_result, loser_name)
-			var victor_name := _bot_activity_name(winner_bot_result, winner_name) if not winner_bot_result.is_empty() else winner_name
-			activity["message"] = "%s lost to %s and has been eliminated from the ladder" % [eliminated_name, victor_name]
+		if not loser_bot_result.is_empty() and eliminated_bot_match_ids.has(loser_bot_match_id):
+			activity["message"] = "%s lost to %s and has been eliminated from the ladder." % [loser_name, winner_name]
 		if not winner_bot_result.is_empty():
 			var previous_bot_rank := RankedProgressionScript.summarize_bot_stars(int(winner.get("bot_stars", 0)))
 			var after_bot_rank := RankedProgressionScript.summarize_bot_stars(int(winner.get("bot_stars", 0)) + 1)
 			if previous_bot_rank["name"] != after_bot_rank["name"]:
-				activity["achievement"] = "reached %s" % str(after_bot_rank["name"])
+				activity["rank_achievement"] = str(after_bot_rank["name"])
 			activity["winner_before_points"] = int(winner.get("bot_stars", 0))
 			activity["winner_after_points"] = int(winner.get("bot_stars", 0)) + 1
 			activity["winner_bot_list_id"] = str(winner_bot_result.get("list_id", ""))
@@ -352,7 +348,7 @@ func get_recent_match_activities(limit: int = 12) -> Array[Dictionary]:
 			var previous_rank := str(result.get("previous_rank_name", ""))
 			var rank_name := str(result.get("rank_name", ""))
 			if not previous_rank.is_empty() and previous_rank != rank_name:
-				activity["achievement"] = "reached %s" % rank_name
+				activity["rank_achievement"] = rank_name
 			activity["winner_before_points"] = int(result.get("previous_points", -1))
 			activity["winner_after_points"] = int(result.get("points", -1))
 		activities.append(activity)
@@ -360,13 +356,7 @@ func get_recent_match_activities(limit: int = 12) -> Array[Dictionary]:
 
 func _activity_player_name(player: Dictionary) -> String:
 	var player_name := str(player.get("player_name", "Player")).strip_edges()
-	if str(player.get("account_id", "")).is_empty():
-		player_name = player_name.replace(": ", " ")
 	return player_name if not player_name.is_empty() else "Player"
-
-func _bot_activity_name(bot_result: Dictionary, fallback: String) -> String:
-	var god_name := str(bot_result.get("god_name", "")).strip_edges().get_slice(",", 0).strip_edges()
-	return god_name if not god_name.is_empty() else fallback
 
 func get_human_ladder(usernames: Dictionary, best_of: int) -> Array[Dictionary]:
 	_ensure_loaded()
@@ -375,17 +365,21 @@ func get_human_ladder(usernames: Dictionary, best_of: int) -> Array[Dictionary]:
 	var players: Array[Dictionary] = []
 	for account_id in usernames:
 		var progress := _get_ranked_progress(account_id, best_of, season)
-		var record := _get_ranked_record(str(account_id), best_of)
+		var record := _get_lifetime_ranked_stats(str(account_id))
 		players.append({"account_id": account_id, "name": usernames[account_id], "points": progress["points"],
 			"rank": progress["rank_name"], "stars": progress["stars"],
-			"wins": int(record["wins"]), "losses": int(record["losses"])})
+			"wins": int(record["wins"]), "losses": int(record["losses"]), "draws": int(record["draws"]),
+			"main_gods": record["main_gods"],
+			"recent_matches": get_recent_ranked_matches_for_player(str(account_id), 10)})
 	return players
 
-func _get_ranked_record(account_id: String, best_of: int) -> Dictionary:
-	var record := {"wins": 0, "losses": 0}
+func _get_lifetime_ranked_stats(account_id: String) -> Dictionary:
+	var record := {"wins": 0, "losses": 0, "draws": 0, "main_gods": []}
+	var god_counts: Dictionary = {}
+	var total_games := 0
 	for match_id in _get_sorted_match_ids(_ranked_history_ids_by_account_id.get(account_id, [])):
 		var entry: Dictionary = _matches_by_id.get(match_id, {})
-		if int(entry.get("best_of", 1)) != best_of:
+		if not bool(entry.get("advances_rank", false)):
 			continue
 		for raw_player_entry in entry.get("players", []):
 			if not (raw_player_entry is Dictionary):
@@ -394,12 +388,107 @@ func _get_ranked_record(account_id: String, best_of: int) -> Dictionary:
 			if str(player_entry.get("account_id", "")) != account_id:
 				continue
 			var result := str(player_entry.get("result", "")).strip_edges().to_lower()
+			total_games += 1
 			if result == "win":
 				record["wins"] += 1
 			elif result == "loss":
 				record["losses"] += 1
+			elif result == "draw":
+				record["draws"] += 1
+			var god_name := str(player_entry.get("god_name", "")).strip_edges()
+			if not god_name.is_empty():
+				god_counts[god_name] = int(god_counts.get(god_name, 0)) + 1
 			break
+	var gods: Array[String] = []
+	for god_name in god_counts.keys():
+		gods.append(str(god_name))
+	gods.sort_custom(func(a: String, b: String) -> bool:
+		var a_count := int(god_counts[a])
+		var b_count := int(god_counts[b])
+		return a < b if a_count == b_count else a_count > b_count
+	)
+	if not gods.is_empty():
+		if float(god_counts[gods[0]]) / float(total_games) > 0.5:
+			record["main_gods"] = [gods[0]]
+		else:
+			record["main_gods"] = gods.slice(0, mini(2, gods.size()))
 	return record
+
+func get_recent_ranked_matches_for_player(account_id: String, limit: int = 10) -> Array[Dictionary]:
+	_ensure_loaded()
+	_load_dedicated_results()
+	var matches: Array[Dictionary] = []
+	var match_ids := _get_sorted_match_ids(_ranked_history_ids_by_account_id.get(account_id, []))
+	for index in range(match_ids.size() - 1, -1, -1):
+		if matches.size() >= maxi(1, limit):
+			break
+		var entry: Dictionary = _matches_by_id.get(match_ids[index], {})
+		if not bool(entry.get("advances_rank", false)):
+			continue
+		var player: Dictionary = _get_player_entry_for_account(entry, account_id)
+		if player.is_empty():
+			continue
+		var opponent: Dictionary = _get_opponent_entry_for_account(entry, account_id)
+		matches.append({
+			"played_unix": int(entry.get("played_unix", 0)),
+			"best_of": int(entry.get("best_of", 1)),
+			"result": str(player.get("result", "draw")),
+			"opponent_name": _activity_player_name(opponent),
+			"opponent_god_name": str(opponent.get("god_name", "")),
+		})
+	return matches
+
+func get_recent_ranked_bot_matches_for_list(list_id: String, limit: int = 10) -> Array[Dictionary]:
+	_ensure_loaded()
+	_load_dedicated_results()
+	var matches: Array[Dictionary] = []
+	var match_ids := _get_sorted_match_ids(_bot_deck_match_ids)
+	for index in range(match_ids.size() - 1, -1, -1):
+		if matches.size() >= maxi(1, limit):
+			break
+		var entry: Dictionary = _matches_by_id.get(match_ids[index], {})
+		var bot_result: Dictionary = {}
+		for result: Dictionary in entry.get("bot_deck_results", []):
+			if str(result.get("list_id", "")) == list_id:
+				bot_result = result
+				break
+		if bot_result.is_empty():
+			continue
+		var player_index := int(bot_result.get("player_index", -1))
+		var player: Dictionary = _get_player_entry_for_index(entry, player_index)
+		var opponent: Dictionary = _get_opponent_entry_for_index(entry, player_index)
+		matches.append({
+			"played_unix": int(entry.get("played_unix", 0)),
+			"best_of": int(entry.get("best_of", 1)),
+			"result": str(bot_result.get("result", "draw")),
+			"opponent_name": _activity_player_name(opponent),
+			"opponent_god_name": str(opponent.get("god_name", "")),
+		})
+	return matches
+
+func _get_player_entry_for_account(entry: Dictionary, account_id: String) -> Dictionary:
+	for player: Dictionary in entry.get("players", []):
+		if str(player.get("account_id", "")) == account_id:
+			return player
+	return {}
+
+func _get_opponent_entry_for_account(entry: Dictionary, account_id: String) -> Dictionary:
+	for player: Dictionary in entry.get("players", []):
+		if str(player.get("account_id", "")) != account_id:
+			return player
+	return {}
+
+func _get_player_entry_for_index(entry: Dictionary, player_index: int) -> Dictionary:
+	for player: Dictionary in entry.get("players", []):
+		if int(player.get("player_index", -1)) == player_index:
+			return player
+	return {}
+
+func _get_opponent_entry_for_index(entry: Dictionary, player_index: int) -> Dictionary:
+	for player: Dictionary in entry.get("players", []):
+		if int(player.get("player_index", -1)) != player_index:
+			return player
+	return {}
 
 func get_current_ranked_progress(account_id: String, best_of: int) -> Dictionary:
 	_ensure_loaded()

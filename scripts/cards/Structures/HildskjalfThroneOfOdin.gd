@@ -118,16 +118,11 @@ func resolve_high_seat_choice(game_manager: GameManager, chosen_card: Card) -> S
 	if chosen_card not in top_cards:
 		return "%s fizzles: %s is no longer among the top cards." % [card_name, chosen_card.card_name]
 
-	var shelved_cards: Array[Card] = []
-	for card in top_cards:
-		deck_owner.deck_zone.cards.erase(card)
-		if card == chosen_card:
-			continue
-		shelved_cards.append(card)
-
-	deck_owner.deck_zone.prime_card(chosen_card, deck_owner == card_owner)
+	var shelved_cards := top_cards
+	shelved_cards.erase(chosen_card)
+	deck_owner.deck_zone.prime_card(chosen_card)
 	for card in shelved_cards:
-		deck_owner.deck_zone.cards.append(card)
+		deck_owner.deck_zone.shelve_deck_card(card)
 
 	uses_this_turn += 1
 

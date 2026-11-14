@@ -13,12 +13,42 @@ enum ZoneType {
 	POWER_SLOT
 }
 
+enum DeckPlacement { UNKNOWN, SHELVED, PRIMED, REVEALED }
+
 @export var zone_type: ZoneType
 @export var zone_index: int = -1
 var cards: Array[Card] = []
 var zone_owner: Player
-# Authoritative knowledge for the deck owner. Never serialized to opponents.
-var known_top_card: Card
+var _public_deck_placements: Dictionary[Card, DeckPlacement] = {}
+var known_top_card: Card:
+	get:
+		return get_known_deck_card(0)
+
+func get_deck_placement(card: Card) -> DeckPlacement:
+	return _public_deck_placements.get(card, DeckPlacement.UNKNOWN)
+
+func get_known_deck_card(index: int) -> Card:
+	if index < 0 or index >= cards.size():
+		return null
+	var card := cards[index]
+	return card if _public_deck_placements.has(card) else null
+
+func get_primed_top_card() -> Card:
+	var card := known_top_card
+	return card if get_deck_placement(card) == DeckPlacement.PRIMED else null
+
+func set_deck_placement(card: Card, placement: DeckPlacement) -> void:
+	if placement == DeckPlacement.UNKNOWN:
+		_public_deck_placements.erase(card)
+	else:
+		_public_deck_placements[card] = placement
+
+func reveal_deck_card(card: Card) -> void:
+	if card.current_zone == self and get_deck_placement(card) == DeckPlacement.UNKNOWN:
+		set_deck_placement(card, DeckPlacement.REVEALED)
+
+func clear_deck_knowledge() -> void:
+	_public_deck_placements.clear()
 
 func get_unordered_deck_cards() -> Array[Card]:
 	var unordered := cards.duplicate()
@@ -27,30 +57,31 @@ func get_unordered_deck_cards() -> Array[Card]:
 	return unordered
 
 func shuffle_deck() -> void:
-	known_top_card = null
+	clear_deck_knowledge()
 	cards.shuffle()
 
-func prime_card(card: Card, known_to_owner: bool = true) -> void:
+func prime_card(card: Card) -> void:
 	cards.erase(card)
-	cards.push_front(card)
-	known_top_card = card if known_to_owner else null
+	add_card(card, DeckPlacement.PRIMED)
 
 func shelve_deck_card(card: Card) -> void:
-	if card == known_top_card:
-		known_top_card = null
 	cards.erase(card)
-	cards.append(card)
+	add_card(card, DeckPlacement.SHELVED)
 
-func add_card(card: Card) -> void:
-	cards.append(card)
+func add_card(card: Card, deck_placement: DeckPlacement = DeckPlacement.UNKNOWN) -> void:
+	if zone_type == ZoneType.DECK and deck_placement == DeckPlacement.PRIMED:
+		cards.push_front(card)
+	else:
+		cards.append(card)
+	if zone_type == ZoneType.DECK:
+		set_deck_placement(card, deck_placement)
 	card.current_zone = self
 	if zone_owner != null and is_in_play_zone() \
 			and (card.is_god or card.has_type("Active God")):
 		zone_owner.has_had_god_in_play = true
 
 func remove_card(card: Card) -> void:
-	if card == known_top_card:
-		known_top_card = null
+	_public_deck_placements.erase(card)
 	cards.erase(card)
 	if card.current_zone == self:
 		card.current_zone = null

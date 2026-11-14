@@ -51,6 +51,7 @@ func run() -> bool:
 	_check_network_payload_guards(failures)
 	_check_full_state_event_payload_budget(failures)
 	_check_game_state_privacy(failures)
+	_check_public_deck_knowledge(failures)
 	_check_json_store_round_trip(failures)
 	_check_match_supervisor_launch_config(failures)
 	_check_ranked_progression(failures)
@@ -61,9 +62,12 @@ func run() -> bool:
 	_check_ranked_bot_manifestations(failures)
 	_check_bot_power_followthrough(failures)
 	_check_bot_summon_and_intercept(failures)
+	_check_bot_fenrir_summon(failures)
 	_check_bot_main_phase_combat_order(failures)
 	_check_bot_defender_target_value(failures)
 	_check_bot_hermes_speed(failures)
+	_check_bot_violent_delights_upkeep(failures)
+	_check_bot_shift_and_extraction(failures)
 	_check_bot_combat_buff_value(failures)
 	_check_bot_jiang_counterstroke(failures)
 	_check_bot_reveal_defense(failures)
@@ -452,6 +456,75 @@ func _check_game_state_privacy(failures: PackedStringArray) -> void:
 		if hidden_card.has("card_name"):
 			failures.append("opponent hand leaked card name: %s" % str(hidden_card.get("card_name", "")))
 
+func _check_public_deck_knowledge(failures: PackedStringArray) -> void:
+	var manager := GameManager.new()
+	var owner := Player.new()
+	manager.players.assign([owner, Player.new()])
+	var deck := owner.deck_zone
+	var hidden := BrownBear.new()
+	hidden.card_owner = owner
+	deck.add_card(hidden)
+	var first := RedCap.new()
+	first.card_owner = owner
+	deck.add_card(first)
+	deck.prime_card(first)
+	var second := Huginn.new()
+	second.card_owner = owner
+	owner.hand_zone.add_card(second)
+	owner.move_card(second, deck, Zone.DeckPlacement.PRIMED)
+	var shelved := Muninn.new()
+	shelved.card_owner = owner
+	owner.hand_zone.add_card(shelved)
+	owner.shelve_card(shelved)
+
+	var mirror := GameManager.new()
+	mirror.players.assign([Player.new(), Player.new()])
+	var mirror_deck := mirror.players[0].deck_zone
+	for viewer in [0, 1, GameState.SPECTATOR_VIEWER_INDEX]:
+		GameState.apply_to_manager(GameState.serialize(manager, viewer), mirror)
+		if mirror_deck.get_card_count() != 4 or mirror_deck.get_primed_top_card() == null \
+				or mirror_deck.get_primed_top_card().uid != second.uid \
+				or mirror_deck.get_known_deck_card(1) == null or mirror_deck.get_known_deck_card(1).uid != first.uid \
+				or mirror_deck.get_known_deck_card(2) != null \
+				or mirror_deck.get_known_deck_card(3) == null or mirror_deck.get_known_deck_card(3).uid != shelved.uid:
+			failures.append("Public deck cards lost their positions for viewer %d" % viewer)
+			break
+		if viewer != 0 and mirror.get_card_by_uid(hidden.uid) != null:
+			failures.append("Unknown deck card leaked to viewer %d" % viewer)
+			break
+	var opponent := manager.players[1]
+	manager.current_player = opponent
+	manager.other_player = owner
+	manager.turn_player = opponent
+	var throne := HildskjalfThroneOfOdin.new()
+	throne.card_owner = opponent
+	opponent.reserve_zones[0].add_card(throne)
+	GameState.apply_to_manager(GameState.serialize(manager, 1), mirror)
+	if mirror_deck.cards[2].uid != hidden.uid or mirror_deck.get_known_deck_card(2) != null:
+		failures.append("A private High Seat peek did not stay separate from public deck knowledge")
+	opponent.reserve_zones[0].remove_card(throne)
+	var bot := ThorPracticeBot.new()
+	bot.bot_player = opponent
+	bot.opponent = owner
+	if not BotCardStrategyScript.visible(bot, shelved) or BotCardStrategyScript.visible(bot, hidden):
+		failures.append("Bot visibility did not distinguish public from unknown deck cards")
+
+	if owner.draw_card() != second or deck.get_primed_top_card() != first \
+			or deck.get_deck_placement(second) != Zone.DeckPlacement.UNKNOWN:
+		failures.append("Drawing a primed card did not expose the next primed card")
+	deck.shelve_deck_card(first)
+	if deck.known_top_card != null or deck.get_known_deck_card(1) != shelved or deck.get_known_deck_card(2) != first:
+		failures.append("Shelving a primed card did not preserve public cards in bottom order")
+	deck.shuffle_deck()
+	GameState.apply_to_manager(GameState.serialize(manager, 1), mirror)
+	if BotCardStrategyScript.visible(bot, shelved):
+		failures.append("Bot retained the identity of a shelved deck position after a shuffle")
+	for index in deck.get_card_count():
+		if deck.get_known_deck_card(index) != null or mirror_deck.get_known_deck_card(index) != null \
+				or not mirror_deck.cards[index].uid.is_empty():
+			failures.append("Shuffling did not clear public deck knowledge")
+			break
+
 func _check_json_store_round_trip(failures: PackedStringArray) -> void:
 	var storage_path := "user://ci_preflight_json_store.json"
 	var global_path := ProjectSettings.globalize_path(storage_path)
@@ -701,6 +774,12 @@ func _check_dedicated_ranked_history(failures: PackedStringArray) -> void:
 
 func _check_ranked_bot_deck_generation(failures: PackedStringArray) -> void:
 	var factory := PracticeAutofillDeckFactory.new()
+	var tez := TezcatlipocaTheSmokingMirror.new()
+	var tez_deck := factory.build_random_deck(1337, tez.card_name, true)
+	if int(tez_deck.get("cards", {}).get("Tonal Extraction", 0)) != 1:
+		failures.append("Ranked Tezcatlipoca did not include Tonal Extraction in a generated Shapeshifter deck")
+	if factory._get_power_candidates(tez, {tez.card_name: 1, "Brown Bear": 3}, true).any(func(card: Card) -> bool: return card is TonalExtraction):
+		failures.append("Ranked Tezcatlipoca added Tonal Extraction without an eligible creature")
 	var thor := Thor.new()
 	for legendary in [false, true]:
 		var candidates := factory._get_regular_candidates(thor, {}, legendary, true)
@@ -952,6 +1031,74 @@ func _check_bot_summon_and_intercept(failures: PackedStringArray) -> void:
 	player.followers = 8
 	if not bot._choose_interceptor(intercept).is_empty():
 		failures.append("Bot chose a losing interception that still allowed lethal follower damage")
+	bot.detach()
+
+func _check_bot_fenrir_summon(failures: PackedStringArray) -> void:
+	var game := GameManager.new()
+	var player := Player.new()
+	var opponent := Player.new()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	player.mana = 5
+	opponent.followers = 30
+	var manager := MatchManager.new(game)
+	var bot := PracticeFuzzPlayerBot.new()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var fenrir := Fenrir.new()
+	fenrir.card_owner = player
+	player.hand_zone.add_card(fenrir)
+	for index in range(fenrir.sacrifice_cost):
+		var payment := CreatureCard.new()
+		payment.card_owner = player
+		player.reserve_zones[index].add_card(payment)
+	var prey := CreatureCard.new()
+	prey.card_owner = opponent
+	prey.level = 3
+	prey.strength = 7
+	prey.resilience = 32
+	prey.speed = 3
+	prey.creature_mode = Card.CreatureMode.DEFENSIVE
+	opponent.frontline_zones[0].add_card(prey)
+	prey.add_buff("Preflight", 8, 1, 0)
+	prey.add_status_effect("berserker_mead_guard", "Preflight")
+	if not bot._plan_creature_summon().is_empty():
+		failures.append("Bot planned Fenrir's Devour against a target protected from destruction")
+	prey.remove_status_effects_by_name("berserker_mead_guard")
+	var attacker := CreatureCard.new()
+	attacker.card_owner = opponent
+	attacker.level = 5
+	attacker.strength = 40
+	attacker.speed = 2
+	attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
+	opponent.frontline_zones[1].add_card(attacker)
+	var starting_followers := player.followers
+	player.followers = 10
+	var danger := bot._forecast_incoming_follower_loss()
+	var defense := bot._plan_creature_summon(danger)
+	var defense_command: Dictionary = defense.get("command", {})
+	if danger < player.followers or defense_command.get("card_uid") != fenrir.uid \
+			or defense_command.get("mode") != Card.CreatureMode.DEFENSIVE \
+			or int(defense.get("score", 0)) < ThorPracticeBot.ECON_CARD_VALUE * 30:
+		failures.append("Bot overlooked Fenrir's Devour resilience when forecasting lethal on the opponent's turn")
+	opponent.frontline_zones[1].remove_card(attacker)
+	player.followers = starting_followers
+	var summon := bot._plan_creature_summon()
+	var command: Dictionary = summon.get("command", {})
+	if command.get("card_uid") != fenrir.uid or command.get("mode") != Card.CreatureMode.AGGRESSIVE \
+			or int(summon.get("combat_score", 0)) < ThorPracticeBot.ECON_CARD_VALUE * 20:
+		failures.append("Bot overlooked Fenrir's same-turn lethal after devouring a buffed interceptor")
+	elif not bot._submit_strategy_plan(summon):
+		failures.append("Bot could not submit the projected Fenrir summon")
+	else:
+		for _step in range(8):
+			manager.advance_priority()
+		var attack := bot._plan_combat(bot._get_combat_candidates())
+		if prey.current_zone != opponent.graveyard_zone or fenrir.get_effective_strength() != 35 \
+				or fenrir.get_effective_resilience() != 53 or not bool(attack.get("lethal", false)):
+			failures.append("Fenrir's resolved Devour did not produce the projected lethal attack")
 	bot.detach()
 
 func _check_bot_main_phase_combat_order(failures: PackedStringArray) -> void:
@@ -1233,6 +1380,120 @@ func _check_bot_hermes_speed(failures: PackedStringArray) -> void:
 	attacks = bot._get_combat_candidates()
 	if not bot._plan_hermes_speed(attacks, bot._plan_combat(attacks)).is_empty():
 		failures.append("Hermes paid for speed even though the attacker already outran Void Shield")
+	bot.detach()
+
+func _check_bot_violent_delights_upkeep(failures: PackedStringArray) -> void:
+	var game := GameManager.new()
+	var player := Player.new()
+	var opponent := Player.new()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	player.mana = AphroditeAreia.ACTIVATION_COST - 1
+	var manager := MatchManager.new(game)
+	var bot := PracticeFuzzPlayerBot.new()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var aphrodite := AphroditeAreia.new()
+	aphrodite.card_owner = player
+	player.god_zone.add_card(aphrodite)
+	var attacker := CreatureCard.new()
+	attacker.card_owner = player
+	attacker.strength = 24
+	attacker.speed = 4
+	attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
+	player.frontline_zones[0].add_card(attacker)
+	var defender := CreatureCard.new()
+	defender.card_owner = opponent
+	defender.resilience = 8
+	defender.creature_mode = Card.CreatureMode.DEFENSIVE
+	opponent.frontline_zones[0].add_card(defender)
+	var captive := CreatureCard.new()
+	captive.card_owner = opponent
+	captive.strength = 30
+	captive.speed = 1
+	captive.creature_mode = Card.CreatureMode.AGGRESSIVE
+	opponent.reserve_zones[0].add_card(captive)
+	if bot._choose_upkeep_option() != "mana":
+		failures.append("Aphrodite did not take mana for a combat kill followed by Violent Delights")
+	player.mana = AphroditeAreia.ACTIVATION_COST
+	var line := bot._plan_combat(bot._get_combat_candidates())
+	if line.get("target") != defender or not line.get("violent_delights", false):
+		failures.append("Aphrodite did not plan the qualifying attack with mana available for Violent Delights")
+	if bot._choose_upkeep_option() != "draw":
+		failures.append("Aphrodite took extra mana when she could already afford the Violent Delights line")
+	player.mana = AphroditeAreia.ACTIVATION_COST - 1
+	opponent.reserve_zones[0].remove_card(captive)
+	if bot._choose_upkeep_option() != "draw":
+		failures.append("Aphrodite planned to enslave a creature that would be destroyed in combat")
+	bot.detach()
+
+func _check_bot_shift_and_extraction(failures: PackedStringArray) -> void:
+	var game := GameManager.new()
+	var player := Player.new()
+	var opponent := Player.new()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	opponent.followers = 26
+	var manager := MatchManager.new(game)
+	var bot := PracticeFuzzPlayerBot.new()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var thiazi := Thiazi.new()
+	thiazi.card_owner = player
+	thiazi.creature_mode = Card.CreatureMode.AGGRESSIVE
+	player.frontline_zones[0].add_card(thiazi)
+	var blocker := CreatureCard.new()
+	blocker.card_owner = opponent
+	blocker.creature_mode = Card.CreatureMode.AGGRESSIVE
+	blocker.strength = 25
+	blocker.speed = 1
+	opponent.frontline_zones[0].add_card(blocker)
+	var attacks := bot._get_combat_candidates()
+	var shift := bot._plan_shift(attacks, bot._plan_combat(attacks), 0)
+	if not bool(shift.get("lethal", false)) or thiazi.in_animal_form:
+		failures.append("Bot failed to forecast a lethal Shift without changing Thiazi's live form")
+	thiazi.creature_minor_actions_used = thiazi.get_max_minor_creature_actions_per_turn()
+	if bool(bot._plan_shift(attacks, bot._plan_combat(attacks), 0).get("lethal", false)):
+		failures.append("Bot forecast an attack after a Shift that consumes Thiazi's major action")
+	thiazi.creature_minor_actions_used = 0
+	if not bot._take_main_phase_action():
+		failures.append("Bot did not submit the combat Shift")
+	for _step in range(8):
+		manager.advance_priority()
+	if not thiazi.in_animal_form or not thiazi.can_take_major_creature_action():
+		failures.append("Thiazi's Shift did not resolve with its attack still available")
+
+	opponent.frontline_zones[0].remove_card(blocker)
+	thiazi.shift_forms()
+	thiazi.creature_mode = Card.CreatureMode.DEFENSIVE
+	var tez := TezcatlipocaTheSmokingMirror.new()
+	tez.card_owner = player
+	tez.tonal_mastery_tokens = 2
+	player.god_zone.add_card(tez)
+	player.mana = 2
+	var serpent := TheWhiteSerpent.new()
+	serpent.card_owner = player
+	player.reserve_zones[0].add_card(serpent)
+	if not bot._take_main_phase_action():
+		failures.append("Tezcatlipoca did not submit a Shift to complete Tonal Mastery")
+	for _step in range(8):
+		manager.advance_priority()
+	if player.mana != 5 or tez.get_tonal_mastery_token_count() != 0 or not serpent.in_serpent_form:
+		failures.append("Tezcatlipoca's bot did not gain mana from a tactically neutral Shift")
+
+	var power := TonalExtraction.new()
+	power.card_owner = player
+	power.is_face_down = true
+	player.power_zones[0].add_card(power)
+	if not bot._take_main_phase_action():
+		failures.append("Tezcatlipoca did not spend the Tonal Mastery mana on a useful extraction")
+	var spirit := player.frontline_zones[1].get_creature() as TonalExtractionSpiritToken
+	if power.is_face_down or player.mana != 0 or not thiazi.is_shapeshift_locked() \
+			or spirit == null or spirit.get_effective_strength() != 27 or not spirit.has_type("Aerial"):
+		failures.append("Bot did not extract Thiazi's stronger alternate form through the unlock command")
 	bot.detach()
 
 func _check_bot_combat_buff_value(failures: PackedStringArray) -> void:
@@ -1877,6 +2138,20 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 	var pool := RankedBotDeckPoolScript.new()
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 7
+	var representation_results: Array[Dictionary] = []
+	for god_name in ["Thor", "Odin"]:
+		for i in range(7 if god_name == "Thor" else 2):
+			var entry := _bot_pool_result("representation_%s_%d" % [god_name, i], "", {"Variant %d" % i: 40}, "win")
+			entry["god_name"] = god_name
+			representation_results.append(entry)
+	var representation_pool := RankedBotDeckPoolScript.new()
+	representation_pool.refresh(representation_results)
+	var preferred_gods := representation_pool.rank_underrepresented_gods(["Thor", "Odin", "Baldr"], rng)
+	var reserved_gods := representation_pool.rank_underrepresented_gods(["Thor", "Odin", "Baldr"], rng, {"Baldr": 3})
+	var full_gods := representation_pool.rank_underrepresented_gods(["Thor", "Odin", "Baldr"], rng, {"Odin": 5, "Baldr": 7})
+	if preferred_gods.size() != 2 or preferred_gods[0] != "Baldr" or reserved_gods[0] != "Odin" \
+			or not full_gods.is_empty():
+		failures.append("Fresh bot gods were not prioritized by the fewest of seven represented lists")
 	pool.refresh(stored_results)
 	var first_list := pool.select_deck({}, rng, 1)
 	if first_list.get("deck_name") != "Thor: Bloodaxe" or first_list.get("stars") != 1:
@@ -1896,11 +2171,13 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 	var results: Array[Dictionary] = []
 	for i in range(7):
 		results.append(_bot_pool_result("list_%d" % i, "", {"Thor": 1, "Common": 30, "Variant %d" % i: 10}, "win"))
+		for game in range(7 if i == 0 else 8):
+			results.append(_bot_pool_result("seed_%d_%d" % [i, game], "list_%d" % i, {}, "win"))
 	results.append(_bot_pool_result("candidate", "", {"Thor": 1, "Common": 30, "Challenger": 10}, "win"))
 	pool.refresh(results)
 	var candidate := pool.select_deck({}, rng, 1)
 	if pool.can_play_list("Thor", "list_0") or not pool.can_play_list("Thor", "list_1") \
-			or candidate.is_empty() or candidate.get("stars") != 1:
+			or candidate.is_empty() or pool.get_deck_details("candidate").is_empty():
 		failures.append("The eighth bot list did not quarantine an incumbent while preserving same-tier matching")
 	var high_rank_results := results.duplicate()
 	for i in range(14):
@@ -1912,10 +2189,28 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 	var high_rank_match := high_rank_pool.select_deck({}, rng, 16)
 	var high_rank_alternative := high_rank_pool.select_deck({"list_1": true}, rng, 16)
 	if high_rank_match.is_empty() or high_rank_alternative.is_empty() \
+			or high_rank_pool.get_ladder_summary()["gods"][0]["challenger"].get("trial_length") != 23 \
 			or abs(int(RankedProgressionScript.summarize_bot_stars(int(high_rank_match["stars"]))["league"]) - 1) > 2 \
 			or abs(int(RankedProgressionScript.summarize_bot_stars(int(high_rank_alternative["stars"]))["league"]) - 1) > 2 \
 			or high_rank_alternative.get("list_id") == "list_1":
 		failures.append("Bot matchmaking did not sample the same two-tier range while skipping busy lists")
+	var protected_results: Array[Dictionary] = []
+	for i in range(7):
+		protected_results.append(_bot_pool_result("protected_list_%d" % i, "", {"Thor": 1, "Common": 30, "Protected %d" % i: 10}, "win"))
+		if i > 0:
+			for game in range(3):
+				protected_results.append(_bot_pool_result("protected_seed_%d_%d" % [i, game], "protected_list_%d" % i, {}, "win"))
+	for i in range(15):
+		protected_results.append(_bot_pool_result("protected_win_%d" % i, "protected_list_0", {}, "win"))
+	for i in range(8):
+		protected_results.append(_bot_pool_result("protected_loss_%d" % i, "protected_list_0", {}, "loss"))
+	protected_results.append(_bot_pool_result("protected_candidate", "", {"Thor": 1, "Common": 30, "Protected Challenger": 10}, "win"))
+	var protected_pool := RankedBotDeckPoolScript.new()
+	protected_pool.refresh(protected_results)
+	var protected_thor: Dictionary = protected_pool.get_ladder_summary()["gods"][0]
+	if protected_thor["lists"][0]["quarantined"] or not protected_pool.can_play_list("Thor", "protected_list_0") \
+			or protected_thor["challenger"].get("trial_length") != 4:
+		failures.append("A high-star bot was treated as weaker than a short-trial challenger")
 	for i in range(6):
 		var outcome := "loss" if i % 2 == 0 else "win"
 		results.append(_bot_pool_result("trial_%d" % i, "candidate", {}, outcome))
@@ -1926,10 +2221,10 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 	var thor: Dictionary = ladder_summary["gods"][0]
 	var challenger: Dictionary = thor["challenger"]
 	if thor["lists"].size() != 7 or not thor["lists"][0]["quarantined"] \
-			or challenger.get("matches_played") != 6 or challenger.get("wins") != 4 \
+			or challenger.get("matches_played") != 7 or challenger.get("wins") != 4 \
 			or challenger.get("losses") != 3 or challenger.get("draws") != 0 \
-			or challenger.has("cards") or ladder_summary["trial_length"] != 7:
-		failures.append("Bot ladder did not report the quarantined list and six completed trial matches")
+			or challenger.has("cards") or challenger.get("trial_length") != 8:
+		failures.append("Bot ladder did not report the incumbent-sized challenger trial")
 	var quarantined_deck := pool.get_deck_details(thor["lists"][0]["list_id"])
 	var challenger_deck := pool.get_deck_details(challenger.get("list_id", ""))
 	if quarantined_deck.get("cards", {}).get("Variant 0") != 10 \
@@ -1938,7 +2233,7 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 	results.append(_bot_pool_result("trial_6", "candidate", {}, "win"))
 	pool.refresh(results)
 	if not pool.can_play_list("Thor", "list_0") or pool.can_play_list("Thor", "candidate"):
-		failures.append("The stronger incumbent did not return after the seventh trial match")
+		failures.append("The stronger incumbent did not return when the challenger matched its game count")
 	thor = pool.get_ladder_summary()["gods"][0]
 	if not thor["challenger"].is_empty() or thor["lists"][0]["quarantined"]:
 		failures.append("Bot ladder still showed a trial after the seventh match")
@@ -1948,23 +2243,38 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 	var early_retirement_results: Array[Dictionary] = []
 	for i in range(7):
 		early_retirement_results.append(_bot_pool_result("early_list_%d" % i, "", {"Thor": 1, "Common": 30, "Variant %d" % i: 10}, "win"))
+		for game in range(3 if i == 0 else 4):
+			early_retirement_results.append(_bot_pool_result("early_seed_%d_%d" % [i, game], "early_list_%d" % i, {}, "win"))
 	early_retirement_results.append(_bot_pool_result("early_candidate", "", {"Thor": 1, "Common": 30, "Early Challenger": 10}, "win"))
 	for i in range(2):
 		early_retirement_results.append(_bot_pool_result("early_loss_%d" % i, "early_candidate", {}, "loss"))
 	var early_retirement_pool := RankedBotDeckPoolScript.new()
 	early_retirement_pool.refresh(early_retirement_results)
 	var early_summary: Dictionary = early_retirement_pool.get_ladder_summary()["gods"][0]
+	if early_summary["challenger"].get("matches_played") != 3 \
+			or early_summary["challenger"].get("trial_length") != 4 \
+			or early_retirement_pool.can_play_list("Thor", "early_list_0"):
+		failures.append("A challenger was removed before matching the incumbent's game count")
+	early_retirement_results.append(_bot_pool_result("early_loss_final", "early_candidate", {}, "loss"))
+	early_retirement_pool.refresh(early_retirement_results)
+	early_summary = early_retirement_pool.get_ladder_summary()["gods"][0]
 	if not early_summary["challenger"].is_empty() or not early_retirement_pool.can_play_list("Thor", "early_list_0") \
 			or not early_retirement_pool.get_deck_details("early_candidate").is_empty():
-		failures.append("A challenger with a 1-2 record was not retired early")
+		failures.append("The weaker challenger remained after matching the incumbent's game count")
 
-	results.append(_bot_pool_result("distinct", "", {"Thor": 1, "Different": 40}, "win"))
+	var variety_results: Array[Dictionary] = []
 	for i in range(7):
-		var outcome := "loss" if i % 2 == 0 else "win"
-		results.append(_bot_pool_result("variety_%d" % i, "distinct", {}, outcome))
-	pool.refresh(results)
-	if not pool.can_play_list("Thor", "distinct") or pool.can_play_list("Thor", "list_0"):
-		failures.append("A bot list with over 75% different cards did not survive for variety")
+		variety_results.append(_bot_pool_result("variety_list_%d" % i, "", {"Thor": 1, "Common": 30, "Variant %d" % i: 10}, "win"))
+		for game in range(7):
+			var outcome := "loss" if i == 0 and game >= 4 else "win"
+			variety_results.append(_bot_pool_result("variety_seed_%d_%d" % [i, game], "variety_list_%d" % i, {}, outcome))
+	variety_results.append(_bot_pool_result("distinct", "", {"Thor": 1, "Different": 40}, "win"))
+	for i in range(7):
+		variety_results.append(_bot_pool_result("variety_%d" % i, "distinct", {}, "win"))
+	var variety_pool := RankedBotDeckPoolScript.new()
+	variety_pool.refresh(variety_results)
+	if not variety_pool.can_play_list("Thor", "distinct") or variety_pool.can_play_list("Thor", "variety_list_0"):
+		failures.append("A challenger with a better equal-length record did not replace the weakest incumbent")
 
 func _bot_pool_result(match_id: String, list_id: String, cards: Dictionary, outcome: String) -> Dictionary:
 	return {

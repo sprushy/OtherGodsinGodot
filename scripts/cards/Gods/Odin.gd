@@ -115,6 +115,7 @@ func activate_with_data(game_manager: GameManager, offering_card: Card, named_ca
 		if top_card.current_zone == card_owner.hand_zone:
 			feedback += " The guess was correct, so you draw it."
 		else:
+			card_owner.deck_zone.reveal_deck_card(top_card)
 			feedback += " The guess was correct, but it could not be drawn."
 	else:
 		card_owner.lose_followers(FOLLOWER_PENALTY, self)

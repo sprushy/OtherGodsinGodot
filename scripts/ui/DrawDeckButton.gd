@@ -3,6 +3,7 @@ extends Button
 const CARD_BACK := preload("res://images/cardbackAI.png")
 const CARD_PROTECTOR := preload("res://images/ui/zones/snow_gargoyle_card_protector_cw45.png")
 const OPPONENT_CARD_PROTECTOR := preload("res://images/ui/zones/snow_gargoyle_card_protector_opponent_v7.png")
+const UITextureCacheScript = preload("res://scripts/ui/UITextureCache.gd")
 const OPPONENT_PROTECTOR_SCALE := 0.94
 const CARD_PROTECTOR_SCALE := 1.25
 const GOLD := Color(0.91, 0.74, 0.40)
@@ -22,6 +23,8 @@ const PEEL_BEND_START := 0.65
 const PEEL_BEND_ANGLE := 1.15
 
 var _deck_count: int = 0
+var _top_card_name := ""
+var _top_card_art: Texture2D
 var _hover_amount: float = 0.0
 var _card_protector_enabled: bool = false
 var _draw_available: bool = false
@@ -77,11 +80,21 @@ func set_deck_count(count: int) -> void:
 	queue_redraw()
 
 func _update_tooltip() -> void:
-	if _opponent_view:
-		tooltip_text = "%d cards remaining in the opponent's deck" % _deck_count
-	else:
-		var choice_text := "Choose +1 card instead of extra mana." if _draw_available else "Choose +1 card at the start of your turn."
-		tooltip_text = "%s\n%d cards remaining in your deck" % [choice_text, _deck_count]
+	tooltip_text = "Inspect deck (%d cards)" % _deck_count
+	if not _top_card_name.is_empty():
+		tooltip_text += "\nPrimed: " + _top_card_name
+	if _draw_available and not _opponent_view:
+		tooltip_text += "\n+1 card available"
+
+func set_primed_top_card(card: Card) -> void:
+	var next_name := card.get_display_name_for_control(self) if card != null else ""
+	var next_art := UITextureCacheScript.get_texture(card.art_path) if card != null else null
+	if next_name == _top_card_name and next_art == _top_card_art:
+		return
+	_top_card_name = next_name
+	_top_card_art = next_art
+	_update_tooltip()
+	queue_redraw()
 
 func show_deck_count_temporarily() -> void:
 	_count_visible_until_msec = Time.get_ticks_msec() + COUNT_CHANGE_DISPLAY_MSEC
@@ -99,10 +112,6 @@ func set_draw_available(available: bool) -> void:
 
 func set_opponent_view(enabled: bool) -> void:
 	_opponent_view = enabled
-	if enabled:
-		disabled = true
-		focus_mode = Control.FOCUS_NONE
-		mouse_default_cursor_shape = Control.CURSOR_ARROW
 	queue_redraw()
 
 func set_opponent_draw_available(available: bool) -> void:
@@ -161,7 +170,7 @@ func get_top_card_rotation() -> float:
 func _process(delta: float) -> void:
 	if not is_visible_in_tree():
 		return
-	var can_peel := _deck_count > 0 and _is_draw_available() and (not disabled or _opponent_view)
+	var can_peel := _deck_count > 0 and _is_draw_available() and not disabled and _top_card_name.is_empty()
 	var hover_target := 1.0 if can_peel and (is_hovered() or has_focus()) else 0.0
 	_hover_amount = move_toward(_hover_amount, hover_target, delta * (3.6 if hover_target > 0.0 else 4.5))
 	if _card_protector_enabled:
@@ -186,7 +195,7 @@ func _draw() -> void:
 			draw_arc(layer.end - Vector2(6.0, 6.0), 6.0, 0.0, PI * 0.5, 8, PAPER_SEAM, PAPER_SEAM_WIDTH, true)
 		draw_set_transform(Vector2.ZERO)
 		var tint := Color.WHITE if _is_draw_available() else Color(0.64, 0.62, 0.57)
-		_draw_card_back(center, get_top_card_rotation(), tint)
+		_draw_top_card(center, get_top_card_rotation() if _top_card_name.is_empty() else 0.0, tint)
 	else:
 		var empty := StyleBoxFlat.new()
 		empty.bg_color = Color(0.04, 0.045, 0.05, 0.65)
@@ -198,7 +207,7 @@ func _draw() -> void:
 	if _card_protector_enabled:
 		_draw_card_protector(center)
 	if _is_draw_available() and _deck_count > 0:
-		_draw_draw_caption(center)
+		_draw_draw_caption(center, 46.0 if _top_card_name.is_empty() else CARD_SIZE.y * 0.5 + 20.0)
 	var hovered := Rect2(Vector2.ZERO, size).has_point(get_local_mouse_position())
 	var remaining_msec := _count_visible_until_msec - Time.get_ticks_msec()
 	if hovered or remaining_msec > 0:
@@ -217,13 +226,13 @@ func _draw_deck_count(deck_center: Vector2, alpha: float) -> void:
 	var count_width := font.get_string_size(count_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x
 	draw_string(font, Vector2(badge.get_center().x - count_width * 0.5, badge.position.y + 17.0), count_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(0.96, 0.88, 0.70, alpha))
 
-func _draw_draw_caption(deck_center: Vector2) -> void:
+func _draw_draw_caption(deck_center: Vector2, baseline: float) -> void:
 	var font := ThemeDB.fallback_font
 	var caption := "Draw" if _opponent_view else "+1 card"
 	var font_size := 22
 	var width := font.get_string_size(caption, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
 	draw_set_transform(deck_center)
-	var text_position := Vector2(-width * 0.5, 46.0)
+	var text_position := Vector2(-width * 0.5, baseline)
 	draw_string_outline(font, text_position, caption, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, 4, Color(0.0, 0.0, 0.0, 0.95))
 	draw_string(font, text_position, caption, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(0.97, 0.89, 0.70))
 	draw_set_transform(Vector2.ZERO)
@@ -248,7 +257,7 @@ func _draw_card_protector(deck_center: Vector2) -> void:
 	draw_set_transform(Vector2.ZERO)
 	draw_texture_rect(protector_texture, rect, false)
 
-func _draw_card_back(center: Vector2, angle: float, tint: Color) -> void:
+func _draw_top_card(center: Vector2, angle: float, tint: Color) -> void:
 	draw_set_transform(center, angle)
 	var rect := Rect2(-CARD_SIZE * 0.5, CARD_SIZE)
 	if choice_highlight_amount > 0.0 and _draw_available and not disabled and not _opponent_view:
@@ -262,7 +271,8 @@ func _draw_card_back(center: Vector2, angle: float, tint: Color) -> void:
 			draw_style_box(aura, rect.grow(2.0))
 	# A second card stays on the deck while only the top sheet bends away.
 	# A lone remaining card has no duplicate underneath it.
-	if _hover_amount > 0.0 and _deck_count == 1:
+	var showing_face := not _top_card_name.is_empty()
+	if not showing_face and _hover_amount > 0.0 and _deck_count == 1:
 		_draw_peeled_card(tint)
 		draw_set_transform(Vector2.ZERO)
 		return
@@ -272,10 +282,24 @@ func _draw_card_back(center: Vector2, angle: float, tint: Color) -> void:
 	edge.set_border_width_all(1)
 	edge.set_corner_radius_all(6)
 	draw_style_box(edge, rect.grow(1.0))
-	draw_texture_rect(CARD_BACK, rect, false, tint)
-	if _hover_amount > 0.0:
-		_draw_peeled_card(tint)
+	if showing_face:
+		_draw_card_face(rect)
+	else:
+		draw_texture_rect(CARD_BACK, rect, false, tint)
+		if _hover_amount > 0.0:
+			_draw_peeled_card(tint)
 	draw_set_transform(Vector2.ZERO)
+
+func _draw_card_face(rect: Rect2) -> void:
+	draw_rect(rect, Color(0.085, 0.07, 0.055))
+	var art_rect := Rect2(rect.position + Vector2(3.0, 24.0), rect.size - Vector2(6.0, 27.0))
+	if _top_card_art != null:
+		var texture_size := _top_card_art.get_size()
+		var fit := maxf(art_rect.size.x / texture_size.x, art_rect.size.y / texture_size.y)
+		var crop_size := art_rect.size / fit
+		draw_texture_rect_region(_top_card_art, art_rect, Rect2((texture_size - crop_size) * 0.5, crop_size))
+	draw_string(get_theme_font("font"), rect.position + Vector2(3.0, 17.0), _top_card_name,
+		HORIZONTAL_ALIGNMENT_CENTER, rect.size.x - 6.0, 11, GOLD)
 
 func _draw_peeled_card(tint: Color) -> void:
 	var peel := smoothstep(0.0, 1.0, _hover_amount)

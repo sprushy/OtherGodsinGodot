@@ -93,16 +93,11 @@ func resolve_foresight_choice(game_manager: GameManager, chosen_card: Card = nul
 		return "%s found no cards to read." % card_name
 
 	var primed_card := chosen_card if chosen_card != null and chosen_card in top_cards else top_cards[0]
-	var shelved_cards: Array[Card] = []
-	for card in top_cards:
-		card_owner.deck_zone.cards.erase(card)
-		if card == primed_card:
-			continue
-		shelved_cards.append(card)
-
+	var shelved_cards := top_cards
+	shelved_cards.erase(primed_card)
 	card_owner.deck_zone.prime_card(primed_card)
 	for card in shelved_cards:
-		card_owner.deck_zone.cards.append(card)
+		card_owner.deck_zone.shelve_deck_card(card)
 
 	var primed_name := primed_card.get_target_log_display_name(game_manager.get_feedback_viewer())
 	if shelved_cards.is_empty():

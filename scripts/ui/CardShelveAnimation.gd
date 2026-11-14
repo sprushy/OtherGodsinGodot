@@ -38,9 +38,8 @@ func _set_progress(value: float) -> void:
 	var bend := Vector2((_source_center.x + destination.x) * 0.5, minf(_source_center.y, destination.y) - 65.0)
 	var center := _source_center.lerp(bend, travel).lerp(bend.lerp(destination, travel), travel)
 	var card_scale := (_source_size / _face_size).lerp(destination_size / _face_size, travel)
-	# Keep a primed card's identity visible through most of its journey,
-	# then turn it face down as it settles onto the top of the deck.
-	var turn := smoothstep(0.55, 0.78, value) if _on_top else smoothstep(0.18, 0.34, value)
+	# A primed card lands face up. Shelved cards slide under the deck face down.
+	var turn := 0.0 if _on_top else smoothstep(0.18, 0.34, value)
 	_face.visible = turn < 1.0
 	_face.modulate.a = 1.0 - turn
 	_back.visible = turn > 0.0

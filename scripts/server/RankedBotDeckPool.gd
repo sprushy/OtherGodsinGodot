@@ -2,7 +2,6 @@ extends RefCounted
 
 const RankedProgressionScript = preload("res://scripts/server/RankedProgression.gd")
 const LISTS_PER_GOD := 7
-const TRIAL_MATCHES := 7
 const EARLY_RETIREMENT_GAMES := 12
 const EXPLORATION_CHANCE := 0.25
 const MATCHMAKING_LEAGUE_TIER_WINDOW := 2
@@ -33,6 +32,7 @@ var _by_god: Dictionary = {}
 var _replayed_match_count := -1
 var _last_replayed_id := ""
 var _deck_auditor: Callable
+var _eliminated_bot_match_ids: Dictionary = {}
 
 func set_deck_auditor(auditor: Callable) -> void:
 	_deck_auditor = auditor
@@ -46,6 +46,7 @@ func refresh(results: Array[Dictionary]) -> void:
 		# Out-of-order worker results need a full replay in finish order.
 		start = 0
 		_by_god.clear()
+		_eliminated_bot_match_ids.clear()
 	for index in range(start, results.size()):
 		results[index].erase("bot_eliminated")
 	for index in range(start, results.size()):
@@ -53,6 +54,9 @@ func refresh(results: Array[Dictionary]) -> void:
 	_ensure_unique_deck_names()
 	_replayed_match_count = results.size()
 	_last_replayed_id = str(results.back()["match_id"]) if not results.is_empty() else ""
+
+func get_eliminated_bot_match_ids() -> Dictionary:
+	return _eliminated_bot_match_ids.duplicate()
 
 func _ensure_unique_deck_names() -> void:
 	var decks: Array[Dictionary] = []
@@ -125,9 +129,10 @@ func get_ladder_summary() -> Dictionary:
 		var trial := {}
 		if not challenger.is_empty():
 			trial = _summarize_list(challenger)
-			trial["matches_played"] = challenger["trial_matches"]
+			trial["matches_played"] = _get_played_match_count(challenger)
+			trial["trial_length"] = int(challenger["trial_target_games"])
 		gods.append({"god_name": god_name, "lists": lists, "challenger": trial})
-	return {"gods": gods, "list_capacity": LISTS_PER_GOD, "trial_length": TRIAL_MATCHES}
+	return {"gods": gods, "list_capacity": LISTS_PER_GOD}
 
 func _summarize_list(list: Dictionary) -> Dictionary:
 	return {
@@ -252,6 +257,24 @@ func select_self_play_pair(busy_list_ids: Dictionary, rng: RandomNumberGenerator
 func _get_played_match_count(list: Dictionary) -> int:
 	return int(list.get("wins", 0)) + int(list.get("losses", 0)) + int(list.get("draws", 0))
 
+func rank_underrepresented_gods(god_names: Array[String], rng: RandomNumberGenerator, reserved: Dictionary = {}) -> Array[String]:
+	var candidates: Array[Dictionary] = []
+	for god_name in god_names:
+		var pool: Dictionary = _by_god.get(god_name, {})
+		var count := (pool.get("lists", []) as Array).size() + int(reserved.get(god_name, 0))
+		if count >= LISTS_PER_GOD:
+			continue
+		candidates.append({"name": god_name, "count": count, "tie": rng.randf()})
+	candidates.sort_custom(func(first: Dictionary, second: Dictionary) -> bool:
+		if int(first["count"]) != int(second["count"]):
+			return int(first["count"]) < int(second["count"])
+		return float(first["tie"]) < float(second["tie"])
+	)
+	var ranked: Array[String] = []
+	for candidate in candidates:
+		ranked.append(str(candidate["name"]))
+	return ranked
+
 static func can_self_play_pair(first: Dictionary, second: Dictionary) -> bool:
 	var first_rank := RankedProgressionScript.summarize_bot_stars(int(first.get("stars", 0)))
 	var second_rank := RankedProgressionScript.summarize_bot_stars(int(second.get("stars", 0)))
@@ -286,18 +309,17 @@ func _apply_result(result: Dictionary) -> void:
 	if not list_id.is_empty():
 		if not challenger.is_empty() and list_id == challenger["list_id"]:
 			_update_record(challenger, outcome)
-			challenger["trial_matches"] += 1
-			if _should_retire_early(challenger):
-				result["bot_eliminated"] = true
-				_retire_list(pool, challenger)
-				return
-			if int(challenger["trial_matches"]) == TRIAL_MATCHES:
+			if _get_played_match_count(challenger) >= int(challenger["trial_target_games"]):
 				_resolve_trial(pool)
 			return
 		for list: Dictionary in lists:
 			if list["list_id"] == list_id:
 				_update_record(list, outcome)
+				if list_id == pool["quarantined_id"] and not challenger.is_empty():
+					challenger["trial_target_games"] = _get_played_match_count(list)
+					return
 				if _should_retire_early(list):
+					_eliminated_bot_match_ids[str(result.get("match_id", ""))] = true
 					result["bot_eliminated"] = true
 					_retire_list(pool, list)
 				return
@@ -325,15 +347,18 @@ func _apply_result(result: Dictionary) -> void:
 	for list: Dictionary in lists:
 		if list["fingerprint"] == fingerprint:
 			_update_record(list, outcome)
+			if list["list_id"] == pool["quarantined_id"] and not challenger.is_empty():
+				challenger["trial_target_games"] = _get_played_match_count(list)
+				return
 			if _should_retire_early(list):
+				_eliminated_bot_match_ids[str(result.get("match_id", ""))] = true
 				result["bot_eliminated"] = true
 				_retire_list(pool, list)
 			return
 	if challenger.get("fingerprint", "") == fingerprint:
 		_update_record(challenger, outcome)
-		if _should_retire_early(challenger):
-			result["bot_eliminated"] = true
-			_retire_list(pool, challenger)
+		if _get_played_match_count(challenger) >= int(challenger["trial_target_games"]):
+			_resolve_trial(pool)
 		return
 	for pending: Dictionary in pool["pending"]:
 		if pending["fingerprint"] == fingerprint:
@@ -353,7 +378,6 @@ func _apply_result(result: Dictionary) -> void:
 		"losses": 0,
 		"draws": 0,
 		"stars": 0,
-		"trial_matches": 0,
 		"self_play_name": str(result.get("bot_name", "")) if bool(result.get("is_self_play", false)) else "",
 	}
 	_update_record(new_list, outcome)
@@ -374,12 +398,15 @@ func _start_trial(pool: Dictionary, challenger: Dictionary) -> void:
 	var lists: Array = pool["lists"]
 	_name_list(challenger, lists)
 	var weakest: Dictionary = {}
-	# Record strength chooses the incumbent after the challenger's seven-match trial.
+	# Challenge the lowest-ranked incumbent of this god.
 	for list: Dictionary in lists:
-		if weakest.is_empty() or _is_stronger(weakest, list):
+		if weakest.is_empty() or _is_higher_ranked(weakest, list):
 			weakest = list
 	pool["quarantined_id"] = weakest["list_id"]
+	challenger["trial_target_games"] = _get_played_match_count(weakest)
 	pool["challenger"] = challenger
+	if _get_played_match_count(challenger) >= int(challenger["trial_target_games"]):
+		_resolve_trial(pool)
 
 func _update_record(list: Dictionary, outcome: String) -> void:
 	match outcome:
@@ -436,21 +463,30 @@ func _resolve_trial(pool: Dictionary) -> void:
 			incumbent_index = i
 			break
 	var incumbent: Dictionary = lists[incumbent_index]
-	if _is_stronger(challenger, incumbent):
+	if _has_stronger_record(challenger, incumbent):
 		lists[incumbent_index] = challenger
 	pool["quarantined_id"] = ""
 	pool["challenger"] = {}
 	if not pool["pending"].is_empty():
 		_start_trial(pool, pool["pending"].pop_front())
 
-func _is_stronger(first: Dictionary, second: Dictionary) -> bool:
+func _is_higher_ranked(first: Dictionary, second: Dictionary) -> bool:
+	if int(first["stars"]) != int(second["stars"]):
+		return int(first["stars"]) > int(second["stars"])
+	var first_games := int(first["wins"]) + int(first["losses"])
+	var second_games := int(second["wins"]) + int(second["losses"])
+	var first_record_score := int(first["wins"]) * second_games
+	var second_record_score := int(second["wins"]) * first_games
+	if first_record_score != second_record_score:
+		return first_record_score > second_record_score
+	return str(first["deck_name"]).nocasecmp_to(str(second["deck_name"])) < 0
+
+func _has_stronger_record(first: Dictionary, second: Dictionary) -> bool:
 	var first_games := int(first["wins"]) + int(first["losses"]) + int(first["draws"])
 	var second_games := int(second["wins"]) + int(second["losses"]) + int(second["draws"])
 	var first_score := (2 * int(first["wins"]) + int(first["draws"])) * second_games
 	var second_score := (2 * int(second["wins"]) + int(second["draws"])) * first_games
-	if first_score != second_score:
-		return first_score > second_score
-	return int(first["stars"]) > int(second["stars"])
+	return first_score > second_score
 
 func _fingerprint(deck: Dictionary) -> String:
 	return JSON.stringify([deck["cards"], deck["reinforcements"], deck["special_setup"]]).sha256_text()

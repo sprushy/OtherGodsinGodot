@@ -53,6 +53,7 @@ const SAFE_NON_CREATURE_CARD_NAMES := {
 	"Mead of Poetry": true,
 	"Divine Lightning": true,
 	"Fall of the Mighty": true,
+	"Tonal Extraction": true,
 }
 
 var _validator := DeckValidatorScript.new()
@@ -74,6 +75,13 @@ func _init() -> void:
 		_cards_by_name[str(card.card_name)] = card
 		if card is GodCard:
 			_gods.append(card as GodCard)
+
+func get_ranked_god_names() -> Array[String]:
+	var names: Array[String] = []
+	for god in _gods:
+		if not names.has(god.card_name):
+			names.append(god.card_name)
+	return names
 
 func build_random_deck(seed_value: int, forced_god_name: String = "", ranked: bool = false) -> Dictionary:
 	if _gods.is_empty():
@@ -292,7 +300,7 @@ func _fill_safe_powers_for_god(
 		var candidates := _get_power_candidates(god, deck_cards, ranked)
 		if candidates.is_empty():
 			return not ranked
-		var chosen := candidates[rng.randi_range(0, candidates.size() - 1)]
+		var chosen := _choose_power_for_god(candidates, god, rng)
 		deck_cards[chosen.card_name] = int(deck_cards.get(chosen.card_name, 0)) + 1
 		power_count += 1
 	return true
@@ -320,7 +328,7 @@ func complete_ranked_power_slots(deck: Dictionary) -> Dictionary:
 		var candidates := _get_power_candidates(god, deck_cards, true)
 		if candidates.is_empty():
 			return {}
-		var chosen := candidates[rng.randi_range(0, candidates.size() - 1)]
+		var chosen := _choose_power_for_god(candidates, god, rng)
 		deck_cards[chosen.card_name] = int(deck_cards.get(chosen.card_name, 0)) + 1
 		power_count += 1
 	var validation := _validator.validate_deck(
@@ -466,6 +474,8 @@ func _has_deckbuilding_requirements(card: Card, cards: Dictionary, god: GodCard)
 		return false
 	var name := card.card_name
 	match name:
+		"Durinn Secondborn":
+			return _count_card_type(cards, Card.CardType.EQUIPMENT) >= 2
 		"Robotic Footsoldier":
 			return _count_other_matching(cards, card, ["Machine"]) >= 2
 		"Isimud":
@@ -486,7 +496,17 @@ func _has_deckbuilding_requirements(card: Card, cards: Dictionary, god: GodCard)
 			return _walk_of_the_sage_has_payoff(cards)
 		"Huginn": return _count_tagged(cards, "Hex") > 0
 		"Muninn": return _count_tagged(cards, "Charm") > 0
-		"Wild Magic": return _count_matching(cards, ["Magic"]) > 0
+		"Wild Magic":
+			return _count_card_type(cards, Card.CardType.SPELL) + _count_card_type(cards, Card.CardType.HEX) \
+				+ _count_card_type(cards, Card.CardType.CHARM) > int(cards.get(name, 0))
+		"Apollyon's Demiurge": return _count_matching(cards, ["Demon"]) >= 3
+		"Eridu, City of Sages": return _count_matching(cards, ["Mage"]) >= 3
+		"Advanced Building Techniques": return _count_card_type(cards, Card.CardType.STRUCTURE) >= 2
+		"Immortal Techniques":
+			return _count_matching(cards, ["Mage"]) > 0 \
+				and _count_card_type(cards, Card.CardType.SPELL) + _count_card_type(cards, Card.CardType.HEX) > 0
+		"A Cost to Walk the Worlds":
+			return _count_named(cards, ["Bit Meseri", "Void Shield", "Wheel of Fire", "Asag the Destroyer"]) > 0
 		"Allfather's Sacrifice": return _count_tagged(cards, "Spell") > 0
 		"Giant Master Architect": return _count_tagged(cards, "Structure") > 0
 		"Wolf Cub": return _count_other_matching(cards, card, ["Lupine"], 4) > 0
@@ -497,8 +517,15 @@ func _has_deckbuilding_requirements(card: Card, cards: Dictionary, god: GodCard)
 		"Gungnir, the Spear of Odin": return _count_matching(cards, ["Norse", "Warrior"]) > 0
 		"Gambanteinn": return _count_matching(cards, ["Mage"]) + _count_matching(cards, ["Shaman"]) > 0
 		"Breidablik": return _count_matching(cards, ["Priest"]) > 0
-		"Tonal Extraction": return _count_matching(cards, ["Shapeshifter"]) > 0
-		"Fire and Gold": return _count_matching(cards, ["Tian", "Dragon"]) > 0 and _count_tagged(cards, "Structure") > 0
+		"Tonal Extraction":
+			for name_in_deck in cards:
+				var target := _cards_by_name.get(name_in_deck) as Card
+				if int(cards[name_in_deck]) > 0 and target != null and target.card_type == Card.CardType.CREATURE \
+						and not target.is_god and target.has_type("Shapeshifter") \
+						and not target.get_tonal_extraction_spirit_profile().is_empty():
+					return true
+			return false
+		"Fire and Gold": return _count_matching(cards, ["Tian", "Dragon"]) > 0
 		"Call of the Valkyrie": return _count_matching(cards, ["Norse", "Warrior"]) > 0
 		"Myrkwood": return _count_matching(cards, ["Animal"]) >= 2
 		"Hunting Tactics": return _has_hunting_tactics_pair(cards)
@@ -526,6 +553,14 @@ func _count_tagged(cards: Dictionary, tag: String) -> int:
 	for name in cards:
 		var candidate: Card = _cards_by_name.get(str(name), null)
 		if candidate != null and not candidate.is_god and candidate.has_type(tag):
+			total += int(cards[name])
+	return total
+
+func _count_card_type(cards: Dictionary, card_type: Card.CardType) -> int:
+	var total := 0
+	for name in cards:
+		var candidate: Card = _cards_by_name.get(str(name), null)
+		if candidate != null and not candidate.is_god and candidate.card_type == card_type:
 			total += int(cards[name])
 	return total
 
@@ -624,10 +659,17 @@ func _get_power_candidates(god: GodCard, deck_cards: Dictionary, ranked: bool = 
 			continue
 		if template is TakeTheField and not _can_use_take_the_field(god):
 			continue
-		if ranked and not _has_deckbuilding_requirements(template, deck_cards, god):
+		if (ranked or template is TonalExtraction) and not _has_deckbuilding_requirements(template, deck_cards, god):
 			continue
 		candidates.append(template)
 	return candidates
+
+func _choose_power_for_god(candidates: Array[Card], god: GodCard, rng: RandomNumberGenerator) -> Card:
+	if god is TezcatlipocaTheSmokingMirror:
+		for power in candidates:
+			if power is TonalExtraction:
+				return power
+	return candidates[rng.randi_range(0, candidates.size() - 1)]
 
 func _is_safe_regular_card(card: Card, god: GodCard, deck_cards: Dictionary, legendary_only: bool, ranked: bool = false) -> bool:
 	if card == null or card.is_god or card.is_power or card.is_single_player_card:
@@ -641,7 +683,7 @@ func _is_safe_regular_card(card: Card, god: GodCard, deck_cards: Dictionary, leg
 	if int(deck_cards.get(card.card_name, 0)) >= _max_copies(card):
 		return false
 	if ranked:
-		if card.card_type != Card.CardType.CREATURE and not BotCardStrategyScript.supports_ranked_deck_card(card):
+		if not BotCardStrategyScript.supports_ranked_deck_card(card):
 			return false
 		if not _has_deckbuilding_requirements(card, deck_cards, god):
 			return false

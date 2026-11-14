@@ -8,7 +8,9 @@ signal deck_requested(list_id: String)
 
 const TITLE_FONT = preload("res://fonts/custom_ui/Norsebold.otf")
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
+const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
 const RankBadgeScript = preload("res://scripts/ui/RankBadge.gd")
+const TextureCacheScript = preload("res://scripts/ui/UITextureCache.gd")
 const LobbyProtocolScript = preload("res://scripts/network/LobbyProtocol.gd")
 const BADGE_SIZE := Vector2i(36, 36)
 const GOLD := Color("f1ce89")
@@ -28,9 +30,11 @@ var _previous_page: Button
 var _next_page: Button
 var _page_label: Label
 var _back_button: Button
+var _view_deck_button: Button
 var _deck_contents: RichTextLabel
 var _deck_timeout: Timer
 var _selected_list_id := ""
+var _selected_entry: Dictionary = {}
 var _paging_supported := false
 var _current_page := 0
 var _last_page := 0
@@ -38,6 +42,8 @@ var _ladder_entries: Array = []
 var _status_message := ""
 var _search_debounce: Timer
 var _badge_viewports: Dictionary[String, SubViewport] = {}
+var _god_art_paths: Dictionary[String, String] = {}
+var _god_textures: Dictionary[String, Texture2D] = {}
 
 func _ready() -> void:
 	name = "BotLadderView"
@@ -87,6 +93,8 @@ func _ready() -> void:
 	_refresh_button = _add_button(header, "Refresh", refresh_requested.emit)
 	_back_button = _add_button(header, "Back to ladder", close_deck)
 	_back_button.hide()
+	_view_deck_button = _add_button(header, "View bot deck", _request_selected_deck)
+	_view_deck_button.hide()
 	_close_button = _add_button(header, "Close", close_requested.emit)
 	_status = Label.new()
 	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -115,29 +123,33 @@ func _ready() -> void:
 	_filter_bar.add_child(_player_filter)
 
 	_table = Tree.new()
-	_table.columns = 5
+	_table.columns = 7
 	_table.hide_root = true
 	_table.set_column_titles_visible(true)
 	_table.set_column_title(0, "Rank")
 	_table.set_column_title(1, "Name")
-	_table.set_column_title(2, "Stars")
-	_table.set_column_title(3, "Tier")
-	_table.set_column_title(4, "Player type")
+	_table.set_column_title(2, "Ranked record")
+	_table.set_column_title(3, "Main God")
+	_table.set_column_title(4, "Stars")
+	_table.set_column_title(5, "Tier")
+	_table.set_column_title(6, "Player type")
 	_table.set_column_expand(0, false)
 	_table.set_column_expand(1, true)
 	_table.set_column_custom_minimum_width(0, 54)
 	_table.set_column_custom_minimum_width(1, 230)
-	for column in [2, 3, 4]:
+	for column in [2, 3, 4, 5, 6]:
 		_table.set_column_expand(column, false)
-	_table.set_column_custom_minimum_width(2, 80)
-	_table.set_column_custom_minimum_width(3, 150)
-	_table.set_column_custom_minimum_width(4, 160)
+	_table.set_column_custom_minimum_width(2, 112)
+	_table.set_column_custom_minimum_width(3, 210)
+	_table.set_column_custom_minimum_width(4, 78)
+	_table.set_column_custom_minimum_width(5, 145)
+	_table.set_column_custom_minimum_width(6, 105)
 	_table.add_theme_constant_override("item_height", 38)
 	_table.add_theme_font_size_override("font_size", 18)
 	_table.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_table.select_mode = Tree.SELECT_ROW
-	_table.item_selected.connect(_open_selected_deck)
-	_table.item_activated.connect(_open_selected_deck)
+	_table.item_selected.connect(_open_selected_entry)
+	_table.item_activated.connect(_open_selected_entry)
 	body.add_child(_table)
 	_pagination = HBoxContainer.new()
 	_pagination.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -166,7 +178,7 @@ func _ready() -> void:
 func set_status(message: String, can_refresh: bool, clear_table: bool = false) -> void:
 	_status_message = message
 	_status.text = message
-	_status.visible = not message.is_empty() and _selected_list_id.is_empty()
+	_status.visible = not message.is_empty() and _selected_entry.is_empty()
 	_refresh_button.disabled = not can_refresh
 	if clear_table:
 		close_deck()
@@ -176,15 +188,15 @@ func set_status(message: String, can_refresh: bool, clear_table: bool = false) -
 		_last_page = 0
 	_previous_page.disabled = not can_refresh or _current_page == 0
 	_next_page.disabled = not can_refresh or _current_page >= _last_page
-	_pagination.visible = _last_page > 0 and _selected_list_id.is_empty()
-	_filter_bar.visible = _selected_list_id.is_empty()
+	_pagination.visible = _last_page > 0 and _selected_entry.is_empty()
+	_filter_bar.visible = _selected_entry.is_empty()
 	_page_label.text = "Page %d of %d" % [_current_page + 1, _last_page + 1]
-	if _selected_list_id.is_empty():
+	if _selected_entry.is_empty():
 		_set_ladder_focus_order()
 
 func set_paging_supported(supported: bool) -> void:
 	_paging_supported = supported
-	_format.visible = supported and _selected_list_id.is_empty()
+	_format.visible = supported and _selected_entry.is_empty()
 	if not supported:
 		_format.select(0)
 		_current_page = 0
@@ -239,12 +251,28 @@ func _render_ladder_rows() -> void:
 		var rank_name := str(entry["rank"])
 		var row := _table.create_item(root)
 		row.set_text(0, str(entry.get("ladder_position", _current_page * LobbyProtocolScript.LADDER_PAGE_SIZE + index + 1)))
+		row.set_metadata(0, entry.duplicate(true))
 		row.set_text(1, player_name)
 		row.set_tooltip_text(1, player_name)
 		row.set_icon(1, _get_badge_icon(rank_name, entry.get("portrait", {})))
-		row.set_text(2, "%d ★" % int(entry["stars"]))
-		row.set_text(3, rank_name)
-		row.set_text(4, "Bot" if is_bot else "Player")
+		var wins := int(entry.get("wins", 0))
+		var losses := int(entry.get("losses", 0))
+		var draws := int(entry.get("draws", 0))
+		row.set_text(2, "%d-%d-%d" % [wins, losses, draws])
+		row.set_tooltip_text(2, "%d wins · %d losses · %d draws since the ranked ladder began" % [wins, losses, draws])
+		var main_gods: Array = entry.get("main_gods", [])
+		var main_god_names := PackedStringArray()
+		for god_name in main_gods:
+			var clean_god_name := str(god_name).strip_edges()
+			if not clean_god_name.is_empty():
+				main_god_names.append(clean_god_name)
+		row.set_text(3, " / ".join(main_god_names))
+		row.set_tooltip_text(3, "Most played ranked God(s)" if main_god_names.is_empty() else "Most played: %s" % " / ".join(main_god_names))
+		if not main_god_names.is_empty():
+			row.set_icon(3, _get_god_icon(main_god_names))
+		row.set_text(4, "%d ★" % int(entry["stars"]))
+		row.set_text(5, rank_name)
+		row.set_text(6, "Bot" if is_bot else "Player")
 		visible_count += 1
 		if is_bot:
 			row.set_metadata(1, str(entry["list_id"]))
@@ -258,7 +286,7 @@ func _render_ladder_rows() -> void:
 		_status.text = "Search and filter the ranked ladder."
 	else:
 		_status.text = _status_message
-	_status.visible = _selected_list_id.is_empty()
+	_status.visible = _selected_entry.is_empty()
 
 func _clear_ladder_rows() -> void:
 	_table.clear()
@@ -283,27 +311,97 @@ func _get_badge_icon(rank_name: String, portrait: Dictionary) -> Texture2D:
 	_badge_viewports[key] = viewport
 	return viewport.get_texture()
 
-func _open_selected_deck() -> void:
+func _get_god_icon(god_names: PackedStringArray) -> Texture2D:
+	if god_names.is_empty():
+		return null
+	var god_name := str(god_names[0])
+	if _god_textures.has(god_name):
+		return _god_textures[god_name]
+	var art_path := str(_god_art_paths.get(god_name, ""))
+	if art_path.is_empty():
+		for card: Card in CardCatalogScript.get_cached_card_templates():
+			if card.is_god and card.card_name == god_name:
+				art_path = card.art_path
+				_god_art_paths[god_name] = art_path
+				break
+	var texture := TextureCacheScript.get_texture(art_path)
+	if texture != null:
+		_god_textures[god_name] = texture
+	return texture
+
+func _open_selected_entry() -> void:
 	var selected := _table.get_selected()
-	if selected == null or not _selected_list_id.is_empty():
+	if selected == null or not _selected_entry.is_empty():
 		return
-	var list_id = selected.get_metadata(1)
-	if not list_id is String or list_id.is_empty():
+	var metadata = selected.get_metadata(0)
+	if not metadata is Dictionary:
 		return
-	_selected_list_id = list_id
-	_deck_contents.text = "Loading %s…" % selected.get_text(0)
+	_selected_entry = metadata.duplicate(true)
+	_selected_list_id = str(_selected_entry.get("list_id", ""))
+	_deck_contents.clear()
+	_render_recent_record_details()
 	_deck_contents.show()
 	_back_button.show()
-	_back_button.grab_focus()
+	_view_deck_button.visible = not _selected_list_id.is_empty()
 	_table.hide()
 	_filter_bar.hide()
 	_status.hide()
 	_refresh_button.hide()
 	_format.hide()
 	_pagination.hide()
-	_set_focus_order([_back_button, _close_button, _deck_contents])
+	var focus_order: Array[Control] = [_back_button]
+	if _view_deck_button.visible:
+		focus_order.append(_view_deck_button)
+	focus_order.append_array([_close_button, _deck_contents])
+	_set_focus_order(focus_order)
+	_back_button.grab_focus()
+
+func _render_recent_record_details() -> void:
+	var player_name := str(_selected_entry.get("name", "Player"))
+	var wins := int(_selected_entry.get("wins", 0))
+	var losses := int(_selected_entry.get("losses", 0))
+	var draws := int(_selected_entry.get("draws", 0))
+	_deck_contents.push_color(GOLD)
+	_deck_contents.add_text("%s\n" % player_name)
+	_deck_contents.pop()
+	_deck_contents.push_color(MUTED)
+	_deck_contents.add_text("Lifetime ranked record: %d wins · %d losses · %d draws\n" % [wins, losses, draws])
+	var main_gods: Array = _selected_entry.get("main_gods", [])
+	if not main_gods.is_empty():
+		var god_names := PackedStringArray()
+		for god in main_gods:
+			god_names.append(str(god))
+		_deck_contents.add_text("Most played God: %s\n" % " / ".join(god_names))
+	_deck_contents.add_text("\nRecent ranked matches\n")
+	_deck_contents.pop()
+	var recent_matches: Array = _selected_entry.get("recent_matches", [])
+	if recent_matches.is_empty():
+		_deck_contents.add_text("No ranked matches recorded yet.\n")
+	else:
+		for recent: Dictionary in recent_matches:
+			var result := str(recent.get("result", "draw")).capitalize()
+			var opponent := str(recent.get("opponent_name", "Opponent"))
+			var opponent_god := str(recent.get("opponent_god_name", "")).strip_edges()
+			var date := _format_match_date(int(recent.get("played_unix", 0)))
+			var opponent_text := opponent if opponent_god.is_empty() else "%s (%s)" % [opponent, opponent_god]
+			_deck_contents.add_text("%s · Bo%d · %s vs %s\n" % [
+				date, int(recent.get("best_of", 1)), result, opponent_text,
+			])
+	_deck_contents.scroll_to_line(0)
+
+func _format_match_date(unix_time: int) -> String:
+	if unix_time <= 0:
+		return "Recent"
+	var date := Time.get_datetime_dict_from_unix_time(unix_time)
+	return "%04d-%02d-%02d" % [int(date["year"]), int(date["month"]), int(date["day"])]
+
+func _request_selected_deck() -> void:
+	if _selected_list_id.is_empty():
+		return
+	_deck_contents.text = "Loading %s…" % str(_selected_entry.get("name", "bot deck"))
+	_view_deck_button.hide()
 	_deck_timeout.start()
-	deck_requested.emit(list_id)
+	deck_requested.emit(_selected_list_id)
 
 func show_deck(list_id: String, deck: Dictionary) -> void:
 	if _selected_list_id.is_empty() or list_id != _selected_list_id:
@@ -313,6 +411,7 @@ func show_deck(list_id: String, deck: Dictionary) -> void:
 		_deck_contents.text = "This list is no longer available. Go back and refresh the ladder."
 		return
 	_deck_contents.clear()
+	_view_deck_button.hide()
 	_deck_contents.push_color(GOLD)
 	_deck_contents.add_text(str(deck["name"]) + "\n\n")
 	_deck_contents.pop()
@@ -348,12 +447,14 @@ func _add_card_section(heading: String, cards: Dictionary) -> void:
 	_deck_contents.add_text("\n")
 
 func close_deck() -> bool:
-	if _selected_list_id.is_empty():
+	if _selected_entry.is_empty():
 		return false
 	_selected_list_id = ""
+	_selected_entry.clear()
 	_deck_timeout.stop()
 	_deck_contents.hide()
 	_back_button.hide()
+	_view_deck_button.hide()
 	_status.visible = not _status.text.is_empty()
 	_refresh_button.show()
 	_format.visible = _paging_supported

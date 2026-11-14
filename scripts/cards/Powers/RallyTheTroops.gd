@@ -109,6 +109,7 @@ func resolve_rally_choice(game_manager: GameManager, chosen_card: Card = null, s
 		if card == recruited_card:
 			controller.move_card(card, controller.hand_zone)
 			card.card_owner = controller
+			controller.deck_zone.reveal_deck_card(card)
 			continue
 		if card.current_zone == controller.deck_zone:
 			controller.deck_zone.shelve_deck_card(card)

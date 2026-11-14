@@ -60,17 +60,22 @@ static func serialize(gm: GameManager, viewer_player_index: int = -1, visible_pl
 		data["game_end_reason"] = gm.game_end_reason
 		data["result_message"] = gm.get_game_result_message()
 		data["match_result_stats"] = gm.match_result_stats.duplicate(true)
+	var priority_response_uids: Array[String] = []
+	if viewer != null and gm.priority_player == viewer:
+		for response_card in gm.get_priority_responses(viewer):
+			if response_card != null and "uid" in response_card and str(response_card.uid) != "":
+				priority_response_uids.append(str(response_card.uid))
+	data["priority_response_uids"] = priority_response_uids
 
 	for i in gm.players.size():
 		var player := gm.players[i]
 		var reveal_private_cards := i == viewer_player_index or bool(visible_lookup.get(i, false))
 		var hide_hand := viewer != null and not reveal_private_cards
 		var hide_deck := viewer != null and not reveal_private_cards
-		# The spectator deck counter only needs the count, even in open-hand bot matches.
-		var deck_cards: Array = []
-		if viewer_player_index != SPECTATOR_VIEWER_INDEX:
-			deck_cards = _serialize_visible_opponent_deck_cards_for_viewer(gm, player, viewer) if hide_deck \
-				else _serialize_zone_cards(player.deck_zone, viewer, false, reveal_private_cards)
+		var spectator := viewer_player_index == SPECTATOR_VIEWER_INDEX
+		var private_peek_count := HildskjalfThroneOfOdin.LOOK_COUNT \
+			if hide_deck and not spectator and _viewer_can_read_opponent_deck_with_hildskjalf(gm, viewer) else 0
+		var deck_cards := _serialize_deck(player.deck_zone, hide_deck or spectator, private_peek_count)
 		var pdata := {
 			player_name = player.player_name,
 			mana = player.mana,
@@ -99,18 +104,20 @@ static func serialize(gm: GameManager, viewer_player_index: int = -1, visible_pl
 
 	return data
 
-static func _serialize_visible_opponent_deck_cards_for_viewer(gm: GameManager, deck_owner: Player, viewer: Player) -> Array:
-	var visible_cards := []
-	if gm == null or deck_owner == null or viewer == null or deck_owner == viewer:
-		return visible_cards
-	if not _viewer_can_read_opponent_deck_with_hildskjalf(gm, viewer):
-		return visible_cards
-	var reveal_count := mini(HildskjalfThroneOfOdin.LOOK_COUNT, deck_owner.deck_zone.cards.size())
-	for i in range(reveal_count):
-		var card := deck_owner.deck_zone.cards[i] as Card
-		if card != null:
-			visible_cards.append(_serialize_card(card, HIDDEN_MODE_NONE))
-	return visible_cards
+static func _serialize_deck(deck: Zone, hide_unknown: bool, private_peek_count: int) -> Array:
+	var result := []
+	for index in deck.cards.size():
+		var card := deck.cards[index]
+		var placement := deck.get_deck_placement(card)
+		if hide_unknown and placement == Zone.DeckPlacement.UNKNOWN and index >= private_peek_count:
+			continue
+		var card_data := _serialize_card(card)
+		if hide_unknown:
+			card_data["deck_index"] = index
+		if placement != Zone.DeckPlacement.UNKNOWN:
+			card_data["deck_placement"] = placement
+		result.append(card_data)
+	return result
 
 static func _viewer_can_read_opponent_deck_with_hildskjalf(gm: GameManager, viewer: Player) -> bool:
 	if gm == null or viewer == null:
@@ -437,6 +444,12 @@ static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 
 	var pp_idx: int = data.get("priority_player_index", -1)
 	gm.priority_player = gm.players[pp_idx] if pp_idx >= 0 and pp_idx < gm.players.size() else null
+	gm.has_authoritative_priority_response_snapshot = data.has("priority_response_uids")
+	gm.authoritative_priority_response_uids.clear()
+	for response_uid in data.get("priority_response_uids", []):
+		var normalized_response_uid := str(response_uid).strip_edges()
+		if normalized_response_uid != "":
+			gm.authoritative_priority_response_uids[normalized_response_uid] = true
 
 	gm.attack_restrictions.clear()
 	for entry in data.get("attack_restrictions", []):
@@ -479,26 +492,7 @@ static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 		player.has_summoned_structure_this_turn = pdata.get("has_summoned_structure_this_turn", false)
 		player.has_had_god_in_play = pdata.get("has_had_god_in_play", false)
 
-		var dk_cards: Array = pdata.get("deck", [])
-		var dk_count: int = pdata.get("deck_count", -1)
-		player.deck_zone.cards.clear()
-		player.deck_zone.known_top_card = null
-		if not dk_cards.is_empty():
-			_apply_zone_cards(player.deck_zone, dk_cards)
-			if dk_count > player.deck_zone.cards.size():
-				for _k in range(dk_count - player.deck_zone.cards.size()):
-					var ph := BaseCard.new()
-					ph.is_face_down = true
-					ph.current_zone = player.deck_zone
-					ph.card_owner = player
-					player.deck_zone.cards.append(ph)
-		elif dk_count >= 0:
-			for _k in range(dk_count):
-				var ph := BaseCard.new()
-				ph.is_face_down = true
-				ph.current_zone = player.deck_zone
-				ph.card_owner = player
-				player.deck_zone.cards.append(ph)
+		_apply_deck(player.deck_zone, pdata.get("deck", []), int(pdata.get("deck_count", -1)))
 
 		_apply_zone_cards(player.hand_zone,     pdata.get("hand", []))
 		_apply_zone_cards(player.god_zone,      pdata.get("god_zone", []))
@@ -529,6 +523,30 @@ static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 			continue
 		gm.action_stack.append(CardAction.from_dict(action_data, gm))
 	gm.prune_stale_stack_actions()
+
+static func _apply_deck(deck: Zone, cards_data: Array, deck_count: int) -> void:
+	deck.cards.clear()
+	deck.clear_deck_knowledge()
+	deck.cards.resize(maxi(deck_count, cards_data.size()))
+	for entry in cards_data.size():
+		var card_data: Dictionary = cards_data[entry]
+		var index := int(card_data.get("deck_index", entry))
+		if index < 0 or index >= deck.cards.size():
+			continue
+		var card := _deserialize_card(card_data)
+		if card != null:
+			deck.cards[index] = card
+			deck.set_deck_placement(card, int(card_data.get("deck_placement", Zone.DeckPlacement.UNKNOWN)) as Zone.DeckPlacement)
+	for index in deck.cards.size():
+		var card := deck.cards[index]
+		if card == null:
+			card = BaseCard.new()
+			card.uid = ""
+			card.is_face_down = true
+			deck.cards[index] = card
+		card.current_zone = deck
+		card.card_owner = deck.zone_owner
+	_link_equipment_in_zone(deck)
 
 static func _apply_zone_cards(zone: Zone, cards_data: Array) -> void:
 	zone.cards.clear()
