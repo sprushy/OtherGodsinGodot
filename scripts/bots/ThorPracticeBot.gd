@@ -512,6 +512,8 @@ func _take_main_phase_action() -> bool:
 	var attacks := _get_combat_candidates()
 	var combat := _plan_combat(attacks)
 	var attack := combat
+	if _try_lindwyrm_devour_attack_target(attack):
+		return true
 	if int(combat.get("score", 0)) >= ECON_CARD_VALUE * 20:
 		return _submit_attack(attack["attacker"], attack["target"])
 	if game_manager.turn_number > 1:
@@ -581,6 +583,26 @@ func _take_main_phase_action() -> bool:
 		return true
 	if _try_switch_to_defensive_mode():
 		return true
+	return false
+
+func _try_lindwyrm_devour_attack_target(attack: Dictionary) -> bool:
+	var target := attack.get("target") as Card
+	if target == null:
+		return false
+	for card in game_manager.get_field_cards(bot_player):
+		if not (card is Lindwyrm) or not card.can_activate(game_manager):
+			continue
+		if target not in card.get_valid_devour_targets(game_manager):
+			continue
+		# Devour removes the same creature as the planned attack and permanently
+		# grows Lindwyrm. Filter protections and replacement effects before preferring it.
+		if target not in CardStrategy.removal_targets(self, card, target):
+			continue
+		return _submit_action({
+			"type": "activate_card_ability",
+			"source_uid": card.uid,
+			"target_uid": target.uid,
+		})
 	return false
 
 func _submit_strategy_plan(plan: Dictionary) -> bool:

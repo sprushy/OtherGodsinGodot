@@ -5,6 +5,7 @@ signal review_requested
 signal replay_requested
 signal rematch_requested
 signal menu_requested
+signal watch_next_bot_match_requested
 
 const TextureCache = preload("res://scripts/ui/UITextureCache.gd")
 const RankedResultPanelScript = preload("res://scripts/ui/RankedResultPanel.gd")
@@ -30,7 +31,7 @@ var _primary_pressed := Color("c2a268")
 func build(
 	result_title: String, message: String, stats: Dictionary, reason: String,
 	can_rematch: bool, can_replay: bool, auto_return: bool, animate: bool = true,
-	ranked_result: Dictionary = {}
+	ranked_result: Dictionary = {}, can_watch_next_bot_match: bool = false
 ) -> void:
 	name = "GameResultOverlay"
 	_is_defeat = result_title == "Defeat"
@@ -100,6 +101,8 @@ func build(
 		buttons.add_theme_constant_override("h_separation", 10)
 		buttons.add_theme_constant_override("v_separation", 10)
 		body.add_child(buttons)
+		if can_watch_next_bot_match:
+			_button(buttons, "Watch Next Bot Match", watch_next_bot_match_requested.emit, true)
 		_button(buttons, "Review Board", review_requested.emit)
 		var replay := _button(buttons, "View Replay", replay_requested.emit)
 		replay.disabled = not can_replay

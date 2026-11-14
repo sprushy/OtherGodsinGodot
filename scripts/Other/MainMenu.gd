@@ -152,6 +152,7 @@ var _host_another_bot_match_button: Button
 var _bot_match_hosting_enabled := false
 var _pending_local_bot_match_modes: Array[bool] = []
 var _local_bot_match_workers: Dictionary = {}
+var _watch_next_local_bot_match_pending: bool = false
 var _local_bot_match_submitting: Dictionary = {}
 var _bot_match_retry_timer: Timer
 var _continuous_bot_match_ids: Dictionary = {}
@@ -1298,6 +1299,10 @@ func _bind_game_signals() -> void:
 			var leave_callback := Callable(self, "_on_game_leave_match_requested")
 			if not game.leave_match_requested.is_connected(leave_callback):
 				game.leave_match_requested.connect(leave_callback)
+		if game != null and game.has_signal("watch_next_bot_match_requested"):
+			var watch_next_callback := Callable(self, "_on_watch_next_local_bot_match_requested")
+			if not game.watch_next_bot_match_requested.is_connected(watch_next_callback):
+				game.watch_next_bot_match_requested.connect(watch_next_callback)
 		if game != null and game.has_signal("rematch_requested"):
 			var rematch_callback := Callable(self, "_on_game_rematch_requested")
 			if not game.rematch_requested.is_connected(rematch_callback):
@@ -2976,6 +2981,7 @@ func _on_local_bot_work_assigned(job: Dictionary) -> void:
 		return
 	var decks: Array = job.get("decks", [])
 	if decks.size() != 2:
+		_watch_next_local_bot_match_pending = false
 		lobby_client.cancel_bot_work(str(job.get("job_id", "")))
 		_bot_match_hosting_enabled = false if continuous else _bot_match_hosting_enabled
 		_update_local_bot_hosting_state()
@@ -2990,6 +2996,7 @@ func _on_local_bot_work_assigned(job: Dictionary) -> void:
 	}
 	var match_port := _allocate_local_bot_match_port()
 	if match_port <= 0:
+		_watch_next_local_bot_match_pending = false
 		lobby_client.cancel_bot_work(str(job["job_id"]))
 		if continuous:
 			_schedule_continuous_bot_match_retry()
@@ -3005,6 +3012,7 @@ func _on_local_bot_work_assigned(job: Dictionary) -> void:
 	supervisor.configure("127.0.0.1", match_port, true, "", ProjectSettings.globalize_path("res://"), false)
 	supervisor.active_matches[session.match_id] = session
 	if not supervisor._launch_dedicated_match(session, true):
+		_watch_next_local_bot_match_pending = false
 		supervisor.queue_free()
 		lobby_client.cancel_bot_work(session.match_id)
 		if continuous:
@@ -3023,6 +3031,9 @@ func _on_local_bot_work_assigned(job: Dictionary) -> void:
 		"continuous": continuous,
 		"last_heartbeat_unix": int(Time.get_unix_time_from_system()),
 	}
+	if _watch_next_local_bot_match_pending:
+		_watch_next_local_bot_match_pending = false
+		call_deferred("_watch_local_bot_match", session.match_id)
 	_continuous_bot_match_ids[session.match_id] = continuous
 	_refresh_seek_list()
 	status_label.text = "Running %d bot match%s on this computer." % [
@@ -3111,6 +3122,7 @@ func _cleanup_failed_local_bot_match(match_id: String, worker: Dictionary, super
 func _on_local_bot_work_result(job_id: String, success: bool, message: String) -> void:
 	if job_id.is_empty():
 		status_label.text = message
+		_watch_next_local_bot_match_pending = false
 		var continuous_request := false
 		if not _pending_local_bot_match_modes.is_empty():
 			continuous_request = _pending_local_bot_match_modes.pop_front()
@@ -3132,6 +3144,7 @@ func _on_local_bot_work_result(job_id: String, success: bool, message: String) -
 
 func _stop_local_bot_match_worker() -> void:
 	_bot_match_hosting_enabled = false
+	_watch_next_local_bot_match_pending = false
 	if is_instance_valid(_bot_match_retry_timer):
 		_bot_match_retry_timer.stop()
 	_pending_local_bot_match_modes.clear()
@@ -3352,8 +3365,44 @@ func _watch_local_bot_match(match_id: String) -> void:
 		_refresh_seek_list()
 		return
 	var match_info: Dictionary = session.to_spectator_match_info("local_volunteer_host")
+	match_info["local_volunteer_host"] = true
 	status_label.text = "Watching your hosted bot match..."
 	_launch_assigned_match(false, "127.0.0.1", int(session.match_port), match_info)
+
+func _on_watch_next_local_bot_match_requested() -> void:
+	var active_game := _get_active_embedded_game()
+	if active_game == null or not bool(active_game.get("_is_local_hosted_bot_observer")):
+		return
+	var current_match_info = active_game.get("_current_match_info")
+	var current_match_id := str(current_match_info.get("match_id", "")) if current_match_info is Dictionary else ""
+	var available_match_ids: Array[String] = []
+	for raw_match_id in _local_bot_match_workers.keys():
+		var match_id := str(raw_match_id)
+		if match_id != current_match_id:
+			available_match_ids.append(match_id)
+	available_match_ids.sort_custom(func(first_id: String, second_id: String) -> bool:
+		var first_worker: Dictionary = _local_bot_match_workers.get(first_id, {})
+		var second_worker: Dictionary = _local_bot_match_workers.get(second_id, {})
+		var first_session = first_worker.get("session", null)
+		var second_session = second_worker.get("session", null)
+		var first_created := int(first_session.created_unix) if first_session != null else 0
+		var second_created := int(second_session.created_unix) if second_session != null else 0
+		return first_created < second_created if first_created != second_created else first_id < second_id
+	)
+	if not available_match_ids.is_empty():
+		_watch_local_bot_match(available_match_ids[0])
+		return
+	if _watch_next_local_bot_match_pending:
+		return
+	_watch_next_local_bot_match_pending = true
+	if not _has_pending_continuous_bot_match() and not _has_active_continuous_bot_match():
+		if lobby_client == null or not lobby_client.is_authenticated() \
+				or _get_local_bot_match_count() + _pending_local_bot_match_modes.size() >= _get_local_bot_match_capacity():
+			_watch_next_local_bot_match_pending = false
+			status_label.text = "No other hosted bot match is available right now."
+			return
+		_request_local_bot_match(false)
+	status_label.text = "Waiting for the next hosted bot match..."
 
 func _on_request_next_received(requester_name: String) -> void:
 	_show_request_next_notice("%s would like to play you next." % requester_name)

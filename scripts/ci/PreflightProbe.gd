@@ -1629,7 +1629,8 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 			or high_rank_alternative.get("list_id") == "list_1":
 		failures.append("Bot matchmaking did not sample the same two-tier range while skipping busy lists")
 	for i in range(6):
-		results.append(_bot_pool_result("trial_%d" % i, "candidate", {}, "loss"))
+		var outcome := "loss" if i % 2 == 0 else "win"
+		results.append(_bot_pool_result("trial_%d" % i, "candidate", {}, outcome))
 	pool.refresh(results)
 	if pool.can_play_list("Thor", "list_0"):
 		failures.append("A bot list trial ended before seven completed matches")
@@ -1637,17 +1638,16 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 	var thor: Dictionary = ladder_summary["gods"][0]
 	var challenger: Dictionary = thor["challenger"]
 	if thor["lists"].size() != 7 or not thor["lists"][0]["quarantined"] \
-			or thor["lists"][0]["name"] != "Thor: Bloodaxe" \
-			or challenger.get("matches_played") != 6 or challenger.get("wins") != 1 \
-			or challenger.get("losses") != 6 or challenger.get("draws") != 0 \
-			or challenger.get("stars") != 1 or challenger.has("cards") or ladder_summary["trial_length"] != 7:
+			or challenger.get("matches_played") != 6 or challenger.get("wins") != 4 \
+			or challenger.get("losses") != 3 or challenger.get("draws") != 0 \
+			or challenger.has("cards") or ladder_summary["trial_length"] != 7:
 		failures.append("Bot ladder did not report the quarantined list and six completed trial matches")
 	var quarantined_deck := pool.get_deck_details(thor["lists"][0]["list_id"])
 	var challenger_deck := pool.get_deck_details(challenger.get("list_id", ""))
 	if quarantined_deck.get("cards", {}).get("Variant 0") != 10 \
 			or challenger_deck.get("cards", {}).get("Challenger") != 10:
 		failures.append("Bot ladder did not resolve both quarantined and challenger deck contents")
-	results.append(_bot_pool_result("trial_6", "candidate", {}, "loss"))
+	results.append(_bot_pool_result("trial_6", "candidate", {}, "win"))
 	pool.refresh(results)
 	if not pool.can_play_list("Thor", "list_0") or pool.can_play_list("Thor", "candidate"):
 		failures.append("The stronger incumbent did not return after the seventh trial match")
@@ -1657,9 +1657,23 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 	if not pool.get_deck_details("candidate").is_empty():
 		failures.append("Bot ladder still returned a retired challenger deck")
 
+	var early_retirement_results: Array[Dictionary] = []
+	for i in range(7):
+		early_retirement_results.append(_bot_pool_result("early_list_%d" % i, "", {"Thor": 1, "Common": 30, "Variant %d" % i: 10}, "win"))
+	early_retirement_results.append(_bot_pool_result("early_candidate", "", {"Thor": 1, "Common": 30, "Early Challenger": 10}, "win"))
+	for i in range(2):
+		early_retirement_results.append(_bot_pool_result("early_loss_%d" % i, "early_candidate", {}, "loss"))
+	var early_retirement_pool := RankedBotDeckPoolScript.new()
+	early_retirement_pool.refresh(early_retirement_results)
+	var early_summary: Dictionary = early_retirement_pool.get_ladder_summary()["gods"][0]
+	if not early_summary["challenger"].is_empty() or not early_retirement_pool.can_play_list("Thor", "early_list_0") \
+			or not early_retirement_pool.get_deck_details("early_candidate").is_empty():
+		failures.append("A challenger with a 1-2 record was not retired early")
+
 	results.append(_bot_pool_result("distinct", "", {"Thor": 1, "Different": 40}, "win"))
 	for i in range(7):
-		results.append(_bot_pool_result("variety_%d" % i, "distinct", {}, "loss"))
+		var outcome := "loss" if i % 2 == 0 else "win"
+		results.append(_bot_pool_result("variety_%d" % i, "distinct", {}, outcome))
 	pool.refresh(results)
 	if not pool.can_play_list("Thor", "distinct") or pool.can_play_list("Thor", "list_0"):
 		failures.append("A bot list with over 75% different cards did not survive for variety")

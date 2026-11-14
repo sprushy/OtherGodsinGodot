@@ -3,6 +3,7 @@ extends RefCounted
 const RankedProgressionScript = preload("res://scripts/server/RankedProgression.gd")
 const LISTS_PER_GOD := 7
 const TRIAL_MATCHES := 7
+const EARLY_RETIREMENT_GAMES := 12
 const EXPLORATION_CHANCE := 0.25
 const MATCHMAKING_LEAGUE_TIER_WINDOW := 2
 const NAME_POOLS := {
@@ -280,12 +281,17 @@ func _apply_result(result: Dictionary) -> void:
 		if not challenger.is_empty() and list_id == challenger["list_id"]:
 			_update_record(challenger, outcome)
 			challenger["trial_matches"] += 1
+			if _should_retire_early(challenger):
+				_retire_list(pool, challenger)
+				return
 			if int(challenger["trial_matches"]) == TRIAL_MATCHES:
 				_resolve_trial(pool)
 			return
 		for list: Dictionary in lists:
 			if list["list_id"] == list_id:
 				_update_record(list, outcome)
+				if _should_retire_early(list):
+					_retire_list(pool, list)
 				return
 		# A match already in flight can finish after its list was retired.
 		return
@@ -296,13 +302,19 @@ func _apply_result(result: Dictionary) -> void:
 	for list: Dictionary in lists:
 		if list["fingerprint"] == fingerprint:
 			_update_record(list, outcome)
+			if _should_retire_early(list):
+				_retire_list(pool, list)
 			return
 	if challenger.get("fingerprint", "") == fingerprint:
 		_update_record(challenger, outcome)
+		if _should_retire_early(challenger):
+			_retire_list(pool, challenger)
 		return
 	for pending: Dictionary in pool["pending"]:
 		if pending["fingerprint"] == fingerprint:
 			_update_record(pending, outcome)
+			if _should_retire_early(pending):
+				pool["pending"].erase(pending)
 			return
 	var new_list := {
 		"list_id": str(result["match_id"]),
@@ -320,6 +332,8 @@ func _apply_result(result: Dictionary) -> void:
 		"self_play_name": str(result.get("bot_name", "")) if bool(result.get("is_self_play", false)) else "",
 	}
 	_update_record(new_list, outcome)
+	if _should_retire_early(new_list):
+		return
 	if lists.size() < LISTS_PER_GOD:
 		_name_list(new_list, lists)
 		lists.append(new_list)
@@ -358,6 +372,39 @@ func _update_record(list: Dictionary, outcome: String) -> void:
 			list["stars"] = maxi(int(rank["floor_points"]), stars - 1)
 		"draw":
 			list["draws"] += 1
+
+func _should_retire_early(list: Dictionary) -> bool:
+	var games_played := _get_played_match_count(list)
+	if games_played <= 0 or games_played > EARLY_RETIREMENT_GAMES:
+		return false
+	return 3 * int(list["losses"]) >= 2 * games_played
+
+func _retire_list(pool: Dictionary, list: Dictionary) -> void:
+	var list_id := str(list.get("list_id", ""))
+	if list_id.is_empty():
+		return
+	if pool["challenger"].get("list_id", "") == list_id:
+		pool["challenger"] = {}
+		pool["quarantined_id"] = ""
+		if not pool["pending"].is_empty():
+			_start_trial(pool, pool["pending"].pop_front())
+		return
+	var lists: Array = pool["lists"]
+	var was_quarantined := str(pool["quarantined_id"]) == list_id
+	lists.erase(list)
+	if was_quarantined:
+		pool["quarantined_id"] = ""
+		var challenger: Dictionary = pool["challenger"]
+		if not challenger.is_empty():
+			lists.append(challenger)
+			pool["challenger"] = {}
+	if pool["challenger"].is_empty() and not pool["pending"].is_empty():
+		if lists.size() < LISTS_PER_GOD:
+			var pending: Dictionary = pool["pending"].pop_front()
+			_name_list(pending, lists)
+			lists.append(pending)
+		elif was_quarantined:
+			_start_trial(pool, pool["pending"].pop_front())
 
 func _resolve_trial(pool: Dictionary) -> void:
 	var lists: Array = pool["lists"]

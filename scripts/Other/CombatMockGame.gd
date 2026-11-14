@@ -162,6 +162,7 @@ const DEBUG_END_TURN_LOGS := false
 signal forfeit_requested
 signal return_to_menu_requested
 signal leave_match_requested
+signal watch_next_bot_match_requested
 signal rematch_requested
 signal match_session_cleared
 signal match_loading_finished
@@ -180,6 +181,7 @@ var prompt_router = null
 var match_client = null
 var _is_networked_client: bool = false
 var _is_observer_mode: bool = false
+var _is_local_hosted_bot_observer: bool = false
 var _observer_reveals_bot_hands: bool = false
 var _observer_feedback_viewer: Player = null
 var selected_card: Card = null
@@ -6250,6 +6252,7 @@ func start_game(
 	_local_match_result_recorded = false
 	_current_match_info = match_info.duplicate(true)
 	_is_observer_mode = bool(match_info.get("observer_mode", false))
+	_is_local_hosted_bot_observer = _is_observer_mode and bool(match_info.get("local_volunteer_host", false))
 	_observer_reveals_bot_hands = _is_observer_mode and bool(match_info.get("is_bot_self_play", false))
 	_observer_perspective_player_index = 0
 	_observer_feedback_viewer = Player.new() if _is_observer_mode else null
@@ -29348,6 +29351,9 @@ func _on_game_result_back_to_menu_pressed() -> void:
 	_hide_corner_action_button()
 	_emit_leave_match_requested()
 
+func _on_watch_next_bot_match_pressed() -> void:
+	watch_next_bot_match_requested.emit()
+
 func _resolve_game_result_message(result_message: String, winner = null, loser = null) -> String:
 	var resolved_message := result_message.strip_edges()
 	if not resolved_message.is_empty():
@@ -29507,12 +29513,13 @@ func _show_game_result_overlay(result_message: String, winner = null, loser = nu
 	overlay.replay_requested.connect(_open_match_replay_overlay)
 	overlay.rematch_requested.connect(_on_game_result_rematch_pressed)
 	overlay.menu_requested.connect(_on_game_result_back_to_menu_pressed)
+	overlay.watch_next_bot_match_requested.connect(_on_watch_next_bot_match_pressed)
 	overlay.build(
 		_get_game_result_title(winner, loser), result_message,
 		game_manager.match_result_stats if game_manager != null else {},
 		game_manager.game_end_reason if game_manager != null else "",
 		_can_offer_lobby_rematch(), not _match_replay_entries.is_empty(), auto_return,
-		true, _ranked_match_result
+		true, _ranked_match_result, _is_local_hosted_bot_observer
 	)
 	if winner != null and winner == _get_result_viewer() and not _is_observer_mode:
 		overlay.play_victory_sound()
@@ -31753,6 +31760,7 @@ func cleanup() -> void:
 	_clear_priority_prompt_command_context()
 	_local_match_result_recorded = false
 	_current_match_info.clear()
+	_is_local_hosted_bot_observer = false
 	_clear_hati_moon_hunt_state()
 	_clear_skoll_upkeep_summon()
 	_clear_wolf_master_summon()
