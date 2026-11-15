@@ -757,7 +757,8 @@ func can_card_respond_to_action(card: Card, top: CardAction, player: Player = nu
 			if typed_hex.has_method("get_priority_targets"):
 				return not get_priority_hex_targets(typed_hex, top).is_empty()
 			return true
-		return top.type == CardAction.Type.ATTACK and top.attacker != null and not get_attack_hex_targets(top, typed_hex).is_empty()
+		var is_attack_or_celestial := (top.type == CardAction.Type.ATTACK and top.attacker != null) or (top.event_name == "gugalanna_celestial_charge" and top.card != null)
+		return is_attack_or_celestial and not get_attack_hex_targets(top, typed_hex).is_empty()
 	if card is CharmCard:
 		var typed_charm := card as CharmCard
 		if card.current_zone == card.card_owner.hand_zone:
@@ -816,10 +817,13 @@ func get_priority_hex_targets(hex: HexCard, action: CardAction) -> Array[Card]:
 
 func get_attack_hex_targets(action: CardAction, hex: HexCard) -> Array[Card]:
 	var valid_targets: Array[Card] = []
-	if action == null or hex == null or action.type != CardAction.Type.ATTACK:
+	if action == null or hex == null:
+		return valid_targets
+	if action.type != CardAction.Type.ATTACK and action.event_name != "gugalanna_celestial_charge":
 		return valid_targets
 	var defender: Card = action.interceptor if action.interceptor != null else (action.target if action.target is Card else null)
-	var candidates: Array[Card] = [action.attacker]
+	var attacker_card: Card = action.attacker if action.attacker != null else action.card
+	var candidates: Array[Card] = [attacker_card] if attacker_card != null else []
 	if action.united_front_partner != null:
 		candidates.append(action.united_front_partner)
 	for candidate in candidates:
@@ -1084,6 +1088,9 @@ func activate_hex(hex: HexCard, attacker: Card, defender: Card) -> bool:
 			return true
 	hex.on_activate(self, attacker, defender)
 	return true
+
+func check_and_trigger_hexes(_attacker: Card = null, _defender: Card = null) -> void:
+	pass
 
 func player_chooses_draw() -> void:
 	if is_game_over:

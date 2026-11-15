@@ -46,8 +46,6 @@ func apply_celestial_charge(game_manager: GameManager, target: Card) -> void:
 		if game_manager.is_immune_to_source(target, self):
 			game_manager.note_player_feedback("Celestial Charge: %s is immune to creature abilities." % target.card_name)
 			return
-		# Allow attack hexes to trigger with Gugalanna as the "attacker".
-		game_manager.check_and_trigger_hexes(self, target)
 
 		# Destroy target if still on the board.
 		if target.current_zone != null and target.current_zone.is_board_zone():
@@ -93,4 +91,3 @@ func _return_to_hand(game_manager: GameManager) -> void:
 	if game_manager != null:
 		game_manager.note_player_feedback("%s returns to hand." % card_name)
 	owner.move_card(self, owner.hand_zone)
-

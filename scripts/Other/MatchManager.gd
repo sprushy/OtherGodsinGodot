@@ -2063,7 +2063,8 @@ func _resolve_ability(action: CardAction) -> void:
 			last_resolution_text = action.resolution_text if action.resolution_text != "" else hex.card_name + " resolved!"
 		else:
 			var def_card: Card = action.interceptor if action.interceptor != null else (action.target if action.target is Card else null)
-			game_manager.activate_hex(hex, action.attacker, def_card)
+			var atk_card: Card = action.attacker if action.attacker != null else (action.response_to.attacker if action.response_to != null and action.response_to.attacker != null else (action.response_to.card if action.response_to != null else null))
+			game_manager.activate_hex(hex, atk_card, def_card)
 			if game_manager.last_hex_resolution_text != "":
 				last_resolution_text = game_manager.last_hex_resolution_text
 			else:
@@ -7005,13 +7006,15 @@ func _process_command_impl(command: Dictionary) -> bool:
 				var automatic_targets := _get_priority_response_targets(phr_hex, phr_source)
 				phr_target = automatic_targets[0] as Card if automatic_targets.size() == 1 else null
 				phr_target_uid = phr_target.uid if phr_target != null else ""
-			var phr_target_is_attacker := not phr_hex.has_method("get_priority_targets") and phr_source.type == CardAction.Type.ATTACK
+			var phr_is_attack_or_celestial := phr_source.type == CardAction.Type.ATTACK or phr_source.event_name == "gugalanna_celestial_charge"
+			var phr_target_is_attacker := not phr_hex.has_method("get_priority_targets") and phr_is_attack_or_celestial
+			var phr_source_attacker: Card = phr_source.attacker if phr_source.attacker != null else (phr_source.card if phr_source.event_name == "gugalanna_celestial_charge" else null)
 			var phr_ability := CardAction.new()
 			phr_ability.type = CardAction.Type.ABILITY
 			phr_ability.source_player = phr_hex.card_owner
 			phr_ability.card = phr_hex
 			phr_ability.response_to = phr_source
-			phr_ability.attacker = phr_target if phr_target_is_attacker and phr_target != null else phr_source.attacker
+			phr_ability.attacker = phr_target if phr_target_is_attacker and phr_target != null else phr_source_attacker
 			phr_ability.interceptor = phr_source.interceptor
 			phr_ability.target = phr_target if not phr_target_is_attacker and phr_target != null else phr_source.target
 			if not game_manager.activate_prepared_card(phr_hex_card, phr_hex_card.card_owner):

@@ -75,6 +75,7 @@ func run() -> bool:
 	_check_standing_bot_seeks(failures)
 	_check_ladder_pages(failures)
 	_check_request_next(failures)
+	_check_gugalanna_celestial_charge(failures)
 
 	if not failures.is_empty():
 		for failure in failures:
@@ -2422,3 +2423,24 @@ func _get_result_path() -> String:
 				return path
 			return ProjectSettings.globalize_path("res://").path_join(path)
 	return ""
+
+func _check_gugalanna_celestial_charge(failures: PackedStringArray) -> void:
+	var game := GameManager.new()
+	var player := Player.new()
+	var opponent := Player.new()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	var gugalanna := GugalannaBullOfHeaven.new()
+	gugalanna.card_owner = player
+	player.frontline_zones[0].add_card(gugalanna)
+	var defender := GenericCreature.new()
+	defender.card_owner = opponent
+	defender.resilience = 35
+	defender.speed = 1
+	opponent.frontline_zones[0].add_card(defender)
+	gugalanna.apply_celestial_charge(game, defender)
+	if defender.current_zone != opponent.graveyard_zone:
+		failures.append("Gugalanna celestial charge did not send target to graveyard")
+	if gugalanna.current_zone != player.hand_zone:
+		failures.append("Gugalanna did not return to hand after celestial charge")
