@@ -2444,3 +2444,23 @@ func _check_gugalanna_celestial_charge(failures: PackedStringArray) -> void:
 		failures.append("Gugalanna celestial charge did not send target to graveyard")
 	if gugalanna.current_zone != player.hand_zone:
 		failures.append("Gugalanna did not return to hand after celestial charge")
+	var charge_action := CardAction.new()
+	charge_action.type = CardAction.Type.EVENT
+	charge_action.event_name = "gugalanna_celestial_charge"
+	charge_action.card = gugalanna
+	charge_action.target = defender
+	charge_action.source_player = player
+	player.frontline_zones[0].add_card(gugalanna)
+	var hex := Smite.new()
+	hex.card_owner = opponent
+	var targets := game.get_attack_hex_targets(charge_action, hex)
+	if targets.is_empty() or targets[0] != gugalanna:
+		failures.append("get_attack_hex_targets failed to identify Gugalanna as celestial charge hex target")
+	var normal_attack := CardAction.new()
+	normal_attack.type = CardAction.Type.ATTACK
+	normal_attack.attacker = gugalanna
+	normal_attack.target = defender
+	normal_attack.source_player = player
+	var attack_targets := game.get_attack_hex_targets(normal_attack, hex)
+	if attack_targets.is_empty() or attack_targets[0] != gugalanna:
+		failures.append("get_attack_hex_targets failed for normal attack")
