@@ -5,6 +5,7 @@ const STARS_PER_DIVISION := 3
 const DIVISIONS := ["V", "IV", "III", "II", "I"]
 const FIRST_LEAGUE_WITH_STAR_LOSS := 2
 const FIRST_LEAGUE_WITHOUT_STREAK_BONUS := 4
+const WIN_STREAK_BONUS_THRESHOLD := 3
 const DIVINE := 6
 
 static func season_for_time(unix_time: float) -> int:
@@ -36,7 +37,7 @@ static func apply_result(progress: Dictionary, result: String, season: int) -> v
 	match result:
 		"win":
 			streak += 1
-			points += 2 if streak >= 3 and int(current_rank["league"]) < FIRST_LEAGUE_WITHOUT_STREAK_BONUS else 1
+			points += win_bonus_stars(streak, previous_points)
 		"loss":
 			streak = 0
 			points = maxi(points - 1, int(current_rank["floor_points"]))
@@ -49,6 +50,36 @@ static func apply_result(progress: Dictionary, result: String, season: int) -> v
 	progress["win_streak"] = streak
 	progress["matches"] = int(progress["matches"]) + 1
 	progress["last_delta"] = points - previous_points
+
+# Stars earned by a win whose streak (including this win) is `streak_including_win`,
+# scored at the pre-win point total. Shared by the human ladder and bot records.
+static func win_bonus_stars(streak_including_win: int, current_points: int) -> int:
+	var bonus := 1
+	if streak_including_win >= WIN_STREAK_BONUS_THRESHOLD \
+			and int(_rank_at(current_points)["league"]) < FIRST_LEAGUE_WITHOUT_STREAK_BONUS:
+		bonus = 2
+	return bonus
+
+# Applies a rated outcome to a bot ladder record ("wins"/"losses"/"draws",
+# "stars", and "win_streak") using the same ladder rules as players. Bots never
+# store season progress, so the streak lives directly on the record that
+# RankedBotDeckPool replays from history.
+static func apply_bot_result(record: Dictionary, outcome: String) -> void:
+	match outcome:
+		"win":
+			record["wins"] = int(record.get("wins", 0)) + 1
+			var streak := int(record.get("win_streak", 0)) + 1
+			record["win_streak"] = streak
+			var stars := int(record.get("stars", 0))
+			record["stars"] = stars + win_bonus_stars(streak, stars)
+		"loss":
+			record["losses"] = int(record.get("losses", 0)) + 1
+			record["win_streak"] = 0
+			var stars := int(record.get("stars", 0))
+			record["stars"] = maxi(int(_rank_at(stars)["floor_points"]), stars - 1)
+		"draw":
+			record["draws"] = int(record.get("draws", 0)) + 1
+			record["win_streak"] = 0
 
 static func summarize(progress: Dictionary, season: int) -> Dictionary:
 	advance_to_season(progress, season)

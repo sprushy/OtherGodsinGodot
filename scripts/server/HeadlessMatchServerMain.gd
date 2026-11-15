@@ -2,10 +2,14 @@ extends SceneTree
 
 const HeadlessMatchServerScript = preload("res://scripts/server/HeadlessMatchServer.gd")
 const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
+## Match servers are event-driven; cap the loop so an idle match does not
+## spin a CPU core at maximum frame rate.
+const SERVER_RUNTIME_MAX_FPS := 30
 
 var _server = null
 
 func _initialize() -> void:
+	Engine.max_fps = SERVER_RUNTIME_MAX_FPS
 	var launch_args: Dictionary = _parse_user_args(OS.get_cmdline_user_args())
 	var config_path: String = str(launch_args.get("match_config", "")).strip_edges()
 	if config_path.is_empty():

@@ -543,7 +543,13 @@ static func build_board_popup_body(card: Card, viewer: Player, config: Dictionar
 				13,
 				Color(1.0, 0.35, 0.35)
 			))
-		if card.is_muted and card.mute_turns_remaining > 0:
+		if card.is_silenced():
+			vbox.add_child(_make_label(
+				"Status: Silenced",
+				13,
+				Color(1.0, 0.78, 0.86)
+			))
+		elif card.is_muted and card.mute_turns_remaining > 0:
 			vbox.add_child(_make_label(
 				"Status: Muted (%d turn%s)" % [
 					card.mute_turns_remaining,

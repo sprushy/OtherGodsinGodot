@@ -11,6 +11,12 @@ const MATCH_STATUS_FILE_STALE_SECONDS := 20
 const MATCH_STATUS_FILE_STARTUP_GRACE_SECONDS := 150
 const MIN_FREE_BOT_DISK_BYTES := 512 * 1024 * 1024
 const SUPERVISOR_HEARTBEAT_INTERVAL_MSEC := 5000
+## Override for the concurrent supervisor-hosted human match limit
+## (OTHERGODS_MAX_HUMAN_MATCHES). Unset means one logical core per match with
+## one core reserved for the lobby itself.
+const MAX_HOSTED_HUMAN_MATCHES_ENV := "OTHERGODS_MAX_HUMAN_MATCHES"
+const HOST_LOBBY_CORE_RESERVE := 1
+const SERVER_HOST_FULL_MESSAGE := "The server is full at the moment — sorry! Please try again in a few minutes."
 
 signal match_created(match_session)
 signal match_closed(match_id: String, room_id: String, final_status: String)
@@ -80,16 +86,11 @@ func create_match(
 	while active_matches.has(match_id):
 		match_id = _generate_match_id()
 
-	var match_port := _allocate_match_port()
-	if match_port <= 0:
-		last_create_match_error = "All dedicated match ports are in use. Try again shortly."
-		return null
-
 	var session := MatchSessionScript.new(
 		match_id,
 		room_id,
 		server_ip,
-		match_port,
+		0,
 		player_session_ids,
 		player_decks_by_session,
 		player_identity_by_session
@@ -97,6 +98,31 @@ func create_match(
 	session.spectator_visible_player_indices_by_session = spectator_visible_player_indices_by_session.duplicate(true)
 	session.is_ranked = is_ranked
 	var require_dedicated := session.get_human_player_count() < player_session_ids.size()
+	# Player-hosted (listen-server) matches never bind a supervisor port: the
+	# host binds its own endpoint and match info points clients at
+	# host_reachable_ip/port. Skip the allocation so these matches do not
+	# consume slots from the dedicated match port pool.
+	var is_player_hosted := not require_dedicated \
+		and not player_host_session_id.strip_edges().is_empty() \
+		and player_host_reachable_port > 0
+	# Supervisor-hosted human matches (dedicated subprocess or in-process host)
+	# each consume a logical core for the life of the match. When the server is
+	# already at sustainable concurrency, decline the new match with an
+	# apology instead of launching it and degrading every running match.
+	# Player-hosted matches run on the host's machine and bot self-play is
+	# shed separately, so neither is gated here.
+	if not is_player_hosted and not session.is_bot_self_play():
+		var capacity_blocker := get_human_match_capacity_blocker()
+		if not capacity_blocker.is_empty():
+			last_create_match_error = capacity_blocker
+			return null
+	var match_port := 0
+	if not is_player_hosted:
+		match_port = _allocate_match_port()
+		if match_port <= 0:
+			last_create_match_error = "All dedicated match ports are in use. Try again shortly."
+			return null
+		session.match_port = match_port
 	session.configure_series_format(best_of)
 	session.mark_active()
 	if player_host_session_id.is_empty():
@@ -105,7 +131,7 @@ func create_match(
 	# GameManager in their own process. No dedicated subprocess, no supervisor-
 	# allocated port bound here (the host binds its own). The supervisor does not
 	# poll a status file for this mode; lifecycle is driven by the lobby.
-	if not require_dedicated and not player_host_session_id.strip_edges().is_empty() and player_host_reachable_port > 0:
+	if is_player_hosted:
 		session.server_mode = MatchSessionScript.SERVER_MODE_PLAYER_HOST
 		session.host_session_id = player_host_session_id.strip_edges()
 		session.host_reachable_ip = player_host_reachable_ip.strip_edges()
@@ -137,14 +163,48 @@ func start_shared_bot_match(session: MatchSession) -> bool:
 	match_created.emit(session)
 	return true
 
-func has_background_worker_capacity() -> bool:
+## Returns "" when a background bot worker may launch, otherwise a short
+## reason naming the port or disk constraint that blocks it.
+func get_background_worker_capacity_blocker() -> String:
 	var port_limit := 65536 - default_match_port
 	if not public_websocket_url.is_empty():
 		port_limit = mini(port_limit, WebSocketEndpointsScript.MATCH_PORT_COUNT)
-	if active_matches.size() >= port_limit - 2:
-		return false
+	# Only sessions holding a supervisor-allocated port compete for the port
+	# pool; player-hosted matches bind their own endpoint elsewhere.
+	var port_bound_match_count := 0
+	for session in active_matches.values():
+		if session != null and int(session.match_port) > 0:
+			port_bound_match_count += 1
+	if port_bound_match_count >= port_limit - 2:
+		return "All dedicated match ports are in use."
 	var disk := DirAccess.open(ServerPathsScript.get_server_root_dir())
-	return disk != null and disk.get_space_left() >= MIN_FREE_BOT_DISK_BYTES
+	if disk == null:
+		return "Server data directory is unavailable."
+	if disk.get_space_left() < MIN_FREE_BOT_DISK_BYTES:
+		return "Free disk space on the server data volume is below 512 MB."
+	return ""
+
+## Returns "" when one more supervisor-hosted human match may launch, otherwise
+## the apologetic "server full" message shown to the declined players. The
+## sustainable concurrency is one match per logical core with one core reserved
+## for the lobby; every active non-bot, non-player-hosted session consumes a
+## slot regardless of whether it runs as a dedicated subprocess or in-process.
+func get_human_match_capacity_blocker() -> String:
+	var hosted_match_count := 0
+	for session in active_matches.values():
+		if session == null or session.is_bot_self_play() or session.is_player_host():
+			continue
+		hosted_match_count += 1
+	if hosted_match_count >= get_max_hosted_human_matches():
+		return SERVER_HOST_FULL_MESSAGE
+	return ""
+
+func get_max_hosted_human_matches() -> int:
+	if OS.has_environment(MAX_HOSTED_HUMAN_MATCHES_ENV):
+		var configured := int(OS.get_environment(MAX_HOSTED_HUMAN_MATCHES_ENV))
+		if configured > 0:
+			return configured
+	return maxi(1, OS.get_processor_count() - HOST_LOBBY_CORE_RESERVE)
 
 func set_spectator_visible_player_indices(match_id: String, session_id: String, player_indices: Array) -> void:
 	var session = active_matches.get(match_id.strip_edges(), null)
@@ -275,8 +335,6 @@ func _launch_dedicated_match(session) -> bool:
 		return false
 
 	var args := PackedStringArray(["--headless"])
-	if session.is_bot_self_play():
-		args.append_array(["--max-fps", "30"])
 	# Capture the dedicated match server's stdout (incl. [HT-DEBUG] prints) to a log
 	# next to its launch config so smoke runs and manual debugging can read it.
 	var match_log_path := config_path.get_basename() + ".log"

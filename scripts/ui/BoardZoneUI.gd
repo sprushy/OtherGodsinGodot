@@ -25,6 +25,7 @@ const TEZ_SACRIFICE_BADGE_TEXTURE := preload("res://images/TezSacBadge.png")
 const APHRODITE_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/AphroditeViolentDelightsBadge.png")
 const DELLINGR_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/DellingrRevealingLightBadge.png")
 const FREYJA_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/FreyjaReceiverOfTheSlainBadge.png")
+const BANE_OF_THE_SVARTALFAR_BADGE_TEXTURE := preload("res://images/card_art/spells/BaneofSvart.png")
 const GUAN_YU_TACTICAL_BREAK_BADGE_TEXTURE := preload("res://images/ability_badges/GuanYuTacticalBreakBadge.png")
 const HERMES_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/HermesBadge.png")
 const MANNAN_MAC_LIR_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/MannanBadge.png")
@@ -112,6 +113,7 @@ const EN_HEDU_ANNA_EXALTATION_SOURCE := "En-hedu-anna Exaltation"
 const EN_HEDU_ANNA_EXALTATION_EFFECT_TYPE := "exaltation"
 const GIDIM_ENSI_CARD_NAME := "Gidim Ensi"
 const GIDIM_ENSI_SLEEP_SOURCE := "Gidim Ensi Guardian"
+const SILENCE_DEBUFF_TEXTURE := preload("res://images/SilenceCursorPGN.png")
 const LEVEL_BADGE_TOP := -12.0
 const LEVEL_BADGE_BOTTOM := 12.0
 const BADGE_ROW_GAP := 6.0
@@ -3684,9 +3686,10 @@ func _add_debuff_affordances(overlay: Control, card: Card) -> void:
 			continue
 		var badge := DebuffBadgeScript.create(preview, int(entry.get("count", 1)))
 		var source_card := entry.get("source_card", null) as Card
-		if source_card != null:
+		var tooltip := str(entry.get("tooltip", ""))
+		if source_card != null or tooltip != "":
 			badge.mouse_filter = Control.MOUSE_FILTER_PASS
-			_connect_badge_hover(badge, "", source_card)
+			_connect_badge_hover(badge, tooltip, source_card)
 		badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 		badge.offset_left = badge_right - DEBUFF_BADGE_SIZE
 		badge.offset_top = badge_top
@@ -3921,6 +3924,7 @@ func _get_debuff_affordance_entries(card: Card) -> Array[Dictionary]:
 		_append_debuff_affordance_entry(entries, seen, _build_debuff_entry_from_buff(buff))
 	for binding in _get_attached_permanent_hexes(card):
 		_append_debuff_affordance_entry(entries, seen, _build_debuff_entry_from_binding(binding))
+	_append_debuff_affordance_entry(entries, seen, _build_mute_debuff_entry(card))
 	return entries
 
 func _is_card_soft_selected(card: Card) -> bool:
@@ -4177,6 +4181,18 @@ func _is_debuff_status_from_attached_binding(card: Card, status: Dictionary) -> 
 	var source_card = status.get("source_card", null)
 	return source_card is PermanentHexCard and (source_card as PermanentHexCard).attached_target == card
 
+func _build_mute_debuff_entry(card: Card) -> Dictionary:
+	if card == null or not card.is_muted:
+		return {}
+	if card.has_status_effect(Card.ABILITY_NEGATED_STATUS) or card.has_status_effect("silence"):
+		return {}
+	return {
+		"key": "mute:%s" % (card.uid if card.uid != "" else str(card.get_instance_id())),
+		"preview_texture": SILENCE_DEBUFF_TEXTURE,
+		"tooltip": "Silenced" if card.is_silenced() else "Muted",
+		"count": 1,
+	}
+
 func _build_debuff_entry_from_status(card: Card, status: Dictionary) -> Dictionary:
 	if card == null or status.is_empty():
 		return {}
@@ -4211,16 +4227,18 @@ func _build_debuff_entry_from_status(card: Card, status: Dictionary) -> Dictiona
 			"preview_texture": FREYJA_ABILITY_BADGE_TEXTURE,
 			"count": 1,
 		}
-	if status_name in ["cannot_attack", "cannot_intercept", "cannot_move", "activation_locked", Card.ABILITY_NEGATED_STATUS]:
+	if status_name in ["cannot_attack", "cannot_intercept", "cannot_move", "activation_locked", Card.ABILITY_NEGATED_STATUS, "silence"]:
 		return {
 			"key": "source:%s" % source_key,
 			"source_card": source_card,
+			"preview_texture": SILENCE_DEBUFF_TEXTURE if source_card == null and status_name in [Card.ABILITY_NEGATED_STATUS, "silence"] else null,
 			"count": 1,
 		}
 	if status_name in ["doomed", "petrified"]:
 		return {
 			"key": "source:%s" % source_key,
 			"source_card": source_card,
+			"preview_texture": BANE_OF_THE_SVARTALFAR_BADGE_TEXTURE if status_name == "petrified" else null,
 			"count": 1,
 		}
 	return {}

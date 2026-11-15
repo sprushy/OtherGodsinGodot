@@ -115,14 +115,14 @@ func get_effective_speed(speed_delta: int = 0) -> int:
 		total += FELINE_SPD_BONUS
 	return clampi(total, 1, 7)
 
-func get_effective_strength() -> int:
-	var total := super.get_effective_strength()
+func get_effective_strength(strength_delta: int = 0) -> int:
+	var total := super.get_effective_strength(strength_delta)
 	if in_feline_form:
 		total += FELINE_STR_BONUS
 	return max(0, total)
 
-func get_effective_resilience() -> int:
-	var total := super.get_effective_resilience()
+func get_effective_resilience(resilience_delta: int = 0) -> int:
+	var total := super.get_effective_resilience(resilience_delta)
 	if not in_feline_form:
 		total += HUMAN_RES_BONUS
 	return max(0, total)

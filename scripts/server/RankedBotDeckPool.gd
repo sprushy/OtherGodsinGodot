@@ -2,9 +2,12 @@ extends RefCounted
 
 const RankedProgressionScript = preload("res://scripts/server/RankedProgression.gd")
 const LISTS_PER_GOD := 7
-const EARLY_RETIREMENT_GAMES := 12
+const EARLY_RETIREMENT_GAMES := 60
 const EXPLORATION_CHANCE := 0.25
-const MATCHMAKING_LEAGUE_TIER_WINDOW := 2
+# Opponents are drawn from the target league and the leagues directly above and
+# below it (e.g. Iron, Bronze, or Silver for a Bronze player). When the band has
+# no candidates, pairing falls back to the closest available league.
+const MATCHMAKING_LEAGUE_TIER_WINDOW := 1
 const NAME_POOLS := {
 	"Thor": ["Bloodaxe", "Moon", "Stormbreaker", "Thunderhead", "Iron Ram", "Cloudsplitter", "Red Hammer", "Mjolnir's Wake"],
 	"Odin": ["Ravenwatch", "Runeweaver", "Grey Wanderer", "Gallows Tree", "Spear of Oaths", "Winter King", "Last Wisdom", "Hanged One"],
@@ -79,12 +82,18 @@ func _ensure_unique_deck_names() -> void:
 		return str(first_deck.get("fingerprint", "")) < str(second_deck.get("fingerprint", ""))
 	)
 	var used_names := {}
+	var needs_name: Array[Dictionary] = []
 	for entry: Dictionary in decks:
 		var deck: Dictionary = entry["deck"]
 		var base_name := str(deck.get("deck_name", "")).strip_edges()
-		var deck_god := display_god_name(str(entry["god_name"]))
 		if _is_generic_bot_name(base_name) or used_names.has(base_name.to_lower()):
-			base_name = _make_unique_bot_name(deck_god, deck, used_names)
+			needs_name.append(entry)
+			continue
+		used_names[base_name.to_lower()] = true
+	for entry: Dictionary in needs_name:
+		var deck: Dictionary = entry["deck"]
+		var deck_god := display_god_name(str(entry["god_name"]))
+		var base_name := _make_unique_bot_name(deck_god, deck, used_names)
 		deck["deck_name"] = base_name
 		used_names[base_name.to_lower()] = true
 
@@ -174,7 +183,8 @@ func _deck_details(list: Dictionary) -> Dictionary:
 func select_deck(busy_list_ids: Dictionary, rng: RandomNumberGenerator, target_stars: int) -> Dictionary:
 	var target_rank := RankedProgressionScript.summarize_bot_stars(target_stars)
 	var target_league := int(target_rank["league"])
-	var decks_by_league: Dictionary = {}
+	var band_candidates: Array = []
+	var candidates_by_gap: Dictionary = {}
 	for pool: Dictionary in _by_god.values():
 		var challenger: Dictionary = pool["challenger"]
 		var lists: Array = pool["lists"].duplicate()
@@ -183,30 +193,19 @@ func select_deck(busy_list_ids: Dictionary, rng: RandomNumberGenerator, target_s
 		for list: Dictionary in lists:
 			if list["list_id"] == pool["quarantined_id"] or busy_list_ids.has(list["list_id"]):
 				continue
-			var rank := RankedProgressionScript.summarize_bot_stars(int(list["stars"]))
-			var league := int(rank["league"])
-			var candidates: Array = decks_by_league.get(league, [])
-			candidates.append(list)
-			decks_by_league[league] = candidates
-	var eligible_leagues: Array[int] = []
-	for raw_league in decks_by_league.keys():
-		var league := int(raw_league)
-		if absi(league - target_league) <= MATCHMAKING_LEAGUE_TIER_WINDOW:
-			eligible_leagues.append(league)
-	if eligible_leagues.is_empty() and not decks_by_league.is_empty():
-		var nearest_gap := 1 << 30
-		for raw_league in decks_by_league.keys():
-			var league := int(raw_league)
-			var gap := absi(league - target_league)
-			if gap < nearest_gap:
-				eligible_leagues.clear()
-				nearest_gap = gap
-			if gap == nearest_gap:
-				eligible_leagues.append(league)
-	if eligible_leagues.is_empty():
+			var gap := absi(_league_for_stars(int(list["stars"])) - target_league)
+			if gap <= MATCHMAKING_LEAGUE_TIER_WINDOW:
+				band_candidates.append(list)
+				continue
+			var bucket: Array = candidates_by_gap.get(gap, [])
+			bucket.append(list)
+			candidates_by_gap[gap] = bucket
+	var candidates: Array = band_candidates
+	if candidates.is_empty() and not candidates_by_gap.is_empty():
+		candidates = candidates_by_gap[_closest_gap(candidates_by_gap)]
+	if candidates.is_empty():
 		return {}
-	var selected_league: int = eligible_leagues[rng.randi_range(0, eligible_leagues.size() - 1)]
-	var candidates: Array = decks_by_league[selected_league]
+	# Every opponent in the band is an equally likely pick, regardless of league.
 	return (candidates[rng.randi_range(0, candidates.size() - 1)] as Dictionary).duplicate(true)
 
 func select_self_play_pair(busy_list_ids: Dictionary, rng: RandomNumberGenerator) -> Array[Dictionary]:
@@ -218,19 +217,35 @@ func select_self_play_pair(busy_list_ids: Dictionary, rng: RandomNumberGenerator
 		for list: Dictionary in lists:
 			if list["list_id"] != pool["quarantined_id"] and not busy_list_ids.has(list["list_id"]):
 				available.append(list)
-	var pairs: Array[Array] = []
-	var trials: Array[Array] = []
+	var pairs_by_gap: Dictionary = {}
+	var trials_by_gap: Dictionary = {}
 	for i in available.size():
 		for j in range(i + 1, available.size()):
 			var first := available[i]
 			var second := available[j]
-			if not can_self_play_pair(first, second):
+			var first_id := str(first.get("list_id", ""))
+			if not first_id.is_empty() and first_id == str(second.get("list_id", "")):
 				continue
+			var gap := absi(_league_for_stars(int(first["stars"])) - _league_for_stars(int(second["stars"])))
 			var pair := [first, second]
-			pairs.append(pair)
+			_append_to_gap_bucket(pairs_by_gap, gap, pair)
 			if _by_god[first["god_name"]]["challenger"] == first or _by_god[second["god_name"]]["challenger"] == second:
-				trials.append(pair)
-	var candidates := trials if not trials.is_empty() else pairs
+				_append_to_gap_bucket(trials_by_gap, gap, pair)
+	# Prefer pairs inside the league band, then the closest available gap.
+	var selected_gaps: Array = []
+	for gap in range(0, MATCHMAKING_LEAGUE_TIER_WINDOW + 1):
+		if pairs_by_gap.has(gap):
+			selected_gaps.append(gap)
+	if selected_gaps.is_empty() and not pairs_by_gap.is_empty():
+		selected_gaps.append(_closest_gap(pairs_by_gap))
+	if selected_gaps.is_empty():
+		return []
+	var candidates: Array = []
+	var trials: Array = []
+	for gap in selected_gaps:
+		candidates.append_array(pairs_by_gap[gap])
+		if trials_by_gap.has(gap):
+			trials.append_array(trials_by_gap[gap])
 	if candidates.is_empty() or (trials.is_empty() and rng.randf() < EXPLORATION_CHANCE):
 		return []
 	var total_weight := 0.0
@@ -254,6 +269,22 @@ func select_self_play_pair(busy_list_ids: Dictionary, rng: RandomNumberGenerator
 		selected.reverse()
 	return selected
 
+func _append_to_gap_bucket(buckets: Dictionary, gap: int, pair: Array) -> void:
+	var bucket: Array = buckets.get(gap, [])
+	bucket.append(pair)
+	buckets[gap] = bucket
+
+func _closest_gap(buckets: Dictionary) -> int:
+	var closest_gap := -1
+	for raw_gap in buckets.keys():
+		var gap := int(raw_gap)
+		if closest_gap < 0 or gap < closest_gap:
+			closest_gap = gap
+	return closest_gap
+
+static func _league_for_stars(stars: int) -> int:
+	return int(RankedProgressionScript.summarize_bot_stars(stars)["league"])
+
 func _get_played_match_count(list: Dictionary) -> int:
 	return int(list.get("wins", 0)) + int(list.get("losses", 0)) + int(list.get("draws", 0))
 
@@ -276,9 +307,7 @@ func rank_underrepresented_gods(god_names: Array[String], rng: RandomNumberGener
 	return ranked
 
 static func can_self_play_pair(first: Dictionary, second: Dictionary) -> bool:
-	var first_rank := RankedProgressionScript.summarize_bot_stars(int(first.get("stars", 0)))
-	var second_rank := RankedProgressionScript.summarize_bot_stars(int(second.get("stars", 0)))
-	if absi(int(first_rank["league"]) - int(second_rank["league"])) > MATCHMAKING_LEAGUE_TIER_WINDOW:
+	if absi(_league_for_stars(int(first.get("stars", 0))) - _league_for_stars(int(second.get("stars", 0)))) > MATCHMAKING_LEAGUE_TIER_WINDOW:
 		return false
 	var first_id := str(first.get("list_id", ""))
 	return first_id.is_empty() or first_id != str(second.get("list_id", ""))
@@ -378,6 +407,7 @@ func _apply_result(result: Dictionary) -> void:
 		"losses": 0,
 		"draws": 0,
 		"stars": 0,
+		"win_streak": 0,
 		"self_play_name": str(result.get("bot_name", "")) if bool(result.get("is_self_play", false)) else "",
 	}
 	_update_record(new_list, outcome)
@@ -409,17 +439,9 @@ func _start_trial(pool: Dictionary, challenger: Dictionary) -> void:
 		_resolve_trial(pool)
 
 func _update_record(list: Dictionary, outcome: String) -> void:
-	match outcome:
-		"win":
-			list["wins"] += 1
-			list["stars"] += 1
-		"loss":
-			list["losses"] += 1
-			var stars := int(list["stars"])
-			var rank := RankedProgressionScript.summarize_bot_stars(stars)
-			list["stars"] = maxi(int(rank["floor_points"]), stars - 1)
-		"draw":
-			list["draws"] += 1
+	# Records are rebuilt by replaying the full stored result history in finish
+	# order, so rule changes here apply retroactively on the next full replay.
+	RankedProgressionScript.apply_bot_result(list, outcome)
 
 func _should_retire_early(list: Dictionary) -> bool:
 	var games_played := _get_played_match_count(list)
@@ -493,16 +515,16 @@ func _fingerprint(deck: Dictionary) -> String:
 
 func _name_list(list: Dictionary, other_lists: Array) -> void:
 	var self_play_name := str(list.get("self_play_name", ""))
-	if not self_play_name.is_empty():
-		list["deck_name"] = self_play_name
-		return
 	var god := display_god_name(list["god_name"])
 	var names: Array = NAME_POOLS.get(god, DEFAULT_NAMES)
 	var used_names := {}
 	for other: Dictionary in other_lists:
-		used_names[other["deck_name"]] = true
+		used_names[str(other["deck_name"]).to_lower()] = true
+	if not _is_generic_bot_name(self_play_name) and not used_names.has(self_play_name.to_lower()):
+		list["deck_name"] = self_play_name
+		return
 	for suffix in names:
 		var name := "%s: %s" % [god, suffix]
-		if not used_names.has(name):
+		if not used_names.has(name.to_lower()):
 			list["deck_name"] = name
 			return

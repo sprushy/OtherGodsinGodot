@@ -491,7 +491,7 @@ func _has_deckbuilding_requirements(card: Card, cards: Dictionary, god: GodCard)
 		"Caleuche, the Ghost Ship":
 			return _count_other_matching(cards, card, ["Spirit"]) >= 2 or (god.card_name == "Freyja" and _count_matching(cards, ["Norse", "Warrior"]) >= 2)
 		"E2-abzu":
-			return _deck_has_mer_mage(cards)
+			return _count_matching(cards, ["Mer"]) >= 2
 		"Walk of the Sage":
 			return _walk_of_the_sage_has_payoff(cards)
 		"Huginn": return _count_tagged(cards, "Hex") > 0

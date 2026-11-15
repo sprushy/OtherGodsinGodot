@@ -14,7 +14,7 @@ func _init() -> void:
 	flavor_text = ""
 	artist = "David Revoy"
 	art_path = "res://images/card_art/hexes/foolish_optimism_crop.jpg"
-	ability_text = "Force your opponent's lowest lvl face-up creature to attack your highest lvl face-up creature. Halve follower damage from that combat."
+	ability_text = "Force your opponent's lowest lvl face-up creature to attack your highest lvl face-up creature."
 
 func resolve(game_manager: GameManager, _target = null) -> void:
 	if game_manager == null:
@@ -54,7 +54,6 @@ func resolve_with_choices(game_manager: GameManager, attacker: Card, defender: C
 	if attacker.has_method("get_united_front_attack_speed"):
 		action.attack_speed_override = attacker.get_united_front_attack_speed(game_manager)
 	action.target = defender
-	action.halve_follower_damage = true
 	game_manager.push_to_stack(action)
 	return feedback
 

@@ -20,6 +20,8 @@ const KNOWN_COMMAND_TYPES := [
 	"tiamat_upkeep_choice",
 	"forfeit",
 	"forfeit_match",
+	"offer_draw",
+	"respond_draw_offer",
 	"submit_reinforcements",
 	"cast_spell",
 	"blot_sacrifice_choice",
@@ -184,6 +186,11 @@ static func get_required_player(command: Dictionary, game_manager: GameManager, 
 			if forfeiting_index >= 0 and forfeiting_index < game_manager.players.size():
 				return game_manager.players[forfeiting_index]
 			return null
+		"offer_draw", "respond_draw_offer":
+			var draw_action_index := int(command.get("player_index", -1))
+			if draw_action_index >= 0 and draw_action_index < game_manager.players.size():
+				return game_manager.players[draw_action_index]
+			return null
 		"submit_reinforcements":
 			var reinforcement_player_index := int(command.get("player_index", -1))
 			if reinforcement_player_index >= 0 and reinforcement_player_index < game_manager.players.size():
@@ -305,7 +312,7 @@ static func requires_resolved_upkeep(command: Dictionary) -> bool:
 	if command_type == "activate_power" and str(command.get("mode", "")) == "return_priest":
 		return false
 	match command_type:
-		"upkeep_choice", "tiamat_upkeep_choice", "skoll_upkeep_summon", "priority_pass", "set_priority_preferences", "intercept_decision", "combat_retreat_decision", "play_hex_response", "play_charm_response", "play_priority_ability", "forfeit", "forfeit_match", "humbaba_augury_choice", "return_to_hand_choice", "doorway_choice":
+		"upkeep_choice", "tiamat_upkeep_choice", "skoll_upkeep_summon", "priority_pass", "set_priority_preferences", "intercept_decision", "combat_retreat_decision", "play_hex_response", "play_charm_response", "play_priority_ability", "forfeit", "forfeit_match", "offer_draw", "respond_draw_offer", "humbaba_augury_choice", "return_to_hand_choice", "doorway_choice":
 			return false
 	return true
 

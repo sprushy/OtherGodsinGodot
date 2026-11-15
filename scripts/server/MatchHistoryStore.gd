@@ -14,6 +14,10 @@ var _ranked_history_ids_by_account_id: Dictionary = {}
 var _bot_deck_match_ids: Array[String] = []
 var _sorted_bot_match_ids: Array[String] = []
 var _bot_results: Array[Dictionary] = []
+# Ladder responses rebuild per request, so keep the per-account/per-bot history
+# views indexed instead of re-sorting every stored match on each row.
+var _sorted_ranked_ids_by_account_id: Dictionary = {}
+var _bot_match_ids_by_list_id: Dictionary = {}
 var _dedicated_result_files_loaded: Dictionary = {}
 var _loaded: bool = false
 
@@ -335,12 +339,15 @@ func get_recent_match_activities(limit: int = 12, eliminated_bot_match_ids: Dict
 		if not loser_bot_result.is_empty() and eliminated_bot_match_ids.has(loser_bot_match_id):
 			activity["message"] = "%s lost to %s and has been eliminated from the ladder." % [loser_name, winner_name]
 		if not winner_bot_result.is_empty():
-			var previous_bot_rank := RankedProgressionScript.summarize_bot_stars(int(winner.get("bot_stars", 0)))
-			var after_bot_rank := RankedProgressionScript.summarize_bot_stars(int(winner.get("bot_stars", 0)) + 1)
+			var previous_points := int(winner.get("bot_stars", 0))
+			var star_delta := RankedProgressionScript.win_bonus_stars(
+				int(winner.get("bot_win_streak", 0)) + 1, previous_points)
+			var previous_bot_rank := RankedProgressionScript.summarize_bot_stars(previous_points)
+			var after_bot_rank := RankedProgressionScript.summarize_bot_stars(previous_points + star_delta)
 			if previous_bot_rank["name"] != after_bot_rank["name"]:
 				activity["rank_achievement"] = str(after_bot_rank["name"])
-			activity["winner_before_points"] = int(winner.get("bot_stars", 0))
-			activity["winner_after_points"] = int(winner.get("bot_stars", 0)) + 1
+			activity["winner_before_points"] = previous_points
+			activity["winner_after_points"] = previous_points + star_delta
 			activity["winner_bot_list_id"] = str(winner_bot_result.get("list_id", ""))
 		elif bool(entry.get("advances_rank", false)):
 			var ranked_results := get_ranked_match_results(entry)
@@ -370,14 +377,14 @@ func get_human_ladder(usernames: Dictionary, best_of: int) -> Array[Dictionary]:
 			"rank": progress["rank_name"], "stars": progress["stars"],
 			"wins": int(record["wins"]), "losses": int(record["losses"]), "draws": int(record["draws"]),
 			"main_gods": record["main_gods"],
-			"recent_matches": get_recent_ranked_matches_for_player(str(account_id), 10)})
+			"recent_matches": get_recent_ranked_matches_for_player(str(account_id), 10, false)})
 	return players
 
 func _get_lifetime_ranked_stats(account_id: String) -> Dictionary:
 	var record := {"wins": 0, "losses": 0, "draws": 0, "main_gods": []}
 	var god_counts: Dictionary = {}
 	var total_games := 0
-	for match_id in _get_sorted_match_ids(_ranked_history_ids_by_account_id.get(account_id, [])):
+	for match_id in _get_sorted_ranked_ids_for_account(account_id):
 		var entry: Dictionary = _matches_by_id.get(match_id, {})
 		if not bool(entry.get("advances_rank", false)):
 			continue
@@ -414,11 +421,12 @@ func _get_lifetime_ranked_stats(account_id: String) -> Dictionary:
 			record["main_gods"] = gods.slice(0, mini(2, gods.size()))
 	return record
 
-func get_recent_ranked_matches_for_player(account_id: String, limit: int = 10) -> Array[Dictionary]:
+func get_recent_ranked_matches_for_player(account_id: String, limit: int = 10, rescan: bool = true) -> Array[Dictionary]:
 	_ensure_loaded()
-	_load_dedicated_results()
+	if rescan:
+		_load_dedicated_results()
 	var matches: Array[Dictionary] = []
-	var match_ids := _get_sorted_match_ids(_ranked_history_ids_by_account_id.get(account_id, []))
+	var match_ids := _get_sorted_ranked_ids_for_account(account_id)
 	for index in range(match_ids.size() - 1, -1, -1):
 		if matches.size() >= maxi(1, limit):
 			break
@@ -438,11 +446,12 @@ func get_recent_ranked_matches_for_player(account_id: String, limit: int = 10) -
 		})
 	return matches
 
-func get_recent_ranked_bot_matches_for_list(list_id: String, limit: int = 10) -> Array[Dictionary]:
+func get_recent_ranked_bot_matches_for_list(list_id: String, limit: int = 10, rescan: bool = true) -> Array[Dictionary]:
 	_ensure_loaded()
-	_load_dedicated_results()
+	if rescan:
+		_load_dedicated_results()
 	var matches: Array[Dictionary] = []
-	var match_ids := _get_sorted_match_ids(_bot_deck_match_ids)
+	var match_ids := _get_sorted_match_ids(_bot_match_ids_by_list_id.get(list_id, []))
 	for index in range(match_ids.size() - 1, -1, -1):
 		if matches.size() >= maxi(1, limit):
 			break
@@ -539,7 +548,7 @@ func get_ranked_match_results(entry: Dictionary) -> Dictionary:
 
 func _replay_ranked_history(account_id: String, best_of: int, stop_before_match_id: String = "") -> Dictionary:
 	var progress := {}
-	var match_ids := _get_sorted_match_ids(_ranked_history_ids_by_account_id.get(account_id, []))
+	var match_ids := _get_sorted_ranked_ids_for_account(account_id)
 	for match_id in match_ids:
 		if match_id == stop_before_match_id:
 			break
@@ -558,10 +567,16 @@ func _index_result(entry: Dictionary) -> void:
 	var match_id := str(entry["match_id"])
 	if entry.has("bot_deck_result") or entry.has("bot_deck_results"):
 		_bot_deck_match_ids.append(match_id)
+		for bot_result in entry.get("bot_deck_results", []):
+			if not (bot_result is Dictionary):
+				continue
+			_bot_match_ids_by_list_id.get_or_add(str(bot_result.get("list_id", "")), []).append(match_id)
 	for player_entry in entry["players"]:
 		_add_history_id(_history_ids_by_profile_id, str(player_entry["profile_id"]), match_id)
 		if bool(entry.get("advances_rank", false)):
-			_add_history_id(_ranked_history_ids_by_account_id, str(player_entry["account_id"]), match_id)
+			var account_id := str(player_entry["account_id"])
+			_add_history_id(_ranked_history_ids_by_account_id, account_id, match_id)
+			_sorted_ranked_ids_by_account_id.erase(account_id)
 
 func _add_history_id(history_index: Dictionary, owner_id: String, match_id: String) -> void:
 	if owner_id.is_empty():
@@ -616,6 +631,7 @@ func _build_player_entry(
 		"deck_name": str(submission.get("deck_name", "")),
 		"deck_id": str(submission.get("deck_id", "")),
 		"bot_stars": int(submission.get("bot_stars", 0)),
+		"bot_win_streak": int(submission.get("bot_win_streak", 0)),
 	}
 
 func _get_profile_history_ids(profile_id: String) -> Array[String]:
@@ -629,6 +645,15 @@ func _get_sorted_match_ids(raw_history_ids) -> Array[String]:
 		history_ids.append(str(raw_match_id))
 	history_ids.sort_custom(_match_finished_before)
 	return history_ids
+
+## Cached sorted ranked history for one account. `_index_result` invalidates the
+## entry whenever a new ranked match id is appended for that account.
+func _get_sorted_ranked_ids_for_account(account_id: String) -> Array[String]:
+	if _sorted_ranked_ids_by_account_id.has(account_id):
+		return _sorted_ranked_ids_by_account_id[account_id]
+	var sorted_ids := _get_sorted_match_ids(_ranked_history_ids_by_account_id.get(account_id, []))
+	_sorted_ranked_ids_by_account_id[account_id] = sorted_ids
+	return sorted_ids
 
 func _match_finished_before(left_id: String, right_id: String) -> bool:
 	var left_time := float(_matches_by_id.get(left_id, {}).get("played_unix", 0))
@@ -677,6 +702,8 @@ func _ensure_loaded() -> void:
 	_loaded = true
 	_matches_by_id = {}
 	_history_ids_by_profile_id = {}
+	_sorted_ranked_ids_by_account_id = {}
+	_bot_match_ids_by_list_id = {}
 	var storage_path: String = _get_storage_path()
 	if not FileAccess.file_exists(storage_path):
 		return

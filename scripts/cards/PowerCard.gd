@@ -54,7 +54,11 @@ func unlock(game_manager: GameManager) -> void:
 	is_muted = false
 	mute_turns_remaining = 0
 	_mute_applied_owner_turn_number = -1
-	PowerUnlockSoundPlayerScript.play_sequence()
+	if game_manager != null:
+		if game_manager.sfx_enabled:
+			PowerUnlockSoundPlayerScript.play_sequence()
+	else:
+		PowerUnlockSoundPlayerScript.play_sequence()
 	on_unlock(game_manager)
 
 # Called immediately when the power is flipped face-up.

@@ -25,9 +25,14 @@ signal field_effect_requested(effect_name: String, source_card: Card)
 enum GamePhase { MULLIGAN, MAIN, COMBAT, END }
 const GAME_END_REASON_DEFEAT := "defeat"
 const GAME_END_REASON_DRAW := "draw"
+const GAME_END_REASON_MUTUAL_DRAW := "mutual_draw"
 const GAME_END_REASON_FORFEIT := "forfeit"
 const GAME_END_REASON_MATCH_FORFEIT := "match_forfeit"
 const GOD_DEATH_FOLLOWER_LOSS := 7
+const FATIGUE_START_TURN := 49
+const FATIGUE_INITIAL_FOLLOWER_LOSS := 7
+const FATIGUE_ESCALATION_TURNS := 7
+const FATIGUE_ESCALATION_STEP := 7
 const UPKEEP_AUTOMATIC_MANA_GAIN := 1
 const UPKEEP_DRAW_MANA_GAIN := 0
 const UPKEEP_MANA_GAIN := 4
@@ -74,6 +79,10 @@ var last_hex_resolution_text: String = ""
 var last_player_feedback_text: String = ""
 var _pending_player_feedback_texts: Array[String] = []
 var _pending_ui_sound_cues: Array[String] = []
+# False for authoritative game instances that are not rendered by this process
+# (e.g. an in-process bot-match server on a hosting client), so their rule
+# events do not play sounds over the locally rendered game.
+var sfx_enabled: bool = true
 var _upkeep_resolved_turn: int = -1
 var _upkeep_started_turn: int = -1
 var _temporary_summon_cost_modifiers: Array[Dictionary] = []
@@ -506,13 +515,15 @@ func consume_ui_sound_cues() -> Array[String]:
 func note_creature_sacrifice(card: Card) -> void:
 	if card == null or not card.is_creature_card():
 		return
-	CreatureSacrificeSoundPlayerScript.play_sound()
+	if sfx_enabled:
+		CreatureSacrificeSoundPlayerScript.play_sound()
 	note_ui_sound_cue("creature_sacrifice")
 
 func note_creature_death(card: Card, was_aerial: bool) -> void:
 	if card == null or not card.is_creature_card() or card.has_meta("creature_sacrifice_in_progress"):
 		return
-	CreatureDeathSoundPlayerScript.play_sound(was_aerial)
+	if sfx_enabled:
+		CreatureDeathSoundPlayerScript.play_sound(was_aerial)
 	note_ui_sound_cue("creature_death_aerial" if was_aerial else "creature_death")
 
 func get_game_result_message(winner: Player = winning_player, loser: Player = losing_player, reason: String = "") -> String:
@@ -535,6 +546,8 @@ func get_game_result_message(winner: Player = winning_player, loser: Player = lo
 			return winner.player_name + " wins the match by forfeit!"
 	if resolved_reason == GAME_END_REASON_DRAW:
 		return "Draw! Both players reached 0 followers."
+	if resolved_reason == GAME_END_REASON_MUTUAL_DRAW:
+		return "Draw! Both players agreed to end the game in a draw."
 	if winner != null and loser != null:
 		return "%s wins the game! %s reached 0 followers." % [winner.player_name, loser.player_name]
 	if loser != null:
@@ -621,10 +634,10 @@ func get_incorporeal_attack_block_feedback(attacker: Card, defender: Card) -> Di
 		}
 	return {}
 
-func can_cards_engage_each_other(attacker: Card, defender: Card) -> bool:
+func can_cards_engage_each_other(attacker: Card, defender: Card, check_structures: bool = true) -> bool:
 	if attacker == null or defender == null:
 		return false
-	if is_attack_blocked_by_active_structure(attacker, defender):
+	if check_structures and is_attack_blocked_by_active_structure(attacker, defender):
 		return false
 	var ignore_targeting_limits := attacker.can_ignore_attack_targeting_restrictions(defender)
 	if not ignore_targeting_limits and attacker.has_method("can_engage") and not attacker.can_engage(defender):
@@ -933,6 +946,17 @@ func _begin_turn_upkeep() -> void:
 		)
 		if is_game_over:
 			return
+	var fatigue_loss := get_fatigue_follower_loss()
+	if fatigue_loss > 0:
+		current_player.lose_followers(fatigue_loss)
+		note_player_feedback(
+			"[b]Fatigue[/b]: %s loses %d followers." % [
+				current_player.player_name,
+				fatigue_loss
+			]
+		)
+		if is_game_over:
+			return
 	var automatic_mana := get_automatic_upkeep_mana_gain(current_player)
 	if automatic_mana > 0:
 		current_player.gain_mana(automatic_mana, false)
@@ -1133,6 +1157,19 @@ func get_upkeep_choice_feedback(choice: String) -> String:
 
 func is_first_game_turn() -> bool:
 	return turn_number == 1
+
+# Fatigue is an unavoidable upkeep penalty that kicks in deep into long games.
+# Turn 49 costs 7 followers; every 7 more turns the cost grows by another 7.
+func is_fatigue_active(turn: int = -1) -> bool:
+	var target_turn := turn_number if turn < 0 else turn
+	return target_turn >= FATIGUE_START_TURN
+
+func get_fatigue_follower_loss(turn: int = -1) -> int:
+	var target_turn := turn_number if turn < 0 else turn
+	if target_turn < FATIGUE_START_TURN:
+		return 0
+	var escalation_steps := round_down_divide(target_turn - FATIGUE_START_TURN, FATIGUE_ESCALATION_TURNS)
+	return FATIGUE_INITIAL_FOLLOWER_LOSS + escalation_steps * FATIGUE_ESCALATION_STEP
 
 func get_base_upkeep_draw_mana_gain() -> int:
 	return UPKEEP_DRAW_MANA_GAIN
@@ -1677,7 +1714,8 @@ func _trigger_board_summon(
 	if card == null or player == null or target_zone == null:
 		return
 	if card.card_type == Card.CardType.STRUCTURE and not face_down and not stealth and not card.is_face_down:
-		StructureBuildSoundPlayerScript.play_sound()
+		if sfx_enabled:
+			StructureBuildSoundPlayerScript.play_sound()
 		note_ui_sound_cue("structure_build")
 	if card.has_method("on_summon"):
 		card.on_summon(self)
@@ -1739,11 +1777,11 @@ func spells_must_be_prepared() -> bool:
 				return true
 	return false
 
-func is_first_turn_attack_blocked_by_weather(creature: Card, projecting_summon: bool = false) -> bool:
+func is_first_turn_attack_blocked_by_weather(creature: Card, projecting_summon: bool = false, removed: Array = []) -> bool:
 	if creature == null or creature.card_type != Card.CardType.CREATURE or (not projecting_summon and not creature.summoned_this_turn):
 		return false
 	for card in get_field_cards():
-		if not (card is HeavySnow) or card.is_face_down or card.abilities_suppressed():
+		if card in removed or not (card is HeavySnow) or card.is_face_down or card.abilities_suppressed():
 			continue
 		if creature.has_method("blocks_weather_effect") and creature.blocks_weather_effect(card, 0, 0, 0):
 			continue
@@ -2268,7 +2306,8 @@ func _notify_attack_declared(attacker: Card, target: Card = null) -> void:
 	if attacker.has_method("on_attack") and not attacker.abilities_suppressed():
 		attacker.on_attack(self, target)
 	var strong_attack := attacker.get_effective_strength() > 25
-	AttackSoundPlayerScript.play_sound(strong_attack)
+	if sfx_enabled:
+		AttackSoundPlayerScript.play_sound(strong_attack)
 	note_ui_sound_cue("attack_strong" if strong_attack else "attack_quick")
 
 func _notify_opponent_attacks_followers(attacker: Card, defending_player: Player) -> void:
@@ -4596,9 +4635,9 @@ func is_followers_attack_blocked_by_active_structure(
 			return true
 	return false
 
-func _any_active_structure_forces_defensive_summon() -> bool:
+func _any_active_structure_forces_defensive_summon(removed: Array = []) -> bool:
 	for structure in _get_active_structures():
-		if structure.has_method("forces_defensive_summon") and structure.forces_defensive_summon():
+		if structure not in removed and structure.has_method("forces_defensive_summon") and structure.forces_defensive_summon():
 			return true
 	return false
 
@@ -4625,6 +4664,19 @@ func forfeit_game(forfeiting_player: Player) -> void:
 
 func forfeit_match(forfeiting_player: Player) -> void:
 	_finish_game(forfeiting_player, GAME_END_REASON_MATCH_FORFEIT)
+
+## Ends the current game with no winner after both players agreed to a draw.
+func draw_by_agreement() -> void:
+	if is_game_over:
+		return
+	winning_player = null
+	losing_player = null
+	game_end_reason = GAME_END_REASON_MUTUAL_DRAW
+	is_game_over = true
+	_set_phase(GamePhase.END)
+	print(get_game_result_message())
+	_finish_match_statistics()
+	game_ended.emit(null, null)
 
 func _finish_game(losing_player_ref: Player, reason: String = GAME_END_REASON_DEFEAT) -> void:
 	if is_game_over or losing_player_ref == null:

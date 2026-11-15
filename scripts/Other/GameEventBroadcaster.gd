@@ -995,7 +995,7 @@ func _viewer_for_player_index(player_index: int) -> Player:
 	if game_manager == null:
 		return null
 	if player_index == GameState.SPECTATOR_VIEWER_INDEX:
-		return Player.new()
+		return Player.create_spectator_viewer()
 	if player_index < 0 or player_index >= game_manager.players.size():
 		return null
 	return game_manager.players[player_index]

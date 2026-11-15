@@ -4,6 +4,10 @@ const LobbyServerScript = preload("res://scripts/server/LobbyServer.gd")
 const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
 const LobbyProtocolScript = preload("res://scripts/network/LobbyProtocol.gd")
 const DEFAULT_LOBBY_HOST_SETTING := "application/config/default_lobby_host"
+## Server runtimes are event-driven (lobby RPC, prompts, bot step delays, 1 s
+## status heartbeats); without a cap an idle match or lobby process iterates
+## its main loop at full speed and pins a CPU core per process.
+const SERVER_RUNTIME_MAX_FPS := 30
 
 var _server_node: Node = null
 var _launch_args: Dictionary = {}
@@ -15,6 +19,7 @@ func _ready() -> void:
 	call_deferred("_boot_server_runtime")
 
 func _boot_server_runtime() -> void:
+	Engine.max_fps = SERVER_RUNTIME_MAX_FPS
 	var control := get_node_or_null("Control")
 	if control != null:
 		control.visible = false

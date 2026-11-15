@@ -108,6 +108,8 @@ var _queued_ui_interactions: Array[Dictionary] = []
 var _next_ui_interaction_id: int = 1
 var _priority_preferences_by_player: Dictionary = {}
 var _last_god_dialogue_msec_by_player: Dictionary = {}
+# Pending mutual draw agreement: {"from_index": int} while an offer awaits an answer.
+var pending_draw_offer: Dictionary = {}
 var _pending_turn_action_after_opponent_priority_command: Dictionary = {}
 var _pending_turn_action_after_opponent_priority_sender_info: Dictionary = {}
 var _pending_turn_action_after_opponent_priority_actor: Player = null
@@ -131,6 +133,7 @@ func _init(p_game_manager: GameManager) -> void:
 
 func reset_runtime_state() -> void:
 	_last_god_dialogue_msec_by_player.clear()
+	pending_draw_offer.clear()
 	_clear_targeting_state()
 	pending_paid_hand_card = null
 	pending_paid_hand_display_zone = null
@@ -660,7 +663,7 @@ func _pending_ui_interaction_has_same_identity(first: Dictionary, second: Dictio
 
 func _command_can_bypass_pending_ui_interaction(command_type: String) -> bool:
 	match command_type:
-		"forfeit", "forfeit_match", "set_priority_preferences":
+		"forfeit", "forfeit_match", "offer_draw", "respond_draw_offer", "set_priority_preferences":
 			return true
 		"upkeep_choice", "tiamat_upkeep_choice", "skoll_upkeep_summon":
 			return true
@@ -1482,6 +1485,10 @@ func _queue_destroyed_response_events(start_index: int, resolved_action: CardAct
 			game_manager.push_to_stack(destroyed_action)
 
 func _finalize_resolved_action(action: CardAction) -> void:
+	if action != null:
+		# Some resolvers capture the action they belong to. Once the action is
+		# complete, releasing the callback breaks that reference cycle.
+		action.resolve_callback = Callable()
 	if game_manager != null and action != null and action.type == CardAction.Type.ATTACK:
 		game_manager.note_attack_resolved()
 	_remove_resolved_action(action)
@@ -3084,14 +3091,14 @@ func _get_declared_attack_speed(attacker: Card) -> int:
 		return attacker.get_united_front_attack_speed(game_manager)
 	return attacker.get_effective_speed()
 
-func _can_intercept(defender: Card, attacker: Card, protected_target, modified_card: Card = null, speed_delta: int = 0, projected_attack_speed: int = -1, projected_defender_zone: Zone = null, projected_mode: int = -1, projected_target_zone: Zone = null) -> bool:
+func _can_intercept(defender: Card, attacker: Card, protected_target, modified_card: Card = null, speed_delta: int = 0, projected_attack_speed: int = -1, projected_defender_zone: Zone = null, projected_mode: int = -1, projected_target_zone: Zone = null, projected_awake: bool = false) -> bool:
 	if attacker == null or protected_target == null:
 		return false
 	if protected_target is Card and defender == protected_target:
 		return false
 	if defender == null or defender.card_type != Card.CardType.CREATURE:
 		return false
-	if defender.is_sleeping:
+	if defender.is_sleeping and not projected_awake:
 		return false
 	if defender.can_special_intercept(game_manager, attacker, protected_target):
 		return game_manager.can_interceptor_engage_attacker(defender, attacker)
@@ -4952,6 +4959,71 @@ func _process_command_impl(command: Dictionary) -> bool:
 				return false
 			game_manager.forfeit_match(match_forfeiting_player)
 			move_validated.emit(command)
+			return true
+		"offer_draw":
+			if game_manager.is_game_over:
+				move_failed.emit("The game is already over.")
+				return false
+			var offering_player: Player = acting_player
+			var offering_index := int(command.get("player_index", -1))
+			if offering_index >= 0 and offering_index < game_manager.players.size():
+				offering_player = game_manager.players[offering_index]
+			if offering_player == null:
+				move_failed.emit("offer_draw: player not found")
+				return false
+			var offerer_index := game_manager.players.find(offering_player)
+			if not pending_draw_offer.is_empty():
+				if int(pending_draw_offer.get("from_index", -1)) == offerer_index:
+					# Re-sending the same unanswered offer is harmless; keep it pending.
+					move_validated.emit(command)
+					return true
+				move_failed.emit("A draw offer is already waiting for an answer.")
+				return false
+			var offered_player := game_manager.get_opponent(offering_player)
+			if offered_player == null:
+				move_failed.emit("offer_draw: no opponent to offer a draw to")
+				return false
+			pending_draw_offer = {"from_index": offerer_index}
+			command["public_log_message"] = "%s offers a draw." % offering_player.player_name
+			move_validated.emit(command)
+			# Deliver directly to the offered player without registering a pending
+			# UI interaction: a draw offer must not freeze the stack, priority, or
+			# the opponent's existing prompts while it waits for an answer.
+			var offered_index := game_manager.players.find(offered_player)
+			if offered_index >= 0:
+				request_ui_interaction.emit(offered_index, "draw_offer", {"from_player_index": offerer_index})
+			return true
+		"respond_draw_offer":
+			if game_manager.is_game_over:
+				move_failed.emit("The game is already over.")
+				return false
+			var responding_player: Player = acting_player
+			var responding_index := int(command.get("player_index", -1))
+			if responding_index >= 0 and responding_index < game_manager.players.size():
+				responding_player = game_manager.players[responding_index]
+			if responding_player == null:
+				move_failed.emit("respond_draw_offer: player not found")
+				return false
+			if pending_draw_offer.is_empty():
+				move_failed.emit("There is no pending draw offer to answer.")
+				return false
+			var offerer_index := int(pending_draw_offer.get("from_index", -1))
+			if offerer_index < 0 or offerer_index >= game_manager.players.size():
+				pending_draw_offer.clear()
+				move_failed.emit("respond_draw_offer: the draw offer is no longer valid.")
+				return false
+			var offered_player := game_manager.get_opponent(game_manager.players[offerer_index])
+			if responding_player != offered_player:
+				move_failed.emit("Only the offered player may answer the draw offer.")
+				return false
+			pending_draw_offer.clear()
+			if bool(command.get("accept", false)):
+				command["public_log_message"] = "%s accepted the draw offer." % responding_player.player_name
+				move_validated.emit(command)
+				game_manager.draw_by_agreement()
+			else:
+				command["public_log_message"] = "%s declined the draw offer." % responding_player.player_name
+				move_validated.emit(command)
 			return true
 		"submit_reinforcements":
 			move_failed.emit("Reinforcement changes are only available between games in a series.")

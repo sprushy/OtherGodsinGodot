@@ -105,15 +105,17 @@ Multiplayer seeks can be Bo1 rated, Bo1 unrated, Bo3 rated, or Bo3 unrated.
 
 In Bo1, a single game decides the match. In Bo3, the first player to win two games wins the match.
 
+In games between players, either player may offer a draw from the game menu. If the opponent accepts, the game ends immediately in a draw with no winner; in Bo3 the drawn game awards no wins and the series continues with the next game. Declining leaves the game unchanged.
+
 After game 1 and, if needed, game 2, both players may move cards between their main deck and Reinforcements. The registered card pool stays the same, but the main deck does not need to stay the same size. The submitted main deck and remaining Reinforcements must still satisfy every normal deck construction rule before the next game can begin.
 
 ### Ranked Progression
 
 Rated matches on the dedicated server count toward rank when both humans sign in to separate accounts or a signed-in player faces a server bot. Bo1 and Bo3 each have their own rank, stars, and win streak. A Bo3 counts once, when the series ends. Unrated games, practice games, and matches abandoned by the server leave rank unchanged. A completed forfeit counts as a loss.
 
-The dedicated lobby keeps an unrated Bo1 and a rated Bo1 bot challenge open. For signed-in players, it picks the available bot closest to their current Bo1 rank by total stars. A fresh bot starts at zero stars and can be selected if it is the closest match. **View Bot Matches** shows live bot games and completed battles. The **Ladder** tab has standings for both rated formats. The Bo1 standings include player accounts and ranked bots. Select a bot to see its deck.
+The dedicated lobby keeps an unrated Bo1 and a rated Bo1 bot challenge open. For signed-in players, it picks with equal probability among the available bots in the player's current league and the leagues directly above and below it, so a Bronze player is equally likely to face an Iron, Bronze, or Silver bot by total stars. If no bot is available in that band, the closest available league is used. A fresh bot starts at zero stars and sits inside the band for Iron and Bronze players. **View Bot Matches** shows live bot games and completed battles. The **Ladder** tab has standings for both rated formats. The Bo1 standings include player accounts and ranked bots. Select a bot to see its deck.
 
-A bot list gains one star for a rated win and loses one for a rated loss, down to zero. Bot-vs-bot games update both bots. They pair bots within three total stars across leagues and divisions. A bot waits if no eligible opponent is available. Each god has seven permanent slots. When all slots are full, a new winning list challenges the absolute weakest incumbent by record, which sits out while the challenger plays seven more matches. Deck uniqueness can favor a challenger over that weakest incumbent, but it cannot change which incumbent is challenged. Otherwise the better win rate keeps the slot, with draws counting as half a win and stars breaking ties.
+A bot list gains one star for a rated win — two stars starting with its third consecutive win through Gold, mirroring the player streak rule — and loses one for a rated loss, down to zero. A loss or draw also resets the bot's streak. Bot-vs-bot games update both bots. They pair bots whose leagues are the same or adjacent; when no such pair exists, the closest available pairing is used instead. Each god has seven permanent slots. When all slots are full, a new winning list challenges the absolute weakest incumbent by record, which sits out while the challenger plays seven more matches. Deck uniqueness can favor a challenger over that weakest incumbent, but it cannot change which incumbent is challenged. Otherwise the better win rate keeps the slot, with draws counting as half a win and stars breaking ties.
 
 Iron, Bronze, Silver, Gold, Diamond, and Ascendant each have five divisions, from V to I. Every division takes three stars to advance. Once you reach Divine, you can keep earning stars.
 
@@ -177,6 +179,8 @@ At the start of upkeep, you normally gain 1 automatic mana immediately, before c
 The very first turn of the game has no automatic mana. God Death also removes the automatic mana. Neither changes the resource options: you still choose 4 mana or 1 card.
 
 God Death applies only after you have had a God in play during the match and no longer control a face-up, awake God on the field. Starting without a God, as in some story encounters, does not trigger God Death.
+
+**Fatigue** sets in from turn 49. At each upkeep from that point on, the turn player loses 7 followers. Every 7 turns the loss grows by another 7: turns 49–55 cost 7 followers, turns 56–62 cost 14, turns 63–69 cost 21, and so on. Long games become increasingly dangerous, so plan to finish before Fatigue grinds you down.
 
 Choose mana when you have several cards you can play. Choose draw when your hand is weak, empty, or missing threats.
 

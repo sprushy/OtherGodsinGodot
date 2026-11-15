@@ -39,6 +39,10 @@ const BOT_SELF_PLAY_FRAME_LIMIT := 0.055
 const BOT_SELF_PLAY_MEMORY_RESERVE := 512 * 1024 * 1024
 const BOT_SELF_PLAY_MEMORY_PER_WORKER := 256 * 1024 * 1024
 const BOT_SELF_PLAY_RETRY_SECONDS := 30
+## Idle-worker ceiling regardless of the configured bot_self_play_limit; each
+## worker simulates on the lobby's single main thread, so this stays small.
+const BOT_SELF_PLAY_MAX_IDLE_WORKERS := 2
+const BOT_SELF_PLAY_BLOCK_LOG_INTERVAL_SECONDS := 60.0
 const ISSUE_REPORT_COOLDOWN_SECONDS := 60
 const BOT_PROPOSAL_COOLDOWN_SECONDS := 60
 const ALLOW_INSECURE_ACCOUNT_AUTH_ENV := "OTHERGODS_ALLOW_INSECURE_ACCOUNT_AUTH"
@@ -88,6 +92,8 @@ var _ranked_bot_deck_pool := RankedBotDeckPoolScript.new()
 var _bot_deck_rng := RandomNumberGenerator.new()
 var _lobby_frame_seconds := 0.0
 var _next_bot_self_play_msec := 0
+var _last_bot_self_play_block_reason := ""
+var _next_bot_self_play_block_log_msec := 0
 var _client_bot_jobs: Dictionary = {}
 var _issue_report_last_submit_by_peer: Dictionary = {}
 var _bot_proposal_last_submit_by_account: Dictionary = {}
@@ -1067,6 +1073,7 @@ func _handle_request_bot_work(peer_id: int, payload: Dictionary = {}) -> void:
 		deck["bot_god_name"] = deck["god_name"]
 		deck["bot_list_id"] = deck["list_id"]
 		deck["bot_stars"] = deck["stars"]
+		deck["bot_win_streak"] = int(deck.get("win_streak", 0))
 	var job_id := _generate_id(32)
 	_client_bot_jobs[job_id] = {
 		"account_id": str(session["account_id"]),
@@ -1630,7 +1637,7 @@ func _build_ladder_page(request: Dictionary) -> Dictionary:
 					"portrait": portrait,
 					"wins": int(bot.get("wins", 0)), "losses": int(bot.get("losses", 0)), "draws": int(bot.get("draws", 0)),
 					"main_gods": [str(god.get("god_name", ""))],
-					"recent_matches": match_history_store.get_recent_ranked_bot_matches_for_list(str(bot["list_id"]), 10)})
+					"recent_matches": match_history_store.get_recent_ranked_bot_matches_for_list(str(bot["list_id"]), 10, false)})
 	ladder.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		if int(a["points"]) != int(b["points"]):
 			return int(a["points"]) > int(b["points"])
@@ -2025,6 +2032,7 @@ func _apply_server_bot_deck(room: LobbyRoom, deck_submission: Dictionary, bot_se
 	room.deck_submission_by_session_id[bot_session_id]["bot_list_id"] = deck_submission["list_id"]
 	room.deck_submission_by_session_id[bot_session_id]["bot_god_name"] = deck_submission["god_name"]
 	room.deck_submission_by_session_id[bot_session_id]["bot_stars"] = deck_submission["stars"]
+	room.deck_submission_by_session_id[bot_session_id]["bot_win_streak"] = int(deck_submission.get("win_streak", 0))
 	sessions_by_id[bot_session_id]["player_name"] = deck_submission["deck_name"]
 	sessions_by_id[bot_session_id]["username"] = deck_submission["deck_name"]
 	room.set_ready(bot_session_id, true)
@@ -2169,6 +2177,7 @@ func _validate_server_bot_deck(deck: Dictionary) -> Dictionary:
 		"list_id": list_id,
 		"god_name": god_name,
 		"stars": int(deck.get("stars", 0)),
+		"win_streak": int(deck.get("win_streak", 0)),
 		"cards": validation_cards,
 		"reinforcements": validation_reinforcements,
 		"special_setup": validation_special_setup,
@@ -2201,8 +2210,22 @@ func _is_available_server_bot_seek(room: LobbyRoom) -> bool:
 		and room.has_valid_deck(only_session_id) \
 		and room.get_ready(only_session_id)
 
+## Rate-limited visibility for why no background bot match is running while the
+## lobby is otherwise idle. The dedicated lobby prints these to its log file,
+## so an idle-zero state is never silent.
+func _log_bot_self_play_block(reason: String) -> void:
+	var now_msec := Time.get_ticks_msec()
+	if reason == _last_bot_self_play_block_reason and now_msec < _next_bot_self_play_block_log_msec:
+		return
+	_last_bot_self_play_block_reason = reason
+	_next_bot_self_play_block_log_msec = now_msec + int(BOT_SELF_PLAY_BLOCK_LOG_INTERVAL_SECONDS * 1000)
+	push_warning("Bot self-play not running: %s" % reason)
+
 func _maintain_bot_self_play() -> void:
-	if not server_bots_enabled or not use_dedicated_match_processes or server_bot_self_play_limit <= 0 or match_supervisor == null:
+	if not server_bots_enabled or not use_dedicated_match_processes or match_supervisor == null:
+		return
+	if server_bot_self_play_limit <= 0:
+		_log_bot_self_play_block("server_bot_self_play_limit is 0 (set OTHERGODS_BOT_SELF_PLAY_LIMIT or bot_self_play_limit= to enable).")
 		return
 	var background: Array = []
 	var foreground := 0
@@ -2212,7 +2235,8 @@ func _maintain_bot_self_play() -> void:
 		else:
 			foreground += 1
 	var cpu_budget := maxi(0, OS.get_processor_count() - 1 - foreground)
-	var target := 1 if foreground == 0 and server_bot_self_play_limit > 0 and cpu_budget > 0 else 0
+	var target := mini(server_bot_self_play_limit, BOT_SELF_PLAY_MAX_IDLE_WORKERS) if foreground == 0 else 0
+	target = mini(target, cpu_budget)
 	var memory := OS.get_memory_info()
 	var free_bytes := int(memory.get("free", -1))
 	var available_bytes := int(memory.get("available", -1))
@@ -2238,10 +2262,29 @@ func _maintain_bot_self_play() -> void:
 		_next_bot_self_play_msec = Time.get_ticks_msec() + BOT_SELF_PLAY_RETRY_SECONDS * 1000
 		return
 	if overloaded or background.size() >= target or Time.get_ticks_msec() < _next_bot_self_play_msec:
+		if background.is_empty() and foreground == 0 and overloaded:
+			if headroom >= 0 and headroom < BOT_SELF_PLAY_MEMORY_RESERVE:
+				_log_bot_self_play_block("Memory headroom %d MB is below the 512 MB reserve." % int(headroom / (1024 * 1024)))
+			else:
+				_log_bot_self_play_block("Lobby frame time %d ms exceeds the %d ms shed threshold." % [
+					int(_lobby_frame_seconds * 1000),
+					int(BOT_SELF_PLAY_FRAME_LIMIT * 1000),
+				])
 		return
-	if headroom < BOT_SELF_PLAY_MEMORY_RESERVE + BOT_SELF_PLAY_MEMORY_PER_WORKER:
+	# The lobby is idle, below target, and should be launching a worker here;
+	# surface whatever is blocking it so an idle-zero state is never silent.
+	if cpu_budget <= 0:
+		_log_bot_self_play_block("cpu_budget is 0 with %d logical cores reserved for the lobby." % OS.get_processor_count())
 		return
-	if not match_supervisor.has_background_worker_capacity():
+	if headroom >= 0 and headroom < BOT_SELF_PLAY_MEMORY_RESERVE + BOT_SELF_PLAY_MEMORY_PER_WORKER:
+		_log_bot_self_play_block("Memory headroom %d MB is below the %d MB needed to launch a worker." % [
+			int(headroom / (1024 * 1024)),
+			int((BOT_SELF_PLAY_MEMORY_RESERVE + BOT_SELF_PLAY_MEMORY_PER_WORKER) / (1024 * 1024)),
+		])
+		return
+	var capacity_blocker: String = match_supervisor.get_background_worker_capacity_blocker()
+	if not capacity_blocker.is_empty():
+		_log_bot_self_play_block(capacity_blocker)
 		return
 	_launch_bot_self_play()
 
@@ -2251,8 +2294,10 @@ func _launch_bot_self_play() -> void:
 	var first := _build_fresh_bot_deck_submission() if pair.is_empty() else _validate_server_bot_deck(pair[0])
 	var second := _build_fresh_bot_deck_submission({str(first.get("god_name", "")): 1}) if pair.is_empty() else _validate_server_bot_deck(pair[1])
 	if first.is_empty() or second.is_empty() or not RankedBotDeckPoolScript.can_self_play_pair(first, second):
+		_log_bot_self_play_block("The ranked bot deck pool produced no valid self-play pair.")
 		return
 	if first["cards"] == second["cards"] and first["special_setup"] == second["special_setup"]:
+		_log_bot_self_play_block("The selected self-play pair decks are identical.")
 		return
 	# Keep the public name from the first appearance onward, including history.
 	for deck in [first, second]:

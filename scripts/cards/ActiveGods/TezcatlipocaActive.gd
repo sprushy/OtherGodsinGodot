@@ -195,14 +195,14 @@ func get_effective_speed(speed_delta: int = 0) -> int:
 		total += JAGUAR_FORM_SPEED_BONUS
 	return clampi(total, 1, 7)
 
-func get_effective_strength() -> int:
-	var total := super.get_effective_strength()
+func get_effective_strength(strength_delta: int = 0) -> int:
+	var total := super.get_effective_strength(strength_delta)
 	if in_jaguar_form:
 		total += JAGUAR_FORM_STRENGTH_BONUS
 	return max(0, total)
 
-func get_effective_resilience() -> int:
-	var total := super.get_effective_resilience()
+func get_effective_resilience(resilience_delta: int = 0) -> int:
+	var total := super.get_effective_resilience(resilience_delta)
 	if in_jaguar_form:
 		total += JAGUAR_FORM_RESILIENCE_DELTA
 	return max(0, total)

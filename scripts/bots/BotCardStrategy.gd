@@ -5,6 +5,14 @@ extends RefCounted
 const BAD := -1000000
 const CARD_VALUE := 5000
 const MANA_VALUE := 1000
+# Mana keeps some residual worth even when the stock passes everything the
+# deck can still pay for: creature action taxes, equipment, and Guard always
+# exist as buyers. Unbounded sinks raise that floor (see _mana_value_floor).
+const MANA_VALUE_FLOOR_PCT := 15
+const MANA_SINK_DEFENSIVE_FLOOR_PCT := 45
+# How quickly the marginal rate decays per point of mana stock above the
+# highest cost the remaining deck, hand, and board can still reach.
+const MANA_SATURATION_DECAY := 0.4
 const MIN_POWER_ACTIVATION_SCORE := 1200
 const TACTICAL_CARDS := [
 	"BitMeseri", "RunicSpellbreaker", "Snowball", "SirensSong", "TabletOfLife",
@@ -77,7 +85,12 @@ static func follower_gain(player: Player, amount: int) -> int:
 static func value(bot, card: Card) -> int:
 	if card == null:
 		return 0
-	if not visible(bot, card):
+	if card.current_zone != null and card.current_zone.zone_type == Zone.ZoneType.DECK \
+			and card.current_zone.zone_owner == bot.bot_player:
+		# The owner knows its own remaining deck composition, so its deck
+		# cards keep their real value instead of the generic unknown price.
+		pass
+	elif not visible(bot, card):
 		return CARD_VALUE
 	if card is WardingStone and card.get_attack_restriction_turns_remaining(bot.game_manager) <= 0:
 		return bot._get_inactive_warding_stone_value(card)
@@ -102,13 +115,110 @@ static func combat_visible(bot, action: CardAction) -> bool:
 	var defender: Card = bot._get_attack_defender_card(action)
 	return defender == null or visible(bot, defender)
 
-static func mana_penalty(bot, amount: int) -> int:
-	var score := maxi(0, amount) * MANA_VALUE
-	if amount > 0 and not bot.bot_player.has_summoned_this_turn:
+static func mana_penalty(bot, amount: int, available_mana: int = -1) -> int:
+	# Spending prices each paid point of mana at its own marginal rate: the
+	# last points of a large stock are nearly free once nothing in the deck
+	# can still use them, while early points of a tight stock are expensive.
+	var stock: int = bot.bot_player.mana if available_mana < 0 else available_mana
+	var spend := maxi(0, amount)
+	var score := 0
+	for index in range(spend):
+		score += marginal_mana_value(bot, stock - index)
+	if spend > 0 and not bot.bot_player.has_summoned_this_turn:
 		var creature: Card = bot._get_best_affordable_hand_creature(0)
-		if creature != null and bot._get_play_cost(creature, false) > bot.bot_player.mana - amount:
+		if creature != null and bot._get_play_cost(creature, false) > bot.bot_player.mana - spend:
 			score += CARD_VALUE / 2
 	return score
+
+static func mana_gain_value(bot, amount: int, at_level: int = -1) -> int:
+	# Mirror of mana_penalty for mana production (ramp, upkeep income,
+	# mana-gain triggers). New stock arrives on top of the current level.
+	var stock: int = bot.bot_player.mana if at_level < 0 else at_level
+	var gain := maxi(0, amount)
+	var score := 0
+	for index in range(gain):
+		score += marginal_mana_value(bot, stock + index)
+	return score
+
+static func marginal_mana_value(bot, level: int = -1) -> int:
+	var stock: int = bot.bot_player.mana if level < 0 else level
+	var econ := _mana_econ(bot)
+	var ceiling := int(econ["ceiling"])
+	if stock <= ceiling:
+		return MANA_VALUE
+	var decayed := int(float(MANA_VALUE) / (1.0 + float(stock - ceiling) * MANA_SATURATION_DECAY))
+	return maxi(int(econ["floor"]), decayed)
+
+# The saturation scan touches the whole hand, deck, and board on every call,
+# and decisions read the rate dozens of times per step. The bot clears this
+# cache when a decision tick starts (run step, priority, and prompt entry),
+# so one scan serves an entire evaluation pass.
+static func _mana_econ(bot) -> Dictionary:
+	var cache = bot.get("_mana_econ_cache")
+	if cache is Dictionary and cache.has("ceiling"):
+		return cache
+	var fresh := {"ceiling": _mana_saturation_ceiling(bot), "floor": _mana_value_floor(bot)}
+	bot.set("_mana_econ_cache", fresh)
+	return fresh
+
+# The highest mana cost the bot can still grow into: hand plays, prepared
+# activations, remaining deck composition (the owner knows its own deck),
+# power unlocks and activations, and god abilities. Income for one more turn
+# is included so a deck with an expensive card still justifies saving.
+static func _mana_saturation_ceiling(bot) -> int:
+	var player: Player = bot.bot_player
+	var top := 0
+	for card in player.hand_zone.cards:
+		top = maxi(top, bot._get_play_cost(card, false))
+		top = maxi(top, bot._get_play_cost(card, true))
+	for card in player.deck_zone.cards:
+		top = maxi(top, maxi(0, card.mana_cost))
+	for zone in player.power_zones:
+		for card in zone.cards:
+			if card is PowerCard:
+				top = maxi(top, card.get_unlock_mana_cost(bot.game_manager))
+				top = maxi(top, activation_cost(bot, card))
+	for card in bot.game_manager.get_field_cards(player):
+		if card.is_prepared:
+			top = maxi(top, activation_cost(bot, card))
+		if card is GodCard and card.has_method("get_activation_mana_cost"):
+			top = maxi(top, card.get_activation_mana_cost(bot.game_manager))
+	if top <= 0:
+		return 0
+	var income: int = bot.game_manager.get_automatic_upkeep_mana_gain(player, bot.game_manager.turn_number + 1) \
+		+ bot.game_manager.get_effective_upkeep_mana_gain(bot.game_manager.get_base_upkeep_mana_gain(), player)
+	return top + income
+
+# Mana never falls to zero because action taxes, equipment, and Guard remain.
+# Unbounded sinks lift the floor further, and a sink that advances the actual
+# win condition (Ancient Pyre's follower conversion) keeps mana at full rate:
+# every point converts directly into follower swing regardless of stock size.
+static func _mana_value_floor(bot) -> int:
+	var profile := mana_sink_profile(bot)
+	if bool(profile.get("win_condition", false)):
+		return MANA_VALUE
+	if bool(profile.get("defensive", false)):
+		return MANA_VALUE * MANA_SINK_DEFENSIVE_FLOOR_PCT / 100
+	return MANA_VALUE * MANA_VALUE_FLOOR_PCT / 100
+
+static func mana_sink_profile(bot) -> Dictionary:
+	var profile := {"win_condition": false, "defensive": false}
+	var player: Player = bot.bot_player
+	if bot.opponent == null or not bot.game_manager.can_player_lose_followers_now(bot.opponent):
+		return profile
+	for card in bot.game_manager.get_field_cards(player):
+		if card is AncientPyre and not card.abilities_suppressed() \
+				and card.can_activate(bot.game_manager):
+			profile["win_condition"] = true
+			break
+	if not bool(profile.get("win_condition", false)):
+		for zone in player.power_zones:
+			for card in zone.cards:
+				if card is ManaGuard and not card.abilities_suppressed():
+					profile["defensive"] = true
+				elif card is AdvancedBuildingTechniques and not card.abilities_suppressed():
+					profile["defensive"] = true
+	return profile
 
 static func activation_cost(bot, card: Card) -> int:
 	if card is PowerCard:
@@ -181,36 +291,117 @@ static func _debilitation_discount(bot, target: Card) -> int:
 	if target == null or (target.card_type != Card.CardType.CREATURE and not target.is_petrified()) or not visible(bot, target) \
 			or target.current_zone == null or not target.current_zone.is_board_zone():
 		return 0
-	var effects := {}
+	var disables := _disable_durations(bot, target)
+	var weight := 0.4 * _disable_weight(disables.get("cannot_attack", 0.0))
+	weight += 0.2 * _disable_weight(disables.get("cannot_intercept", 0.0))
+	weight += 0.1 * _disable_weight(disables.get("cannot_move", 0.0))
+	weight += 0.15 * _disable_weight(disables.get("activation_locked", 0.0))
+	weight += 0.1 * _disable_weight(disables.get(Card.ABILITY_NEGATED_STATUS, 0.0))
+	var other_effects := {}
 	for status in target._get_effective_statuses():
 		var name := str(status.get("name", ""))
-		if name not in ["cannot_attack", "cannot_intercept", "activation_locked", "ability_negated", "petrified", "sleep", "cannot_move", "malinalxochitl_poison", "destroy_at_turn_end", "freyja_active_open_sessrumnir", "tonal_extraction_no_shift"]:
+		if name not in ["malinalxochitl_poison", "destroy_at_turn_end", "freyja_active_open_sessrumnir", "tonal_extraction_no_shift"]:
 			continue
 		var duration := 1.0
 		if name != "destroy_at_turn_end" and (status.get("expires_after_combat", false) \
 				or int(status.get("expires_turn", bot.game_manager.turn_number + 2)) <= bot.game_manager.turn_number + 1):
 			duration = 0.5
-		effects[name] = maxf(float(effects.get(name, 0.0)), duration)
-	var weight := 0.0
-	weight += 0.4 * float(effects.get("cannot_attack", 0.0))
-	weight += 0.2 * float(effects.get("cannot_intercept", 0.0))
-	weight += 0.2 * float(effects.get("activation_locked", 0.0))
-	weight += 0.25 * float(effects.get("ability_negated", 0.0))
-	weight += 0.75 * float(effects.get("petrified", 0.0))
-	weight += 0.45 * float(effects.get("sleep", 0.0))
-	weight += 0.1 * float(effects.get("cannot_move", 0.0))
-	weight += 0.15 * float(effects.get("malinalxochitl_poison", 0.0))
-	weight += 0.75 * float(effects.get("destroy_at_turn_end", 0.0))
-	weight += 0.6 * float(effects.get("freyja_active_open_sessrumnir", 0.0))
-	weight += 0.1 * float(effects.get("tonal_extraction_no_shift", 0.0))
-	if target.is_enslaved():
-		weight += 0.25
-	if target.is_muted:
-		weight += 0.25 if target.mute_turns_remaining < 0 else 0.125
+		other_effects[name] = maxf(float(other_effects.get(name, 0.0)), duration)
+	weight += 0.15 * float(other_effects.get("malinalxochitl_poison", 0.0))
+	weight += 0.75 * float(other_effects.get("destroy_at_turn_end", 0.0))
+	weight += 0.6 * float(other_effects.get("freyja_active_open_sessrumnir", 0.0))
+	weight += 0.1 * float(other_effects.get("tonal_extraction_no_shift", 0.0))
 	# Strength and resilience penalties are already in value(); only speed
 	# needs a separate adjustment.
 	var speed_loss := maxi(0, target.speed - target.get_effective_speed()) * 150
 	return int(value(bot, target) * minf(weight, 0.85)) + speed_loss
+
+static func status_duration(game: GameManager, target: Card, status: Dictionary) -> float:
+	# Count the rest of the current turn as one turn. Combat-only effects
+	# cover a smaller part of that window.
+	var expires_turn = status.get("expires_turn")
+	var duration := INF if expires_turn == null else maxf(0.0, int(expires_turn) - game.turn_number + 1)
+	if status.get("expires_after_combat", false):
+		return minf(duration, 0.5)
+	if status.get("name") != "sleep":
+		return duration
+	var source := status.get("source_card") as Card
+	if source is Gambanteinn:
+		return minf(duration, 1.0)
+	if source is Berserker:
+		return minf(duration, 2.0 if game.current_player == source.get_controller() else 1.0)
+	if source is BerserkerMead:
+		for entry in source.affected_creatures:
+			if entry.get("creature") == target and entry.get("state") == "sleeping":
+				var until_owner_turn := 0 if game.current_player == source.get_controller() else 1
+				if game.turn_number + until_owner_turn <= int(entry.get("sleep_started_turn", -1)):
+					until_owner_turn += 2
+				return minf(duration, until_owner_turn + 1)
+	return duration
+
+static func _mute_duration(game: GameManager, target: Card, owner_turns: int, skip_current: bool) -> float:
+	if owner_turns < 0:
+		return INF
+	if owner_turns == 0:
+		return 0.0
+	if game.current_player == target.card_owner:
+		return 2 * owner_turns + (1 if skip_current else -1)
+	return 2 * owner_turns
+
+static func _extend_disables(durations: Dictionary, restrictions: Array, duration: float) -> void:
+	for restriction in restrictions:
+		durations[restriction] = maxf(durations.get(restriction, 0.0), duration)
+
+static func _disable_durations(bot, target: Card, include_pending: bool = false) -> Dictionary:
+	var durations := {}
+	for status in target._get_effective_statuses():
+		var name := str(status.get("name", ""))
+		var duration := status_duration(bot.game_manager, target, status)
+		match name:
+			"sleep":
+				_extend_disables(durations, ["cannot_attack", "cannot_intercept"], duration)
+			"petrified":
+				_extend_disables(durations, ["cannot_attack", "cannot_intercept", "cannot_move", "activation_locked", Card.ABILITY_NEGATED_STATUS], duration)
+			Card.ABILITY_NEGATED_STATUS:
+				_extend_disables(durations, ["activation_locked", Card.ABILITY_NEGATED_STATUS], duration)
+			"cannot_attack", "cannot_intercept", "cannot_move", "activation_locked":
+				_extend_disables(durations, [name], duration)
+	if target.is_muted or target.is_enslaved():
+		var skip_current: bool = target._mute_applied_owner_turn_number == bot.game_manager.turn_number
+		var duration := INF if target.is_enslaved() else _mute_duration(bot.game_manager, target, target.mute_turns_remaining, skip_current)
+		_extend_disables(durations, ["activation_locked", Card.ABILITY_NEGATED_STATUS], duration)
+	if include_pending:
+		for pending: CardAction in bot.game_manager.action_stack:
+			if pending.target != target or pending in bot.game_manager.resolving_stack_actions:
+				continue
+			if pending.card is Dromi or pending.card is Gleipnir:
+				_extend_disables(durations, ["cannot_attack"], INF)
+			if pending.card is Gleipnir:
+				_extend_disables(durations, ["cannot_intercept", "activation_locked", Card.ABILITY_NEGATED_STATUS], INF)
+	return durations
+
+static func _disable_weight(duration: float) -> float:
+	return 1.0 - pow(0.65, duration)
+
+static func _disable_gain(bot, target: Card, values: Dictionary, duration: float = INF) -> int:
+	var existing := _disable_durations(bot, target, true)
+	var proposed := _disable_weight(duration)
+	var gain := 0.0
+	for restriction in values:
+		gain += float(values[restriction]) * maxf(0.0, proposed - _disable_weight(existing.get(restriction, 0.0)))
+	return roundi(gain)
+
+static func adds_attack_lock_next_turn(bot, target: Card) -> bool:
+	return float(_disable_durations(bot, target, true).get("cannot_attack", 0.0)) <= 1.0
+
+static func adds_intercept_lock_this_turn(bot, target: Card) -> bool:
+	return float(_disable_durations(bot, target, true).get("cannot_intercept", 0.0)) < 1.0
+
+static func mute_gain(bot, target: Card, owner_turns: int, full_value: int) -> int:
+	var duration := _mute_duration(bot.game_manager, target, owner_turns, true)
+	# Mute replaces its own timer. Only value the turns beyond existing coverage.
+	var values := {"activation_locked": full_value * 0.6, Card.ABILITY_NEGATED_STATUS: full_value * 0.4}
+	return roundi(_disable_gain(bot, target, values, duration) / _disable_weight(duration))
 
 static func _own_dromi_drain_loss(bot, target: Card) -> int:
 	if target == null or target.get_controller() != bot.opponent or not visible(bot, target):
@@ -308,6 +499,19 @@ static func counterstroke_can_answer(
 		return false
 	return true
 
+static func _jiang_counterstroke_reserve_value(bot, jiang: Card) -> int:
+	if not (jiang is JiangZiyaFisherOfKings) or bot == null or bot.opponent == null:
+		return 0
+	var reserve_value := 3500 if jiang.current_zone in bot.bot_player.frontline_zones else 1800
+	for attacker: Card in bot._get_board_creatures(bot.opponent):
+		if attacker.current_zone in bot.opponent.frontline_zones \
+				and visible(bot, attacker) \
+				and not attacker.is_sleeping \
+				and not attacker.has_status_effect("cannot_attack") \
+				and bot._can_attack_creature(attacker, jiang):
+			reserve_value = maxi(reserve_value, int((value(bot, jiang) + value(bot, attacker)) / 2.0))
+	return reserve_value
+
 static func destruction_guard(target: Card) -> bool:
 	return target.has_status_effect("berserker_mead_guard") or target.has_status_effect("berserker_rage_guard") or target.has_status_effect("en_hedu_anna_exaltation_guard")
 
@@ -378,7 +582,11 @@ static func stat_changes(bot, card: Card, target: Card) -> Dictionary:
 			return {"str": reduction, "res": reduction, "spd": 0}
 		"FifaTheMagicalArrow": return {"str": FifaTheMagicalArrow.STR_BONUS, "res": 0, "spd": 0}
 		"BerserkerMead": return {"str": BerserkerMead.STR_BONUS, "res": 0, "spd": 0}
-		"Lamashatu": return {"str": 5, "res": 5, "spd": 0}
+		"Lamashatu":
+			return {
+				"str": Lamashatu.SUCKLE_STRENGTH_BONUS, "res": Lamashatu.SUCKLE_RESILIENCE_BONUS,
+				"spd": Lamashatu.SUCKLE_SPEED_BONUS,
+			}
 		"SevenLeagueBoots":
 			var old_base: int = target.speed - (1 if target.is_stealth else 0)
 			for equipment in target.equipment:
@@ -395,7 +603,10 @@ static func stat_gain(bot, card: Card, target: Card, action: CardAction = null) 
 	if target.negates_external_effects() and card != target:
 		return 0
 	var changes := stat_changes(bot, card, target)
-	return combat_gain(bot, target, int(changes.get("str", 0)), int(changes.get("res", 0)), action, int(changes.get("spd", 0)))
+	# Fifa lasts through the recipient's next fight. Equipment and Suckle
+	# can also matter on a later turn. The other supported buffs expire this turn.
+	var future_turns := 2 if card is EquipmentCard or card is Lamashatu or card is FifaTheMagicalArrow else 0
+	return combat_gain(bot, target, int(changes.get("str", 0)), int(changes.get("res", 0)), action, int(changes.get("spd", 0)), future_turns)
 
 static func combat_projection(bot, action: CardAction) -> Dictionary:
 	var pending := {}
@@ -424,13 +635,14 @@ static func combat_projection(bot, action: CardAction) -> Dictionary:
 				pending[target_card] = pending.get(target_card, Vector3i.ZERO) + changes
 	return {"attack": action if action != null and action.type == CardAction.Type.ATTACK else null, "stats": pending}
 
-static func combat_gain(bot, target: Card, str_delta: int, res_delta: int = 0, action: CardAction = null, speed_delta: int = 0) -> int:
-	if not visible(bot, target):
+static func combat_gain(bot, target: Card, str_delta: int, res_delta: int = 0, action: CardAction = null, speed_delta: int = 0, future_turns: int = 0) -> int:
+	var delta := Vector3i(str_delta, res_delta, speed_delta)
+	if delta == Vector3i.ZERO or not visible(bot, target):
 		return 0
 	var projection := combat_projection(bot, action)
 	var pending: Dictionary = projection["stats"]
 	var proposed := pending.duplicate()
-	proposed[target] = pending.get(target, Vector3i.ZERO) + Vector3i(str_delta, res_delta, speed_delta)
+	proposed[target] = pending.get(target, Vector3i.ZERO) + delta
 	if action != null:
 		var attack := projection["attack"] as CardAction
 		if attack != null:
@@ -439,37 +651,21 @@ static func combat_gain(bot, target: Card, str_delta: int, res_delta: int = 0, a
 			return _projected_combat_score(bot, attack, proposed) - _projected_combat_score(bot, attack, pending)
 		if pending.is_empty():
 			return 0
-	# These forecasts concern attacks later this turn, not next-turn value from
-	# temporary buffs that expire during the opponent's turn.
 	if bot.game_manager.current_player != bot.bot_player:
 		return 0
-	var best := 0
-	for attacker in bot._get_attack_ready_creatures():
-		if bot._has_committed_attack(attacker):
-			continue
-		if target.get_controller() == bot.bot_player and target != attacker:
-			continue
-		var defenders: Array = []
-		if target == attacker:
-			defenders.append_array(bot._get_board_creatures(bot.opponent))
-			defenders.append(bot.opponent)
-		else:
-			defenders.append(target)
-		for defender in defenders:
-			if defender is Card and (not visible(bot, defender) or not bot._can_attack_creature(attacker, defender)):
-				continue
-			var planned := CardAction.new()
-			planned.type = CardAction.Type.ATTACK
-			planned.attacker = attacker
-			planned.target = defender
-			planned.halve_follower_damage = attacker.halves_follower_damage_inflicted()
-			var before := _projected_combat_score(bot, planned, pending, true)
-			var after := _projected_combat_score(bot, planned, proposed, true)
-			# A buff must create an attack the bot would actually want to take.
-			if after > 0:
-				best = maxi(best, after - maxi(0, before))
+	var best: int = bot._forecast_stat_combat_gain(target, pending, proposed, 0)
 	if bot._can_win_followers_after_modifiers(proposed) and not bot._can_win_followers_after_modifiers(pending):
 		best = maxi(best, CARD_VALUE * 20)
+	# During priority, let the existing stack settle before planning a later fight.
+	var forecast_turns := future_turns if action == null else 0
+	for turn_offset in range(1, forecast_turns + 1):
+		var after_expiry: Dictionary = bot._forecast_expired_combat_stats(turn_offset)
+		var projected_stats := after_expiry.duplicate()
+		projected_stats[target] = after_expiry.get(target, Vector3i.ZERO) + delta
+		var gain: int = bot._forecast_stat_combat_gain(target, after_expiry, projected_stats, turn_offset)
+		# Use the best single opportunity. The fights can be alternatives, and
+		# a next-combat buff is spent once the recipient fights.
+		best = maxi(best, roundi(gain * pow(0.65, turn_offset)))
 	return best
 
 static func additive_combat_stats(bot, source: Card, target: Card) -> Vector3i:
@@ -486,9 +682,7 @@ static func additive_combat_stats(bot, source: Card, target: Card) -> Vector3i:
 	var changes := stat_changes(bot, source, target)
 	return Vector3i(int(changes.get("str", 0)), int(changes.get("res", 0)), int(changes.get("spd", 0)))
 
-static func _projected_combat_score(bot, action: CardAction, stats: Dictionary, check_interceptors: bool = false) -> int:
-	if check_interceptors and action.target is Player and not bot._can_attack_followers_after_modifiers(action.attacker, stats):
-		return 0
+static func _projected_combat_score(bot, action: CardAction, stats: Dictionary) -> int:
 	return bot._score_attack_economy(bot._estimate_projected_attack_economy(action, stats))
 
 static func target_score(bot, card: Card, target: Card, action: CardAction = null) -> int:
@@ -522,7 +716,10 @@ static func target_score(bot, card: Card, target: Card, action: CardAction = nul
 				return -value(bot, target)
 			return int(removal_score(bot, card, target) * 0.7)
 		"Alu":
-			return int(value(bot, target) * 0.8) if enemy and not target.is_sleeping else BAD
+			if not enemy or not visible(bot, target):
+				return BAD
+			var target_value := value(bot, target)
+			return _disable_gain(bot, target, {"cannot_attack": target_value * 0.5, "cannot_intercept": target_value * 0.3})
 		"Nimue":
 			if own and target is EquipmentCard:
 				for bearer in bot._get_board_creatures(bot.bot_player):
@@ -536,17 +733,20 @@ static func target_score(bot, card: Card, target: Card, action: CardAction = nul
 			if own and target.current_zone == bot.bot_player.deck_zone and bot.game_manager.can_player_add_to_hand_now(bot.bot_player):
 				var mana: int = bot.bot_player.mana - bot.game_manager.get_creature_action_mana_cost(card, "activate")
 				return bot._deck_pick_value(target, mana, bot._forecast_incoming_follower_loss()) \
-					- (3500 if card.current_zone in bot.bot_player.frontline_zones else 1800)
+					- _jiang_counterstroke_reserve_value(bot, card)
 			return BAD
 		"Dromi", "Gleipnir":
-			if not enemy or not visible(bot, target) or target.has_status_effect("cannot_attack"):
+			if not enemy or not visible(bot, target):
 				return BAD
-			var gain := int(value(bot, target) * 0.75)
-			if key(card) == "Dromi":
-				gain += bot._score_follower_loss(bot.opponent, 14)
-			elif not target.has_status_effect("cannot_intercept"):
-				gain += 2500
-			return gain
+			var target_value := value(bot, target)
+			if card is Dromi:
+				var attack_gain := _disable_gain(bot, target, {"cannot_attack": target_value * 0.75})
+				return attack_gain + bot._score_follower_loss(bot.opponent, 2 * Dromi.FOLLOWER_LOSS)
+			var restrictions := {"cannot_attack": target_value * 0.5, "cannot_intercept": 2500}
+			if not target.ability_text.is_empty():
+				restrictions["activation_locked"] = target_value * 0.15
+				restrictions[Card.ABILITY_NEGATED_STATUS] = target_value * 0.1
+			return _disable_gain(bot, target, restrictions)
 		"Snowball", "SapStrength", "VisionOfTartarus":
 			if not enemy:
 				return BAD
@@ -561,8 +761,6 @@ static func target_score(bot, card: Card, target: Card, action: CardAction = nul
 					if buff.get("source_card") == card and buff.get("effect_type") == "suckle":
 						return BAD
 			var score := stat_gain(bot, card, target, action)
-			if key(card) == "Lamashatu":
-				score += 1800 # Persistent growth, even without an immediate attack.
 			if key(card) == "BerserkerMead":
 				score -= 1500 # Sleeping through the next turn costs another action.
 			return score
@@ -578,8 +776,9 @@ static func target_score(bot, card: Card, target: Card, action: CardAction = nul
 			if bot._get_first_open_summon_zone(bot.bot_player) == null:
 				return BAD
 			# The body leaves the hand and loses its abilities. Value the saved
-			# summon payment, rather than counting it as an extra drawn card.
-			var score: int = maxi(0, bot._get_play_cost(target, false)) * MANA_VALUE + target.get_effective_strength() * 80 + target.get_effective_resilience() * 25
+			# summon payment at the current marginal mana rate, rather than
+			# counting it as an extra drawn card.
+			var score: int = maxi(0, bot._get_play_cost(target, false)) * marginal_mana_value(bot) + target.get_effective_strength() * 80 + target.get_effective_resilience() * 25
 			if key(target) in ["EnkiLordOfEridu", "Askelladen", "Gawain", "Lindwyrm", "Lamashatu", "Mummu"]:
 				score -= 4000
 			if target.has_type("Mage") or target.has_type("Priest"):
@@ -589,9 +788,10 @@ static func target_score(bot, card: Card, target: Card, action: CardAction = nul
 		"SirensSong":
 			return combat_gain_for_stolen_creature(bot, target) if enemy else BAD
 		"Absence":
-			if not enemy or not visible(bot, target) or target.is_muted:
+			if not enemy or not visible(bot, target):
 				return BAD
-			return value(bot, target) if target.is_god else 4500 + target.mana_cost * 800
+			var mute_value := value(bot, target) if target.is_god else 4500 + target.mana_cost * 800
+			return mute_gain(bot, target, Absence.MUTE_DURATION, mute_value)
 		"Exorcism":
 			if not own:
 				return BAD
@@ -612,7 +812,7 @@ static func target_score(bot, card: Card, target: Card, action: CardAction = nul
 				if own and can_remove_from_board(bot, card, target, true):
 					return -value(bot, target)
 				return removal_score(bot, card, target)
-			return combat_gain(bot, target, 0, -AncientPyre.EFFECT_AMOUNT) if enemy else BAD
+			return combat_gain(bot, target, 0, -AncientPyre.EFFECT_AMOUNT, action, 0, 2) if enemy and not target.negates_external_effects() else BAD
 		"Watchtower":
 			return 1500 if enemy and not visible(bot, target) else BAD
 		"Gawain":
@@ -660,11 +860,9 @@ static func wipe_cards(bot, card: Card) -> Array:
 		if doomed:
 			result.append(target)
 	if id == "FalloftheMighty":
-		# Its maximum depends on hidden strength; leave that uncertain cast
-		# alone rather than querying private stats from the authoritative state.
-		for target in bot.game_manager.get_field_cards():
-			if not visible(bot, target):
-				return []
+		# Face-down cards are always prepared spells, hexes, or charms, and
+		# stealthed creatures are excluded from the strength check, so no hidden
+		# card can change which creatures the strength check dooms.
 		return card.get_strongest_creatures(bot.game_manager)
 	return result
 
@@ -719,14 +917,17 @@ static func effect_score(bot, card: Card, target: Card = null, action: CardActio
 				if action.card.would_destroy_creature_of_player(bot.game_manager, bot.bot_player, action.target):
 					for creature in bot._get_board_creatures(bot.bot_player):
 						gain += value(bot, creature) / 2
-		"HeroicStand": gain = 7 * MANA_VALUE
+		"HeroicStand": gain = mana_gain_value(bot, 7)
 		"TheInferno", "TheDeluge", "Earthquake", "FiresOfJudgment", "Famine", "OccultSingularity", "FalloftheMighty", "BaneOfTheSvartalfar":
 			gain = 0
 			var removed: Array = []
 			for doomed in removal_targets(bot, card, target, action):
 				var amount := value(bot, doomed)
 				if id == "BaneOfTheSvartalfar":
-					amount = int(maxi(0, amount - _debilitation_discount(bot, doomed)) * 0.7)
+					amount = _disable_gain(bot, doomed, {
+						"cannot_attack": amount * 0.3, "cannot_intercept": amount * 0.15, "cannot_move": amount * 0.1,
+						"activation_locked": amount * 0.09, Card.ABILITY_NEGATED_STATUS: amount * 0.06,
+					})
 				elif doomed.get_controller() == bot.opponent:
 					amount -= _debilitation_discount(bot, doomed) + _own_dromi_drain_loss(bot, doomed)
 				else:
@@ -819,7 +1020,7 @@ static func wild_magic_gain(bot, spell: Card) -> int:
 static func _wild_magic_card_gain(bot, card: Card) -> int:
 	if card is WildMagic or not supports_ranked_deck_card(card):
 		return 0
-	var gain: int = CARD_VALUE + bot._get_hand_value(card) * 30 - activation_cost(bot, card) * 400
+	var gain: int = CARD_VALUE + bot._get_hand_value(card) * 30 - activation_cost(bot, card) * 400 * marginal_mana_value(bot) / 1000
 	if card is SpellCard and bot.game_manager.spells_must_be_prepared():
 		gain += MANA_VALUE
 	return gain
@@ -828,7 +1029,7 @@ static func weather_score(bot, weather: Card) -> int:
 	var id := key(weather)
 	var gain := 0
 	for field_card in bot.game_manager.get_field_cards():
-		if not visible(bot, field_card) or field_card.is_face_down or field_card.abilities_suppressed():
+		if not visible(bot, field_card) or field_card.is_face_down:
 			continue
 		var side := 1 if field_card.get_controller() == bot.opponent else -1
 		if key(field_card) == id:
@@ -839,15 +1040,18 @@ static func weather_score(bot, weather: Card) -> int:
 			continue
 		match id:
 			"HeavySnow":
-				if (field_card.has_type("Anguine") or field_card.has_type("Amphibious")) and not weather._weather_effect_is_blocked(field_card):
-					gain += side * value(bot, field_card) * (1 if field_card.is_sleeping else 3) / 4
+				if weather._is_weather_locked_creature(field_card) and not weather._weather_effect_is_blocked(field_card):
+					var target_value := value(bot, field_card)
+					gain += side * _disable_gain(bot, field_card, {
+						"cannot_attack": target_value * 0.35, "cannot_intercept": target_value * 0.25, "cannot_move": target_value * 0.15,
+					})
 			"Storm":
 				if weather._weather_effect_is_blocked(field_card):
 					continue
 				if field_card.has_type("Aerial"):
 					gain += side * 3000
 				if weather._has_non_passive_creature_ability(field_card):
-					gain += side * 2300
+					gain += side * _disable_gain(bot, field_card, {"activation_locked": 1380, Card.ABILITY_NEGATED_STATUS: 920})
 	if id == "Drought":
 		# The extra preparation step is costly if our hand depends on spells.
 		gain -= bot.bot_player.hand_zone.cards.filter(func(card: Card) -> bool: return card is SpellCard and card != weather).size() * 1700
@@ -901,7 +1105,9 @@ static func equipment_pickup_score(bot, equipment: EquipmentCard, bearer: Card) 
 	if key(equipment) == "DraupnirTheMultiplying":
 		var remaining := maxi(0, DraupnirTheMultiplying.MAX_ACTIVATIONS - equipment.activations_used)
 		var safety_bonus := 500 if bearer.current_zone in bot.bot_player.reserve_zones else 0
-		return remaining * DraupnirTheMultiplying.MANA_GAIN * MANA_VALUE + safety_bonus
+		# Future payments arrive while the current stock is being spent, so
+		# price the total gain from today's level rather than today's rate.
+		return mana_gain_value(bot, remaining * DraupnirTheMultiplying.MANA_GAIN) + safety_bonus
 	# The item is already on the board, so its original card cost is sunk. Give
 	# even low-impact gear a baseline value over passing, then account for its
 	# stat changes and any special combat benefit.
@@ -920,7 +1126,16 @@ static func equipment_pickup_score(bot, equipment: EquipmentCard, bearer: Card) 
 static func structure_score(bot, structure: Card) -> int:
 	var gain := 0
 	match key(structure):
-		"AncientPyre": gain = 6500 if bot.opponent.followers < 50 or bot.bot_player.followers < 50 else 0
+		"AncientPyre":
+			gain = 6500 if bot.opponent.followers < 50 or bot.bot_player.followers < 50 else 0
+			# In a locked board state the Pyre is the win condition: its
+			# conversion clock turns surplus mana into direct follower swing.
+			# The sooner it ends the game, the more the structure is worth.
+			if bot.has_method("_locked_board_state") and bot._locked_board_state() \
+					and bot.opponent.followers > 0:
+				var clock_turns := ceili(float(bot.opponent.followers) / float(AncientPyre.USES_PER_TURN * AncientPyre.EFFECT_AMOUNT))
+				if clock_turns > 0:
+					gain = maxi(gain, CARD_VALUE + CARD_VALUE * 2 / clock_turns)
 		"Watchtower":
 			# Counters arrive from future enemy entries, not existing cards.
 			gain = 6000 if bot._board_creature_count(bot.opponent) < 3 else 3000
@@ -960,7 +1175,9 @@ static func structure_score(bot, structure: Card) -> int:
 		"EriduCityOfSages":
 			for creature in bot._get_board_creatures(bot.bot_player):
 				if creature.has_type("Mage"):
-					gain += EriduCityOfSages.MANA_PER_MAGE * MANA_VALUE * 3
+					# One mana dose per turn for three turns, priced from the
+					# current stock so a saturated position values it less.
+					gain += mana_gain_value(bot, EriduCityOfSages.MANA_PER_MAGE * 3)
 		"GlitnirThePeaceful":
 			if bot.game_manager._any_active_structure_forces_defensive_summon():
 				return BAD
@@ -1028,7 +1245,6 @@ static func forced_combat_choice(bot, source: Card, attackers: Array, defenders:
 			action.type = CardAction.Type.ATTACK
 			action.attacker = attacker
 			action.target = defender
-			action.halve_follower_damage = true
 			var score: int = bot._score_attack_economy(bot._estimate_attack_economy(action, null, 0, 0))
 			if score > int(best["score"]):
 				best = {"score": score, "attacker_uid": attacker.uid, "defender_uid": defender.uid}

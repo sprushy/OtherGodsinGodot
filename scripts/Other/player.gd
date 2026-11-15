@@ -44,8 +44,13 @@ func get_index(manager: GameManager = null) -> int:
 		return -1
 	return manager.players.find(self)
 
-func _init() -> void:
-	_initialize_zones()
+static func create_spectator_viewer() -> Player:
+	# Spectators need a distinct identity for visibility without owning zones.
+	return Player.new(false)
+
+func _init(owns_zones: bool = true) -> void:
+	if owns_zones:
+		_initialize_zones()
 
 func _initialize_zones() -> void:
 	hand_zone = Zone.new()
@@ -103,7 +108,8 @@ func gain_mana(amount: int, play_sound: bool = true) -> void:
 		return
 	mana += amount
 	if amount > 0 and game_manager != null and play_sound:
-		ManaSoundPlayerScript.play_gain(amount)
+		if game_manager.sfx_enabled:
+			ManaSoundPlayerScript.play_gain(amount)
 		game_manager.note_ui_sound_cue("mana_gain:%d" % amount)
 	mana_changed.emit(mana)
 
@@ -111,7 +117,8 @@ func spend_mana(amount: int) -> bool:
 	if mana >= amount:
 		mana -= amount
 		if amount > 0 and game_manager != null:
-			ManaSoundPlayerScript.play_spend()
+			if game_manager.sfx_enabled:
+				ManaSoundPlayerScript.play_spend()
 			game_manager.note_ui_sound_cue("mana_spend")
 		mana_changed.emit(mana)
 		return true

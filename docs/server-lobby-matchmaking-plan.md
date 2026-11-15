@@ -489,17 +489,38 @@ forcing a full rewrite all at once.
 
 ## Bot self-play
 
-The dedicated lobby starts up to ten concurrent bot matches, one worker per
-lobby maintenance tick. Set `OTHERGODS_BOT_SELF_PLAY_LIMIT` or pass
-`bot_self_play_limit=0..10` on the dedicated lobby command line to lower the cap.
-Zero keeps the standing bot challenges and disables background matches.
+While the lobby has no human matches, it runs up to two concurrent bot
+self-play matches (`min(bot_self_play_limit, 2, cores - 1)`; one worker per
+lobby maintenance tick). Set `OTHERGODS_BOT_SELF_PLAY_LIMIT` or pass
+`bot_self_play_limit=0..10` on the dedicated lobby command line to lower the
+cap. Zero keeps the standing bot challenges and disables background matches.
+Starting a human match abandons all background matches immediately ("Yielded
+capacity to a human match") and waits 30 seconds before refilling.
 
-The scheduler reserves a logical CPU slot for the lobby and reduces its worker
-budget as dedicated human matches start. It checks physical memory headroom,
-lobby frame time, free disk space, and spare match ports. It sheds background
+Self-play pairings prefer bots whose leagues are the same or adjacent; when the
+band has no pair, the closest available gap is used. Underplayed lists keep
+their extra selection weight inside the chosen range.
+
+The scheduler reserves a logical CPU slot for the lobby and yields all worker
+slots when a human match is present. It checks physical memory headroom,
+lobby frame time, free disk space, and spare match ports, and reports any
+blocker at warning level in the lobby log at most once per minute per reason,
+so an idle lobby with zero bot matches is never silent. It sheds background
 workers under pressure and waits before refilling. Workers run at 30 FPS. A
 match stops and records a diagnostic after 45 seconds without advancing a turn
 or 20 minutes overall.
+
+## Human match capacity
+
+Supervisor-hosted human matches (dedicated subprocess or in-process host) are
+capped at one concurrent match per logical core with one core reserved for the
+lobby; `OTHERGODS_MAX_HUMAN_MATCHES` overrides the limit. When the cap is
+reached, `MatchSupervisor.create_match` declines the new match instead of
+launching it, and both players receive "The server is full at the moment —
+sorry! Please try again in a few minutes." The room stays open so they can
+retry. Player-hosted matches never count against the cap (they run on the
+host's machine), and bot self-play is excluded because the scheduler sheds it
+to make room for humans.
 
 Completed battles are recorded in `server_data/match_history_results`. Each
 record stores both bot outcomes, starting ranks, turns, and final follower

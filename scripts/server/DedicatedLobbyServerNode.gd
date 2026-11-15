@@ -4,6 +4,9 @@ class_name DedicatedLobbyServerNode
 const DedicatedLobbyProtocolScript = preload("res://scripts/network/LobbyProtocol.gd")
 
 func _ready() -> void:
+	# Dedicated-only lobby node: cap the loop so an idle process does not spin
+	# a CPU core at maximum frame rate.
+	Engine.max_fps = 30
 	use_dedicated_match_processes = true
 	allow_in_process_match_fallback = false
 	super._ready()

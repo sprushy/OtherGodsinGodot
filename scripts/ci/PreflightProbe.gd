@@ -22,6 +22,10 @@ const MIN_CATALOG_CARDS := 200
 const RESULT_ARG_PREFIX := "preflight_result_file="
 
 var _ran := false
+var _fixture_games: Array[GameManager] = []
+var _fixture_players: Array[Player] = []
+var _fixture_matches: Array[MatchManager] = []
+var _fixture_bots: Array[PracticeFuzzPlayerBot] = []
 
 class RequestNextLobby extends LobbyServerScript:
 	var events: Array[Dictionary] = []
@@ -62,8 +66,14 @@ func run() -> bool:
 	_check_ranked_bot_manifestations(failures)
 	_check_bot_power_followthrough(failures)
 	_check_bot_summon_and_intercept(failures)
+	_check_bot_speed_one_stealth(failures)
+	_check_bot_reserve_summon_threat(failures)
 	_check_bot_fenrir_summon(failures)
 	_check_bot_main_phase_combat_order(failures)
+	_check_bot_removal_opens_attacks(failures)
+	_check_bot_paired_removals(failures)
+	_check_bot_summon_and_removal_order(failures)
+	_check_bot_disable_overlap(failures)
 	_check_bot_defender_target_value(failures)
 	_check_bot_hermes_speed(failures)
 	_check_bot_violent_delights_upkeep(failures)
@@ -76,6 +86,7 @@ func run() -> bool:
 	_check_ladder_pages(failures)
 	_check_request_next(failures)
 	_check_gugalanna_celestial_charge(failures)
+	_release_fixtures()
 
 	if not failures.is_empty():
 		for failure in failures:
@@ -86,6 +97,66 @@ func run() -> bool:
 	print("preflight_probe: PASS")
 	_write_result_file(true, failures)
 	return true
+
+func _new_fixture_game() -> GameManager:
+	var game := GameManager.new()
+	_fixture_games.append(game)
+	return game
+
+func _new_fixture_player() -> Player:
+	var player := Player.new()
+	_fixture_players.append(player)
+	return player
+
+func _new_fixture_match(game: GameManager) -> MatchManager:
+	var manager := MatchManager.new(game)
+	_fixture_matches.append(manager)
+	return manager
+
+func _new_fixture_bot() -> PracticeFuzzPlayerBot:
+	var bot := PracticeFuzzPlayerBot.new()
+	_fixture_bots.append(bot)
+	return bot
+
+func _release_fixtures() -> void:
+	for bot in _fixture_bots:
+		bot.detach()
+	_fixture_bots.clear()
+	for manager in _fixture_matches:
+		manager.reset_runtime_state()
+	_fixture_matches.clear()
+	for game in _fixture_games:
+		for player in game.players:
+			if player not in _fixture_players:
+				_fixture_players.append(player)
+		# A queued resolver can capture its own action or match. Abandon
+		# pending test work without executing gameplay during teardown.
+		for action: CardAction in game.action_stack + game.resolving_stack_actions:
+			action.resolve_callback = Callable()
+		game.action_stack.clear()
+		game.resolving_stack_actions.clear()
+		game._pending_doorway_continue = Callable()
+		game._pending_return_to_hand_continue = Callable()
+		game._deferred_combat_resume = Callable()
+	_fixture_games.clear()
+	for player in _fixture_players:
+		player.game_manager = null
+		player.current_deck.clear()
+		player.card_collection.clear()
+		player.reserved_active_god = null
+		# Zones own their cards and players own their zones. Break the
+		# back-references and clear effect sources that can point at themselves.
+		for zone: Zone in [player.hand_zone, player.deck_zone, player.graveyard_zone, player.abyss_zone, player.god_zone] + player.power_zones + player.frontline_zones + player.reserve_zones:
+			for card in zone.cards.duplicate():
+				card.active_buffs.clear()
+				card.active_statuses.clear()
+				card.sleeping_from = null
+				for equipment in card.equipment:
+					equipment.equipped_on = null
+				card.equipment.clear()
+				zone.remove_card(card)
+			zone.zone_owner = null
+	_fixture_players.clear()
 
 func _check_card_catalog(failures: PackedStringArray) -> void:
 	for path in CardCatalogScript.CARD_SCRIPT_PATHS:
@@ -161,7 +232,7 @@ func _check_deck_validator(failures: PackedStringArray) -> void:
 	)
 	if not bool(swap_result.get("is_valid", false)):
 		failures.append("legal Reinforcement resubmission with changed main-deck size failed validation: %s" % str(swap_result.get("error", "")))
-	var player := Player.new()
+	var player := _new_fixture_player()
 	if not player.validate_deck(_cards_from_counts(valid_deck)):
 		failures.append("Player.validate_deck rejected a DeckValidator-valid deck")
 	if player.validate_deck(_cards_from_counts({"Thor": 2})):
@@ -224,11 +295,11 @@ func _string_lookup(values: Array) -> Dictionary:
 	return lookup
 
 func _check_command_authority(failures: PackedStringArray) -> void:
-	var game_manager := GameManager.new()
-	var player_one := Player.new()
+	var game_manager := _new_fixture_game()
+	var player_one := _new_fixture_player()
 	player_one.player_name = "Player 1"
 	game_manager.players.append(player_one)
-	var player_two := Player.new()
+	var player_two := _new_fixture_player()
 	player_two.player_name = "Player 2"
 	game_manager.players.append(player_two)
 	game_manager.current_player = player_one
@@ -238,7 +309,7 @@ func _check_command_authority(failures: PackedStringArray) -> void:
 	game_manager._upkeep_started_turn = game_manager.turn_number
 	game_manager._upkeep_resolved_turn = game_manager.turn_number
 
-	var match_manager := MatchManager.new(game_manager)
+	var match_manager := _new_fixture_match(game_manager)
 	var attacker := BaseCard.new()
 	attacker.card_name = "Probe Attacker"
 	attacker.card_type = Card.CardType.CREATURE
@@ -376,7 +447,7 @@ func _check_network_payload_guards(failures: PackedStringArray) -> void:
 	network_manager.free()
 
 func _check_full_state_event_payload_budget(failures: PackedStringArray) -> void:
-	var game_manager := GameManager.new()
+	var game_manager := _new_fixture_game()
 	var deck_counts := _known_good_deck_counts()
 	var session := MatchSessionScript.new(
 		"preflight_payload_budget",
@@ -417,11 +488,11 @@ func _check_full_state_event_payload_budget(failures: PackedStringArray) -> void
 	network_manager.free()
 
 func _check_game_state_privacy(failures: PackedStringArray) -> void:
-	var game_manager := GameManager.new()
-	var player_one := Player.new()
+	var game_manager := _new_fixture_game()
+	var player_one := _new_fixture_player()
 	player_one.player_name = "Player 1"
 	game_manager.players.append(player_one)
-	var player_two := Player.new()
+	var player_two := _new_fixture_player()
 	player_two.player_name = "Player 2"
 	game_manager.players.append(player_two)
 	game_manager.current_player = player_one
@@ -458,9 +529,9 @@ func _check_game_state_privacy(failures: PackedStringArray) -> void:
 			failures.append("opponent hand leaked card name: %s" % str(hidden_card.get("card_name", "")))
 
 func _check_public_deck_knowledge(failures: PackedStringArray) -> void:
-	var manager := GameManager.new()
-	var owner := Player.new()
-	manager.players.assign([owner, Player.new()])
+	var manager := _new_fixture_game()
+	var owner := _new_fixture_player()
+	manager.players.assign([owner, _new_fixture_player()])
 	var deck := owner.deck_zone
 	var hidden := BrownBear.new()
 	hidden.card_owner = owner
@@ -478,8 +549,8 @@ func _check_public_deck_knowledge(failures: PackedStringArray) -> void:
 	owner.hand_zone.add_card(shelved)
 	owner.shelve_card(shelved)
 
-	var mirror := GameManager.new()
-	mirror.players.assign([Player.new(), Player.new()])
+	var mirror := _new_fixture_game()
+	mirror.players.assign([_new_fixture_player(), _new_fixture_player()])
 	var mirror_deck := mirror.players[0].deck_zone
 	for viewer in [0, 1, GameState.SPECTATOR_VIEWER_INDEX]:
 		GameState.apply_to_manager(GameState.serialize(manager, viewer), mirror)
@@ -805,7 +876,7 @@ func _check_ranked_bot_deck_generation(failures: PackedStringArray) -> void:
 			failures.append("Ranked bot decks cannot generate %s" % expected)
 
 	var deck := factory.build_random_deck(1337, TiamatThePrimordial.TIAMAT_CARD_NAME, true)
-	var player := Player.new()
+	var player := _new_fixture_player()
 	if deck.is_empty() or not DeckBuilder.new().build_deck(player, _cards_from_counts(deck["cards"]), deck["special_setup"]):
 		failures.append("Ranked bot generator did not produce a legal Tiamat deck")
 		return
@@ -830,14 +901,14 @@ func _check_ranked_bot_deck_generation(failures: PackedStringArray) -> void:
 		failures.append("Ranked Tiamat did not fill all three shared power/Brood slots")
 		return
 
-	var game_manager := GameManager.new()
-	var opponent := Player.new()
+	var game_manager := _new_fixture_game()
+	var opponent := _new_fixture_player()
 	game_manager.players.assign([player, opponent])
 	game_manager.current_player = player
 	game_manager.other_player = opponent
 	game_manager.start_turn()
-	var match_manager := MatchManager.new(game_manager)
-	var bot := PracticeFuzzPlayerBot.new()
+	var match_manager := _new_fixture_match(game_manager)
+	var bot := _new_fixture_bot()
 	bot.attach(game_manager, match_manager, ServerBotGameInput.new(match_manager, 0), 0)
 	var deck_size := player.deck_zone.cards.size()
 	bot._handle_upkeep()
@@ -888,9 +959,9 @@ func _check_ranked_bot_manifestations(failures: PackedStringArray) -> void:
 
 	var gods: Array[GodCard] = [Thor.new(), GuanYu.new(), TiamatThePrimordial.new(), TezcatlipocaTheSmokingMirror.new()]
 	for god in gods:
-		var game_manager := GameManager.new()
-		var player := Player.new()
-		var opponent := Player.new()
+		var game_manager := _new_fixture_game()
+		var player := _new_fixture_player()
+		var opponent := _new_fixture_player()
 		game_manager.players.assign([player, opponent])
 		game_manager.current_player = player
 		game_manager.other_player = opponent
@@ -901,8 +972,8 @@ func _check_ranked_bot_manifestations(failures: PackedStringArray) -> void:
 		game_manager.turn_number = 2
 		game_manager._upkeep_started_turn = game_manager.turn_number
 		game_manager._upkeep_resolved_turn = game_manager.turn_number
-		var match_manager := MatchManager.new(game_manager)
-		var bot := PracticeFuzzPlayerBot.new()
+		var match_manager := _new_fixture_match(game_manager)
+		var bot := _new_fixture_bot()
 		bot.attach(game_manager, match_manager, ServerBotGameInput.new(match_manager, 0), 0)
 		god.card_owner = player
 		player.god_zone.add_card(god)
@@ -961,25 +1032,18 @@ func _check_ranked_bot_manifestations(failures: PackedStringArray) -> void:
 		):
 			failures.append("Ranked bot failed to summon the matching Active God for %s" % god.card_name)
 		bot.detach()
-		match_manager.reset_runtime_state()
-		game_manager.action_stack.clear()
-		for seat in game_manager.players:
-			for zone in [seat.god_zone, seat.hand_zone, seat.deck_zone, seat.graveyard_zone, seat.abyss_zone] + seat.power_zones + seat.frontline_zones + seat.reserve_zones:
-				for card in zone.cards.duplicate():
-					zone.remove_card(card)
-				zone.zone_owner = null
 
 func _check_bot_power_followthrough(failures: PackedStringArray) -> void:
-	var game := GameManager.new()
-	var player := Player.new()
-	var opponent := Player.new()
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
 	game.players.assign([player, opponent])
 	game.current_player = player
 	game.other_player = opponent
 	game.start_turn()
 	game.player_chooses_upkeep_only()
-	var manager := MatchManager.new(game)
-	var bot := PracticeFuzzPlayerBot.new()
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
 	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
 	var factory := MechFactory.new()
 	factory.card_owner = player
@@ -1010,15 +1074,15 @@ func _check_bot_power_followthrough(failures: PackedStringArray) -> void:
 	bot.detach()
 
 func _check_bot_summon_and_intercept(failures: PackedStringArray) -> void:
-	var game := GameManager.new()
-	var player := Player.new()
-	var opponent := Player.new()
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
 	game.players.assign([player, opponent])
 	game.current_player = player
 	game.other_player = opponent
 	game.turn_number = 2
-	var manager := MatchManager.new(game)
-	var bot := PracticeFuzzPlayerBot.new()
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
 	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
 	var enki := EnkiLordOfEridu.new()
 	enki.card_owner = opponent
@@ -1050,10 +1114,110 @@ func _check_bot_summon_and_intercept(failures: PackedStringArray) -> void:
 		failures.append("Bot chose a losing interception that still allowed lethal follower damage")
 	bot.detach()
 
+func _check_bot_speed_one_stealth(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	game.has_resolved_attack_this_turn = true
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var sulak := SulakTheUnclean.new()
+	sulak.card_owner = player
+	player.hand_zone.add_card(sulak)
+	var threat := CreatureCard.new()
+	threat.card_owner = opponent
+	threat.creature_mode = Card.CreatureMode.AGGRESSIVE
+	threat.speed = 1
+	threat.strength = 14
+	opponent.frontline_zones[0].add_card(threat)
+	var danger := bot._forecast_incoming_follower_loss()
+	var hidden := bot._plan_creature_summon(danger)
+	if not hidden.get("command", {}).get("stealth", false):
+		failures.append("Bot failed to summon Speed 1 Sulak in Stealth when it can block just as well")
+	var optimism := FoolishOptimism.new()
+	optimism.card_owner = player
+	player.hand_zone.add_card(optimism)
+	var face_up: Dictionary = bot._plan_creature_summon(danger).get("command", {})
+	if face_up.get("card_uid") != sulak.uid or face_up.get("stealth", true):
+		failures.append("Bot hid Sulak even though Foolish Optimism has a profitable face-up combat")
+	player.hand_zone.remove_card(optimism)
+	sulak.level = 1
+	sulak.speed = 2
+	if bot._plan_creature_summon(danger).get("command", {}).get("stealth", true):
+		failures.append("Bot treated level 1 as a reason to hide a faster creature")
+	sulak.level = 2
+	sulak.speed = 1
+	var hermes := Hermes.new()
+	hermes.card_owner = player
+	player.god_zone.add_card(hermes)
+	player.mana = Hermes.ACTIVATION_COST
+	game.has_resolved_attack_this_turn = false
+	threat.creature_mode = Card.CreatureMode.DEFENSIVE
+	threat.speed = 2
+	threat.resilience = 30
+	opponent.followers = sulak.strength
+	var boosted := bot._plan_creature_summon(bot._forecast_incoming_follower_loss())
+	if boosted.get("command", {}).get("mode") != Card.CreatureMode.AGGRESSIVE \
+			or boosted.get("command", {}).get("stealth", true) or int(boosted.get("combat_score", 0)) < ThorPracticeBot.ECON_CARD_VALUE * 20:
+		failures.append("Bot missed a face-up summon that Hermes can speed up for lethal")
+	game.has_resolved_attack_this_turn = true
+	if not bot._submit_strategy_plan(hidden) or not sulak.is_stealth:
+		failures.append("Bot did not submit the Stealth summon for Sulak")
+	bot.detach()
+
+func _check_bot_reserve_summon_threat(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var recruit := CreatureCard.new()
+	recruit.card_owner = player
+	recruit.strength = 12
+	recruit.resilience = 10
+	player.hand_zone.add_card(recruit)
+	var defender := CreatureCard.new()
+	defender.card_owner = player
+	defender.resilience = 30
+	defender.speed = 3
+	player.frontline_zones[0].add_card(defender)
+	var attacker := CreatureCard.new()
+	attacker.card_owner = opponent
+	attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
+	attacker.strength = 21
+	attacker.speed = 3
+	opponent.reserve_zones[0].add_card(attacker)
+	var protected_summon := bot._plan_creature_summon(0)
+	if protected_summon.get("command", {}).get("zone_type") != Zone.ZoneType.RESERVE:
+		failures.append("Bot passed up a protected reserve summon that an advancing enemy could kill in the frontline")
+	attacker.add_status_effect("cannot_move", "Preflight")
+	if bot._plan_creature_summon(0).get("command", {}).get("zone_type") != Zone.ZoneType.FRONTLINE:
+		failures.append("Bot passed up the frontline summon when the reserve attacker could not advance")
+	attacker.remove_status_effects_by_name("cannot_move")
+	defender.add_status_effect("cannot_intercept", "Preflight")
+	if not bot._plan_creature_summon(0).is_empty():
+		failures.append("Bot assumed a reserve summon was safe even though the advancing attacker could reach both rows")
+	defender.remove_status_effects_by_name("cannot_intercept")
+	if not bot._submit_strategy_plan(protected_summon) or recruit.current_zone not in player.reserve_zones:
+		failures.append("Bot did not submit the summon in the protected reserve")
+	bot.detach()
+
 func _check_bot_fenrir_summon(failures: PackedStringArray) -> void:
-	var game := GameManager.new()
-	var player := Player.new()
-	var opponent := Player.new()
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
 	game.players.assign([player, opponent])
 	game.current_player = player
 	game.other_player = opponent
@@ -1061,8 +1225,8 @@ func _check_bot_fenrir_summon(failures: PackedStringArray) -> void:
 	game._upkeep_resolved_turn = game.turn_number
 	player.mana = 5
 	opponent.followers = 30
-	var manager := MatchManager.new(game)
-	var bot := PracticeFuzzPlayerBot.new()
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
 	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
 	var fenrir := Fenrir.new()
 	fenrir.card_owner = player
@@ -1119,17 +1283,17 @@ func _check_bot_fenrir_summon(failures: PackedStringArray) -> void:
 	bot.detach()
 
 func _check_bot_main_phase_combat_order(failures: PackedStringArray) -> void:
-	var game := GameManager.new()
-	var player := Player.new()
-	var opponent := Player.new()
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
 	game.players.assign([player, opponent])
 	game.current_player = player
 	game.other_player = opponent
 	game.turn_number = 3
 	game._upkeep_resolved_turn = game.turn_number
 	player.mana = 5
-	var manager := MatchManager.new(game)
-	var bot := PracticeFuzzPlayerBot.new()
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
 	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
 	var veteran := CreatureCard.new()
 	veteran.card_owner = player
@@ -1137,27 +1301,54 @@ func _check_bot_main_phase_combat_order(failures: PackedStringArray) -> void:
 	veteran.speed = 4
 	veteran.creature_mode = Card.CreatureMode.AGGRESSIVE
 	player.frontline_zones[0].add_card(veteran)
+	var second_attacker := CreatureCard.new()
+	second_attacker.card_owner = player
+	second_attacker.strength = 10
+	second_attacker.speed = 3
+	second_attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
+	player.frontline_zones[1].add_card(second_attacker)
 	var recruit := CreatureCard.new()
 	recruit.card_owner = player
 	recruit.strength = 8
 	recruit.speed = 3
 	recruit.mana_cost = 1
 	player.hand_zone.add_card(recruit)
+	var wall := CreatureCard.new()
+	wall.card_owner = player
+	wall.strength = 0
+	wall.resilience = 300
+	wall.mana_cost = 1
+	player.hand_zone.add_card(wall)
 	var blocker := CreatureCard.new()
 	blocker.card_owner = opponent
-	blocker.strength = 10
+	blocker.strength = 18
 	blocker.resilience = 12
 	blocker.speed = 5
-	blocker.creature_mode = Card.CreatureMode.DEFENSIVE
+	blocker.creature_mode = Card.CreatureMode.AGGRESSIVE
 	opponent.frontline_zones[0].add_card(blocker)
+	opponent.guard = 6
+	var attacks := bot._get_combat_candidates()
+	var baseline := bot._plan_combat(attacks)
+	var summon := bot._plan_creature_summon(bot._forecast_incoming_follower_loss(), attacks, baseline)
+	if summon.get("command", {}).get("card_uid") != wall.uid \
+			or summon.get("attack_setup", {}).get("command", {}).get("card_uid") != recruit.uid:
+		failures.append("Bot did not retain the attacking summon alongside the higher-value wall")
+	opponent.followers = 14
+	attacks = bot._get_combat_candidates()
+	baseline = bot._plan_combat(attacks)
+	var lethal_summon := bot._plan_creature_summon(bot._forecast_incoming_follower_loss(), attacks, baseline)
+	if baseline.get("lethal", false) or not lethal_summon.get("attack_setup", {}).get("lethal", false):
+		failures.append("Bot did not identify lethal that needs all three attacks and spends guard only once")
+	opponent.followers = 100
 	if not bot._take_main_phase_action() or recruit.current_zone not in player.frontline_zones \
 			or recruit.creature_mode != Card.CreatureMode.AGGRESSIVE or game.has_resolved_attack_this_turn:
-		failures.append("Bot attacked before summoning a second creature that could hit followers after the blocker fell")
+		failures.append("Bot attacked before summoning a third creature that could hit followers after the blocker fell")
 	else:
 		for _step in range(8):
 			manager.advance_priority()
 		var fight := bot._plan_combat(bot._get_combat_candidates())
-		if fight.get("attacker") != veteran or fight.get("target") != blocker:
+		if fight.get("attacker") != veteran or fight.get("target") != blocker \
+				or fight.get("attackers", []).size() != 3:
 			failures.append("Bot did not use the stronger creature to clear the blocker after summoning")
 		elif not bot._take_main_phase_action():
 			failures.append("Bot did not submit the attack that clears the blocker")
@@ -1165,25 +1356,30 @@ func _check_bot_main_phase_combat_order(failures: PackedStringArray) -> void:
 			for _step in range(8):
 				manager.advance_priority()
 			var followers := opponent.followers
-			if blocker.current_zone != opponent.graveyard_zone or not bot._take_main_phase_action():
-				failures.append("Bot did not follow up with the newly summoned creature")
+			var expected_damage := second_attacker.strength + recruit.strength - opponent.guard
+			if blocker.current_zone != opponent.graveyard_zone:
+				failures.append("Bot did not clear the blocker")
 			else:
-				for _step in range(8):
-					manager.advance_priority()
-				if opponent.followers != followers - recruit.strength:
-					failures.append("Summoning first did not deliver the projected follower damage")
+				for _attack in range(2):
+					if not bot._take_main_phase_action():
+						failures.append("Bot did not submit both follow-up attacks")
+						break
+					for _step in range(8):
+						manager.advance_priority()
+				if opponent.followers != followers - expected_damage:
+					failures.append("Summoning first did not deliver both projected follow-up hits")
 	bot.detach()
 
-	game = GameManager.new()
-	player = Player.new()
-	opponent = Player.new()
+	game = _new_fixture_game()
+	player = _new_fixture_player()
+	opponent = _new_fixture_player()
 	game.players.assign([player, opponent])
 	game.current_player = player
 	game.other_player = opponent
 	game.turn_number = 3
 	game._upkeep_resolved_turn = game.turn_number
 	player.mana = 5
-	manager = MatchManager.new(game)
+	manager = _new_fixture_match(game)
 	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
 	recruit = CreatureCard.new()
 	recruit.card_owner = player
@@ -1210,16 +1406,59 @@ func _check_bot_main_phase_combat_order(failures: PackedStringArray) -> void:
 			failures.append("Bot did not follow Fall of the Mighty with a summon ready to attack")
 	bot.detach()
 
-	game = GameManager.new()
-	player = Player.new()
-	opponent = Player.new()
+	# A face-down prepared card cannot be a creature, so it must not veto the
+	# Fall of the Mighty strength check (practice regressions hid Humbaba-scale
+	# threats behind ordinary prepared hexes).
+	game = _new_fixture_game()
+	player = _new_fixture_player()
+	opponent = _new_fixture_player()
 	game.players.assign([player, opponent])
 	game.current_player = player
 	game.other_player = opponent
 	game.turn_number = 3
 	game._upkeep_resolved_turn = game.turn_number
 	player.mana = 5
-	manager = MatchManager.new(game)
+	manager = _new_fixture_match(game)
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	recruit = CreatureCard.new()
+	recruit.card_owner = player
+	recruit.strength = 15
+	recruit.resilience = 25
+	recruit.mana_cost = 2
+	player.hand_zone.add_card(recruit)
+	blocker = CreatureCard.new()
+	blocker.card_owner = opponent
+	blocker.strength = 22
+	blocker.speed = 5
+	blocker.creature_mode = Card.CreatureMode.AGGRESSIVE
+	opponent.frontline_zones[0].add_card(blocker)
+	fall = FallOfTheMighty.new()
+	fall.card_owner = player
+	player.hand_zone.add_card(fall)
+	var prepared_hex := VoidShield.new()
+	prepared_hex.card_owner = opponent
+	prepared_hex.is_face_down = true
+	prepared_hex.is_prepared = true
+	opponent.reserve_zones[0].add_card(prepared_hex)
+	if not bot._take_main_phase_action() or recruit.current_zone != player.hand_zone:
+		failures.append("A face-down prepared card stopped Fall of the Mighty from clearing the stronger creature")
+	else:
+		for _step in range(8):
+			manager.advance_priority()
+		if blocker.current_zone != opponent.graveyard_zone:
+			failures.append("Fall of the Mighty did not destroy the strongest creature behind a face-down prepared card")
+	bot.detach()
+
+	game = _new_fixture_game()
+	player = _new_fixture_player()
+	opponent = _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	player.mana = 5
+	manager = _new_fixture_match(game)
 	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
 	blocker = CreatureCard.new()
 	blocker.card_owner = opponent
@@ -1273,10 +1512,266 @@ func _check_bot_main_phase_combat_order(failures: PackedStringArray) -> void:
 		failures.append("Bot ignored ability suppression when valuing removal of a debilitated creature")
 	bot.detach()
 
+func _check_bot_removal_opens_attacks(failures: PackedStringArray) -> void:
+	for use_spell in [true, false]:
+		var game := _new_fixture_game()
+		var player := _new_fixture_player()
+		var opponent := _new_fixture_player()
+		game.players.assign([player, opponent])
+		game.current_player = player
+		game.other_player = opponent
+		game.turn_number = 3
+		game._upkeep_resolved_turn = game.turn_number
+		player.mana = 5
+		opponent.followers = 37
+		var manager := _new_fixture_match(game)
+		var bot := _new_fixture_bot()
+		bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+		for strength in [21, 8, 8]:
+			var attacker := CreatureCard.new()
+			attacker.card_owner = player
+			attacker.strength = strength
+			attacker.speed = 3
+			attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
+			bot._get_first_open_summon_zone(player).add_card(attacker)
+		var blocker := CreatureCard.new()
+		blocker.card_owner = opponent
+		blocker.strength = 20
+		blocker.resilience = 5
+		blocker.speed = 5
+		blocker.creature_mode = Card.CreatureMode.AGGRESSIVE
+		opponent.frontline_zones[0].add_card(blocker)
+		var removal: Card = BitMeseri.new() if use_spell else AncientPyre.new()
+		removal.card_owner = player
+		var source_zone := player.hand_zone if use_spell else player.frontline_zones[4]
+		source_zone.add_card(removal)
+		var attacks := bot._get_combat_candidates()
+		var baseline := bot._plan_combat(attacks)
+		var plan := bot._get_best_strategy_action(attacks, baseline)
+		if baseline.get("lethal", false) or not plan.get("lethal", false) or not bot._take_main_phase_action():
+			failures.append("Bot missed the lethal line opened by %s" % removal.card_name)
+			bot.detach()
+			continue
+		for _step in range(8):
+			manager.advance_priority()
+		if blocker.current_zone.is_board_zone() or game.has_resolved_attack_this_turn:
+			failures.append("Bot attacked before clearing the blocker with %s" % removal.card_name)
+			bot.detach()
+			continue
+		for _attack in range(3):
+			if not bot._take_main_phase_action():
+				break
+			for _step in range(8):
+				manager.advance_priority()
+		if opponent.followers > 0:
+			failures.append("Bot did not use all three attackers after %s cleared the blocker" % removal.card_name)
+		bot.detach()
+
+func _check_bot_paired_removals(failures: PackedStringArray) -> void:
+	for scenario in ["lethal", "economy", "barriers"]:
+		var lethal_case: bool = scenario != "economy"
+		var game := _new_fixture_game()
+		var player := _new_fixture_player()
+		var opponent := _new_fixture_player()
+		game.players.assign([player, opponent])
+		game.current_player = player
+		game.other_player = opponent
+		game.turn_number = 3
+		game._upkeep_resolved_turn = game.turn_number
+		player.mana = 6
+		opponent.followers = 39 if lethal_case else 100
+		var manager := _new_fixture_match(game)
+		var bot := _new_fixture_bot()
+		bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+		var strengths := [23, 8, 8]
+		for index in range(strengths.size()):
+			var attacker := CreatureCard.new()
+			attacker.card_owner = player
+			attacker.strength = strengths[index]
+			attacker.speed = 3
+			attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
+			player.frontline_zones[index].add_card(attacker)
+		for index in range(2):
+			var blocker: Card = PalisadeBarrier.new() if scenario == "barriers" else CreatureCard.new()
+			blocker.card_owner = opponent
+			var zone := opponent.frontline_zones[index]
+			if scenario == "barriers":
+				if index == 1:
+					zone = opponent.reserve_zones[0]
+			else:
+				blocker.strength = 20
+				blocker.speed = 5
+				blocker.creature_mode = Card.CreatureMode.AGGRESSIVE
+			zone.add_card(blocker)
+			var removal := BitMeseri.new()
+			removal.card_owner = player
+			player.hand_zone.add_card(removal)
+		var attacks := bot._get_combat_candidates()
+		var baseline := bot._plan_combat(attacks)
+		var removals: Array[Dictionary] = []
+		var danger := bot._forecast_incoming_follower_loss()
+		var single := bot._get_best_strategy_action(attacks, baseline, danger, removals)
+		var pair := bot._plan_paired_removals(removals, attacks, baseline, danger)
+		if lethal_case:
+			if single.get("lethal", false) or not pair.get("lethal", false):
+				failures.append("Bot did not find lethal that requires both removal spells")
+			player.mana = 5
+			if not bot._plan_paired_removals(removals, attacks, baseline, danger).is_empty():
+				failures.append("Bot projected two removal spells without enough mana for both")
+			player.mana = 6
+		elif int(single.get("score", 0)) <= int(pair.get("score", 0)):
+			failures.append("Bot valued the second removal above a profitable combat clear")
+		for _action in range(2):
+			if not bot._take_main_phase_action():
+				failures.append("Bot did not submit both parts of the multi-defender plan")
+				break
+			for _step in range(8):
+				manager.advance_priority()
+		var remaining_cards := 0 if lethal_case else 1
+		if player.hand_zone.cards.size() != remaining_cards or not bot._get_board_creatures(opponent).is_empty() \
+				or game.has_resolved_attack_this_turn == lethal_case:
+			failures.append("Bot did not choose the expected removal or combat sequence against two defenders")
+		if lethal_case:
+			for _attack in range(3):
+				if not bot._take_main_phase_action():
+					break
+				for _step in range(8):
+					manager.advance_priority()
+			if opponent.followers > 0:
+				failures.append("Bot did not use all three follower attacks after the two removal spells")
+		bot.detach()
+
+func _check_bot_summon_and_removal_order(failures: PackedStringArray) -> void:
+	for summon_first in [false, true]:
+		var game := _new_fixture_game()
+		var player := _new_fixture_player()
+		var opponent := _new_fixture_player()
+		game.players.assign([player, opponent])
+		game.current_player = player
+		game.other_player = opponent
+		game.turn_number = 3
+		game._upkeep_resolved_turn = game.turn_number
+		player.mana = 5
+		opponent.followers = 16
+		var manager := _new_fixture_match(game)
+		var bot := _new_fixture_bot()
+		bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+		var attacker_count := 2 if summon_first else 1
+		for index in range(attacker_count):
+			var attacker := CreatureCard.new()
+			attacker.card_owner = player
+			attacker.strength = 8
+			attacker.speed = 3
+			attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
+			player.frontline_zones[index].add_card(attacker)
+		var blocker := CreatureCard.new()
+		blocker.card_owner = opponent
+		blocker.level = 1
+		blocker.strength = 20
+		blocker.resilience = 5
+		blocker.speed = 5
+		blocker.creature_mode = Card.CreatureMode.AGGRESSIVE
+		opponent.frontline_zones[0].add_card(blocker)
+		var recruit: Card = Lindwyrm.new() if summon_first else CreatureCard.new()
+		recruit.card_owner = player
+		if not summon_first:
+			recruit.strength = 8
+			recruit.speed = 3
+			recruit.mana_cost = 1
+		player.hand_zone.add_card(recruit)
+		var bit_meseri := BitMeseri.new()
+		if summon_first:
+			bit_meseri.card_owner = player
+			player.hand_zone.add_card(bit_meseri)
+		else:
+			var pyre := AncientPyre.new()
+			pyre.card_owner = player
+			player.frontline_zones[4].add_card(pyre)
+		if not bot._take_main_phase_action():
+			failures.append("Bot had no first action for a summon and removal combination")
+			bot.detach()
+			continue
+		for _step in range(8):
+			manager.advance_priority()
+		if recruit.current_zone.is_board_zone() != summon_first or blocker.current_zone.is_board_zone() != summon_first:
+			failures.append("Bot chose the wrong order for the summon and removal combination")
+			bot.detach()
+			continue
+		if not bot._take_main_phase_action():
+			failures.append("Bot did not complete the summon and removal setup")
+			bot.detach()
+			continue
+		for _step in range(8):
+			manager.advance_priority()
+		if not recruit.current_zone.is_board_zone() or blocker.current_zone.is_board_zone() or game.has_resolved_attack_this_turn:
+			failures.append("Bot did not complete both setup actions before attacking")
+		for _attack in range(2):
+			if not bot._take_main_phase_action():
+				break
+			for _step in range(8):
+				manager.advance_priority()
+		if opponent.followers > 0 or (summon_first and bit_meseri.current_zone != player.hand_zone):
+			failures.append("Bot missed the two attacks opened by the setup or spent the spell unnecessarily")
+		bot.detach()
+
+func _check_bot_disable_overlap(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	var manager := _new_fixture_match(game)
+	var bot := ThorPracticeBot.new()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+
+	var target := Alu.new()
+	target.card_owner = opponent
+	opponent.frontline_zones[0].add_card(target)
+	var alu := Alu.new()
+	alu.card_owner = player
+	var gleipnir := Gleipnir.new()
+	gleipnir.card_owner = player
+	var awake_score := BotCardStrategyScript.target_score(bot, alu, target)
+	var awake_binding := BotCardStrategyScript.target_score(bot, gleipnir, target)
+	target.add_status_effect("sleep", "Preflight", null, null, {"expires_turn": game.turn_number})
+	var short_sleep := BotCardStrategyScript.target_score(bot, alu, target)
+	target.remove_status_effects_by_name("sleep")
+	target.add_status_effect("sleep", "Preflight", null, null, {"expires_turn": game.turn_number + 2})
+	var long_sleep := BotCardStrategyScript.target_score(bot, alu, target)
+	target.apply_sleep(alu)
+	var permanent_sleep := BotCardStrategyScript.target_score(bot, alu, target)
+	if awake_score <= short_sleep or short_sleep <= long_sleep or long_sleep <= 0 or permanent_sleep != 0:
+		failures.append("Bot did not value only the sleep duration Alu adds")
+	var sleeping_binding := BotCardStrategyScript.target_score(bot, gleipnir, target)
+	target.mute_permanently(game)
+	if sleeping_binding <= 0 or sleeping_binding >= awake_binding or BotCardStrategyScript.target_score(bot, gleipnir, target) != 0:
+		failures.append("Bot did not score Gleipnir's ability suppression independently of sleep")
+
+	var adapa := FirstSageAdapa.new()
+	adapa.card_owner = player
+	player.frontline_zones[0].add_card(adapa)
+	var renewing := BerserkerMead.new()
+	renewing.card_owner = opponent
+	opponent.power_zones[0].add_card(renewing)
+	var fresh := ManaGuard.new()
+	fresh.card_owner = opponent
+	opponent.power_zones[1].add_card(fresh)
+	var prompt := {"source_uid": adapa.uid, "target_uids": [renewing.uid, fresh.uid]}
+	renewing.mute_for_turns(1, game)
+	var extended := BotCardStrategyScript.mute_gain(bot, renewing, FirstSageAdapa.MUTE_DURATION, 5000)
+	var choice := BotCardPromptPolicy.build_command(bot, "first_sage_adapa_impact", prompt)
+	renewing.mute_for_turns(Absence.MUTE_DURATION, game)
+	fresh.mute_permanently(game)
+	var redundant := BotCardPromptPolicy.build_command(bot, "first_sage_adapa_impact", prompt)
+	if extended <= 0 or extended >= 5000 or choice.get("target_uid") != fresh.uid or redundant.get("target_uid") != "":
+		failures.append("Bot did not prefer a fresh mute and skip mutes that add no duration")
+
 func _check_bot_defender_target_value(failures: PackedStringArray) -> void:
-	var game := GameManager.new()
-	var player := Player.new()
-	var opponent := Player.new()
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
 	game.players.assign([player, opponent])
 	game.current_player = player
 	game.other_player = opponent
@@ -1284,8 +1779,8 @@ func _check_bot_defender_target_value(failures: PackedStringArray) -> void:
 	game._upkeep_resolved_turn = game.turn_number
 	player.mana = 5
 	opponent.mana = AgainWalker.RESURRECTION_COST
-	var manager := MatchManager.new(game)
-	var bot := PracticeFuzzPlayerBot.new()
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
 	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
 	var attacker := CreatureCard.new()
 	attacker.card_owner = player
@@ -1349,17 +1844,17 @@ func _check_bot_defender_target_value(failures: PackedStringArray) -> void:
 	bot.detach()
 
 func _check_bot_hermes_speed(failures: PackedStringArray) -> void:
-	var game := GameManager.new()
-	var player := Player.new()
-	var opponent := Player.new()
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
 	game.players.assign([player, opponent])
 	game.current_player = player
 	game.other_player = opponent
 	game.turn_number = 3
 	game._upkeep_resolved_turn = game.turn_number
 	player.mana = 2
-	var manager := MatchManager.new(game)
-	var bot := PracticeFuzzPlayerBot.new()
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
 	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
 	var hermes := Hermes.new()
 	hermes.card_owner = player
@@ -1400,16 +1895,16 @@ func _check_bot_hermes_speed(failures: PackedStringArray) -> void:
 	bot.detach()
 
 func _check_bot_violent_delights_upkeep(failures: PackedStringArray) -> void:
-	var game := GameManager.new()
-	var player := Player.new()
-	var opponent := Player.new()
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
 	game.players.assign([player, opponent])
 	game.current_player = player
 	game.other_player = opponent
 	game.turn_number = 3
 	player.mana = AphroditeAreia.ACTIVATION_COST - 1
-	var manager := MatchManager.new(game)
-	var bot := PracticeFuzzPlayerBot.new()
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
 	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
 	var aphrodite := AphroditeAreia.new()
 	aphrodite.card_owner = player
@@ -1446,17 +1941,17 @@ func _check_bot_violent_delights_upkeep(failures: PackedStringArray) -> void:
 	bot.detach()
 
 func _check_bot_shift_and_extraction(failures: PackedStringArray) -> void:
-	var game := GameManager.new()
-	var player := Player.new()
-	var opponent := Player.new()
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
 	game.players.assign([player, opponent])
 	game.current_player = player
 	game.other_player = opponent
 	game.turn_number = 3
 	game._upkeep_resolved_turn = game.turn_number
 	opponent.followers = 26
-	var manager := MatchManager.new(game)
-	var bot := PracticeFuzzPlayerBot.new()
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
 	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
 	var thiazi := Thiazi.new()
 	thiazi.card_owner = player
@@ -1531,6 +2026,35 @@ func _check_bot_shift_and_extraction(failures: PackedStringArray) -> void:
 		failures.append("Bot avoided a safe Shift because it expected a reserve creature to move into an occupied lane")
 	for occupant in occupied_lanes:
 		occupant.current_zone.remove_card(occupant)
+	var weak_target := CreatureCard.new()
+	weak_target.card_owner = opponent
+	weak_target.resilience = 1
+	opponent.frontline_zones[4].add_card(weak_target)
+	opponent.followers = 100
+	if bot._get_best_mode_switch_candidate() == nagual:
+		failures.append("Bot switched Nagual to Aggressive for a weak target while a reserve attacker could kill it")
+	opponent.frontline_zones[4].remove_card(weak_target)
+	opponent.followers = 15
+	if bot._get_best_mode_switch_candidate() != nagual:
+		failures.append("Bot passed up a winning attack because of a reserve threat on the next turn")
+	opponent.followers = 26
+	opponent.frontline_zones[4].add_card(weak_target)
+	blocker.add_status_effect("cannot_move", "Preflight")
+	if not bot._try_switch_to_aggressive_mode(danger) or nagual.creature_mode != Card.CreatureMode.AGGRESSIVE:
+		failures.append("Bot did not switch Nagual to Aggressive once the reserve attacker could no longer advance")
+	opponent.frontline_zones[4].remove_card(weak_target)
+	nagual.reset_creature_action_state()
+	nagual.spend_attack_creature_action()
+	if bot._get_best_defensive_mode_switch_candidate() == nagual:
+		failures.append("Bot spent Nagual's remaining minor action on defense against a reserve attacker that could not advance")
+	blocker.remove_status_effects_by_name("cannot_move")
+	var original_strength := blocker.strength
+	blocker.strength = 23
+	if bot._get_best_defensive_mode_switch_candidate() == nagual:
+		failures.append("Bot switched Nagual to Defensive even though the reserve attacker could still kill it")
+	blocker.strength = original_strength
+	if not bot._try_switch_to_defensive_mode() or nagual.creature_mode != Card.CreatureMode.DEFENSIVE:
+		failures.append("Bot did not switch Nagual back to Defensive after attacking to survive the advancing reserve creature")
 	opponent.reserve_zones[0].remove_card(blocker)
 	player.frontline_zones[1].remove_card(nagual)
 	var serpent := TheWhiteSerpent.new()
@@ -1556,16 +2080,16 @@ func _check_bot_shift_and_extraction(failures: PackedStringArray) -> void:
 	bot.detach()
 
 func _check_bot_combat_buff_value(failures: PackedStringArray) -> void:
-	var game := GameManager.new()
-	var player := Player.new()
-	var opponent := Player.new()
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
 	game.players.assign([player, opponent])
 	game.current_player = player
 	game.other_player = opponent
 	game.turn_number = 3
 	game._upkeep_resolved_turn = game.turn_number
-	var manager := MatchManager.new(game)
-	var bot := PracticeFuzzPlayerBot.new()
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
 	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
 	var enkidu := Enkidu.new()
 	enkidu.card_owner = player
@@ -1688,19 +2212,44 @@ func _check_bot_combat_buff_value(failures: PackedStringArray) -> void:
 	if projection.get("attack") != null:
 		failures.append("combat_projection misidentified a non-object spell target as an attack")
 	game.action_stack.clear()
+	enkidu.clear_all_effects()
+	enkidu.strength = 20
+	enkidu.spend_major_creature_action()
+	asaruludu.creature_mode = Card.CreatureMode.DEFENSIVE
+	asaruludu.resilience = 23
+	asaruludu.speed = 7
+	opponent.followers = 100
+	enkidu.add_buff("Preflight temporary strength", 6, 0, 0, null, null, "buff", {"expires_turn": game.turn_number})
+	var lasting_gain := BotCardStrategyScript.stat_gain(bot, second, enkidu)
+	var temporary_gain := BotCardStrategyScript.combat_gain(bot, enkidu, FifaTheMagicalArrow.STR_BONUS)
+	if lasting_gain <= 0 or temporary_gain != 0 or enkidu.get_effective_strength() != 26:
+		failures.append("Bot did not distinguish a buff that lasts until the next fight from one that expires before it")
+	enkidu.add_buff("Preflight lasting strength", 6, 0, 0)
+	if BotCardStrategyScript.stat_gain(bot, second, enkidu) != 0:
+		failures.append("Bot valued extra strength when the existing lasting buff already secured the fight")
+
+	enkidu.clear_all_effects()
+	asaruludu.resilience = 24
+	var pyre := AncientPyre.new()
+	pyre.card_owner = player
+	player.frontline_zones[1].add_card(pyre)
+	var open_defense := BotCardStrategyScript.target_score(bot, pyre, asaruludu)
+	asaruludu.add_buff("Preflight lasting resilience reduction", 0, -AncientPyre.EFFECT_AMOUNT, 0)
+	if open_defense <= 0 or BotCardStrategyScript.target_score(bot, pyre, asaruludu) != 0:
+		failures.append("Bot did not distinguish a resilience debuff that opens a fight from a redundant stack")
 	bot.detach()
 
 func _check_bot_jiang_counterstroke(failures: PackedStringArray) -> void:
-	var game := GameManager.new()
-	var player := Player.new()
-	var opponent := Player.new()
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
 	game.players.assign([player, opponent])
-	game.current_player = player
-	game.other_player = opponent
+	game.current_player = opponent
+	game.other_player = player
 	game.turn_number = 2
 	game._upkeep_resolved_turn = game.turn_number
-	var manager := MatchManager.new(game)
-	var bot := PracticeFuzzPlayerBot.new()
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
 	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
 	var jiang := JiangZiyaFisherOfKings.new()
 	jiang.card_owner = player
@@ -1720,21 +2269,28 @@ func _check_bot_jiang_counterstroke(failures: PackedStringArray) -> void:
 			or int(bot._score_priority_card(jiang, attack, -1)["score"]) <= 0 \
 			or bot._choose_priority_response() != jiang:
 		failures.append("Bot did not recognize or choose Jiang's Counterstroke when Jiang was attacked")
-	jiang.activate(game)
+	manager.advance_priority()
+	var counterstroke_action: CardAction = game.action_stack.back() if game.action_stack.size() >= 2 else null
+	if counterstroke_action == null or counterstroke_action.card != jiang:
+		failures.append("Bot did not submit Jiang's Counterstroke during the attack priority window")
+	else:
+		if counterstroke_action.get_timing_speed() != JiangZiyaFisherOfKings.COUNTER_RESPONSE_SPEED:
+			failures.append("Jiang's submitted Counterstroke lost its response speed")
+		manager.resolve_action(counterstroke_action)
 	if attack in game.action_stack or jiang.tactic_counters != 0 or attacker.current_zone != opponent.graveyard_zone:
-		failures.append("Jiang's Counterstroke did not negate the attack and destroy its attacker")
+		failures.append("Bot's submitted Counterstroke did not negate the attack and destroy its attacker")
 	bot.detach()
 
-	game = GameManager.new()
-	player = Player.new()
-	opponent = Player.new()
+	game = _new_fixture_game()
+	player = _new_fixture_player()
+	opponent = _new_fixture_player()
 	game.players.assign([player, opponent])
 	game.current_player = player
 	game.other_player = opponent
 	game.turn_number = 2
 	game._upkeep_resolved_turn = game.turn_number
-	manager = MatchManager.new(game)
-	bot = PracticeFuzzPlayerBot.new()
+	manager = _new_fixture_match(game)
+	bot = _new_fixture_bot()
 	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
 	jiang = JiangZiyaFisherOfKings.new()
 	jiang.card_owner = opponent
@@ -1759,17 +2315,17 @@ func _check_bot_jiang_counterstroke(failures: PackedStringArray) -> void:
 	bot.detach()
 
 func _check_bot_reveal_defense(failures: PackedStringArray) -> void:
-	var game := GameManager.new()
-	var player := Player.new()
-	var opponent := Player.new()
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
 	game.players.assign([player, opponent])
 	game.current_player = player
 	game.other_player = opponent
 	game.turn_number = 3
 	game.has_resolved_attack_this_turn = true
 	player.followers = 15
-	var manager := MatchManager.new(game)
-	var bot := PracticeFuzzPlayerBot.new()
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
 	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
 	var priest := MasmassuPriest.new()
 	priest.card_owner = player
@@ -1827,9 +2383,9 @@ func _check_bot_reveal_defense(failures: PackedStringArray) -> void:
 	bot.detach()
 
 func _check_bot_next_turn_lethal(failures: PackedStringArray) -> void:
-	var game := GameManager.new()
-	var player := Player.new()
-	var opponent := Player.new()
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
 	game.players.assign([player, opponent])
 	game.current_player = player
 	game.other_player = opponent
@@ -1837,8 +2393,8 @@ func _check_bot_next_turn_lethal(failures: PackedStringArray) -> void:
 	game._upkeep_resolved_turn = game.turn_number
 	player.followers = 10
 	player.mana = 3
-	var manager := MatchManager.new(game)
-	var bot := PracticeFuzzPlayerBot.new()
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
 	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
 	var attacker := CreatureCard.new()
 	attacker.card_owner = opponent
@@ -2137,6 +2693,30 @@ func _check_ladder_pages(failures: PackedStringArray) -> void:
 	DirAccess.remove_absolute(result_dir)
 
 func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
+	var named_results: Array[Dictionary] = [
+		_bot_pool_result("m_bloodaxe", "", {"Thor": 1, "Bloodaxe Variant": 40}, "win"),
+		_bot_pool_result("z_moon", "", {"Thor": 1, "Moon Variant": 40}, "win"),
+	]
+	for result in named_results:
+		result["is_self_play"] = true
+		result["bot_name"] = "Thor: Challenger"
+	for i in range(15):
+		named_results.append(_bot_pool_result("moon_win_%d" % i, "z_moon", {}, "win"))
+	var named_pool := RankedBotDeckPoolScript.new()
+	named_pool.refresh(named_results)
+	var moon_before := named_pool.get_deck_details("z_moon")
+	var new_named_result := _bot_pool_result("a_new", "", {"Thor": 1, "New Variant": 40}, "win")
+	new_named_result["is_self_play"] = true
+	new_named_result["bot_name"] = "Thor: Challenger"
+	named_results.append(new_named_result)
+	named_pool.refresh(named_results)
+	var moon_after := named_pool.get_deck_details("z_moon")
+	var replayed_named_pool := RankedBotDeckPoolScript.new()
+	replayed_named_pool.refresh(named_results)
+	if moon_before.get("name") != "Thor: Moon" or moon_after.get("name") != "Thor: Moon" \
+			or moon_after.get("stars") != moon_before.get("stars") \
+			or replayed_named_pool.get_deck_details("z_moon").get("name") != "Thor: Moon":
+		failures.append("An established Thor bot changed its name when a new generic list arrived")
 	var storage_file := "preflight_bot_pool_%d.json" % OS.get_process_id()
 	var writer := MatchHistoryStoreScript.new(storage_file, true)
 	var reader := MatchHistoryStoreScript.new(storage_file, true)
@@ -2169,10 +2749,10 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 	var before_bot_rank := RankedProgressionScript.summarize_bot_stars(int(before_win.get("bot_stars", -1)))
 	var after_bot_rank := RankedProgressionScript.summarize_bot_stars(int(after_win.get("bot_stars", -1)))
 	if not matched_before or not matched_after \
-			or absi(int(before_bot_rank["league"])) > 2 \
+			or absi(int(before_bot_rank["league"])) > 1 \
 			or after_win.get("bot_list_id") != "bot_win" \
-			or absi(int(after_bot_rank["league"]) - int(RankedProgressionScript.summarize_bot_stars(1)["league"])) > 2:
-		failures.append("Bot challenge did not select an available deck within two leagues of the player's rank")
+			or absi(int(after_bot_rank["league"]) - int(RankedProgressionScript.summarize_bot_stars(1)["league"])) > 1:
+		failures.append("Bot challenge did not select an available deck inside the player's league band")
 	lobby.free()
 	var self_play := MatchSessionScript.new("bot_self_play", "preflight_room", "127.0.0.1", 12345, ["BOT_A", "BOT_B"], {
 		"BOT_A": {"bot_god_name": "Thor", "bot_list_id": "bot_win", "bot_stars": 1, "cards": {"Thor": 1, "Berserker": 3}},
@@ -2196,7 +2776,43 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 			or RankedBotDeckPoolScript.can_self_play_pair({"stars": 14}, {"stars": 45})
 			or not RankedBotDeckPoolScript.can_self_play_pair({"stars": 5}, {"stars": 9})
 			or RankedBotDeckPoolScript.can_self_play_pair({"stars": 5, "list_id": "same"}, {"stars": 5, "list_id": "same"})):
-		failures.append("Bot matchmaking did not enforce the two-league gap and distinct seats")
+		failures.append("Bot matchmaking did not enforce the adjacent-league band and distinct seats")
+	var band_pair_results: Array[Dictionary] = [
+		_bot_pool_result("band_a", "", {"Thor": 1, "Band A": 40}, "win"),
+		_bot_pool_result("band_a_seed", "band_a", {}, "win"),
+		_bot_pool_result("band_b", "", {"Thor": 1, "Band B": 40}, "win"),
+	]
+	var band_far_entry := _bot_pool_result("band_far", "", {"Odin": 1, "Band Far": 40}, "win")
+	band_far_entry["god_name"] = "Odin"
+	band_pair_results.append(band_far_entry)
+	for i in range(44):
+		var band_far_seed := _bot_pool_result("band_far_seed_%d" % i, "band_far", {}, "win")
+		band_far_seed["god_name"] = "Odin"
+		band_pair_results.append(band_far_seed)
+	var band_pair_pool := RankedBotDeckPoolScript.new()
+	band_pair_pool.refresh(band_pair_results)
+	var band_pair_rng := RandomNumberGenerator.new()
+	band_pair_rng.seed = 11
+	var band_pair_ok := false
+	for i in range(60):
+		var band_pair := band_pair_pool.select_self_play_pair({}, band_pair_rng)
+		if band_pair.is_empty():
+			continue
+		if band_pair.size() != 2 \
+				or absi(int(RankedProgressionScript.summarize_bot_stars(int(band_pair[0].get("stars", 0)))["league"]) \
+					- int(RankedProgressionScript.summarize_bot_stars(int(band_pair[1].get("stars", 0)))["league"])) > 1:
+			band_pair_ok = false
+			break
+		band_pair_ok = true
+	if not band_pair_ok:
+		failures.append("Bot self-play pairing did not prefer the adjacent-league band")
+	var closest_pair: Array[Dictionary] = []
+	for i in range(60):
+		closest_pair = band_pair_pool.select_self_play_pair({"band_b": true}, band_pair_rng)
+		if not closest_pair.is_empty():
+			break
+	if closest_pair.size() != 2:
+		failures.append("Bot self-play pairing did not fall back to the closest available gap")
 	var result_dir := ServerPathsScript.get_server_data_file_path(storage_file).get_basename() + "_results"
 	DirAccess.remove_absolute(result_dir.path_join("%s.json" % session.match_id.sha256_text()))
 	DirAccess.remove_absolute(result_dir.path_join("%s.json" % human_win.match_id.sha256_text()))
@@ -2252,16 +2868,42 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 		high_rank_results.append(_bot_pool_result("ranked_%d" % i, "list_1", {}, "win"))
 	for i in range(15):
 		high_rank_results.append(_bot_pool_result("quarantined_%d" % i, "list_0", {}, "win"))
+	var far_entry := _bot_pool_result("far_list", "", {"Odin": 1, "Common": 30, "Far Variant": 10}, "win")
+	far_entry["god_name"] = "Odin"
+	high_rank_results.append(far_entry)
+	for i in range(44):
+		var far_seed := _bot_pool_result("far_seed_%d" % i, "far_list", {}, "win")
+		far_seed["god_name"] = "Odin"
+		high_rank_results.append(far_seed)
 	var high_rank_pool := RankedBotDeckPoolScript.new()
 	high_rank_pool.refresh(high_rank_results)
 	var high_rank_match := high_rank_pool.select_deck({}, rng, 16)
 	var high_rank_alternative := high_rank_pool.select_deck({"list_1": true}, rng, 16)
+	var high_rank_thor: Dictionary = {}
+	for god_summary in high_rank_pool.get_ladder_summary()["gods"]:
+		if str(god_summary["god_name"]) == "Thor":
+			high_rank_thor = god_summary
+			break
+	var band_samples_out_of_range := false
+	for i in range(40):
+		var band_sample := high_rank_pool.select_deck({"far_list": true}, rng, 16)
+		if band_sample.is_empty() \
+				or abs(int(RankedProgressionScript.summarize_bot_stars(int(band_sample["stars"]))["league"]) - 1) > 1:
+			band_samples_out_of_range = true
+			break
+	var high_rank_fallback := high_rank_pool.select_deck({
+		"list_0": true, "list_1": true, "list_2": true, "list_3": true,
+		"list_4": true, "list_5": true, "list_6": true, "candidate": true,
+	}, rng, 16)
 	if high_rank_match.is_empty() or high_rank_alternative.is_empty() \
-			or high_rank_pool.get_ladder_summary()["gods"][0]["challenger"].get("trial_length") != 23 \
-			or abs(int(RankedProgressionScript.summarize_bot_stars(int(high_rank_match["stars"]))["league"]) - 1) > 2 \
-			or abs(int(RankedProgressionScript.summarize_bot_stars(int(high_rank_alternative["stars"]))["league"]) - 1) > 2 \
-			or high_rank_alternative.get("list_id") == "list_1":
-		failures.append("Bot matchmaking did not sample the same two-tier range while skipping busy lists")
+			or high_rank_thor.is_empty() \
+			or band_samples_out_of_range \
+			or high_rank_thor["challenger"].get("trial_length") != 23 \
+			or abs(int(RankedProgressionScript.summarize_bot_stars(int(high_rank_match["stars"]))["league"]) - 1) > 1 \
+			or abs(int(RankedProgressionScript.summarize_bot_stars(int(high_rank_alternative["stars"]))["league"]) - 1) > 1 \
+			or high_rank_alternative.get("list_id") == "list_1" \
+			or str(high_rank_fallback.get("list_id")) != "far_list":
+		failures.append("Bot matchmaking did not sample the league band with a closest-gap fallback while skipping busy lists")
 	var protected_results: Array[Dictionary] = []
 	for i in range(7):
 		protected_results.append(_bot_pool_result("protected_list_%d" % i, "", {"Thor": 1, "Common": 30, "Protected %d" % i: 10}, "win"))
@@ -2344,6 +2986,22 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 	if not variety_pool.can_play_list("Thor", "distinct") or variety_pool.can_play_list("Thor", "variety_list_0"):
 		failures.append("A challenger with a better equal-length record did not replace the weakest incumbent")
 
+	var streak_results: Array[Dictionary] = []
+	streak_results.append(_bot_pool_result("streak_0", "", {"Thor": 1, "Common": 30, "Streak": 10}, "win"))
+	for i in range(4):
+		streak_results.append(_bot_pool_result("streak_seed_%d" % i, "streak_0", {}, "win"))
+	var streak_pool := RankedBotDeckPoolScript.new()
+	streak_pool.refresh(streak_results)
+	var streak_list := streak_pool.select_deck({}, rng, 5)
+	if streak_list.is_empty() or int(streak_list.get("stars", 0)) != 8:
+		failures.append("A bot on a five-win streak did not earn the third-win bonus stars")
+	streak_results.append(_bot_pool_result("streak_draw", "streak_0", {}, "draw"))
+	streak_results.append(_bot_pool_result("streak_win_after_draw", "streak_0", {}, "win"))
+	streak_pool.refresh(streak_results)
+	var streak_after_break := streak_pool.get_deck_details("streak_0")
+	if int(streak_after_break.get("stars", 0)) != 9 or int(streak_after_break.get("draws", 0)) != 1:
+		failures.append("A bot draw did not reset the win streak before the next bonus star")
+
 func _bot_pool_result(match_id: String, list_id: String, cards: Dictionary, outcome: String) -> Dictionary:
 	return {
 		"match_id": match_id,
@@ -2425,9 +3083,9 @@ func _get_result_path() -> String:
 	return ""
 
 func _check_gugalanna_celestial_charge(failures: PackedStringArray) -> void:
-	var game := GameManager.new()
-	var player := Player.new()
-	var opponent := Player.new()
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
 	game.players.assign([player, opponent])
 	game.current_player = player
 	game.other_player = opponent

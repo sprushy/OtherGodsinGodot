@@ -171,6 +171,16 @@ func get_public_rank_badges() -> Array[Dictionary]:
 		badges.append(badge.duplicate(true))
 	return badges
 
+func get_public_bot_player_stars() -> Array[int]:
+	var bot_stars: Array[int] = []
+	for session_id in player_session_ids:
+		var resolved_session_id := str(session_id).strip_edges()
+		var stars := -1
+		if is_bot_session(resolved_session_id):
+			stars = int(_get_player_deck(resolved_session_id).get("bot_stars", 0))
+		bot_stars.append(stars)
+	return bot_stars
+
 func record_series_game_win(winner_index: int) -> Dictionary:
 	if winner_index < 0 or winner_index >= player_session_ids.size():
 		return get_series_snapshot()
@@ -370,6 +380,7 @@ func to_match_info(session_id: String = "") -> Dictionary:
 		"player_index": get_player_index(session_id) if not session_id.is_empty() else -1,
 		"player_names": get_public_player_names(),
 		"rank_badges": get_public_rank_badges(),
+		"bot_player_stars": get_public_bot_player_stars(),
 		"has_bot": get_human_player_count() < player_session_ids.size(),
 		"is_bot_self_play": is_bot_self_play(),
 		"status": status,

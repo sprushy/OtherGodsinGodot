@@ -167,6 +167,10 @@ func start_from_config(config: Dictionary) -> Error:
 	_initial_join_deadline_unix = int(Time.get_unix_time_from_system()) + INITIAL_JOIN_TIMEOUT_SECONDS
 
 	game_manager = GameManager.new()
+	# This server may run inside a windowed hosting client that is playing its
+	# own game, so never emit direct SFX from this game instance. Match clients
+	# replay sounds from ui_sound_cues instead.
+	game_manager.sfx_enabled = false
 	match_manager = MatchManager.new(game_manager)
 	prompt_router = PromptRouterScript.new(game_manager)
 	headless_match_host = HeadlessMatchHostScript.new()
@@ -598,6 +602,7 @@ func _start_next_series_game() -> void:
 		game_event_broadcaster.shutdown()
 
 	game_manager = GameManager.new()
+	game_manager.sfx_enabled = false
 	match_manager = MatchManager.new(game_manager)
 	match_manager.network_manager = network_manager
 	prompt_router = PromptRouterScript.new(game_manager)
@@ -700,8 +705,11 @@ func _get_spectator_bot_ranked_result(winner_index: int) -> Dictionary:
 	var previous_points := maxi(0, int(submission.get("bot_stars", 0)))
 	var previous := RankedProgressionScript.summarize_bot_stars(previous_points)
 	var outcome := "win" if ranked_player_index == winner_index else "loss"
-	var next_points := previous_points + 1 if outcome == "win" else previous_points
-	if outcome == "loss":
+	var next_points := previous_points
+	if outcome == "win":
+		next_points = previous_points + RankedProgressionScript.win_bonus_stars(
+			int(submission.get("bot_win_streak", 0)) + 1, previous_points)
+	else:
 		next_points = maxi(int(previous["floor_points"]), previous_points - 1)
 	var after := RankedProgressionScript.summarize_bot_stars(next_points)
 	return {

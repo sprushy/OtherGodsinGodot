@@ -65,6 +65,7 @@ const BoardScorchMarksScript = preload("res://scripts/ui/BoardScorchMarks.gd")
 const VOID_GATEWAY_DELAY_SECONDS := 0.2
 const DrawDeckButtonScript = preload("res://scripts/ui/DrawDeckButton.gd")
 const RankBadgeScript = preload("res://scripts/ui/RankBadge.gd")
+const RankedProgressionScript = preload("res://scripts/server/RankedProgression.gd")
 const PrioritySealButtonScript = preload("res://scripts/ui/PrioritySealButton.gd")
 const CardOverlayFanScript = preload("res://scripts/ui/CardOverlayFan.gd")
 const PreparedMagicalCardCoverTexture = preload("res://images/PreparedMagicalCardCoverDimRuntime.png")
@@ -470,12 +471,15 @@ var anointing_source: AnointingStatue = null
 var _pending_retreat_uid: String = ""
 var _pending_retreat_prompt_id: int = -1
 var _retreat_prompt_panel: Control = null
+var _draw_offer_prompt_panel: Control = null
+var _pending_draw_offer_from_index: int = -1
 var _awaiting_creature_sacrifice: bool = false
 var _sacrifice_pending_card: Card = null
 var _sacrifice_pending_zone: Zone = null
 var _sacrifice_pending_mode: String = ""
 var _sacrifice_remaining: int = 0
 var _selected_creature_summon_sacrifices: Array[Card] = []
+var _awaiting_sacrifice_payment_choice: bool = false
 var _pending_creature_summon_cost_card: Card = null
 var _pending_creature_summon_cost_required: int = 0
 var _pending_creature_summon_cost_paid: int = 0
@@ -1750,6 +1754,134 @@ func _on_pause_forfeit_pressed() -> void:
 	_hide_pause_menu()
 	_on_forfeit_button_pressed()
 
+func _can_offer_draw() -> bool:
+	if _game_finished or _is_observer_mode:
+		return false
+	if self is PracticeThorGame or self is CardTestGame:
+		return false
+	if bool(_current_match_info.get("has_bot", false)):
+		return false
+	return game_manager != null and game_manager.players.size() == 2
+
+func _on_pause_offer_draw_pressed() -> void:
+	_hide_pause_menu()
+	_submit_draw_offer()
+
+func _submit_draw_offer() -> void:
+	if not _can_offer_draw():
+		return
+	if not _can_submit_network_action():
+		_set_action_label_text("Could not send the draw offer.")
+		update_ui()
+		return
+	var offering_index := _get_local_forfeit_player_index()
+	if offering_index < 0 or game_input == null:
+		_set_action_label_text("Could not determine which player is offering the draw.")
+		update_ui()
+		return
+	if game_input.submit_action({type = "offer_draw", player_index = offering_index}):
+		_set_action_label_text("Draw offer sent. Waiting for your opponent's answer...")
+	else:
+		_set_action_label_text("Could not send the draw offer.")
+	update_ui()
+
+func _apply_draw_offer_prompt(data: Dictionary) -> void:
+	if _game_finished or _is_observer_mode or game_manager == null:
+		return
+	_show_draw_offer_prompt(int(data.get("from_player_index", -1)))
+
+func _show_draw_offer_prompt(from_player_index: int) -> void:
+	_hide_draw_offer_prompt()
+	_pending_draw_offer_from_index = from_player_index
+	var center := CenterContainer.new()
+	center.name = "DrawOfferPromptCenter"
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_draw_offer_prompt_panel = center
+
+	var panel := PanelContainer.new()
+	panel.name = "DrawOfferPromptPanel"
+	var style := _make_priority_control_style(Color(0.07, 0.09, 0.08, 0.97), Color(0.60, 0.46, 0.25))
+	style.set_corner_radius_all(8)
+	style.content_margin_left = 16
+	style.content_margin_right = 16
+	style.content_margin_top = 12
+	style.content_margin_bottom = 12
+	panel.add_theme_stylebox_override("panel", style)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 10)
+	panel.add_child(vbox)
+
+	var lbl := Label.new()
+	var offered_by := "Your opponent"
+	if from_player_index >= 0 and from_player_index < game_manager.players.size():
+		var offering_name := str(game_manager.players[from_player_index].player_name).strip_edges()
+		if not offering_name.is_empty():
+			offered_by = offering_name
+	lbl.text = offered_by + " offers a draw.\nAccept to end the game in a draw?"
+	lbl.custom_minimum_size.x = 308
+	lbl.custom_maximum_size.x = lbl.custom_minimum_size.x
+	lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl.add_theme_font_size_override("font_size", 14)
+	vbox.add_child(lbl)
+
+	var hbox := HBoxContainer.new()
+	hbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	hbox.add_theme_constant_override("separation", 12)
+	vbox.add_child(hbox)
+	hbox.add_child(_make_draw_offer_choice("Accept Draw", true))
+	hbox.add_child(_make_draw_offer_choice("Decline", false))
+
+	center.add_child(panel)
+	add_child(center)
+	_promote_transient_ui(center, TRANSIENT_UI_Z_INDEX + 105)
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+func _make_draw_offer_choice(caption: String, accept: bool) -> Button:
+	var button := Button.new()
+	button.text = caption
+	button.custom_minimum_size = Vector2(146, 44)
+	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	button.add_theme_font_size_override("font_size", 16)
+	if accept:
+		button.add_theme_color_override("font_color", Color(0.72, 0.92, 0.62))
+	else:
+		button.add_theme_color_override("font_color", Color(0.95, 0.78, 0.55))
+	button.pressed.connect(_submit_draw_response.bind(accept))
+	return button
+
+func _submit_draw_response(accept: bool) -> void:
+	var from_index := _pending_draw_offer_from_index
+	_hide_draw_offer_prompt()
+	if from_index < 0 or game_input == null:
+		_set_action_label_text("No pending draw offer to answer.")
+		update_ui()
+		return
+	var responding_index := _get_local_forfeit_player_index()
+	if responding_index < 0:
+		_set_action_label_text("Could not determine which player is answering the draw offer.")
+		update_ui()
+		return
+	if not _can_submit_network_action():
+		_set_action_label_text("Could not answer the draw offer.")
+		update_ui()
+		return
+	if game_input.submit_action({type = "respond_draw_offer", player_index = responding_index, accept = accept}):
+		_set_action_label_text("Draw accepted. The game ends in a draw." if accept else "Draw offer declined.")
+	else:
+		_set_action_label_text("Could not answer the draw offer.")
+	update_ui()
+
+func _hide_draw_offer_prompt() -> void:
+	if _draw_offer_prompt_panel != null and is_instance_valid(_draw_offer_prompt_panel):
+		_draw_offer_prompt_panel.visible = false
+		if _draw_offer_prompt_panel.get_parent() != null:
+			_draw_offer_prompt_panel.get_parent().remove_child(_draw_offer_prompt_panel)
+		_draw_offer_prompt_panel.queue_free()
+	_draw_offer_prompt_panel = null
+	_pending_draw_offer_from_index = -1
+
 func _hide_pause_menu() -> void:
 	if _pause_menu_overlay != null and is_instance_valid(_pause_menu_overlay):
 		_pause_menu_overlay.queue_free()
@@ -1824,6 +1956,14 @@ func _show_pause_menu() -> void:
 	forfeit_btn.custom_minimum_size = Vector2(0, 38)
 	forfeit_btn.pressed.connect(_on_pause_forfeit_pressed)
 	menu_vbox.add_child(forfeit_btn)
+
+	if _can_offer_draw():
+		var offer_draw_btn := Button.new()
+		offer_draw_btn.text = "Offer Draw"
+		offer_draw_btn.custom_minimum_size = Vector2(0, 38)
+		offer_draw_btn.tooltip_text = "Propose ending the game in a draw. It counts as a draw once your opponent accepts."
+		offer_draw_btn.pressed.connect(_on_pause_offer_draw_pressed)
+		menu_vbox.add_child(offer_draw_btn)
 
 	var settings_panel := PanelContainer.new()
 	settings_panel.name = "SettingsMenuPanel"
@@ -6260,7 +6400,7 @@ func start_game(
 	_is_local_hosted_bot_observer = _is_observer_mode and bool(match_info.get("local_volunteer_host", false))
 	_observer_reveals_bot_hands = _is_observer_mode and bool(match_info.get("is_bot_self_play", false))
 	_observer_perspective_player_index = 0
-	_observer_feedback_viewer = Player.new() if _is_observer_mode else null
+	_observer_feedback_viewer = Player.create_spectator_viewer() if _is_observer_mode else null
 	if is_instance_valid(_action_log_shell):
 		_action_log_shell.visible = false
 	_restore_corner_action_button()
@@ -6690,6 +6830,11 @@ func _sync_deck_rank_badge(badge: RankBadgeScript, player: Player) -> void:
 	var index := game_manager.players.find(player)
 	var entry: Dictionary = badges[index] if index >= 0 and index < badges.size() else {}
 	var rank_name := str(entry.get("rank_name", ""))
+	if rank_name.is_empty():
+		var bot_stars: Array = _current_match_info.get("bot_player_stars", [])
+		if index >= 0 and index < bot_stars.size() and int(bot_stars[index]) >= 0:
+			var rank := RankedProgressionScript.summarize_bot_stars(int(bot_stars[index]))
+			rank_name = str(rank["name"])
 	badge.visible = not rank_name.is_empty()
 	badge.set_badge(rank_name, entry.get("portrait", {}))
 
@@ -6743,8 +6888,8 @@ func _sync_turn_start_props() -> void:
 	var show_badge_names := _is_observer_mode or bool(_current_match_info.get("has_bot", false))
 	_local_deck_badge_name.text = _get_player_display_name_for_index(game_manager.players.find(display_player))
 	_opponent_deck_badge_name.text = _get_player_display_name_for_index(game_manager.players.find(opponent))
-	_local_deck_badge_name.visible = show_badge_names and _local_deck_badge.visible
-	_opponent_deck_badge_name.visible = show_badge_names and _opponent_deck_badge.visible
+	_local_deck_badge_name.visible = show_badge_names
+	_opponent_deck_badge_name.visible = show_badge_names
 	draw_button.set_deck_count(display_player.deck_zone.get_card_count())
 	_opponent_draw_deck.set_deck_count(opponent.deck_zone.get_card_count())
 	var local_top := display_player.deck_zone.get_primed_top_card()
@@ -6847,19 +6992,10 @@ func _layout_turn_start_props() -> void:
 	# Align the card faces with the well; deck art is inset inside its button.
 	for deck in [draw_button, _opponent_draw_deck]:
 		deck.position.x += (prop_size.x * 0.5 - deck.get_top_card_rect().get_center().x) * prop_scale
-	var local_deck_badge := _local_deck_badge
-	var opponent_deck_badge := _opponent_deck_badge
-	var local_deck_badge_name := _local_deck_badge_name
-	var opponent_deck_badge_name := _opponent_deck_badge_name
-	if _is_observer_mode:
-		local_deck_badge = _opponent_deck_badge if _observer_perspective_player_index == 1 else _local_deck_badge
-		opponent_deck_badge = _local_deck_badge if _observer_perspective_player_index == 1 else _opponent_deck_badge
-		local_deck_badge_name = _opponent_deck_badge_name if _observer_perspective_player_index == 1 else _local_deck_badge_name
-		opponent_deck_badge_name = _local_deck_badge_name if _observer_perspective_player_index == 1 else _opponent_deck_badge_name
-	_position_deck_rank_badge(opponent_deck_badge, _opponent_draw_deck, prop_scale, true)
-	_position_deck_rank_badge(local_deck_badge, draw_button, prop_scale, false)
-	_position_deck_rank_badge_name(opponent_deck_badge_name, opponent_deck_badge, true)
-	_position_deck_rank_badge_name(local_deck_badge_name, local_deck_badge, false)
+	_position_deck_rank_badge(_opponent_deck_badge, _opponent_draw_deck, prop_scale, true)
+	_position_deck_rank_badge(_local_deck_badge, draw_button, prop_scale, false)
+	_position_deck_rank_badge_name(_opponent_deck_badge_name, _opponent_deck_badge, _opponent_draw_deck, prop_scale, true)
+	_position_deck_rank_badge_name(_local_deck_badge_name, _local_deck_badge, draw_button, prop_scale, false)
 	choice_intro_label.custom_minimum_size = Vector2.ZERO
 	choice_intro_label.size = choice_intro_label.get_combined_minimum_size()
 	choice_intro_label.scale = Vector2.ONE * prop_scale
@@ -6879,12 +7015,19 @@ func _position_deck_rank_badge(badge: RankBadgeScript, deck: Control, prop_scale
 	badge.size = Vector2.ONE * extent
 	badge.position = Vector2(center_x - extent * 0.5, edge_y - extent if above else edge_y)
 
-func _position_deck_rank_badge_name(label: Label, badge: RankBadgeScript, above: bool) -> void:
-	if not label.visible or not badge.visible:
+func _position_deck_rank_badge_name(label: Label, badge: RankBadgeScript, deck: Control, prop_scale: float, above: bool) -> void:
+	if not label.visible:
 		return
 	label.size = Vector2(220.0, 22.0)
-	label.position = Vector2(badge.position.x + (badge.size.x - label.size.x) * 0.5,
-		badge.position.y + badge.size.y + 2.0 if above else badge.position.y - label.size.y - 2.0)
+	if badge.visible:
+		label.position = Vector2(badge.position.x + (badge.size.x - label.size.x) * 0.5,
+			badge.position.y + badge.size.y + 2.0 if above else badge.position.y - label.size.y - 2.0)
+		return
+	var card: Rect2 = deck.get_top_card_rect()
+	var center_x: float = deck.position.x + card.get_center().x * prop_scale
+	var edge_y: float = deck.position.y + (card.position.y - 16.0 if above else card.end.y + 36.0) * prop_scale
+	label.position = Vector2(center_x - label.size.x * 0.5,
+		edge_y + 2.0 if above else edge_y - label.size.y - 2.0)
 
 func _position_turn_start_prop(prop: Control, center: Vector2, prop_size: Vector2, prop_scale: float) -> void:
 	prop.size = prop_size
@@ -9518,6 +9661,7 @@ func _append_follower_control_avoid_rect(rects: Array[Rect2], control: Control) 
 func _get_follower_control_avoid_rects() -> Array[Rect2]:
 	var rects: Array[Rect2] = []
 	_append_follower_control_avoid_rect(rects, _action_log_button)
+	_append_follower_control_avoid_rect(rects, _action_log_shell)
 	_append_follower_control_avoid_rect(rects, forfeit_button)
 	_append_follower_control_avoid_rect(rects, forfeit_match_button)
 	_append_follower_control_avoid_rect(rects, _observer_perspective_button)
@@ -9697,10 +9841,17 @@ func _get_follower_battlefield_route_data() -> Dictionary:
 	for raw_zone_ui in _board_zone_uis:
 		_append_follower_route_zone_data(open_points, occupied_rects, raw_zone_ui as BoardZoneUI)
 	_append_follower_route_zone_data(open_points, occupied_rects, _player_god_zone_ui)
+	_append_follower_no_walk_rect(occupied_rects, _action_log_shell)
 	return {
 		"open_points": open_points,
 		"occupied_rects": occupied_rects,
 	}
+
+func _append_follower_no_walk_rect(occupied_rects: Array[Rect2], control: Control) -> void:
+	var rect := _get_follower_local_control_rect(control)
+	if rect.size.x <= 0.0 or rect.size.y <= 0.0:
+		return
+	occupied_rects.append(rect.grow(FOLLOWER_CASUALTY_CONTROL_AVOID_PADDING))
 
 func _get_follower_battlefield_bounds() -> Rect2:
 	var min_x := 1.0e20
@@ -10698,6 +10849,7 @@ func _refresh_hand_visual_states(
 	freyja_power_targeting: bool
 ) -> void:
 	var viewer := game_manager.get_feedback_viewer()
+	var pending_ghost_card := _get_pending_summon_ghost_hand_card()
 	for i in range(entries.size()):
 		var entry := entries[i]
 		var card := entry.get("card", null) as Card
@@ -10715,6 +10867,7 @@ func _refresh_hand_visual_states(
 			bool(entry.get("blot_selected", false))
 		)
 		vc.set_disabled(freyja_power_targeting)
+		vc.set_hand_proxy_visual(card == pending_ghost_card, card == pending_ghost_card)
 
 func draw_hand() -> void:
 	if hand_container != null:
@@ -10737,6 +10890,7 @@ func draw_hand() -> void:
 	if _is_blot_selection_active():
 		blot_valid_choices = _get_blot_valid_choices(_pending_blot_spell)
 	var freyja_power_targeting := _is_freyja_power_target_selection_active(hand_player)
+	var pending_ghost_card := _get_pending_summon_ghost_hand_card()
 	var entries := _get_hand_render_entries(hand_player, blot_valid_choices)
 	var signature := _get_hand_render_signature(hand_player, entries)
 	if _can_refresh_hand_in_place(signature, entries):
@@ -10789,6 +10943,7 @@ func draw_hand() -> void:
 			)
 			if freyja_power_targeting:
 				vc.set_disabled(true)
+			vc.set_hand_proxy_visual(card == pending_ghost_card, card == pending_ghost_card)
 		vc.hand_hovered.connect(_on_hand_card_hover_started)
 		vc.hand_unhovered.connect(_on_hand_card_hover_ended)
 		vc.card_clicked.connect(_on_hand_card_tapped)
@@ -16704,6 +16859,10 @@ func _on_hand_card_pressed(card: Card) -> void:
 		_set_action_label_text("Finish Titlacauan first. Click enemy creatures, click Tez to confirm, or right-click to skip.")
 		update_ui()
 		return
+	if _is_pending_creature_summon_payment_active() and not _is_card_usable_for_priority(card):
+		_set_action_label_text(_get_pending_summon_payment_block_text())
+		update_ui()
+		return
 	_pending_spell_display_zone = null
 	if _try_handle_blot_prompt_card_input(card):
 		return
@@ -17149,6 +17308,9 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 	if _is_turn_choice_pending():
 		_reject_pre_turn_action()
 		return
+	if _awaiting_creature_sacrifice or _awaiting_altar_void_payment or _awaiting_sacrifice_payment_choice:
+		_set_action_label_text(_get_pending_summon_payment_block_text())
+		return
 	var replay_selected_card_uid: String = selected_card.uid if selected_card != null else ""
 	var replay_pending_move_uid: String = _pending_move_card.uid if _pending_move_card != null else ""
 	var replay_indicated_move_uid: String = _indicated_move_card.uid if _indicated_move_card != null else ""
@@ -17370,6 +17532,10 @@ func _on_god_card_pressed(card: Card) -> void:
 		else:
 			_set_action_label_text("Titlacauan is waiting for enemy creature picks. Click Tez to confirm or right-click to skip.")
 			update_ui()
+		return
+	if _is_pending_creature_summon_payment_active() and not _is_card_usable_for_priority(card):
+		_set_action_label_text(_get_pending_summon_payment_block_text())
+		update_ui()
 		return
 	_ensure_pending_reveal_click_selection()
 	if _has_pending_target_selection():
@@ -18358,14 +18524,17 @@ func _try_play_selected_creature_to_zone(zone: Zone) -> void:
 			selected_card = null
 			placement_mode = ""
 			placement_container.visible = false
+			_awaiting_sacrifice_payment_choice = true
 			_set_action_label_text(_get_sacrifice_payment_prompt(_sacrifice_pending_card))
 			_show_sacrifice_payment_prompt(_sacrifice_pending_card, altar)
+			update_ui()
 			return
 		_awaiting_creature_sacrifice = true
 		selected_card = null
 		placement_mode = ""
 		placement_container.visible = false
 		_set_action_label_text(_get_creature_sacrifice_prompt(_sacrifice_pending_card, _sacrifice_remaining))
+		update_ui()
 		return
 	_drag_sacrifice_done = false
 	_resolve_pending_creature_play(selected_card, zone, placement_mode)
@@ -20575,8 +20744,87 @@ func _clear_pending_creature_summon_payment_state() -> void:
 	_altar_void_targets_chosen.clear()
 	_clear_pending_creature_summon_cost_tracking()
 
+func _is_pending_creature_summon_payment_active() -> bool:
+	return _awaiting_creature_sacrifice or _awaiting_altar_void_payment \
+		or _awaiting_sacrifice_payment_choice or _awaiting_drag_sacrifice_zone
+
+func _get_pending_summon_ghost_hand_card() -> Card:
+	if not _is_pending_creature_summon_payment_active():
+		return null
+	if _awaiting_drag_sacrifice_zone:
+		return _drag_sacrifice_card
+	return _sacrifice_pending_card
+
+func _get_pending_summon_payment_block_text() -> String:
+	var card := _get_pending_summon_ghost_hand_card()
+	var card_name := card.card_name if card != null else "the summon"
+	return card_name + " is waiting on its sacrifice choice. Right-click to cancel it."
+
+func _cancel_pending_creature_summon_payment() -> bool:
+	if not (_awaiting_creature_sacrifice or _awaiting_altar_void_payment or _awaiting_sacrifice_payment_choice):
+		return false
+	var card := _sacrifice_pending_card
+	var card_name := card.card_name if card != null else "the summon"
+	_hide_sacrifice_payment_prompt()
+	_awaiting_creature_sacrifice = false
+	_awaiting_altar_void_payment = false
+	_awaiting_sacrifice_payment_choice = false
+	_altar_pending_power = null
+	_sacrifice_pending_card = null
+	_sacrifice_pending_zone = null
+	_sacrifice_pending_mode = ""
+	_sacrifice_remaining = 0
+	_clear_pending_creature_summon_payment_state()
+	_set_action_label_text("Cancelled " + card_name + " - it stays in your hand.")
+	update_ui()
+	return true
+
+func _cancel_drag_sacrifice_zone_choice() -> bool:
+	if not _awaiting_drag_sacrifice_zone:
+		return false
+	var card := _drag_sacrifice_card
+	var card_name := card.card_name if card != null else "the summon"
+	_awaiting_drag_sacrifice_zone = false
+	_drag_sacrifice_card = null
+	_drag_sacrifice_target = null
+	_drag_sacrifice_mode = ""
+	_clear_pending_creature_summon_payment_state()
+	_set_action_label_text("Cancelled " + card_name + " - it stays in your hand.")
+	update_ui()
+	return true
+
+func _try_cancel_pending_pre_play_selection() -> bool:
+	if _awaiting_creature_sacrifice or _awaiting_altar_void_payment or _awaiting_sacrifice_payment_choice:
+		return _cancel_pending_creature_summon_payment()
+	if _awaiting_drag_sacrifice_zone:
+		return _cancel_drag_sacrifice_zone_choice()
+	if _pending_hati_summon != null:
+		_cancel_pending_hati_moon_hunt_selection()
+		return true
+	if _pending_skoll_summon != null:
+		_cancel_pending_skoll_summon_zone_choice()
+		return true
+	return false
+
+func _cancel_pending_hati_moon_hunt_selection() -> void:
+	var hati := _pending_hati_summon
+	_clear_hati_moon_hunt_state()
+	_set_action_label_text("Moon Hunt cancelled.")
+	if hati != null:
+		_show_hati_prompt(hati)
+	update_ui()
+
+func _cancel_pending_skoll_summon_zone_choice() -> void:
+	var skoll := _pending_skoll_summon
+	_clear_skoll_upkeep_summon()
+	_set_action_label_text("Sun Hunt cancelled.")
+	if skoll != null:
+		_show_skoll_prompt(skoll)
+	update_ui()
+
 func _begin_normal_creature_sacrifice_selection() -> void:
 	_hide_sacrifice_payment_prompt()
+	_awaiting_sacrifice_payment_choice = false
 	_awaiting_altar_void_payment = false
 	_altar_pending_power = null
 	_altar_void_targets_chosen.clear()
@@ -20588,6 +20836,7 @@ func _begin_altar_void_selection() -> void:
 	_hide_sacrifice_payment_prompt()
 	_awaiting_creature_sacrifice = false
 	_awaiting_altar_void_payment = true
+	_awaiting_sacrifice_payment_choice = false
 	_altar_void_targets_chosen.clear()
 	_set_action_label_text(_sacrifice_pending_card.card_name + " - select a sleeping creature to void (" + str(_sacrifice_remaining) + " remaining)")
 	update_ui()
@@ -20891,6 +21140,9 @@ func _on_board_card_pressed(card: Card) -> void:
 		_set_action_label_text("Choose an empty friendly zone to place " + _drag_sacrifice_card.card_name)
 		if _can_use_zone_after_sacrifice(card.current_zone, _drag_sacrifice_target):
 			_execute_drag_sacrifice(card.current_zone)
+		return
+	if _awaiting_sacrifice_payment_choice:
+		_set_action_label_text(_get_pending_summon_payment_block_text())
 		return
 	if _awaiting_creature_sacrifice:
 		_select_pending_creature_sacrifice(card)
@@ -22106,6 +22358,10 @@ func _input(event: InputEvent) -> void:
 				_show_devour_cancel_prompt()
 			else:
 				_cancel_pending_target_selection(_get_pending_target_selection_name() + " cancelled.")
+			get_viewport().set_input_as_handled()
+			return
+		if mouse_button_event.pressed and mouse_button_event.button_index == MOUSE_BUTTON_RIGHT \
+				and _try_cancel_pending_pre_play_selection():
 			get_viewport().set_input_as_handled()
 			return
 		if mouse_button_event.pressed and mouse_button_event.button_index == MOUSE_BUTTON_LEFT \
@@ -24355,6 +24611,11 @@ func _show_sacrifice_payment_prompt(card: Card, altar: AltarOfDreams) -> void:
 	altar_btn.pressed.connect(_begin_altar_void_selection)
 	vbox.add_child(altar_btn)
 
+	var cancel_btn := Button.new()
+	cancel_btn.text = "Cancel"
+	cancel_btn.pressed.connect(_on_sacrifice_payment_prompt_cancel_pressed)
+	vbox.add_child(cancel_btn)
+
 	add_child(panel)
 	_promote_transient_ui(panel)
 	panel.anchor_left = 0.5
@@ -24372,6 +24633,9 @@ func _hide_sacrifice_payment_prompt() -> void:
 		panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		panel.visible = false
 		panel.queue_free()
+
+func _on_sacrifice_payment_prompt_cancel_pressed() -> void:
+	_cancel_pending_creature_summon_payment()
 
 func _get_active_advanced_building_techniques(player: Player) -> AdvancedBuildingTechniques:
 	for zone in player.power_zones:
@@ -27120,6 +27384,7 @@ func _dismiss_transient_prompts(clear_required_prompts: bool = true) -> void:
 	_hide_tezcatlipoca_active_titlacauan_prompt()
 	_hide_priority_prompt()
 	_hide_intercept_prompt()
+	_hide_draw_offer_prompt()
 	_clear_pending_retreat_state()
 	_hide_hati_prompt()
 	_hide_gala_tura_prompt()
@@ -27159,6 +27424,7 @@ func _dismiss_transient_prompts(clear_required_prompts: bool = true) -> void:
 	_pending_kos_selected_demons.clear()
 	_awaiting_creature_sacrifice = false
 	_awaiting_altar_void_payment = false
+	_awaiting_sacrifice_payment_choice = false
 	_altar_pending_power = null
 	_sacrifice_pending_card = null
 	_sacrifice_pending_zone = null
@@ -27841,6 +28107,8 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 			_apply_intercept_offered(data)
 		"combat_retreat":
 			_apply_retreat_prompt(data)
+		"draw_offer":
+			_apply_draw_offer_prompt(data)
 		"resurrection":
 			var card := game_manager.get_card_by_uid(data.get("card_uid", ""))
 			if card != null:
@@ -28426,6 +28694,7 @@ func _on_end_turn_button_pressed() -> void:
 	awaiting_stupefy_target = false
 	stupefy_source = null
 	_awaiting_creature_sacrifice = false
+	_awaiting_sacrifice_payment_choice = false
 	_sacrifice_pending_card = null
 	_sacrifice_pending_zone = null
 	_sacrifice_pending_mode = ""
@@ -28685,6 +28954,8 @@ func _on_observer_perspective_button_pressed() -> void:
 	_enemy_hand_render_signature = ""
 	_refresh_observer_perspective_button()
 	update_ui()
+	_sync_turn_start_props()
+	_layout_turn_start_props()
 
 func _reset_forfeit_match_confirmation() -> void:
 	_forfeit_match_confirm_pending = false
@@ -29991,6 +30262,9 @@ func _apply_ui_interaction(event_data: Dictionary) -> void:
 		"combat_retreat":
 			if local_idx >= 0 and int(event_data.get("player_index", local_idx)) == local_idx:
 				_apply_retreat_prompt(payload)
+		"draw_offer":
+			if local_idx >= 0 and int(event_data.get("player_index", local_idx)) == local_idx:
+				_apply_draw_offer_prompt(payload)
 		"doorway_choice":
 			var structure_uid: String = payload.get("structure_uid", "")
 			var card_uid: String = payload.get("card_uid", "")
@@ -30493,7 +30767,7 @@ func _apply_full_state(data: Dictionary) -> void:
 				game_manager.feedback_viewer = game_manager.players[local_idx]
 		elif _is_observer_mode:
 			if _observer_feedback_viewer == null:
-				_observer_feedback_viewer = Player.new()
+				_observer_feedback_viewer = Player.create_spectator_viewer()
 			game_manager.feedback_viewer = _observer_feedback_viewer
 			_clamp_observer_perspective_index()
 			_refresh_observer_perspective_button()
@@ -31302,7 +31576,10 @@ func _open_upkeep_choice_window() -> void:
 	_network_upkeep_prompt_player_index = local_idx
 	update_ui()
 	show_turn_choice()
-	_set_action_label_text("Upkeep for " + game_manager.current_player.player_name + ": choose your upkeep option.")
+	var upkeep_prompt := "Upkeep for " + game_manager.current_player.player_name + ": choose your upkeep option."
+	if game_manager.is_fatigue_active():
+		upkeep_prompt += " Fatigue: you will lose %d followers." % game_manager.get_fatigue_follower_loss()
+	_set_action_label_text(upkeep_prompt)
 	_maybe_prompt_turn_start_windows()
 
 func _show_nusku_well_of_fire_prompt(nusku: NuskuFirebearer, choices: Array[Card], mill_count: int) -> void:
@@ -31585,6 +31862,10 @@ func _should_prepare_magical_card_on_drop(card: Card, is_drag_prepare: bool = fa
 
 func _on_card_drag_released(card: Card, drop_pos: Vector2, card_rotated: bool, card_stealth: bool) -> void:
 	if _game_finished:
+		update_ui()
+		return
+	if _is_pending_creature_summon_payment_active():
+		_set_action_label_text(_get_pending_summon_payment_block_text())
 		update_ui()
 		return
 	if _try_handle_blot_drag_selection(card):

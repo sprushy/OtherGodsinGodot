@@ -2755,11 +2755,6 @@ func _build_seek_tabs() -> void:
 	multiplayer_container.add_child(_ladder_button)
 	if ip_line_edit != null:
 		multiplayer_container.move_child(_ladder_button, ip_line_edit.get_index())
-	_host_bot_match_button = Button.new()
-	_host_bot_match_button.text = "Host Bot Matches"
-	_host_bot_match_button.pressed.connect(_on_host_bot_match_pressed)
-	_seek_action_row.add_child(_host_bot_match_button)
-	_host_bot_match_button.hide()
 	_host_another_bot_match_button = Button.new()
 	_host_another_bot_match_button.text = "Host Another Bot Match"
 	_host_another_bot_match_button.pressed.connect(_on_host_another_bot_match_pressed)
@@ -2775,6 +2770,11 @@ func _build_seek_tabs() -> void:
 	_host_bot_gauntlet_button.pressed.connect(_open_my_bot_picker.bind(true))
 	_seek_action_row.add_child(_host_bot_gauntlet_button)
 	_host_bot_gauntlet_button.hide()
+	_host_bot_match_button = Button.new()
+	_host_bot_match_button.text = "Host Bot Matches"
+	_host_bot_match_button.pressed.connect(_on_host_bot_match_pressed)
+	_seek_action_row.add_child(_host_bot_match_button)
+	_host_bot_match_button.hide()
 	_apply_seek_action_button_sizing()
 
 func _build_recent_activity_panel() -> void:
@@ -2923,11 +2923,17 @@ func _on_host_another_bot_match_pressed() -> void:
 	_request_local_bot_match(false)
 
 func _request_continuous_bot_match() -> void:
-	if not _bot_match_hosting_enabled or _has_pending_continuous_bot_match() \
-			or _has_active_continuous_bot_match():
+	if not _bot_match_hosting_enabled or _has_pending_continuous_bot_match():
 		_update_host_bot_match_button()
 		return
-	_request_local_bot_match(true)
+	# Fill every open hosting slot instead of maintaining a single match:
+	# each pending request holds one slot, and assignment results and match
+	# closes call back here to keep the pool topped up.
+	var open_slots := _get_local_bot_match_capacity() \
+		- _get_local_bot_match_count() - _pending_local_bot_match_modes.size()
+	for _slot in range(open_slots):
+		_request_local_bot_match(true)
+	_update_host_bot_match_button()
 
 func _schedule_continuous_bot_match_retry(delay_seconds: float = 15.0) -> void:
 	if not _bot_match_hosting_enabled:

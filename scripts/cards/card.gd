@@ -776,16 +776,16 @@ func get_effective_level() -> int:
 		total += buff.get("lvl", 0)
 	return max(1, total)
 
-func get_effective_strength() -> int:
-	var total = strength
+func get_effective_strength(strength_delta: int = 0) -> int:
+	var total := strength + strength_delta
 	for equip in equipment:
 		total += equip.strength_modifier
 	for buff in _get_effective_buffs():
 		total += buff.get("str", 0)
 	return max(0, total)
 
-func get_effective_resilience() -> int:
-	var total = resilience
+func get_effective_resilience(resilience_delta: int = 0) -> int:
+	var total := resilience + resilience_delta
 	for equip in equipment:
 		total += equip.resilience_modifier
 	for buff in _get_effective_buffs():
@@ -1373,6 +1373,7 @@ func mute_permanently(game_manager: GameManager = null) -> void:
 	mute_turns_remaining = -1
 	_mute_applied_owner_turn_number = -1
 	_process_mute_state_change(game_manager, was_muted)
+	_emit_visual_state_changed()
 
 func on_turn_end(game_manager: GameManager) -> void:
 	var was_muted := is_muted

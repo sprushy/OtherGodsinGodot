@@ -26,7 +26,7 @@ runtime validation or optimal bot strategy.
 | Durinn Secondborn | `durinn_secondborn_impact` | Choose an offered target |
 | Fenrir | `fenrir_devour_impact` | Choose an offered devour target |
 | First Sage Adapa | `first_sage_adapa_impact` | Choose an offered target |
-| Foolish Optimism | `foolish_optimism` | Compare legal offered attacker/defender pairs using combat outcomes and halved follower damage |
+| Foolish Optimism | `foolish_optimism` | Compare legal offered attacker/defender pairs using combat outcomes |
 | Fourth Sage Enmegalamma | `fourth_sage_enmegalamma_impact` | Choose an offered target |
 | Freyja, active | `freyja_active_open_sessrumnir` | Choose creatures up to the current summon limit, or skip |
 | Gala-Tura | `gala_tura_destroyed` | Choose up to three offered cards |
@@ -183,6 +183,38 @@ cards in the table. No new probe scripts or visual QA were added.
   type-dependent Powers only when the deck has matching creatures. The practice
   fuzz smoke can exercise this generator with `smoke_ranked_bot_decks=1`.
 
+### Marginal mana model
+
+- Mana is priced at its marginal rate instead of a flat 1000-per-point
+  (`CardStrategy.marginal_mana_value`). While the stock is at or below the
+  saturation ceiling — the highest cost the remaining deck, hand, prepared
+  activations, power unlocks, and god abilities can still reach, plus one
+  turn of income — each point is worth full value. Past it the rate decays
+  by `MANA_SATURATION_DECAY` per excess point, down to a floor.
+- The floor depends on what can still absorb surplus mana
+  (`mana_sink_profile`): an unbounded win-condition sink (Ancient Pyre
+  conversion) keeps full value because every point converts directly into
+  follower swing; defensive sinks (ManaGuard, Advanced Building Techniques)
+  keep 45%; otherwise 15% covers action taxes, equipment, and Guard.
+- Spending integrates the rate across the paid range (`mana_penalty`), and
+  mana production is priced symmetrically (`mana_gain_value`), so ramp and
+  upkeep income lose value in saturated positions too.
+- The owner reads its own remaining deck composition: its deck cards keep
+  their real value in `value()` instead of the generic unknown price.
+- Upkeep compares the mana option (best play it enables plus the marginal
+  value of the income) against the draw option (best play at the current
+  budget plus the expected hand value of the card drawn from the bot's own
+  deck, weighted by how thin the hand is).
+- Thor practice bot prices one- and two-mana action taxes at the current
+  rate (`_mana_rate`) and production triggers (Draupnir, Eridu, Heroic
+  Stand, Book of Life, Mummu, Tonal Mastery, Masmassu, Pictish Beast) via
+  `mana_gain_value`. The saturation scan is cached per decision tick.
+- In a locked board state — neither side can push follower damage through —
+  Ancient Pyre's conversion clock becomes the win condition: each conversion
+  scores as direct progress toward the opponent's follower loss and the
+  structure's value scales with how soon the clock ends the game, so surplus
+  mana keeps being pumped into conversions.
+
 ## Verification
 
 - Godot 4.7 `--check-only` passed for all affected bot variants, MatchManager,
@@ -196,3 +228,22 @@ cards in the table. No new probe scripts or visual QA were added.
   `That account was not found`; it did not reach gameplay.
 - Individual card interactions still need manual play checks. No visual QA or
   new gameplay probe scripts were used.
+
+### Marginal mana model verification (2026-11-15)
+
+- `--check-only` passed for `BotCardStrategy.gd`, `ThorPracticeBot.gd`,
+  `BotCardPromptPolicy.gd`, `PracticeFuzzPlayerBot.gd`,
+  `HostHuntingTacticsBot.gd`, `ServerBotGameInput.gd`,
+  `NetworkClientSmokeBot.gd`, and `BotGameInput.gd`.
+- Maintained `practice_thor`, `practice_thor_intercept`, and
+  `ranked_timeout_upkeep` passed on the final build.
+- `practice_thor_summon` fails: the Thor bot zeroes the scripted player's
+  followers by turn 4 through a big-strength rush. This reproduces with the
+  mana economics fully neutralized and in a clean HEAD worktree, so it is a
+  pre-existing failure, not caused by this change set.
+- The `practice_thor_fuzz` timeout (stall with `stack=1 priority_player=-1
+  pending_prompts=0`) is flaky and pre-existing: it reproduces at HEAD. A
+  seed sweep (seeds 1337/1339/1341/1343, one game each) passed 2/4 at HEAD
+  and 1/4 with this change set; the neutralized build also passed 1/2. The
+  stall signature is identical across builds and turns, so the change set
+  shifts game flow toward the pre-existing wedge but does not introduce it.

@@ -30,7 +30,7 @@ static func serialize(gm: GameManager, viewer_player_index: int = -1, visible_pl
 	for raw_index in visible_player_indices:
 		visible_lookup[int(raw_index)] = true
 	if viewer_player_index == SPECTATOR_VIEWER_INDEX:
-		viewer = Player.new()
+		viewer = Player.create_spectator_viewer()
 	elif viewer_player_index >= 0 and viewer_player_index < gm.players.size():
 		viewer = gm.players[viewer_player_index]
 	var data := {

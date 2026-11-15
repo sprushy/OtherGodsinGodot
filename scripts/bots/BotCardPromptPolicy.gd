@@ -32,7 +32,7 @@ const TARGET_COMMANDS := {
 	"tonal_extraction": "tonal_extraction_choice",
 }
 const HARMFUL_TARGET_PROMPTS := [
-	"first_sage_adapa_impact", "lailoken_reveal", "masmassu_priest_reveal",
+	"lailoken_reveal", "masmassu_priest_reveal",
 	"terror_impact", "fenrir_devour_impact", "gugalanna_celestial_charge",
 ]
 
@@ -56,6 +56,10 @@ static func build_command(bot, type: String, data: Dictionary) -> Dictionary:
 			command["target_uid"] = _best_reveal_target(bot, source, data.get("target_uids", []))
 		elif type == "apollyons_demiurge":
 			command["target_uid"] = bot._choose_demiurge_summon(data.get("target_uids", []))
+		elif type == "third_sage_enmedugga_impact" and source is ThirdSageEnmedugga:
+			command["target_uid"] = _best_good_fortune_target(bot, source, data.get("target_uids", []))
+		elif type == "first_sage_adapa_impact" and source is FirstSageAdapa:
+			command["target_uid"] = _best_silence_target(bot, source, data.get("target_uids", []))
 		elif type == "tonal_extraction" and source is TonalExtraction:
 			var targets: Array[Card] = []
 			for target in source.get_valid_targets(bot.game_manager):
@@ -282,6 +286,34 @@ static func _best_reveal_target(bot, source: Card, target_uids: Array, enemy_onl
 		if score > best_score:
 			best_score = score
 			best_uid = uid
+	return best_uid
+
+static func _best_good_fortune_target(bot, source: ThirdSageEnmedugga, target_uids: Array) -> String:
+	var best_uid := ""
+	var best_score := 0
+	for target in source.get_valid_targets(bot.game_manager):
+		if target.get_controller() != bot.bot_player or target.uid not in target_uids:
+			continue
+		var added_wards := 0
+		for ward_kind in ["spells", "creature_abilities"]:
+			if not bot.game_manager.has_target_immunity(target, source, ward_kind):
+				added_wards += 1
+		var score := added_wards * Strategy.value(bot, target)
+		if score > best_score or (score == best_score and score > 0 and target.uid < best_uid):
+			best_score = score
+			best_uid = target.uid
+	return best_uid
+
+static func _best_silence_target(bot, source: FirstSageAdapa, target_uids: Array) -> String:
+	var best_uid := ""
+	var best_score := 0
+	for target in source.get_valid_targets(bot.game_manager):
+		if target.uid not in target_uids or bot.game_manager.is_immune_to_source(target, source):
+			continue
+		var score := Strategy.mute_gain(bot, target, FirstSageAdapa.MUTE_DURATION, Strategy.value(bot, target))
+		if score > best_score or (score == best_score and score > 0 and target.uid < best_uid):
+			best_score = score
+			best_uid = target.uid
 	return best_uid
 
 static func _best_uid(bot, data: Dictionary, key: String, harmful: bool) -> String:
