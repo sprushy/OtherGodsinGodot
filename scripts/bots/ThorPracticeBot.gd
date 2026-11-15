@@ -525,7 +525,8 @@ func _submit_priority_response(card: Card) -> bool:
 			var chosen_target := _choose_best_wheel_of_fire_target(card as WheelOfFire, targets, top_action)
 			target_uid = chosen_target.uid if chosen_target != null else ""
 		elif CardStrategy.supported(card):
-			var chosen_target := _score_priority_card(card, top_action, danger)["target"] as Card
+			var priority_target = _score_priority_card(card, top_action, danger).get("target", null)
+			var chosen_target: Card = priority_target if priority_target is Card else null
 			target_uid = chosen_target.uid if chosen_target != null else ""
 		else:
 			target_uid = _choose_target_uid_for_source(card, targets)
@@ -546,7 +547,8 @@ func _submit_priority_response(card: Card) -> bool:
 			targets = charm.get_priority_targets(game_manager, top_action)
 		var target_uid := _choose_target_uid_for_source(card, targets)
 		if CardStrategy.supported(card):
-			var target := _score_priority_card(card, top_action, danger)["target"] as Card
+			var priority_target = _score_priority_card(card, top_action, danger).get("target", null)
+			var target: Card = priority_target if priority_target is Card else null
 			target_uid = target.uid if target != null else ""
 		if charm.targets and target_uid.is_empty():
 			return false
@@ -564,7 +566,8 @@ func _submit_priority_response(card: Card) -> bool:
 			targets = card.get_valid_targets(game_manager)
 		var target_uid := _choose_target_uid_for_source(card, targets)
 		if CardStrategy.supported(card) or card is E2Abzu:
-			var target := _score_priority_card(card, top_action, danger)["target"] as Card
+			var priority_target = _score_priority_card(card, top_action, danger).get("target", null)
+			var target: Card = priority_target if priority_target is Card else null
 			target_uid = target.uid if target != null else ""
 		if bool(card.get("targets")) and target_uid.is_empty():
 			return false
@@ -5578,7 +5581,7 @@ func _get_attack_defender_card(action: CardAction) -> Card:
 		return null
 	if action.interceptor != null:
 		return action.interceptor
-	return action.target as Card
+	return action.target if action.target is Card else null
 
 func _is_norse_creature(card: Card) -> bool:
 	return card != null and card.card_type == Card.CardType.CREATURE and str(card.culture).strip_edges() == "Norse"

@@ -416,9 +416,12 @@ static func combat_projection(bot, action: CardAction) -> Dictionary:
 					countered = stack[index - 1]
 				negated.append(countered)
 				continue
-			var changes := additive_combat_stats(bot, queued.card, queued.target as Card)
+			if not (queued.card is Card) or not (queued.target is Card):
+				continue
+			var target_card: Card = queued.target
+			var changes := additive_combat_stats(bot, queued.card, target_card)
 			if changes != Vector3i.ZERO:
-				pending[queued.target] = pending.get(queued.target, Vector3i.ZERO) + changes
+				pending[target_card] = pending.get(target_card, Vector3i.ZERO) + changes
 	return {"attack": action if action != null and action.type == CardAction.Type.ATTACK else null, "stats": pending}
 
 static func combat_gain(bot, target: Card, str_delta: int, res_delta: int = 0, action: CardAction = null, speed_delta: int = 0) -> int:
@@ -471,6 +474,8 @@ static func combat_gain(bot, target: Card, str_delta: int, res_delta: int = 0, a
 
 static func additive_combat_stats(bot, source: Card, target: Card) -> Vector3i:
 	# These effects add stats without replacing a previous modifier or moving a card.
+	if source == null or target == null:
+		return Vector3i.ZERO
 	if not (source is FifaTheMagicalArrow or source is Snowball or source is SapStrength \
 			or source is VisionOfOdin or source is VisionOfTartarus or source is Hermes):
 		return Vector3i.ZERO

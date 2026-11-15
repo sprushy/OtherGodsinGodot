@@ -1678,6 +1678,15 @@ func _check_bot_combat_buff_value(failures: PackedStringArray) -> void:
 	opponent.followers = 8
 	if int(bot._score_priority_card(second, attack, -1)["score"]) <= 0:
 		failures.append("Bot did not value a second Fifa when the extra damage was lethal")
+	var non_object_action := CardAction.new()
+	non_object_action.type = CardAction.Type.SPELL
+	non_object_action.card = first
+	non_object_action.target = ["non_object_target", 42]
+	game.push_to_stack(non_object_action)
+	var projection := BotCardStrategyScript.combat_projection(bot, non_object_action)
+	if projection.get("attack") != null:
+		failures.append("combat_projection misidentified a non-object spell target as an attack")
+	game.action_stack.clear()
 	bot.detach()
 
 func _check_bot_jiang_counterstroke(failures: PackedStringArray) -> void:
