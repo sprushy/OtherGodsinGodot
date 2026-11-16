@@ -396,6 +396,9 @@ func _render_recent_record_details() -> void:
 	_deck_contents.pop()
 	_deck_contents.push_color(MUTED)
 	_deck_contents.add_text("Lifetime ranked record: %d wins · %d losses · %d draws\n" % [wins, losses, draws])
+	var owner_name := str(_selected_entry.get("owner_name", "")).strip_edges()
+	if not owner_name.is_empty():
+		_deck_contents.add_text("Created by: %s\n" % owner_name)
 	var main_gods: Array = _selected_entry.get("main_gods", [])
 	if not main_gods.is_empty():
 		var god_names := PackedStringArray()
@@ -446,9 +449,13 @@ func show_deck(list_id: String, deck: Dictionary) -> void:
 	_deck_contents.add_text(str(deck["name"]) + "\n\n")
 	_deck_contents.pop()
 	_deck_contents.push_color(MUTED)
-	_deck_contents.add_text("Record: %d wins · %d losses · %d draws\n\n" % [
+	_deck_contents.add_text("Record: %d wins · %d losses · %d draws\n" % [
 		int(deck.get("wins", 0)), int(deck.get("losses", 0)), int(deck.get("draws", 0)),
 	])
+	var owner_name := str(deck.get("owner_name", "")).strip_edges()
+	if not owner_name.is_empty():
+		_deck_contents.add_text("Created by: %s\n" % owner_name)
+	_deck_contents.add_text("\n")
 	_deck_contents.pop()
 	_add_card_section("Main deck", deck["cards"])
 	var reinforcements: Dictionary = deck["reinforcements"]

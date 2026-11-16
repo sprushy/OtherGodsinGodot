@@ -233,6 +233,8 @@ func _build_bot_deck_results(match_session, player_entries: Array[Dictionary]) -
 			"god_name": deck["bot_god_name"],
 			"bot_name": player_entry["player_name"],
 			"list_id": deck.get("bot_list_id", ""),
+			"owner_name": str(deck.get("owner_name", "")),
+			"is_community_bot": bool(deck.get("is_community_bot", false)),
 			"cards": deck["cards"],
 			"reinforcements": deck.get("reinforcements", {}),
 			"special_setup": deck.get("special_setup", {}),

@@ -14,6 +14,19 @@ const MANA_SINK_DEFENSIVE_FLOOR_PCT := 45
 # highest cost the remaining deck, hand, and board can still reach.
 const MANA_SATURATION_DECAY := 0.4
 const MIN_POWER_ACTIVATION_SCORE := 1200
+# Meta reach/survival curves fitted to the ranked bot self-play window
+# (copies-weighted creature statlines, 2026-11 snapshot). Reach = share of the
+# field a strength value destroys (defender res <= strength); survival = share
+# of the field that cannot destroy the body (attacker str < resilience).
+# Aggressive defenders fight STR vs STR and defensive defenders STR vs RES, so
+# both curves price the same currency: what the statline beats. The survival
+# curve is steep through res 18-27 (res 21 survives ~54% of attackers, res 27
+# ~84%), which the old flat res * 25 badly underpriced.
+const META_REACH_ANCHOR_STATS := [0, 10, 15, 18, 21, 24, 27, 30, 36, 99]
+const META_REACH_ANCHOR_SHARES := [0.0, 27.0, 49.5, 61.7, 73.1, 78.8, 93.0, 95.7, 99.3, 100.0]
+const META_SURVIVAL_ANCHOR_STATS := [0, 9, 15, 18, 21, 24, 27, 30, 36, 99]
+const META_SURVIVAL_ANCHOR_SHARES := [0.0, 10.0, 21.2, 39.7, 53.8, 73.8, 84.4, 92.6, 98.5, 100.0]
+const META_STAT_POINT_WEIGHT := 23
 const TACTICAL_CARDS := [
 	"BitMeseri", "RunicSpellbreaker", "Snowball", "SirensSong", "TabletOfLife",
 	"BookOfLife", "Earthquake", "FiresOfJudgment", "Famine", "OccultSingularity",
@@ -101,6 +114,23 @@ static func open_spaces(player: Player) -> int:
 static func follower_gain(player: Player, amount: int) -> int:
 	return amount * (600 if player.followers < 25 else 350 if player.followers < 50 else 200)
 
+static func _meta_curve_share(anchor_stats: Array, anchor_shares: Array, stat: int) -> float:
+	var value := maxi(0, stat)
+	for index in range(1, anchor_stats.size()):
+		if value <= int(anchor_stats[index]):
+			var span := float(anchor_stats[index] - anchor_stats[index - 1])
+			if span <= 0.0:
+				return float(anchor_shares[index])
+			var progress := float(value - int(anchor_stats[index - 1])) / span
+			return lerpf(float(anchor_shares[index - 1]), float(anchor_shares[index]), progress)
+	return float(anchor_shares[anchor_shares.size() - 1])
+
+static func _strength_reach_points(strength: int) -> int:
+	return int(_meta_curve_share(META_REACH_ANCHOR_STATS, META_REACH_ANCHOR_SHARES, strength) * META_STAT_POINT_WEIGHT)
+
+static func _resilience_survival_points(resilience: int) -> int:
+	return int(_meta_curve_share(META_SURVIVAL_ANCHOR_STATS, META_SURVIVAL_ANCHOR_SHARES, resilience) * META_STAT_POINT_WEIGHT)
+
 static func value(bot, card: Card) -> int:
 	if card == null:
 		return 0
@@ -113,7 +143,12 @@ static func value(bot, card: Card) -> int:
 		return CARD_VALUE
 	if card is WardingStone and card.get_attack_restriction_turns_remaining(bot.game_manager) <= 0:
 		return bot._get_inactive_warding_stone_value(card)
-	var score := CARD_VALUE + maxi(0, card.get_effective_strength()) * 80 + maxi(0, card.get_effective_resilience()) * 25 + maxi(0, card.mana_cost) * 200
+	# Body value uses the meta-fitted curves above: strength prices at what it
+	# can destroy, resilience at what survives it, so walls stop scoring at a
+	# fraction of an attacker's value. (Old flat split: str * 80 + res * 25.)
+	var score := CARD_VALUE + _strength_reach_points(card.get_effective_strength()) \
+		+ _resilience_survival_points(card.get_effective_resilience()) \
+		+ maxi(0, card.mana_cost) * 200
 	if card.is_god and _would_destroying_god_cause_god_death(bot, card):
 		var owner := card.get_controller()
 		score += bot._score_follower_loss(owner, GameManager.GOD_DEATH_FOLLOWER_LOSS) + MANA_VALUE
@@ -825,8 +860,11 @@ static func target_score(bot, card: Card, target: Card, action: CardAction = nul
 				return BAD
 			# The body leaves the hand and loses its abilities. Value the saved
 			# summon payment at the current marginal mana rate, rather than
-			# counting it as an extra drawn card.
-			var score: int = maxi(0, bot._get_play_cost(target, false)) * marginal_mana_value(bot) + target.get_effective_strength() * 80 + target.get_effective_resilience() * 25
+			# counting it as an extra drawn card. Body value uses the same meta
+			# reach/survival curves as value().
+			var score: int = maxi(0, bot._get_play_cost(target, false)) * marginal_mana_value(bot) \
+				+ _strength_reach_points(target.get_effective_strength()) \
+				+ _resilience_survival_points(target.get_effective_resilience())
 			if key(target) in ["EnkiLordOfEridu", "Askelladen", "Gawain", "Lindwyrm", "Lamashatu", "Mummu"]:
 				score -= 4000
 			if target.has_type("Mage") or target.has_type("Priest"):

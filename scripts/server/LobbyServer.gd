@@ -1111,13 +1111,45 @@ func _find_community_bot(account_id: String, bot_id: String) -> Dictionary:
 	var bot := JsonStoreScript.load_dictionary(bot_path, {}, "CommunityBotPool")
 	if str(bot.get("account_id", "")) != account_id:
 		return {}
-	bot["name"] = str(bot.get("deck_name", "Community Bot"))
+	var display_name := _community_bot_display_name(bot)
+	bot["name"] = display_name
+	bot["deck_name"] = display_name
+	bot["is_community_bot"] = true
 	bot["bot_list_id"] = bot_id
 	bot["list_id"] = bot_id
 	bot["bot_god_name"] = str(bot.get("god_name", ""))
 	bot["bot_stars"] = 0
 	bot["stars"] = 0
 	return bot
+
+## Community bots use the same "God: Name" ladder format as the rest of the
+## ranked bot pool; the creator is surfaced separately as a "Created by" field.
+func _community_bot_display_name(bot: Dictionary) -> String:
+	var raw_name := str(bot.get("bot_name", "")).strip_edges()
+	if raw_name.is_empty():
+		# Bots submitted before bot_name was stored kept the creator inside
+		# deck_name as "Owner's Bot": strip that prefix back off.
+		var deck_name := str(bot.get("deck_name", "")).strip_edges()
+		var owner_name := str(bot.get("owner_name", "")).strip_edges()
+		var legacy_prefix := "%s's " % owner_name
+		if not owner_name.is_empty() and deck_name.begins_with(legacy_prefix):
+			raw_name = deck_name.substr(legacy_prefix.length()).strip_edges()
+		else:
+			raw_name = deck_name
+	if raw_name.is_empty():
+		raw_name = "Community Bot"
+	var god_name := RankedBotDeckPoolScript.display_god_name(str(bot.get("god_name", ""))).strip_edges()
+	if god_name.is_empty():
+		return raw_name
+	return "%s: %s" % [god_name, raw_name]
+
+func _public_bot_entry(bot: Dictionary) -> Dictionary:
+	return {
+		"bot_id": str(bot.get("bot_id", "")),
+		"deck_name": _community_bot_display_name(bot),
+		"god_name": str(bot.get("god_name", "")),
+		"submitted_unix": int(bot.get("submitted_unix", 0)),
+	}
 
 func _handle_submit_issue_report(peer_id: int, payload: Dictionary) -> void:
 	var session := _get_session_for_peer(peer_id)
@@ -1315,7 +1347,8 @@ func _handle_submit_bot_deck(peer_id: int, payload: Dictionary) -> void:
 		"bot_id": bot_id,
 		"account_id": account_id,
 		"owner_name": owner_name,
-		"deck_name": "%s's %s" % [owner_name, bot_name],
+		"bot_name": bot_name,
+		"deck_name": _community_bot_display_name({"bot_name": bot_name, "god_name": god_name}),
 		"cards": validation.get("cards", {}),
 		"special_setup": validation.get("special_setup", special_setup),
 		"reinforcements": validation.get("reinforcements", reinforcements),
@@ -1360,14 +1393,6 @@ func _handle_request_my_bots(peer_id: int) -> void:
 				file_name = directory.get_next()
 			directory.list_dir_end()
 	_send_to_peer(peer_id, LobbyProtocolScript.MY_BOTS, {"bots": bots})
-
-func _public_bot_entry(bot: Dictionary) -> Dictionary:
-	return {
-		"bot_id": str(bot.get("bot_id", "")),
-		"deck_name": str(bot.get("deck_name", "Bot")),
-		"god_name": str(bot.get("god_name", "")),
-		"submitted_unix": int(bot.get("submitted_unix", 0)),
-	}
 
 func _handle_report_bot_work_started(peer_id: int, payload: Dictionary) -> void:
 	var session := _get_session_for_peer(peer_id)
@@ -1650,6 +1675,7 @@ func _build_ladder_page(request: Dictionary) -> Dictionary:
 				)
 				ladder.append({"name": bot["name"], "list_id": bot["list_id"], "points": bot["stars"],
 					"rank": rank["name"], "stars": rank["stars"], "is_bot": true,
+					"owner_name": str(bot.get("owner_name", "")),
 					"portrait": portrait,
 					"wins": int(bot.get("wins", 0)), "losses": int(bot.get("losses", 0)), "draws": int(bot.get("draws", 0)),
 					"main_gods": [str(god.get("god_name", ""))],
@@ -1675,7 +1701,8 @@ func _build_ladder_page(request: Dictionary) -> Dictionary:
 	if not search_query.is_empty():
 		var matching_rows: Array[Dictionary] = []
 		for row in ladder:
-			if str(row.get("name", "")).to_lower().contains(search_query):
+			if str(row.get("name", "")).to_lower().contains(search_query) \
+					or str(row.get("owner_name", "")).to_lower().contains(search_query):
 				matching_rows.append(row)
 		ladder = matching_rows
 	if search_query.is_empty() and ladder.size() > 100:
@@ -2208,7 +2235,34 @@ func _ensure_server_bot_deck_factory() -> void:
 func _refresh_ranked_bot_deck_pool() -> void:
 	_ensure_match_history_store()
 	_ensure_server_bot_deck_factory()
-	_ranked_bot_deck_pool.refresh(match_history_store.get_bot_deck_results())
+	var community_bot_ids := _get_community_bot_ids()
+	var results: Array[Dictionary] = []
+	for raw_result in match_history_store.get_bot_deck_results():
+		# Results recorded before community bots joined the ladder stored the
+		# submitter's bot id without a community flag: restore the flag so the
+		# pool replay keeps those results on the bot's ladder entry.
+		if community_bot_ids.has(str(raw_result.get("list_id", ""))):
+			var result: Dictionary = raw_result.duplicate(true)
+			result["is_community_bot"] = true
+			results.append(result)
+		else:
+			results.append(raw_result)
+	_ranked_bot_deck_pool.refresh(results)
+
+func _get_community_bot_ids() -> Dictionary:
+	var ids := {}
+	var bot_dir := ServerPathsScript.get_server_data_file_path("community_bot_pool")
+	var directory := DirAccess.open(bot_dir)
+	if directory == null:
+		return ids
+	directory.list_dir_begin()
+	var file_name := directory.get_next()
+	while not file_name.is_empty():
+		if not directory.current_is_dir() and file_name.ends_with(".json"):
+			ids[file_name.get_basename()] = true
+		file_name = directory.get_next()
+	directory.list_dir_end()
+	return ids
 
 func _duplicate_dictionary(value) -> Dictionary:
 	if value is Dictionary:

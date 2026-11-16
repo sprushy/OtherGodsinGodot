@@ -147,6 +147,7 @@ func _summarize_list(list: Dictionary) -> Dictionary:
 	return {
 		"list_id": list["list_id"],
 		"name": list["deck_name"],
+		"owner_name": str(list.get("owner_name", "")),
 		"stars": list["stars"],
 		"wins": list["wins"],
 		"losses": list["losses"],
@@ -170,6 +171,7 @@ func _deck_details(list: Dictionary) -> Dictionary:
 		"list_id": list["list_id"],
 		"name": list["deck_name"],
 		"deck_name": list["deck_name"],
+		"owner_name": str(list.get("owner_name", "")),
 		"god_name": list["god_name"],
 		"wins": int(list.get("wins", 0)),
 		"losses": int(list.get("losses", 0)),
@@ -341,6 +343,7 @@ func _apply_result(result: Dictionary) -> void:
 	var pool: Dictionary = _by_god.get_or_add(god_name, {"lists": [], "challenger": {}, "pending": [], "quarantined_id": ""})
 	var lists: Array = pool["lists"]
 	var challenger: Dictionary = pool["challenger"]
+	var is_community_bot := bool(result.get("is_community_bot", false))
 	if not list_id.is_empty():
 		if not challenger.is_empty() and list_id == challenger["list_id"]:
 			_update_record(challenger, outcome)
@@ -358,9 +361,12 @@ func _apply_result(result: Dictionary) -> void:
 					result["bot_eliminated"] = true
 					_retire_list(pool, list)
 				return
-		# A match already in flight can finish after its list was retired.
-		return
-	if outcome != "win" and not bool(result.get("is_self_play", false)):
+		if not is_community_bot:
+			# A match already in flight can finish after its list was retired.
+			return
+		# A community bot's first ladder result adopts its submitting bot id, so
+		# later results and recent-match lookups resolve the same ladder entry.
+	elif outcome != "win" and not bool(result.get("is_self_play", false)):
 		return
 
 	var audited_result := result.duplicate(true)
@@ -401,8 +407,25 @@ func _apply_result(result: Dictionary) -> void:
 			if _should_retire_early(pending):
 				pool["pending"].erase(pending)
 			return
+	var bot_name := str(result.get("bot_name", "")).strip_edges()
+	var owner_name := str(result.get("owner_name", "")).strip_edges()
+	if owner_name.is_empty():
+		# Community results recorded before explicit owner attribution stored
+		# the creator inside the deck name ("Owner's Bot").
+		var separator := bot_name.find("'s ")
+		if separator > 0:
+			owner_name = bot_name.substr(0, separator).strip_edges()
+			bot_name = bot_name.substr(separator + 3).strip_edges()
+	var self_play_name := ""
+	if bool(result.get("is_self_play", false)) and not bot_name.is_empty():
+		self_play_name = bot_name
+		if not self_play_name.begins_with("%s: " % display_god_name(god_name)):
+			self_play_name = "%s: %s" % [display_god_name(god_name), self_play_name]
+	var adopted_list_id := str(result["match_id"])
+	if is_community_bot and not list_id.is_empty():
+		adopted_list_id = list_id
 	var new_list := {
-		"list_id": str(result["match_id"]),
+		"list_id": adopted_list_id,
 		"fingerprint": fingerprint,
 		"god_name": god_name,
 		"deck_name": "%s: Challenger" % display_god_name(god_name),
@@ -414,7 +437,8 @@ func _apply_result(result: Dictionary) -> void:
 		"draws": 0,
 		"stars": 0,
 		"win_streak": 0,
-		"self_play_name": str(result.get("bot_name", "")) if bool(result.get("is_self_play", false)) else "",
+		"self_play_name": self_play_name,
+		"owner_name": owner_name,
 	}
 	_update_record(new_list, outcome)
 	if _should_retire_early(new_list):

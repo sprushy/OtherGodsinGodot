@@ -238,6 +238,33 @@ func _run_retry_poll() -> void:
 	_retry_poll_queued = false
 	_queue_step()
 
+# True when the active targeting selection was raised by this bot's own card
+# in a game this bot resolves authoritatively. Networked client mirrors must
+# not confirm locally; the authoritative side answers there.
+func _owns_pending_click_selection() -> bool:
+	if match_manager == null or not match_manager.pending_click_selection_confirm.is_valid():
+		return false
+	if match_manager.network_manager != null \
+			and not bool(match_manager.network_manager.get("is_server")):
+		return false
+	var source: Card = match_manager.pending_click_selection_source
+	return source != null and source.get_controller() == bot_player
+
+# Mandatory self-raised selections resolve with the first valid target
+# (matching the engine's mandatory-selection policy); optional ones cancel
+# when no target remains, and mandatory ones with none fizzle safely via the
+# empty-target resolution path.
+func _resolve_own_click_selection() -> void:
+	var targets: Array = match_manager.pending_click_selection_valid_targets
+	var target = targets[0] if not targets.is_empty() else null
+	if target != null:
+		match_manager.confirm_click_selection(target)
+	elif match_manager.pending_click_selection_allows_cancel:
+		match_manager.cancel_targeting()
+	else:
+		match_manager.resolve_mandatory_selection_without_target()
+	_queue_retry_poll()
+
 func _get_retry_tree() -> SceneTree:
 	if match_manager != null and match_manager.network_manager != null:
 		return match_manager.network_manager.get_tree()
@@ -252,7 +279,9 @@ func _should_queue_step() -> bool:
 		return false
 	if match_manager.has_method("is_authoritative_stack_resolution_pending") and match_manager.is_authoritative_stack_resolution_pending():
 		return false
-	if match_manager.is_targeting_active():
+	# A click selection raised by this bot's own card must be answered by the
+	# bot: nobody else will in headless games, and the human answers their own.
+	if match_manager.is_targeting_active() and not _owns_pending_click_selection():
 		return false
 	if match_manager.selected_attacker != null or match_manager.pending_attack_target != null:
 		return false
@@ -267,6 +296,9 @@ func _run_step() -> void:
 	_mana_econ_cache = {}
 	_tonal_setup_cache = {}
 	if not _should_queue_step():
+		return
+	if _owns_pending_click_selection():
+		_resolve_own_click_selection()
 		return
 	if not game_manager.action_stack.is_empty():
 		_handle_priority()
@@ -1103,8 +1135,31 @@ func _forecast_aggressive_exposure_risk(creature: Card) -> int:
 		loss += (maxi(0, creature.mana_cost) + 2 * creature.sacrifice_cost) * _mana_rate() / 2
 	loss += _score_follower_loss(bot_player, threat_strength - strength)
 	# The opponent still has to hold the answer, pay for it, and choose this
-	# line, so the exposure is charged at half weight.
-	return (loss + 1) / 2
+	# line, so the exposure is charged at half weight. Each ready protective
+	# reply (Smite / Void Shield) halves it again: when a clear attempt eats
+	# a banked answer the body survives and the reply trades for their
+	# attacker, so the loss stops being one-sided. Two or more replies cover
+	# an extra clear attempt each.
+	return ((loss + 1) / 2) >> mini(_get_own_protective_responses().size(), 3)
+
+# Mirror of _get_known_attack_response_cards for this side's own protection:
+# banked face-down responses in owned zones plus affordable hand copies (the
+# hand is private to this bot and persists unspent mana into the reply
+# window). Only the two replies that remove the ATTACKER count here - The
+# Inferno would hit this side's own board too, so it protects nobody.
+func _get_own_protective_responses() -> Array[Card]:
+	var responses: Array[Card] = []
+	if bot_player == null or game_manager == null:
+		return responses
+	for zone in bot_player.frontline_zones + bot_player.reserve_zones:
+		for card in zone.cards:
+			if card is Smite or card is VoidShield:
+				responses.append(card)
+	for card in bot_player.hand_zone.cards:
+		if (card is Smite or card is VoidShield) \
+				and bot_player.mana >= game_manager.get_card_play_mana_cost(bot_player, card, false):
+			responses.append(card)
+	return responses
 
 func _get_tonal_mastery_god(player: Player) -> TezcatlipocaTheSmokingMirror:
 	if player == null or player.god_zone.cards.is_empty() \
@@ -4400,7 +4455,9 @@ func _get_hand_value(card: Card) -> int:
 	if card is BrownBear:
 		return 40
 	if card is CreatureCard:
-		return 35 + mini(40, maxi(0, card.strength) + maxi(0, card.resilience) / 3)
+		# Walls matter: resilience counts at half strength here (was /3) so
+		# defensive bodies are not the default discard.
+		return 35 + mini(40, maxi(0, card.strength) + maxi(0, card.resilience) / 2)
 	return 65 if CardStrategy.supported(card) else 30
 
 func _handle_combat_retreat_prompt(data: Dictionary) -> void:
@@ -5926,9 +5983,23 @@ func _choose_creature_summon_mode(card: Card, opposing_creatures = null) -> Card
 	if card == null or card.card_type != Card.CardType.CREATURE:
 		return Card.CreatureMode.DEFENSIVE
 	var resolved_opposing: Array[Card] = _get_board_creatures(opponent) if opposing_creatures == null else opposing_creatures
+	var has_clean_kills := _count_clean_attack_targets_for(card, resolved_opposing) > 0
+	var ready_protection := _get_own_protective_responses().size() > 0
+	# Aggressive stance defends at STR vs STR while defensive stance defends at
+	# STR vs RES, so a res-dominant body summoned aggressive throws away its
+	# better defense stat to poke with its worse one. An empty board is no
+	# reason for that: stance can switch later once there is real work for the
+	# strength, so res-dominant bodies default defensive unless a clean kill is
+	# available right now. Exception: with a banked protective reply and
+	# nothing on the board to defend against, the poke is the better plan -
+	# any clear attempt eats the reply instead, so the exposure forecast
+	# charges almost nothing for it.
+	if _get_projected_resilience(card) > _get_projected_strength(card) and not has_clean_kills \
+			and not (ready_protection and resolved_opposing.is_empty()):
+		return Card.CreatureMode.DEFENSIVE
 	if resolved_opposing.is_empty():
 		return Card.CreatureMode.AGGRESSIVE
-	if _count_clean_attack_targets_for(card, resolved_opposing) > 0:
+	if has_clean_kills:
 		return Card.CreatureMode.AGGRESSIVE
 	if _is_projected_creature_strongest_on_board(card, resolved_opposing):
 		return Card.CreatureMode.AGGRESSIVE
