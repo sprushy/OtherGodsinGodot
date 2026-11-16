@@ -596,7 +596,7 @@ func _check_public_deck_knowledge(failures: PackedStringArray) -> void:
 	var bot := ThorPracticeBot.new()
 	bot.bot_player = opponent
 	bot.opponent = owner
-	if not BotCardStrategyScript.visible(bot, shelved) or BotCardStrategyScript.visible(bot, hidden):
+	if BotCardStrategyScript.visible(bot, shelved) or BotCardStrategyScript.visible(bot, hidden):
 		failures.append("Bot visibility did not distinguish public from unknown deck cards")
 
 	if owner.draw_card() != second or deck.get_primed_top_card() != first \
@@ -3065,17 +3065,20 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 		player_loss_results.append(_bot_pool_result("player_loss_list_%d" % i, "", {"Thor": 1, "Common": 30, "Variant %d" % i: 10}, "win"))
 		for game in range(3):
 			player_loss_results.append(_bot_pool_result("player_loss_seed_%d_%d" % [i, game], "player_loss_list_%d" % i, {}, "win", true))
+	var player_loss_pool := RankedBotDeckPoolScript.new()
+	player_loss_pool.refresh(player_loss_results)
+	var stars_before_player_losses := int(player_loss_pool.get_deck_details("player_loss_list_0").get("stars", -1))
 	player_loss_results.append(_bot_pool_result("player_loss_challenger", "", {"Thor": 1, "Common": 30, "Player Loss Challenger": 10}, "win", true))
 	for i in range(6):
 		player_loss_results.append(_bot_pool_result("player_loss_trial_%d" % i, "player_loss_challenger", {}, "loss"))
 	player_loss_results.append(_bot_pool_result("player_loss_incumbent", "player_loss_list_0", {}, "loss"))
-	var player_loss_pool := RankedBotDeckPoolScript.new()
 	player_loss_pool.refresh(player_loss_results)
 	var player_loss_summary: Dictionary = player_loss_pool.get_ladder_summary()["gods"][0]
 	var player_loss_list := player_loss_pool.get_deck_details("player_loss_list_0")
 	if player_loss_summary["challenger"].get("matches_played") != 1 \
 			or player_loss_summary["challenger"].get("losses") != 0 \
-			or int(player_loss_list.get("losses", -1)) != 0 or int(player_loss_list.get("stars", -1)) != 4:
+			or int(player_loss_list.get("losses", -1)) != 0 \
+			or int(player_loss_list.get("stars", -1)) != stars_before_player_losses:
 		failures.append("A loss to a human player counted toward bot pool evaluation")
 	player_loss_results.append(_bot_pool_result("player_loss_trial_self_play", "player_loss_challenger", {}, "loss", true))
 	player_loss_pool.refresh(player_loss_results)

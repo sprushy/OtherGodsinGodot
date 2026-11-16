@@ -3440,20 +3440,33 @@ func _on_bot_deck_submission_result(success: bool, message: String, _bot: Dictio
 
 func _format_bot_submission_deck(deck: Dictionary) -> String:
 	var lines := PackedStringArray([str(deck["name"])])
+	var templates_by_name := {}
+	for card in _all_cards:
+		templates_by_name[str(card.card_name)] = card
 	for section in ["cards", "reinforcements"]:
 		var cards: Dictionary = deck[section]
 		if cards.is_empty():
 			continue
 		lines.append_array(["", "Main Deck" if section == "cards" else "Reinforcements"])
 		var card_names := cards.keys()
-		card_names.sort()
+		card_names.sort_custom(func(a: String, b: String) -> bool:
+			var template_a: Card = templates_by_name.get(a, null)
+			var template_b: Card = templates_by_name.get(b, null)
+			var order_a := 8 if template_a == null else _type_order(template_a)
+			var order_b := 8 if template_b == null else _type_order(template_b)
+			if order_a != order_b:
+				return order_a < order_b
+			return a.to_lower() < b.to_lower()
+		)
 		for card_name in card_names:
 			lines.append("%d x %s" % [cards[card_name], card_name])
-	var matriarch_slots := TiamatScript.get_slot_card_names_from_setup(deck["special_setup"])
-	for slot_index in range(matriarch_slots.size()):
-		var slot_cards: Array = matriarch_slots[slot_index]
-		if not slot_cards.is_empty():
-			lines.append("Matriarch slot %d: %s" % [slot_index + 1, ", ".join(slot_cards)])
+	# Saved Matriarch slots only apply to Tiamat decks, so skip them otherwise.
+	if (deck["cards"] as Dictionary).has(TiamatScript.TIAMAT_CARD_NAME):
+		var matriarch_slots := TiamatScript.get_slot_card_names_from_setup(deck["special_setup"])
+		for slot_index in range(matriarch_slots.size()):
+			var slot_cards: Array = matriarch_slots[slot_index]
+			if not slot_cards.is_empty():
+				lines.append("Matriarch slot %d: %s" % [slot_index + 1, ", ".join(slot_cards)])
 	return "\n".join(lines)
 
 func _show_send_friend_dialog() -> void:

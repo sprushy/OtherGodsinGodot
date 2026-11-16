@@ -4777,6 +4777,8 @@ func _sync_turn_activity_timers() -> void:
 func _auto_act_after_move_timeout(expected_context: Dictionary) -> void:
 	if expected_context != _get_local_move_timer_context():
 		return
+	if _auto_resolve_mandatory_target_selection_after_timeout():
+		return
 	match str(expected_context.get("interaction_type", "turn")):
 		"priority":
 			_set_action_label_text("Move timer expired. Passing priority.")
@@ -4796,6 +4798,33 @@ func _auto_act_after_move_timeout(expected_context: Dictionary) -> void:
 				_set_action_label_text("Move timer expired. Ending turn.")
 				_auto_end_turn_after_move_timeout()
 	update_ui()
+
+func _auto_resolve_mandatory_target_selection_after_timeout() -> bool:
+	# Non-optional prompt selections (no "may" wording) cannot be declined:
+	# when the move timer expires, resolve with the first valid target.
+	if match_manager == null or game_manager == null:
+		return false
+	if not match_manager.pending_click_selection_confirm.is_valid() \
+			or match_manager.pending_click_selection_allows_cancel:
+		return false
+	var selection_name := _get_pending_target_selection_name()
+	var candidates: Array = match_manager.pending_click_selection_valid_targets
+	var source = match_manager.pending_click_selection_source
+	if candidates.is_empty() and source is Card and source.has_method("get_valid_targets"):
+		candidates = source.call("get_valid_targets", game_manager)
+	for candidate in candidates:
+		if candidate == null:
+			continue
+		var live_target = match_manager._resolve_live_click_selection_target(candidate)
+		if match_manager.pending_click_selection_validator.call(live_target):
+			_set_action_label_text("Move timer expired. Choosing the first valid target for " + selection_name + ".")
+			match_manager.confirm_click_selection(live_target)
+			update_ui()
+			return true
+	_set_action_label_text("Move timer expired. Resolving " + selection_name + " without a target.")
+	match_manager.resolve_mandatory_selection_without_target()
+	update_ui()
+	return true
 
 func _sync_local_priority_recovery() -> void:
 	if _is_networked_client or match_manager == null:
@@ -14335,13 +14364,9 @@ func _refresh_deck_overlay() -> void:
 		_deck_overlay_grid.remove_child(child)
 		child.queue_free()
 	for card in known_cards:
-		# Hidden primed/shelved placeholders render face-down, like unknown
-		# deck positions; only publicly known identities show their faces.
-		var show_back := card == null \
-			or (card.is_face_down \
-				and card.current_zone != null \
-				and card.current_zone.zone_type == Zone.ZoneType.DECK)
-		if show_back:
+		if card != null:
+			_deck_overlay_grid.add_child(_make_zone_overlay_card(card, true))
+		else:
 			var back := TextureRect.new()
 			back.texture = CardBackTexture
 			back.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -14349,8 +14374,6 @@ func _refresh_deck_overlay() -> void:
 			back.custom_minimum_size = Vector2(136, 205)
 			back.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			_deck_overlay_grid.add_child(back)
-		else:
-			_deck_overlay_grid.add_child(_make_zone_overlay_card(card, true))
 
 func _show_card_selection_overlay(
 	title_text: String,
@@ -14876,6 +14899,11 @@ func _cancel_pending_target_selection(reason: String) -> bool:
 		_set_action_label_text("Mopsus has begun Seer. Finish choosing the highlighted opponent hand cards.")
 		update_ui()
 		return false
+	if match_manager != null and match_manager.pending_click_selection_confirm.is_valid() \
+			and not match_manager.pending_click_selection_allows_cancel:
+		_set_action_label_text(_get_pending_target_selection_name() + ": this choice is mandatory. Click a valid target.")
+		update_ui()
+		return false
 	_hide_devour_cancel_prompt()
 	var paid_preview_card := _pending_paid_hand_card
 	var selection_source = match_manager.pending_click_selection_source if match_manager != null else null
@@ -15307,11 +15335,13 @@ func _begin_pending_click_selection(
 		source_card: Card,
 		validator: Callable,
 		confirm_callback: Callable,
-		cancel_callback: Callable = Callable()
+		cancel_callback: Callable = Callable(),
+		allows_cancel: bool = true,
+		valid_targets: Array = []
 ) -> void:
 	if match_manager == null:
 		return
-	match_manager.start_click_selection(selection_name, source_card, validator, confirm_callback, cancel_callback)
+	match_manager.start_click_selection(selection_name, source_card, validator, confirm_callback, cancel_callback, allows_cancel, valid_targets)
 	_sync_visual_linger_input_blocker()
 
 func _prompt_card_target_selection(
@@ -18970,7 +19000,9 @@ func _show_first_sage_adapa_impact_prompt(card: FirstSageAdapa, prompt_targets: 
 		card,
 		validate_silence_target,
 		on_choose_silence_target,
-		on_cancel_silence_target
+		on_cancel_silence_target,
+		false,
+		current_targets
 	)
 	_set_action_label_text(card.card_name + ": click an opposing power or God ability to silence.")
 	update_ui()
@@ -19016,7 +19048,9 @@ func _show_third_sage_enmedugga_impact_prompt(card: ThirdSageEnmedugga, prompt_t
 		card,
 		validate_sage_target,
 		on_choose_sage,
-		on_cancel_sage
+		on_cancel_sage,
+		false,
+		current_targets
 	)
 	_set_action_label_text(card.card_name + ": click a Mer Sage to bless.")
 	update_ui()
@@ -19117,7 +19151,9 @@ func _show_lailoken_reveal_prompt(card: Lailoken, prompt_targets: Array = []) ->
 		card,
 		validate_magic_drain_target,
 		on_choose_magic_drain,
-		on_cancel_magic_drain
+		on_cancel_magic_drain,
+		false,
+		current_targets
 	)
 	_set_action_label_text(card.card_name + ": click a prepared magical card to destroy.")
 	update_ui()
@@ -19178,7 +19214,9 @@ func _show_masmassu_priest_reveal_prompt(card, prompt_targets: Array = []) -> vo
 		card,
 		validate_dalkhu_break_target,
 		on_choose_dalkhu_break,
-		on_cancel_dalkhu_break
+		on_cancel_dalkhu_break,
+		false,
+		current_targets
 	)
 	_set_action_label_text(card.card_name + ": click a creature to destroy.")
 	update_ui()
@@ -20759,7 +20797,9 @@ func _show_fenrir_devour_prompt(card: Fenrir, prompt_targets: Array = []) -> voi
 		card,
 		validate_devour_target,
 		on_choose_devour_target,
-		on_cancel_devour_target
+		on_cancel_devour_target,
+		false,
+		current_targets
 	)
 	_set_action_label_text("Click a Devour target.")
 	update_ui()

@@ -41,6 +41,10 @@ var pending_click_selection_source: Card = null
 var pending_click_selection_validator: Callable = Callable()
 var pending_click_selection_confirm: Callable = Callable()
 var pending_click_selection_cancel: Callable = Callable()
+# Non-optional prompt selections (no "may" wording) cannot be cancelled; the
+# player must pick a valid target.
+var pending_click_selection_allows_cancel: bool = true
+var pending_click_selection_valid_targets: Array = []
 
 # Hand card play state
 var pending_paid_hand_card: Card = null
@@ -201,13 +205,17 @@ func start_click_selection(
 	source: Card,
 	validator: Callable,
 	confirm: Callable,
-	cancel: Callable
+	cancel: Callable,
+	allows_cancel: bool = true,
+	valid_targets: Array = []
 ) -> void:
 	pending_click_selection_name = selection_name
 	pending_click_selection_source = source
 	pending_click_selection_validator = validator
 	pending_click_selection_confirm = confirm
 	pending_click_selection_cancel = cancel
+	pending_click_selection_allows_cancel = allows_cancel
+	pending_click_selection_valid_targets = valid_targets.duplicate()
 	targeting_started.emit(source, selection_name)
 
 func _clear_targeting_state() -> void:
@@ -216,9 +224,14 @@ func _clear_targeting_state() -> void:
 	pending_click_selection_validator = Callable()
 	pending_click_selection_confirm = Callable()
 	pending_click_selection_cancel = Callable()
+	pending_click_selection_allows_cancel = true
+	pending_click_selection_valid_targets = []
 	targeting_ended.emit()
 
-func cancel_targeting() -> void:
+func cancel_targeting() -> bool:
+	if pending_click_selection_confirm.is_valid() and not pending_click_selection_allows_cancel:
+		move_failed.emit("%s targeting is not optional and cannot be cancelled." % pending_click_selection_name)
+		return false
 	var click_cancel_callback := pending_click_selection_cancel
 	_clear_targeting_state()
 	
@@ -239,6 +252,16 @@ func cancel_targeting() -> void:
 	awaiting_anointing_target = false
 	anointing_source = null
 	
+	if click_cancel_callback.is_valid():
+		click_cancel_callback.call()
+	return true
+
+func resolve_mandatory_selection_without_target() -> void:
+	# Timeout fallback for non-optional prompt selections whose valid targets
+	# have all disappeared: clear the selection and submit the empty-target
+	# resolution (the authoritative handlers fizzle or auto-pick safely).
+	var click_cancel_callback := pending_click_selection_cancel
+	_clear_targeting_state()
 	if click_cancel_callback.is_valid():
 		click_cancel_callback.call()
 
@@ -5738,10 +5761,13 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var valid_targets := sage.get_valid_targets(game_manager)
 			var target_uid: String = command.get("target_uid", "")
 			if target_uid == "":
-				var feedback := "%s found no opposing powers or God abilities to silence." % sage.card_name if valid_targets.is_empty() else sage.card_name + " impact fizzles."
-				game_manager.note_player_feedback(feedback)
-				move_validated.emit(command)
-				return true
+				if valid_targets.is_empty():
+					game_manager.note_player_feedback("%s found no opposing powers or God abilities to silence." % sage.card_name)
+					move_validated.emit(command)
+					return true
+				# Silence Divine is mandatory: a missing choice resolves with the first valid target.
+				target_uid = str(valid_targets[0].uid).strip_edges()
+				command["target_uid"] = target_uid
 			var target := sage.get_silence_target_by_uid(game_manager, target_uid)
 			if target == null:
 				if _resolving_priority_choice_command:
@@ -5765,10 +5791,13 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var valid_targets := sage.get_valid_targets(game_manager)
 			var target_uid: String = command.get("target_uid", "")
 			if target_uid == "":
-				var feedback := "%s found no Mer Sage to bless." % sage.card_name if valid_targets.is_empty() else sage.card_name + " impact fizzles."
-				game_manager.note_player_feedback(feedback)
-				move_validated.emit(command)
-				return true
+				if valid_targets.is_empty():
+					game_manager.note_player_feedback("%s found no Mer Sage to bless." % sage.card_name)
+					move_validated.emit(command)
+					return true
+				# Good Fortune is mandatory: a missing choice resolves with the first valid target.
+				target_uid = str(valid_targets[0].uid).strip_edges()
+				command["target_uid"] = target_uid
 			var target := game_manager.get_card_by_uid(target_uid)
 			if not _is_card_in_targets_by_uid(target, valid_targets):
 				if _resolving_priority_choice_command:
@@ -5880,15 +5909,19 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var valid_targets := lailoken.get_valid_targets(game_manager)
 			var target_uid: String = command.get("target_uid", "")
 			if target_uid == "":
-				var feedback := "%s found no prepared magical cards to drain." % lailoken.card_name if valid_targets.is_empty() else lailoken.card_name + " reveal fizzles."
-				game_manager.note_player_feedback(feedback)
-				if pending_action != null:
-					pending_action.resolution_text = feedback
-					last_resolution_text = feedback
-					_complete_deferred_authoritative_action(pending_action, "lailoken_reveal_choice")
-				_resume_combat_reveal_after_source_choice(lailoken)
-				move_validated.emit(command)
-				return true
+				if valid_targets.is_empty():
+					var feedback := "%s found no prepared magical cards to drain." % lailoken.card_name
+					game_manager.note_player_feedback(feedback)
+					if pending_action != null:
+						pending_action.resolution_text = feedback
+						last_resolution_text = feedback
+						_complete_deferred_authoritative_action(pending_action, "lailoken_reveal_choice")
+					_resume_combat_reveal_after_source_choice(lailoken)
+					move_validated.emit(command)
+					return true
+				# Magic Drain is mandatory: a missing choice resolves with the first valid target.
+				target_uid = str(valid_targets[0].uid).strip_edges()
+				command["target_uid"] = target_uid
 			var target := game_manager.get_card_by_uid(target_uid)
 			if not _is_card_in_targets_by_uid(target, valid_targets):
 				if _resolving_priority_choice_command:
@@ -5931,16 +5964,19 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var valid_targets: Array = priest.get_valid_targets(game_manager)
 			var target_uid: String = command.get("target_uid", "")
 			if target_uid == "":
-				var no_target_feedback: String = "%s found no creatures to drown." % priest.card_name if priest is Grindylow else "%s found no creatures to break." % priest.card_name
-				var feedback: String = no_target_feedback if valid_targets.is_empty() else priest.card_name + " reveal fizzles."
-				game_manager.note_player_feedback(feedback)
-				if pending_action != null:
-					pending_action.resolution_text = feedback
-					last_resolution_text = feedback
-					_complete_deferred_authoritative_action(pending_action, "masmassu_priest_reveal_choice")
-				_resume_combat_reveal_after_source_choice(priest)
-				move_validated.emit(command)
-				return true
+				if valid_targets.is_empty():
+					var no_target_feedback: String = "%s found no creatures to drown." % priest.card_name if priest is Grindylow else "%s found no creatures to break." % priest.card_name
+					game_manager.note_player_feedback(no_target_feedback)
+					if pending_action != null:
+						pending_action.resolution_text = no_target_feedback
+						last_resolution_text = no_target_feedback
+						_complete_deferred_authoritative_action(pending_action, "masmassu_priest_reveal_choice")
+					_resume_combat_reveal_after_source_choice(priest)
+					move_validated.emit(command)
+					return true
+				# Dalkhu Break / Drown Below is mandatory: a missing choice resolves with the first valid target.
+				target_uid = str(valid_targets[0].uid).strip_edges()
+				command["target_uid"] = target_uid
 			var target := game_manager.get_card_by_uid(target_uid)
 			if not _is_card_in_targets_by_uid(target, valid_targets):
 				if _resolving_priority_choice_command:
@@ -6056,9 +6092,13 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var valid_targets := fenrir.get_valid_devour_targets(game_manager)
 			var target_uid: String = command.get("target_uid", "")
 			if target_uid == "":
-				_complete_deferred_prompt_action_or_note("fenrir_devour_choice", fenrir, fenrir.card_name + " impact fizzles.")
-				move_validated.emit(command)
-				return true
+				if valid_targets.is_empty():
+					_complete_deferred_prompt_action_or_note("fenrir_devour_choice", fenrir, fenrir.card_name + " impact fizzles.")
+					move_validated.emit(command)
+					return true
+				# Devour is mandatory: a missing choice resolves with the first valid target.
+				target_uid = str(valid_targets[0].uid).strip_edges()
+				command["target_uid"] = target_uid
 			var target := game_manager.get_card_by_uid(target_uid)
 			if not _is_card_in_targets_by_uid(target, valid_targets):
 				if _resolving_priority_choice_command:
