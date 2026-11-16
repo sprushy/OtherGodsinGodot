@@ -2580,6 +2580,17 @@ func _add_board_card_custom_ability_badge(overlay: Control, card: Card) -> void:
 		card_uid
 	)
 
+func _has_pending_aphrodite_badge_offer(card: Card) -> bool:
+	if card == null or not (card is AphroditeAreia):
+		return false
+	var scene_root := _get_targeting_scene_root()
+	if scene_root == null:
+		return false
+	var offer_uid := str(scene_root.get("_pending_aphrodite_prompt_source_uid"))
+	if offer_uid.is_empty():
+		return false
+	return BoardZoneUI.get_action_point_card_uid(card) == offer_uid
+
 func _add_god_custom_ability_badge(overlay: Control, card: Card) -> void:
 	if overlay == null or card == null or not card.is_god:
 		return
@@ -2601,7 +2612,9 @@ func _add_god_custom_ability_badge(overlay: Control, card: Card) -> void:
 			and game_manager != null \
 			and card.has_method("_can_use_tactical_break") \
 			and bool(card.call("_can_use_tactical_break", game_manager))
-	if not _should_show_ability_badge_control(card, badge_ready, clickable):
+	if _has_pending_aphrodite_badge_offer(card):
+		badge_ready = true
+	elif not _should_show_ability_badge_control(card, badge_ready, clickable):
 		return
 	var hover_text := _get_creature_ability_badge_hover_text(card)
 	var badge_top := _get_badge_row_top() + 26.0 + GOD_ABILITY_BADGE_TOP_OFFSET

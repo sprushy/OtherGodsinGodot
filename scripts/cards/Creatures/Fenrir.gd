@@ -41,6 +41,21 @@ func can_use_hand_ability(game_manager: GameManager) -> bool:
 		return false
 	return not get_valid_wolf_master_summons_after_shuffle(game_manager).is_empty()
 
+func get_hand_ability_unavailable_reason(game_manager: GameManager) -> String:
+	if game_manager == null or card_owner == null:
+		return "No active game."
+	if current_zone != card_owner.hand_zone:
+		return card_name + " must be in your hand."
+	if card_owner != game_manager.current_player:
+		return "Wait for your turn."
+	if card_owner.has_summoned_this_turn:
+		return "You have already used your normal summon this turn."
+	if _get_open_summon_zones().is_empty():
+		return "No empty friendly zone available."
+	if get_valid_wolf_master_summons_after_shuffle(game_manager).is_empty():
+		return "No payable Lupine in your deck."
+	return ""
+
 func perform_wolf_master_shuffle() -> bool:
 	if card_owner == null:
 		return false

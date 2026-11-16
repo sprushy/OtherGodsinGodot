@@ -513,14 +513,24 @@ func _score_priority_card(card: Card, action: CardAction, danger: int) -> Dictio
 			if score <= CardStrategy.BAD:
 				score = -CardStrategy.mana_penalty(self, CardStrategy.activation_cost(self, card))
 				for victim: Card in removed:
-					score += CardStrategy.value(self, victim) if victim.get_controller() == opponent else -CardStrategy.value(self, victim)
+					score += CardStrategy.value(self, victim) if _get_card_loss_owner(victim) == opponent else -CardStrategy.value(self, victim)
 			if card is E2Abzu:
 				score -= E2Abzu.VOID_AND_RETURN_COST * _mana_rate()
 			if action.type == CardAction.Type.ATTACK and CardStrategy.combat_visible(self, action):
 				var both_attackers_removed := action.attacker in removed and (action.united_front_partner == null or action.united_front_partner in removed)
 				if both_attackers_removed or _get_attack_defender_card(action) in removed:
 					var combat_score := _score_attack_economy(_estimate_attack_economy(action, null, 0, 0))
-					score = maxi(score, -combat_score - ECON_CARD_VALUE)
+					var cancel_score := -combat_score - ECON_CARD_VALUE \
+						- CardStrategy.mana_penalty(self, CardStrategy.activation_cost(self, card))
+					var removed_combatant: Card = action.attacker if both_attackers_removed else _get_attack_defender_card(action)
+					if removed_combatant != null and _get_card_loss_owner(removed_combatant) == bot_player:
+						# Cancelling a compelled attack (a Foolish Optimism-style
+						# forced combat) by destroying our own combatant still
+						# costs that creature: the casualty is paid either way,
+						# so only the rest of the combat is avoided. Compare
+						# complete lines instead of crediting the full combat.
+						cancel_score -= CardStrategy.value(self, removed_combatant)
+					score = maxi(score, cancel_score)
 			score += _follower_safety_gain(danger, {"removed": removed})
 		elif (card is Dromi or card is Gleipnir) and target != null and score > CardStrategy.BAD \
 				and CardStrategy.adds_attack_lock_next_turn(self, target):
@@ -1352,13 +1362,14 @@ func _should_activate_prepared_mead_for_enki() -> bool:
 func _plan_creature_summon(danger: int = -1, attacks: Array[Dictionary] = [], baseline: Dictionary = {}, removed_by_setup: Array = [], setup_cost: int = 0, setup: Dictionary = {}) -> Dictionary:
 	if game_manager == null or opponent == null:
 		return {}
-	var zone := _get_first_open_summon_zone(bot_player)
-	if zone == null:
+	var zones := _get_open_summon_lane_candidates(bot_player)
+	if zones.is_empty():
 		return {}
-	var zones: Array[Zone] = [zone]
-	var reserve := _get_first_open_reserve_zone(bot_player)
-	if reserve != null and reserve != zone:
-		zones.append(reserve)
+	var frontline_open := false
+	for lane in zones:
+		if lane in bot_player.frontline_zones:
+			frontline_open = true
+			break
 	var best := {}
 	var best_score := 0
 	var best_attack_setup := {}
@@ -1379,7 +1390,12 @@ func _plan_creature_summon(danger: int = -1, attacks: Array[Dictionary] = [], ba
 			var score := _score_creature_play_in_zone(creature, summon_zone, available_mana, false)
 			if score <= -1000000:
 				continue
-			if summon_zone in bot_player.reserve_zones and zones[0] in bot_player.frontline_zones \
+			# Lateral lane alignment: friendly gear that only this lane brings
+			# into pickup reach. Attacks and interception reach are independent
+			# of the column in this engine, so row-level value is scored below
+			# and only the pickup-reach difference separates sibling lanes.
+			score += _score_move_toward_equipment(creature, summon_zone)
+			if summon_zone in bot_player.reserve_zones and frontline_open \
 					and danger < bot_player.followers and not _is_dangerously_low_on_followers():
 				# The frontline slot is open, so hiding this creature on the
 				# reserve line is a real choice. Charge the lost attack
@@ -1764,14 +1780,14 @@ func _estimate_defensive_summon_value(card: Card, zone: Zone, stealth: bool = fa
 			continue
 		if game_manager.is_followers_attack_blocked_by_active_structure(attacker, bot_player, []):
 			continue
-		var projected_speed := attacker.get_effective_speed()
+		var projected_speed := attacker.get_effective_speed() + _opponent_hermes_speed_gain(attacker)
 		var partner := match_manager._get_declared_attack_partner(attacker)
 		if partner in removed:
 			partner = null
 		if partner != null:
 			if not CardStrategy.visible(self, partner):
 				continue
-			projected_speed = mini(projected_speed, partner.get_effective_speed())
+			projected_speed = mini(projected_speed, partner.get_effective_speed() + _opponent_hermes_speed_gain(partner))
 		var speed_delta := -1 if stealth and not card.is_stealth else 0
 		if not match_manager._can_intercept(card, attacker, bot_player, card, speed_delta, projected_speed, zone, Card.CreatureMode.DEFENSIVE):
 			continue
@@ -4174,7 +4190,8 @@ func _score_attack_value_from_zone(card: Card, zone: Zone) -> int:
 	var best := 0
 	for target in _get_board_creatures(opponent):
 		best = maxi(best, _score_standard_attack_plan(preview, target))
-	if _can_attack_followers_safely(preview):
+	if _can_attack_followers_safely(preview) \
+			and not _known_prepared_response_punishes_attack(preview, opponent):
 		best = maxi(best, _score_followers_attack(preview))
 	return maxi(best, 0)
 
@@ -4278,6 +4295,25 @@ func _zone_option(zone: Zone) -> Dictionary:
 		"zone_type": zone.zone_type,
 		"zone_index": zone.zone_index,
 	}
+
+# True when a visible prepared enemy response would fire against declaring
+# this attack (The Inferno / Void Shield / Smite, prepared or revealed in
+# hand). The replies-aware combat planner prices these answers; the simple
+# fallback attack paths consult this guard so execution can never contradict
+# the planner's refusal while the board is unchanged.
+func _known_prepared_response_punishes_attack(attacker: Card, target) -> bool:
+	if attacker == null or opponent == null or game_manager == null:
+		return false
+	var action := CardAction.new()
+	action.type = CardAction.Type.ATTACK
+	action.source_player = bot_player
+	action.attacker = attacker
+	action.target = target
+	action.interceptor = target if target is Card else null
+	for response in _get_known_attack_response_cards(action):
+		if not _estimate_known_attack_response(response, action).is_empty():
+			return true
+	return false
 
 func _try_attack() -> bool:
 	var attackers := _get_attack_ready_creatures()
@@ -4527,7 +4563,7 @@ func _should_summon_creature_stealthily(card: Card, zone: Zone, mode: Card.Creat
 		if enemy == null or not CardStrategy.visible(self, enemy) or enemy.is_sleeping \
 				or enemy.has_status_effect("cannot_attack"):
 			continue
-		var enemy_speed := enemy.get_effective_speed()
+		var enemy_speed := enemy.get_effective_speed() + _opponent_hermes_speed_gain(enemy)
 		if enemy_speed <= stealth_speed or enemy_speed > face_up_speed:
 			continue
 		if _can_attack_followers_safely(enemy) or _has_attackable_friendly_target(enemy):
@@ -4712,6 +4748,8 @@ func _get_best_askelladen_target_for(askelladen: Askelladen, opposing_creatures:
 	for creature in opposing_creatures:
 		if not _can_attack_creature(askelladen, creature):
 			continue
+		if _known_prepared_response_punishes_attack(askelladen, creature):
+			continue
 		if not _can_askelladen_retreat(askelladen, creature):
 			continue
 		var score := _score_askelladen_bounce_target(creature)
@@ -4761,6 +4799,8 @@ func _get_best_supported_attack(attackers: Array[Card], opposing_creatures: Arra
 			if CardStrategy.counterstroke_can_answer(self, defender, attacker, null, true):
 				continue
 			if not match_manager._get_possible_interceptors(attacker, defender).is_empty():
+				continue
+			if _known_prepared_response_punishes_attack(attacker, defender):
 				continue
 			var action := CardAction.new()
 			action.type = CardAction.Type.ATTACK
@@ -4981,35 +5021,31 @@ func _score_standard_attack_plan(attacker: Card, target: Card) -> int:
 		return -1000000
 	var partner := match_manager._get_declared_attack_partner(attacker)
 	var attack_cost := game_manager.get_creature_action_mana_cost(attacker, "attack") * _mana_rate()
-	var possible_interceptors := match_manager._get_possible_interceptors(attacker, target)
-	if not possible_interceptors.is_empty():
-		# This fallback scorer used to value the declared target as if the attack
-		# could not be intercepted. Score the combat the defender can actually
-		# choose instead, including the option to let the attack through.
-		for candidate in _get_attack_candidates(attacker, partner):
-			if candidate.get("target", null) != target:
-				continue
-			var projected_result := _project_attack(candidate)
-			if projected_result.is_empty():
-				return -1000000
-			var projected_score := _score_attack_economy(projected_result) - attack_cost
-			if projected_score <= 0:
-				return -1000000
-			return projected_score + attacker.get_effective_speed() * 30
+	# Score the combat the defender can actually choose: interceptions plus
+	# known prepared responses (The Inferno / Void Shield / Smite) for every
+	# attack, not only intercepted ones. The replies-aware combat planner
+	# refuses attacks a prepared answer punishes; this fallback scorer must
+	# agree with that verdict instead of valuing the declared target as if
+	# the attack must resolve.
+	var has_interceptors := not match_manager._get_possible_interceptors(attacker, target).is_empty()
+	var projected_score := -1000000
+	for candidate in _get_attack_candidates(attacker, partner):
+		if candidate.get("target", null) != target:
+			continue
+		var projected_result := _project_attack(candidate)
+		if projected_result.is_empty():
+			return -1000000
+		projected_score = _score_attack_economy(projected_result) - attack_cost
+		break
+	if projected_score <= 0:
 		return -1000000
-	if _is_attack_target_tactically_bad(attacker, target):
-		return -1000000
-	if not _would_destroy_target_in_battle(attacker, target):
-		return -1000000
-	var action := CardAction.new()
-	action.type = CardAction.Type.ATTACK
-	action.source_player = bot_player
-	action.attacker = attacker
-	action.target = target
-	action.united_front_partner = partner
-	var result := _estimate_attack_economy(action, null, 0, 0)
-	var score := _score_attack_economy(result) - attack_cost
-	return score + attacker.get_effective_speed() * 30 if score > 0 else -1000000
+	if not has_interceptors:
+		# With nothing able to answer, the fallback still wants a clean kill.
+		if _is_attack_target_tactically_bad(attacker, target):
+			return -1000000
+		if not _would_destroy_target_in_battle(attacker, target):
+			return -1000000
+	return projected_score + attacker.get_effective_speed() * 30
 
 func _can_kill_with_all_attackers(attackers: Array[Card]) -> bool:
 	if opponent == null or game_manager == null or game_manager.has_turn_follower_loss_prevention(opponent):
@@ -5035,6 +5071,8 @@ func _get_best_stealth_attack(attackers: Array[Card], opposing_creatures: Array[
 		for attacker in attackers:
 			if not _can_attack_creature(attacker, target):
 				continue
+			if _known_prepared_response_punishes_attack(attacker, target):
+				continue
 			if not _is_attack_safe_from_interceptors(attacker, target):
 				continue
 			if best_attacker == null or _is_board_creature_better(attacker, best_attacker):
@@ -5051,6 +5089,8 @@ func _get_best_safe_followers_attack(attackers: Array[Card]) -> Dictionary:
 	var best_score := -1000000
 	for attacker in attackers:
 		if attacker == null or not _can_attack_followers_safely(attacker):
+			continue
+		if _known_prepared_response_punishes_attack(attacker, opponent):
 			continue
 		var score := _score_followers_attack(attacker)
 		if best_attacker == null or score > best_score:
@@ -5724,6 +5764,43 @@ func _get_first_open_summon_zone(player: Player) -> Zone:
 	if frontline_zone != null:
 		return frontline_zone
 	return _get_central_open_zone(player.reserve_zones)
+
+# Summon lane candidates for the placement pass: the most central open
+# frontline lanes first, then reserve lanes. Column choice only changes
+# equipment pickup reach in this engine (attacks and interception reach are
+# lane-independent), so a bounded center-out sample covers the meaningful
+# placements while keeping the central bias as the tiebreaker.
+func _get_open_summon_lane_candidates(player: Player, max_per_row: int = 3) -> Array[Zone]:
+	var candidates: Array[Zone] = []
+	if player == null:
+		return candidates
+	for rows in [player.frontline_zones, player.reserve_zones]:
+		var taken := 0
+		for zone in _get_center_out_open_zones(rows):
+			candidates.append(zone)
+			taken += 1
+			if taken >= max_per_row:
+				break
+	return candidates
+
+func _get_center_out_open_zones(zones: Array[Zone]) -> Array[Zone]:
+	var center := float(zones.size() - 1) / 2.0
+	var open_indexes: Array[int] = []
+	for index in range(zones.size()):
+		var zone := zones[index]
+		if zone != null and zone.cards.is_empty():
+			open_indexes.append(index)
+	open_indexes.sort_custom(func(a: int, b: int) -> bool:
+		var distance_a := absf(float(a) - center)
+		var distance_b := absf(float(b) - center)
+		if distance_a != distance_b:
+			return distance_a < distance_b
+		return a < b
+	)
+	var ordered: Array[Zone] = []
+	for index in open_indexes:
+		ordered.append(zones[index])
+	return ordered
 
 func _get_first_open_reserve_zone(player: Player) -> Zone:
 	if player == null:
@@ -6463,11 +6540,23 @@ func _add_combat_casualty(result: Dictionary, killer: Card, victim: Card) -> voi
 		var enslave_risk := _opponent_aphrodite_enslavement_risk(victim)
 		if enslave_risk > 0:
 			result["enslavement_risk"] = int(result.get("enslavement_risk", 0)) + enslave_risk
+		# Losing a frontline body can also hand Guan Yu's Tactical Break clock
+		# the frontline lead it feeds on.
+		var counter_risk := _opponent_guanyu_counter_risk(victim)
+		if counter_risk > 0:
+			result["guanyu_counter_risk"] = int(result.get("guanyu_counter_risk", 0)) + counter_risk
 	if killer.get_controller() == bot_player and victim is CreatureCard and not victim.is_petrified() \
 			and not killer.abilities_suppressed() and not game_manager._should_class_rend(killer, victim):
 		var replacement: Zone = victim.get_self_graveyard_replacement_zone(game_manager, true, true, false) if victim is BaseCard else null
 		if replacement == null or replacement == victim.card_owner.graveyard_zone:
 			result["bot_slayer"] = killer
+	if killer.get_controller() == bot_player and victim.get_controller() == opponent \
+			and victim.card_type == Card.CardType.CREATURE and not victim.is_petrified():
+		# A kill that evens the frontline count denies their next Tactical
+		# Break counter for a full upkeep.
+		var counter_break := _opponent_guanyu_counter_break_bonus(victim)
+		if counter_break > 0:
+			result["guanyu_counter_break"] = int(result.get("guanyu_counter_break", 0)) + counter_break
 
 func _forecast_again_walker_return_cost(walker: AgainWalker, killer: Card) -> int:
 	var owner := walker.card_owner
@@ -6528,10 +6617,83 @@ func _opponent_aphrodite_enslavement_risk(dying_victim: Card) -> int:
 	# She still has to reach her turn, pay, and find the window open.
 	return best / 4
 
+# Tactical Break value of a single tactic counter: every TACTIC_COUNTER_COST
+# counters destroy one board card, so one counter is a quarter of the best
+# removal target the enemy god could name.
+func _opponent_guanyu_counter_value() -> int:
+	var god := _find_opponent_god()
+	if not (god is GuanYu) or god.is_muted or not CardStrategy.visible(self, god):
+		return 0
+	var best := 0
+	for creature in _get_board_creatures(bot_player):
+		if CardStrategy.visible(self, creature) and not creature.is_face_down:
+			best = maxi(best, _get_card_economic_value(creature))
+	if best <= 0:
+		return 0
+	return best / GuanYu.TACTIC_COUNTER_COST
+
+func _guanyu_frontline_count(player: Player) -> int:
+	if player == null:
+		return 0
+	var count := 0
+	for zone in player.frontline_zones:
+		for card in zone.cards:
+			if card != null and card.card_type == Card.CardType.CREATURE:
+				count += 1
+	return count
+
+# Killing an enemy creature can deny their next Tactical Break counter when
+# the kill evens the frontline count: the clock stops for a full upkeep.
+func _opponent_guanyu_counter_break_bonus(victim: Card) -> int:
+	var counter_value := _opponent_guanyu_counter_value()
+	if counter_value <= 0 or victim == null:
+		return 0
+	var their_count := _guanyu_frontline_count(opponent)
+	if victim.current_zone != null and victim.current_zone.zone_type == Zone.ZoneType.FRONTLINE:
+		their_count -= 1
+	if their_count > _guanyu_frontline_count(bot_player):
+		return 0
+	return counter_value / 2
+
+# Losing one of our frontline creatures to combat can hand them the frontline
+# lead that feeds the Tactical Break clock. Charge part of the next counter.
+func _opponent_guanyu_counter_risk(dying_victim: Card) -> int:
+	var counter_value := _opponent_guanyu_counter_value()
+	if counter_value <= 0 or dying_victim == null \
+			or dying_victim.current_zone == null \
+			or dying_victim.current_zone.zone_type != Zone.ZoneType.FRONTLINE:
+		return 0
+	var our_count := _guanyu_frontline_count(bot_player) - 1
+	if _guanyu_frontline_count(opponent) <= our_count:
+		return 0
+	return counter_value / 3
+
+# Deceptive Speed potential: their Hermes can still give this face-up
+# creature +3 speed this turn (once per turn, 2 mana). Forecasts that
+# compare speeds treat enemy bodies as potentially faster while the god is
+# live, so intercept projections stop running on best-case assumptions.
+func _opponent_hermes_speed_gain(creature: Card) -> int:
+	if creature == null or opponent == null or game_manager == null:
+		return 0
+	if creature.get_controller() != opponent or not creature.is_creature_card() \
+			or creature.is_face_down or creature.is_stealth:
+		return 0
+	var god := _find_opponent_god()
+	if not (god is Hermes) or god.is_muted or not CardStrategy.visible(self, god):
+		return 0
+	if god._last_used_turn == game_manager.turn_number or opponent.mana < Hermes.ACTIVATION_COST:
+		return 0
+	for buff in creature.active_buffs:
+		if buff.get("effect_type") == Hermes.BUFF_EFFECT_TYPE:
+			return 0
+	return Hermes.SPEED_BONUS
+
 func _score_attack_economy(result: Dictionary) -> int:
 	var score := int(result.get("opponent_cards_lost", 0)) - int(result.get("bot_cards_lost", 0))
 	score += int(result.get("scavenge_value", 0)) + int(result.get("deck_reward", 0))
 	score -= int(result.get("enslavement_risk", 0))
+	score -= int(result.get("guanyu_counter_risk", 0))
+	score += int(result.get("guanyu_counter_break", 0))
 	score += int(result.get("reveal_bonus", 0))
 	score += _score_follower_loss(opponent, int(result.get("opponent_followers_lost", 0)))
 	score -= _score_follower_loss(bot_player, int(result.get("bot_followers_lost", 0)))
@@ -6644,10 +6806,22 @@ func _add_destroyed_card_to_economy(result: Dictionary, card: Card, value_overri
 	var value := value_override
 	if value < 0:
 		value = _get_card_economic_value(card) if CardStrategy.visible(self, card) else ECON_CARD_VALUE
-	if card.get_controller() == bot_player:
+	var loss_owner := _get_card_loss_owner(card)
+	if loss_owner == bot_player:
 		result["bot_cards_lost"] = int(result.get("bot_cards_lost", 0)) + value
-	elif card.get_controller() == opponent:
+	elif loss_owner == opponent:
 		result["opponent_cards_lost"] = int(result.get("opponent_cards_lost", 0)) + value
+
+# The player that really loses when this card leaves play. Control effects
+# (Siren's Song steals, enslavement) move the body between boards, but
+# destruction still empties the owner's board for good, so a temporarily
+# borrowed creature dying is the owner's loss, never the borrower's.
+func _get_card_loss_owner(card: Card) -> Player:
+	if card == null:
+		return null
+	if card.get_controller() != card.card_owner:
+		return card.card_owner
+	return card.get_controller()
 
 func _add_follower_loss_to_economy(result: Dictionary, player: Player, amount: int, source: Card = null) -> void:
 	if player == null or amount <= 0:

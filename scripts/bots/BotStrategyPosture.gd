@@ -47,10 +47,19 @@ static func evaluate(bot) -> Dictionary:
 	var result := neutral()
 	var bot_push := _sustained_push(bot)
 	var opponent_push: int = bot._forecast_incoming_follower_loss()
+	# Radiant Wisdom-style conversion (Baldr Active): follower damage becomes
+	# follower gain, so each point of a converter's push also heals its owner
+	# every turn and doubles the race swing.
+	var bot_conversion_gain: int = bot_push if _has_live_converter(bot, bot.bot_player) else 0
+	var opponent_conversion_gain: int = opponent_push if _has_live_converter(bot, bot.opponent) else 0
+	# Net clocks: recurring upkeep heals (Baldr's Blessed One) slow a clock
+	# that does not out-damage them; a faster clock ignores the heal.
+	var bot_net_push: int = bot_push - _upkeep_follower_gain(bot, bot.opponent) - opponent_conversion_gain
+	var opponent_net_push: int = opponent_push - _upkeep_follower_gain(bot, bot.bot_player) - bot_conversion_gain
 	result["bot_push"] = bot_push
 	result["opponent_push"] = opponent_push
-	result["bot_clock"] = ceili(float(bot.opponent.followers) / float(maxi(1, bot_push))) if bot_push > 0 else NO_CLOCK
-	result["opponent_clock"] = ceili(float(bot.bot_player.followers) / float(maxi(1, opponent_push))) if opponent_push > 0 else NO_CLOCK
+	result["bot_clock"] = ceili(float(bot.opponent.followers) / float(maxi(1, bot_net_push))) if bot_net_push > 0 else NO_CLOCK
+	result["opponent_clock"] = ceili(float(bot.bot_player.followers) / float(maxi(1, opponent_net_push))) if opponent_net_push > 0 else NO_CLOCK
 
 	var posture := "balanced"
 	if bot_push <= 0 and opponent_push <= 0 and bot._locked_board_state():
@@ -65,7 +74,7 @@ static func evaluate(bot) -> Dictionary:
 		posture = "race"
 	elif int(result["bot_clock"]) + 1 <= int(result["opponent_clock"]):
 		posture = "race"
-	elif opponent_push > 0 and (int(result["opponent_clock"]) < int(result["bot_clock"]) \
+	elif opponent_net_push > 0 and (int(result["opponent_clock"]) < int(result["bot_clock"]) \
 			or opponent_push * 4 >= bot.bot_player.followers):
 		posture = "defend"
 	result["posture"] = posture
@@ -94,6 +103,30 @@ static func _sustained_push(bot) -> int:
 		if bot._can_attack_followers_safely(attacker):
 			guaranteed += damage
 	return maxi(0, maxi(guaranteed, potential / 2) - bot.opponent.guard)
+
+
+# A live Radiant Wisdom-style converter (Baldr Active) turns its owner's
+# follower damage into follower gain: each point of that owner's push also
+# heals them, so the net clock must subtract the owner's own push.
+static func _has_live_converter(bot, player: Player) -> bool:
+	if bot == null or player == null:
+		return false
+	for creature in bot._get_board_creatures(player):
+		if creature.has_method("converts_follower_damage_to_conversion") \
+				and creature.converts_follower_damage_to_conversion():
+			return true
+	return false
+
+
+# Recurring upkeep follower gain from a player's god (Baldr's Blessed One).
+# God zones are public, so this is information the bot is allowed to have.
+static func _upkeep_follower_gain(bot, player: Player) -> int:
+	if bot == null or player == null or player.god_zone == null:
+		return 0
+	for god in player.god_zone.cards:
+		if god is Baldr and not god.is_muted:
+			return Baldr.FOLLOWERS_GAINED_PER_TURN
+	return 0
 
 
 # Upkeeps (of this player's own turns) until fatigue alone reduces their

@@ -105,6 +105,9 @@ func activate_with_data(game_manager: GameManager, offering_card: Card, named_ca
 		return
 
 	var revealed_name := top_card.card_name
+	# The reveal is public knowledge, so shelving it on a wrong guess must keep
+	# the identity known to both players.
+	card_owner.deck_zone.reveal_deck_card(top_card)
 	var guessed_correctly := _guess_matches_top_card(guessed_name, top_card)
 	var feedback := "Runic Knowledge voided %s and revealed %s." % [
 		offering_card.card_name,

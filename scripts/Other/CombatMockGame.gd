@@ -504,6 +504,7 @@ var _pending_advanced_building_techniques_prompt_data: Dictionary = {}
 var _pending_freyja_active_prompt_data: Dictionary = {}
 var _pending_nergal_lion_prompt_data: Dictionary = {}
 var _pending_nusku_well_of_fire_prompt_data: Dictionary = {}
+var _pending_aphrodite_prompt_source_uid: String = ""
 var _awaiting_altar_void_payment: bool = false
 var _altar_pending_power: AltarOfDreams = null
 var _altar_void_targets_chosen: Array[Card] = []
@@ -14334,9 +14335,13 @@ func _refresh_deck_overlay() -> void:
 		_deck_overlay_grid.remove_child(child)
 		child.queue_free()
 	for card in known_cards:
-		if card != null:
-			_deck_overlay_grid.add_child(_make_zone_overlay_card(card, true))
-		else:
+		# Hidden primed/shelved placeholders render face-down, like unknown
+		# deck positions; only publicly known identities show their faces.
+		var show_back := card == null \
+			or (card.is_face_down \
+				and card.current_zone != null \
+				and card.current_zone.zone_type == Zone.ZoneType.DECK)
+		if show_back:
 			var back := TextureRect.new()
 			back.texture = CardBackTexture
 			back.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -14344,6 +14349,8 @@ func _refresh_deck_overlay() -> void:
 			back.custom_minimum_size = Vector2(136, 205)
 			back.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			_deck_overlay_grid.add_child(back)
+		else:
+			_deck_overlay_grid.add_child(_make_zone_overlay_card(card, true))
 
 func _show_card_selection_overlay(
 	title_text: String,
@@ -17164,16 +17171,32 @@ func _on_hand_card_right_clicked(card: Card) -> void:
 			_select_hand_creature_for_placement(card, mode)
 		_add_hand_creature_summon_option(vbox, str(entry[0]), mode, choose_stance, not _is_champions_call_hand_proxy(card))
 
-	if card is Fenrir and (card as Fenrir).can_use_hand_ability(game_manager):
-		for entry in [["Wolf Master in Aggressive Stance", "aggressive"], ["Wolf Master in Defensive Stance", "defensive"], ["Wolf Master in Stealth Mode", "stealth"]]:
-			var wolf_btn := Button.new()
-			wolf_btn.text = entry[0]
-			var wolf_mode: String = entry[1]
-			wolf_btn.pressed.connect(func() -> void:
-				_close_context_menu()
-				_queue_fenrir_wolf_master(card as Fenrir, wolf_mode)
-			)
-			vbox.add_child(wolf_btn)
+	var fenrir_card := card as Fenrir
+	if fenrir_card != null:
+		if fenrir_card.can_use_hand_ability(game_manager):
+			for entry in [["Wolf Master in Aggressive Stance", "aggressive"], ["Wolf Master in Defensive Stance", "defensive"], ["Wolf Master in Stealth Mode", "stealth"]]:
+				var wolf_btn := Button.new()
+				wolf_btn.text = entry[0]
+				var wolf_mode: String = entry[1]
+				wolf_btn.pressed.connect(func() -> void:
+					_close_context_menu()
+					_queue_fenrir_wolf_master(card as Fenrir, wolf_mode)
+				)
+				vbox.add_child(wolf_btn)
+		else:
+			var wolf_reason := fenrir_card.get_hand_ability_unavailable_reason(game_manager)
+			var wolf_unavailable_btn := Button.new()
+			wolf_unavailable_btn.text = "Wolf Master (unavailable)"
+			wolf_unavailable_btn.disabled = true
+			vbox.add_child(wolf_unavailable_btn)
+			if not wolf_reason.is_empty():
+				var wolf_reason_label := Label.new()
+				wolf_reason_label.text = wolf_reason
+				wolf_reason_label.add_theme_font_size_override("font_size", 11)
+				wolf_reason_label.modulate = Color(0.75, 0.75, 0.75)
+				wolf_reason_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+				wolf_reason_label.custom_minimum_size = Vector2(180.0, 0.0)
+				vbox.add_child(wolf_reason_label)
 
 	var cancel := Button.new()
 	cancel.text = "Cancel"
@@ -17656,7 +17679,7 @@ func _on_god_card_pressed(card: Card) -> void:
 		game_input.submit_action({type = "god_ability", god_uid = god_uid})
 		return
 	if card is AphroditeAreia:
-		_show_aphrodite_prompt(card as AphroditeAreia)
+		_begin_aphrodite_badge_activation(card as AphroditeAreia)
 	elif _god_ability_should_use_selection_overlay(card):
 		var targets: Array = card.get_valid_targets(game_manager)
 		if targets.is_empty():
@@ -18570,6 +18593,9 @@ func _try_play_selected_creature_to_zone(zone: Zone) -> void:
 		_summon_champions_call_hand_proxy(selected_card, zone, placement_mode)
 		return
 	if not _can_play_card_for_turn_action(game_manager.current_player, selected_card, zone):
+		if _try_offer_wolf_master_on_failed_play(selected_card, placement_mode):
+			_pending_creature_play_resolver = Callable()
+			return
 		_set_action_label_text(_get_play_card_unavailable_text(selected_card, zone))
 		_pending_creature_play_resolver = Callable()
 		update_ui()
@@ -18604,6 +18630,19 @@ func _try_play_selected_creature_to_zone(zone: Zone) -> void:
 	placement_mode = ""
 	placement_container.visible = false
 	update_ui()
+
+func _try_offer_wolf_master_on_failed_play(card: Card, mode: String) -> bool:
+	if game_manager == null or card == null or not (card is Fenrir):
+		return false
+	if _get_non_priority_action_block_reason() != "":
+		return false
+	var fenrir := card as Fenrir
+	if not fenrir.can_use_hand_ability(game_manager):
+		return false
+	var wolf_mode := mode if mode in ["aggressive", "defensive", "stealth"] else "aggressive"
+	_set_action_label_text(_get_play_card_unavailable_text(card, null) + " Wolf Master instead: choose a Lupine, or cancel.")
+	_queue_fenrir_wolf_master(fenrir, wolf_mode)
+	return true
 
 func _queue_fenrir_wolf_master(card: Fenrir, mode: String) -> void:
 	if card == null or game_manager == null:
@@ -25005,56 +25044,12 @@ func _show_demiurge_prompt(spell) -> void:
 	panel.offset_top = -70
 	panel.offset_bottom = 70
 
-func _show_aphrodite_prompt(god: AphroditeAreia, from_match_prompt: bool = false) -> void:
-	_hide_aphrodite_prompt()
-
-	var panel := PanelContainer.new()
-	panel.name = "AphroditePromptPanel"
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.16, 0.08, 0.12, 0.97)
-	style.border_color = Color(0.92, 0.58, 0.7)
-	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side as Side, 2)
-	panel.add_theme_stylebox_override("panel", style)
-	panel.custom_minimum_size = Vector2(320, 0)
-
-	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 8)
-	panel.add_child(vbox)
-
-	var title := Label.new()
-	title.text = god.card_name
-	title.add_theme_font_size_override("font_size", 14)
-	vbox.add_child(title)
-
-	var info := Label.new()
-	info.text = "Use Violent Delights? Choose an enemy creature to enslave, or decline."
-	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	vbox.add_child(info)
-
-	var buttons := HBoxContainer.new()
-	vbox.add_child(buttons)
-
-	var activate_btn := Button.new()
-	activate_btn.text = "Choose Target"
-	activate_btn.pressed.connect(_on_aphrodite_confirm_pressed.bind(god, from_match_prompt))
-	buttons.add_child(activate_btn)
-
-	var decline_btn := Button.new()
-	decline_btn.text = "Decline"
-	decline_btn.pressed.connect(_on_aphrodite_decline_pressed.bind(god, from_match_prompt))
-	buttons.add_child(decline_btn)
-
-	add_child(panel)
-	_promote_transient_ui(panel)
-	panel.anchor_left = 0.5
-	panel.anchor_right = 0.5
-	panel.anchor_top = 0.5
-	panel.anchor_bottom = 0.5
-	panel.offset_left = -160
-	panel.offset_right = 160
-	panel.offset_top = -60
-	panel.offset_bottom = 60
+func _offer_aphrodite_enslave_badge_prompt(god: AphroditeAreia) -> void:
+	if god == null:
+		return
+	_pending_aphrodite_prompt_source_uid = str(god.uid)
+	_set_action_label_text(god.card_name + " - Violent Delights ready: click the ability badge on your god to choose an enemy creature to enslave.")
+	update_ui()
 
 func _show_absence_mode_prompt(spell: Absence, target: Card) -> void:
 	_hide_absence_mode_prompt()
@@ -26722,11 +26717,22 @@ func _on_absence_cancel_pressed() -> void:
 	_set_action_label_text("Cancelled Absence.")
 	update_ui()
 
-func _hide_aphrodite_prompt() -> void:
-	var panel := get_node_or_null("AphroditePromptPanel")
-	if panel:
-		panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		panel.queue_free()
+func _clear_aphrodite_badge_prompt() -> void:
+	_pending_aphrodite_prompt_source_uid = ""
+
+func _begin_aphrodite_badge_activation(god: AphroditeAreia) -> void:
+	if god == null or game_manager == null:
+		return
+	if not _pending_aphrodite_prompt_source_uid.is_empty() and god.uid != _pending_aphrodite_prompt_source_uid:
+		_pending_aphrodite_prompt_source_uid = ""
+	if not _pending_aphrodite_prompt_source_uid.is_empty():
+		# A serialized post-combat offer is pending and blocks other commands,
+		# so consume it with a confirm first. The validated-move/networked
+		# followup paths then start the target selection.
+		if _submit_prompt_choice_command({"type": "aphrodite_enslave_choice", "source_uid": god.uid, "confirm": true}):
+			_pending_aphrodite_prompt_source_uid = ""
+		return
+	_begin_aphrodite_target_selection(god)
 
 func _begin_aphrodite_target_selection(god: AphroditeAreia) -> void:
 	if god == null or game_manager == null:
@@ -26760,27 +26766,6 @@ func _begin_aphrodite_target_selection(god: AphroditeAreia) -> void:
 	_prompt_card_target_selection(god, targets, choose_target, cancel_target_selection, "Choose a creature for Violent Delights")
 	_set_action_label_text(god.card_name + " - Violent Delights: choose an enemy creature to enslave.")
 	update_ui()
-
-func _on_aphrodite_confirm_pressed(god: AphroditeAreia, from_match_prompt: bool) -> void:
-	if from_match_prompt:
-		if _submit_prompt_choice_command({"type": "aphrodite_enslave_choice", "source_uid": god.uid, "confirm": true}):
-			_hide_aphrodite_prompt()
-			update_ui()
-	else:
-		_hide_aphrodite_prompt()
-		_begin_aphrodite_target_selection(god)
-
-func _on_aphrodite_decline_pressed(god: AphroditeAreia, from_match_prompt: bool) -> void:
-	if from_match_prompt:
-		if _submit_prompt_choice_command({"type": "aphrodite_enslave_choice", "source_uid": god.uid, "confirm": false}):
-			_hide_aphrodite_prompt()
-			update_ui()
-	else:
-		_hide_aphrodite_prompt()
-		awaiting_god_ability_target = false
-		god_ability_source = null
-		_set_action_label_text("Declined Aphrodite Areia.")
-		update_ui()
 
 func _hide_demiurge_prompt() -> void:
 	var panel := get_node_or_null("DemiurgePromptPanel")
@@ -27476,7 +27461,7 @@ func _dismiss_transient_prompts(clear_required_prompts: bool = true) -> void:
 	_hide_breidablik_prompt()
 	_hide_e2_abzu_prompt()
 	_hide_divine_caprice_prompt()
-	_hide_aphrodite_prompt()
+	_clear_aphrodite_badge_prompt()
 	if not preserve_raven_prime_prompts:
 		_hide_blot_sacrifice_prompt()
 	_hide_deucalion_prompt()
@@ -28184,7 +28169,7 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 		"aphrodite_enslave":
 			var god := game_manager.get_card_by_uid(data.get("source_uid", "")) as AphroditeAreia
 			if god != null:
-				_show_aphrodite_prompt(god, true)
+				_offer_aphrodite_enslave_badge_prompt(god)
 		"book_of_life":
 			var spell := game_manager.get_card_by_uid(data.get("source_uid", "")) as BookOfLife
 			if spell != null:
@@ -30355,7 +30340,7 @@ func _apply_ui_interaction(event_data: Dictionary) -> void:
 		"aphrodite_enslave":
 			var god := game_manager.get_card_by_uid(payload.get("source_uid", "")) as AphroditeAreia
 			if god != null:
-				_show_aphrodite_prompt(god, true)
+				_offer_aphrodite_enslave_badge_prompt(god)
 		"book_of_life":
 			var spell := game_manager.get_card_by_uid(payload.get("source_uid", "")) as BookOfLife
 			if spell != null:

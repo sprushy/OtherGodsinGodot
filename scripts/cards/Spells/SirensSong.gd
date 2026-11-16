@@ -17,7 +17,7 @@ func _init() -> void:
 	flavor_text = ""
 	artist = "User provided"
 	art_path = ART_PATH
-	ability_text = "Take control of an opposing creature until end of turn."
+	ability_text = "Take control of an opposing face-up creature until end of turn."
 
 func get_valid_targets(game_manager: GameManager) -> Array[Card]:
 	var valid_targets: Array[Card] = []

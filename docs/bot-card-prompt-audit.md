@@ -91,10 +91,16 @@ heuristics, not a search over future game states.
 | Passive unlocks | Ancient Wisdom, Giant's Disdain, Summoned Sap, Terror, Rally the Troops, Norse Bloodlust, Hunting Tactics, Altar of Dreams, Myrkwood, Kurnugia, Ferocious Defence, Advanced Building Techniques, Feast of Ambrosia and Nectar |
 
 Removal responses account for the combat that would happen without spending
-the response. Mass effects subtract friendly losses and respect visible
+the response. Cancelling a compelled attack (Foolish Optimism) by destroying
+the bot's own attacker is compared as a complete line: the creature is lost
+either way, so only combat losses beyond that casualty pay for the response.
+Mass effects subtract friendly losses and respect visible
 immunities. Conditional wipes do not inspect hidden enemy identities; Fall of
 the Mighty is held when hidden field cards make its strongest-card result
-uncertain. Temporary control/resurrection is discounted. Exorcism counts lost
+uncertain. Temporary control/resurrection is discounted. Combat and removal
+losses from a temporary steal are charged to the card's owner, so a borrowed
+body dying is the owner's loss and destroying it never counts as gaining a
+card. Exorcism counts lost
 outside buffs, and Book of Life discounts silencing known utility creatures.
 
 Automatic-response hexes honor `requires_priority_target_selection()` instead

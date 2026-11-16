@@ -82,7 +82,7 @@ static func visible(bot, card: Card) -> bool:
 	if card == null:
 		return false
 	if card.current_zone != null and card.current_zone.zone_type == Zone.ZoneType.DECK:
-		return card.current_zone.get_deck_placement(card) != Zone.DeckPlacement.UNKNOWN
+		return card.current_zone.is_deck_card_publicly_known(card)
 	if card.get_controller() == bot.bot_player:
 		return true
 	if card.current_zone == bot.opponent.hand_zone:
@@ -293,6 +293,19 @@ static func removal_score(bot, source: Card, target: Card, action: CardAction = 
 			return BAD
 		if destruction and target.card_type == Card.CardType.CREATURE and gm.has_turn_destruction_ward(bot.opponent):
 			return BAD
+	# A Siren's Song-style steal only lends the body: destroying a creature we
+	# own while the opponent borrows it sends OUR card to the graveyard instead
+	# of taking it back at end of turn. Price that destruction as a loss and
+	# keep only the avoided-combat credit. Enslavement is a permanent flip, so
+	# an enslaved body stays a normal removal target.
+	if destruction and target.card_owner == bot.bot_player \
+			and target.get_controller() != target.card_owner and not target.is_enslaved():
+		var borrowed_loss := -value(bot, target)
+		if action != null and action.type == CardAction.Type.ATTACK \
+				and combat_visible(bot, action) \
+				and (action.attacker == target or bot._get_attack_defender_card(action) == target):
+			borrowed_loss -= bot._score_attack_economy(bot._estimate_attack_economy(action, null, 0, 0))
+		return borrowed_loss
 	var score := value(bot, target)
 	score -= _debilitation_discount(bot, target)
 	score -= _own_dromi_drain_loss(bot, target)
@@ -442,6 +455,22 @@ static func _own_dromi_drain_loss(bot, target: Card) -> int:
 	# future drain so a possible later lethal does not outrank one now.
 	var drain_value := mini(CARD_VALUE, bot._score_follower_loss(bot.opponent, Dromi.FOLLOWER_LOSS))
 	return int(bindings.size() * drain_value * 1.5)
+
+# Dromi drains 7 followers at the start of each of its target's turns and
+# stays as long as the target does. The attack lock prices the first two
+# turns; credit the ticking when the target is likely to persist (it is not
+# trading into combat) and when the drain itself closes the game.
+static func _dromi_drain_turns(bot, target: Card) -> int:
+	var turns := 2
+	if target != null and (target.creature_mode == Card.CreatureMode.DEFENSIVE or target.is_stealth):
+		turns += 1
+	if bot.opponent != null:
+		var pool: int = bot.opponent.followers
+		if pool <= 2 * Dromi.FOLLOWER_LOSS:
+			turns += 2
+		elif pool <= 4 * Dromi.FOLLOWER_LOSS:
+			turns += 1
+	return turns
 
 static func _attached_debuff_release_value(bot, source: Card) -> int:
 	if not (source is PermanentHexCard):
@@ -760,7 +789,7 @@ static func target_score(bot, card: Card, target: Card, action: CardAction = nul
 			var target_value := value(bot, target)
 			if card is Dromi:
 				var attack_gain := _disable_gain(bot, target, {"cannot_attack": target_value * 0.75})
-				return attack_gain + bot._score_follower_loss(bot.opponent, 2 * Dromi.FOLLOWER_LOSS)
+				return attack_gain + bot._score_follower_loss(bot.opponent, _dromi_drain_turns(bot, target) * Dromi.FOLLOWER_LOSS)
 			var restrictions := {"cannot_attack": target_value * 0.5, "cannot_intercept": 2500}
 			if not target.ability_text.is_empty():
 				restrictions["activation_locked"] = target_value * 0.15
@@ -809,7 +838,19 @@ static func target_score(bot, card: Card, target: Card, action: CardAction = nul
 		"Absence":
 			if not enemy or not visible(bot, target):
 				return BAD
-			var mute_value := value(bot, target) if target.is_god else 4500 + target.mana_cost * 800
+			var mute_value := 0
+			if target.is_god:
+				mute_value = value(bot, target)
+			else:
+				mute_value = 4500 + target.mana_cost * 800
+				# Prioritize powers that are about to pay off over stored-but-
+				# dormant ones: planned powers fire at a payoff moment the mute
+				# delays, and a target the enemy can already pay for is an
+				# imminent activation instead of a paper threat.
+				if key(target) in PLANNED_POWERS:
+					mute_value += 1500
+				if bot.opponent != null and bot.opponent.mana >= activation_cost(bot, target):
+					mute_value += 1000
 			return mute_gain(bot, target, Absence.MUTE_DURATION, mute_value)
 		"Exorcism":
 			if not own:
@@ -900,13 +941,36 @@ static func combat_gain_for_stolen_creature(bot, target: Card) -> int:
 	if not visible(bot, target) or target.is_sleeping or not target.can_take_major_creature_action():
 		return 0
 	# Temporary control is valuable for its immediate attack and for denying
-	# interception. It is not permanent removal or a newly acquired card.
+	# interception. It is not permanent removal or a newly acquired card, and
+	# the borrowed body's death costs its owner, so every legal attack line is
+	# priced with the same combat estimator the bot uses for its own attacks.
 	var score := 0
 	for defender in bot._get_board_creatures(bot.opponent):
 		if defender == target or not visible(bot, defender):
 			continue
-		if target.get_effective_strength() > defender.get_effective_strength() and defender.creature_mode == Card.CreatureMode.AGGRESSIVE:
-			score = maxi(score, value(bot, defender))
+		if not bot._can_attack_creature(target, defender):
+			continue
+		var action := CardAction.new()
+		action.type = CardAction.Type.ATTACK
+		action.attacker = target
+		action.target = defender
+		var economy: Dictionary = bot._estimate_attack_economy(action, null, 0, 0, 0, false)
+		var line_score: int = bot._score_attack_economy(economy)
+		# Until control actually moves, the estimator charges attack recoil to
+		# the current controller. After the steal the bot pays those followers,
+		# and a recoil that reaches the bot's pool can even lose the game. The
+		# defender-side overflow (the stolen body winning the fight) is already
+		# charged to the opponent and stays there, so only correct lines where
+		# the defender survived.
+		var recoil: int = int(economy.get("opponent_followers_lost", 0))
+		if recoil > 0 and not (defender in economy.get("casualties", [])):
+			line_score += -bot._score_follower_loss(bot.opponent, recoil) \
+				+ bot._score_follower_loss(bot.bot_player, recoil)
+			if bool(economy.get("bot_wins", false)):
+				line_score -= CARD_VALUE * 20
+				if recoil >= bot.bot_player.followers:
+					line_score -= CARD_VALUE * 20
+		score = maxi(score, line_score)
 	if bot._board_creature_count(bot.opponent) == 1:
 		score = maxi(score, bot._score_follower_loss(bot.opponent, target.get_effective_strength()))
 	return score
@@ -1249,6 +1313,17 @@ static func structure_score(bot, structure: Card) -> int:
 		"Watchtower":
 			# Counters arrive from future enemy entries, not existing cards.
 			gain = 6000 if bot._board_creature_count(bot.opponent) < 3 else 3000
+			# Scout reveals pay off when the enemy actually hides bodies: each
+			# face-down or stealthed opposing creature is a threat the tower
+			# can flip for a counter, worth far more against stealth engines
+			# than against boards that play face-up.
+			var hidden_enemies := 0
+			for enemy in bot._get_board_creatures(bot.opponent):
+				if enemy.is_face_down or enemy.is_stealth:
+					hidden_enemies += 1
+			gain += mini(hidden_enemies, 3) * 1500
+			if hidden_enemies == 0 and bot._board_creature_count(bot.opponent) >= 3:
+				gain = 3000
 		"DoorwayToTheVoid":
 			for dead in bot.opponent.graveyard_zone.cards:
 				if dead is CreatureCard:
@@ -1546,4 +1621,13 @@ static func unlock_score(bot, power: PowerCard, unlock_cost: int = -1) -> int:
 				continue
 			gain += value(bot, field_card) * (1 if field_card.get_controller() == bot.opponent else -1)
 		gain += CARD_VALUE * (maxi(0, bot.opponent.hand_zone.cards.size() - Ragnarok.HAND_LIMIT) - maxi(0, bot.bot_player.hand_zone.cards.size() - Ragnarok.HAND_LIMIT))
+		# Posture tilt: forfeiting its attacks is a real cost while the bot's
+		# own clock is winning, while a reset that wipes the board is exactly
+		# the forced action the locked-behind clock wants.
+		if not bot._posture_evaluating and bot.has_method("_strategy_posture"):
+			var posture := str(bot._strategy_posture().get("posture", "balanced"))
+			if posture == "race" and bot.bot_player.followers >= bot.opponent.followers:
+				gain -= CARD_VALUE / 2
+			elif posture == "locked_behind":
+				gain += CARD_VALUE / 2
 	return gain - mana_penalty(bot, unlock_cost)

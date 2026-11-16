@@ -19,7 +19,13 @@ enum DeckPlacement { UNKNOWN, SHELVED, PRIMED, REVEALED }
 @export var zone_index: int = -1
 var cards: Array[Card] = []
 var zone_owner: Player
+# Owner-authoritative knowledge of deck positions. Never treated as public on
+# its own: the deck owner always knows their primed/shelved cards, but opponents
+# only learn a card's identity when it was publicly known entering the deck.
 var _public_deck_placements: Dictionary[Card, DeckPlacement] = {}
+# Cards whose identity opponents legitimately know (they saw the card revealed
+# or played face-up before it was primed/shelved into this deck).
+var _public_identity_cards: Dictionary[Card, bool] = {}
 var known_top_card: Card:
 	get:
 		return get_known_deck_card(0)
@@ -37,18 +43,40 @@ func get_primed_top_card() -> Card:
 	var card := known_top_card
 	return card if get_deck_placement(card) == DeckPlacement.PRIMED else null
 
+func is_deck_identity_public(card: Card) -> bool:
+	return _public_identity_cards.get(card, false)
+
+func set_deck_identity_public(card: Card, value: bool) -> void:
+	if value:
+		_public_identity_cards[card] = true
+	else:
+		_public_identity_cards.erase(card)
+
+## True when a viewer without private access may learn this card's identity:
+## it was explicitly revealed, or it entered the deck while publicly known.
+func is_deck_card_publicly_known(card: Card) -> bool:
+	var placement := get_deck_placement(card)
+	if placement == DeckPlacement.UNKNOWN:
+		return false
+	if placement == DeckPlacement.REVEALED:
+		return true
+	return is_deck_identity_public(card)
+
 func set_deck_placement(card: Card, placement: DeckPlacement) -> void:
 	if placement == DeckPlacement.UNKNOWN:
 		_public_deck_placements.erase(card)
+		_public_identity_cards.erase(card)
 	else:
 		_public_deck_placements[card] = placement
 
 func reveal_deck_card(card: Card) -> void:
-	if card.current_zone == self and get_deck_placement(card) == DeckPlacement.UNKNOWN:
+	if card.current_zone == self:
 		set_deck_placement(card, DeckPlacement.REVEALED)
+		set_deck_identity_public(card, true)
 
 func clear_deck_knowledge() -> void:
 	_public_deck_placements.clear()
+	_public_identity_cards.clear()
 
 func get_unordered_deck_cards() -> Array[Card]:
 	var unordered := cards.duplicate()
@@ -60,21 +88,31 @@ func shuffle_deck() -> void:
 	clear_deck_knowledge()
 	cards.shuffle()
 
-func prime_card(card: Card) -> void:
+func prime_card(card: Card, identity_public = null) -> void:
 	cards.erase(card)
-	add_card(card, DeckPlacement.PRIMED)
+	add_card(card, DeckPlacement.PRIMED, identity_public)
 
-func shelve_deck_card(card: Card) -> void:
+func shelve_deck_card(card: Card, identity_public = null) -> void:
 	cards.erase(card)
-	add_card(card, DeckPlacement.SHELVED)
+	add_card(card, DeckPlacement.SHELVED, identity_public)
 
-func add_card(card: Card, deck_placement: DeckPlacement = DeckPlacement.UNKNOWN) -> void:
+func add_card(card: Card, deck_placement: DeckPlacement = DeckPlacement.UNKNOWN, identity_public = null) -> void:
 	if zone_type == ZoneType.DECK and deck_placement == DeckPlacement.PRIMED:
 		cards.push_front(card)
 	else:
 		cards.append(card)
 	if zone_type == ZoneType.DECK:
+		var preserved := is_deck_identity_public(card)
 		set_deck_placement(card, deck_placement)
+		# Re-placing a card inside the deck keeps any identity the opponents
+		# already learned (e.g. shelving a card that was just revealed), unless
+		# the caller states otherwise.
+		if identity_public is bool:
+			set_deck_identity_public(card, identity_public)
+		elif deck_placement == DeckPlacement.PRIMED or deck_placement == DeckPlacement.SHELVED:
+			set_deck_identity_public(card, preserved)
+		else:
+			set_deck_identity_public(card, false)
 	card.current_zone = self
 	if zone_owner != null and is_in_play_zone() \
 			and (card.is_god or card.has_type("Active God")):
@@ -82,6 +120,7 @@ func add_card(card: Card, deck_placement: DeckPlacement = DeckPlacement.UNKNOWN)
 
 func remove_card(card: Card) -> void:
 	_public_deck_placements.erase(card)
+	_public_identity_cards.erase(card)
 	cards.erase(card)
 	if card.current_zone == self:
 		card.current_zone = null

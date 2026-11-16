@@ -62,6 +62,7 @@ var _gods: Array[GodCard] = []
 var _cards_by_name: Dictionary = {}
 var _prompt_heavy_lookup: Dictionary = {}
 var _safe_non_creature_lookup: Dictionary = {}
+var _restricted_equipment_lookup: Dictionary = {}
 
 func _init() -> void:
 	for prompt_name in PROMPT_HEAVY_CARD_NAMES.keys():
@@ -75,6 +76,7 @@ func _init() -> void:
 		_cards_by_name[str(card.card_name)] = card
 		if card is GodCard:
 			_gods.append(card as GodCard)
+	_build_restricted_equipment_lookup()
 
 func get_ranked_god_names() -> Array[String]:
 	var names: Array[String] = []
@@ -475,7 +477,11 @@ func _has_deckbuilding_requirements(card: Card, cards: Dictionary, god: GodCard)
 	var name := card.card_name
 	match name:
 		"Durinn Secondborn":
-			return _count_card_type(cards, Card.CardType.EQUIPMENT) >= 2
+			return _count_card_type(cards, Card.CardType.EQUIPMENT) >= 3
+		"Circle of Rebirth":
+			return _count_matching_any(cards, ["Animal", "Plant"]) >= 5
+		"Sixth Sage An-Enlilda":
+			return _count_ancient_dwelling_targets(cards) >= 2
 		"Robotic Footsoldier":
 			return _count_other_matching(cards, card, ["Machine"]) >= 2
 		"Isimud":
@@ -515,7 +521,7 @@ func _has_deckbuilding_requirements(card: Card, cards: Dictionary, god: GodCard)
 		"Harii Jarl": return _count_other_matching(cards, card, ["Harii"]) > 0
 		"Harii Shaman": return _count_matching(cards, ["Norse", "Warrior"]) + _count_matching(cards, ["Animal"]) > 0
 		"Gungnir, the Spear of Odin": return _count_matching(cards, ["Norse", "Warrior"]) > 0
-		"Gambanteinn": return _count_matching(cards, ["Mage"]) + _count_matching(cards, ["Shaman"]) > 0
+		"Gambanteinn": return _restricted_equipment_has_bearers(card, cards)
 		"Breidablik": return _count_matching(cards, ["Priest"]) > 0
 		"Tonal Extraction":
 			for name_in_deck in cards:
@@ -533,6 +539,10 @@ func _has_deckbuilding_requirements(card: Card, cards: Dictionary, god: GodCard)
 		"Rally the Troops": return _count_matching(cards, ["Warrior"]) >= 6 and _count_matching(cards, ["Warrior"], 5) > 0
 		"Raven Storm": return _count_matching(cards, ["Norse", "Warrior"]) + _count_matching(cards, ["Lupine"]) > 0
 		"Fifa the Magical Arrow": return _count_matching(cards, ["Warrior"]) > 0
+	# Equipment that restricts which creatures can bear it (e.g. Gambanteinn,
+	# Sharur) is only worth adding with enough legal bearers in the deck.
+	if not _restricted_equipment_has_bearers(card, cards):
+		return false
 	if card.is_power and BotCardStrategyScript.PASSIVE_TYPES.has(BotCardStrategyScript.key(card)) \
 			and name not in ["Rally the Troops", "Norse Bloodlust", "Hunting Tactics", "Myrkwood"]:
 		var matching_creatures := 0
@@ -601,6 +611,60 @@ func _count_other_matching(cards: Dictionary, source: Card, tags: Array, maximum
 		if matches:
 			total += int(cards[name])
 	return total
+
+func _count_matching_any(cards: Dictionary, tags: Array) -> int:
+	var total := 0
+	for name in cards:
+		var candidate: Card = _cards_by_name.get(str(name), null)
+		if candidate == null or candidate.card_type != Card.CardType.CREATURE or candidate.is_god:
+			continue
+		for tag in tags:
+			if candidate.has_type(str(tag)):
+				total += int(cards[name])
+				break
+	return total
+
+# Mirrors SixthSageAnEnlilda's Ancient Dwelling target rule for deck templates.
+func _count_ancient_dwelling_targets(cards: Dictionary) -> int:
+	var total := 0
+	for name in cards:
+		var candidate: Card = _cards_by_name.get(str(name), null)
+		if candidate == null or candidate.card_type != Card.CardType.STRUCTURE or not candidate.has_type("Dwelling"):
+			continue
+		if candidate.has_type("Ancient Structure") or candidate.has_type("Ancient") \
+				or str(candidate.culture).strip_edges() == "Ancient":
+			total += int(cards[name])
+	return total
+
+# Equipment counts as bearer-restricted when it refuses at least one creature
+# that could otherwise receive equipment. Template can_equip_to calls are pure
+# type checks, so this is safe to run once against the catalog at init.
+func _build_restricted_equipment_lookup() -> void:
+	for equipment in _all_cards:
+		if equipment == null or equipment.card_type != Card.CardType.EQUIPMENT:
+			continue
+		for candidate in _all_cards:
+			if candidate == null or candidate.card_type != Card.CardType.CREATURE or candidate.is_god:
+				continue
+			if not candidate.can_receive_equipment():
+				continue
+			if not equipment.can_equip_to(candidate):
+				_restricted_equipment_lookup[equipment.card_name] = true
+				break
+
+func _restricted_equipment_has_bearers(card: Card, cards: Dictionary) -> bool:
+	if card == null or card.card_type != Card.CardType.EQUIPMENT:
+		return true
+	if not _restricted_equipment_lookup.has(card.card_name):
+		return true
+	var bearers := 0
+	for name in cards:
+		var candidate: Card = _cards_by_name.get(str(name), null)
+		if candidate == null or candidate.card_type != Card.CardType.CREATURE or candidate.is_god:
+			continue
+		if card.can_equip_to(candidate):
+			bearers += int(cards[name])
+	return bearers >= 4
 
 func _walk_of_the_sage_has_payoff(cards: Dictionary) -> bool:
 	var has_mage := _count_matching(cards, ["Mage"]) > 0

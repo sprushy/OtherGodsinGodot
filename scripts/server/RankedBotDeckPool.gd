@@ -332,6 +332,12 @@ func _apply_result(result: Dictionary) -> void:
 	var god_name: String = result["god_name"]
 	var list_id: String = result["list_id"]
 	var outcome: String = result["result"]
+	# Losses to human players do not count toward bot evaluation: only self-play
+	# results and wins against players shape records, stars, retirement, and
+	# trials. Records are rebuilt by replaying history, so this applies
+	# retroactively on the next full replay.
+	if outcome == "loss" and not bool(result.get("is_self_play", false)):
+		return
 	var pool: Dictionary = _by_god.get_or_add(god_name, {"lists": [], "challenger": {}, "pending": [], "quarantined_id": ""})
 	var lists: Array = pool["lists"]
 	var challenger: Dictionary = pool["challenger"]

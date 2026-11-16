@@ -12,7 +12,7 @@ func _init() -> void:
 	sacrifice_cost = 0
 	speed = 1
 	resilience = 20
-	strength = 28
+	strength = 27
 	ability_text = "[b]Augury Reading[/b] ([b]Passive[/b]): Every time this card enters combat, your opponent looks at the top three cards of their deck, [b]Primes[/b] one, and [b]Shelves[/b] the others."
 	flavor_text = ""
 	culture = "Ancient"

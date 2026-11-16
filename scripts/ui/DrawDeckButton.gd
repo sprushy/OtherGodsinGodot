@@ -27,6 +27,7 @@ const PEEL_BEND_ANGLE := 1.15
 var _deck_count: int = 0
 var _top_card_name := ""
 var _top_card_art: Texture2D
+var _top_card_hidden: bool = false
 var _hover_amount: float = 0.0
 var _card_protector_enabled: bool = false
 var _draw_available: bool = false
@@ -92,16 +93,25 @@ func _update_tooltip() -> void:
 		tooltip_text = "Draw 1 card\nRight-click to inspect deck (%d cards)" % _deck_count
 	else:
 		tooltip_text = "Inspect deck (%d cards)" % _deck_count
-	if not _top_card_name.is_empty():
+	if _top_card_hidden:
+		tooltip_text += "\nPrimed: face-down card"
+	elif not _top_card_name.is_empty():
 		tooltip_text += "\nPrimed: " + _top_card_name
 
 func set_primed_top_card(card: Card) -> void:
-	var next_name := card.get_display_name_for_control(self) if card != null else ""
-	var next_art := UITextureCacheScript.get_texture(card.art_path) if card != null else null
-	if next_name == _top_card_name and next_art == _top_card_art:
+	# A hidden placeholder (face-down card in a deck zone) means a primed card
+	# is present, but its identity is not public knowledge for this viewer.
+	var hidden := card != null \
+		and card.is_face_down \
+		and card.current_zone != null \
+		and card.current_zone.zone_type == Zone.ZoneType.DECK
+	var next_name := card.get_display_name_for_control(self) if card != null and not hidden else ""
+	var next_art := UITextureCacheScript.get_texture(card.art_path) if card != null and not hidden else null
+	if next_name == _top_card_name and next_art == _top_card_art and hidden == _top_card_hidden:
 		return
 	_top_card_name = next_name
 	_top_card_art = next_art
+	_top_card_hidden = hidden
 	_update_tooltip()
 	queue_redraw()
 

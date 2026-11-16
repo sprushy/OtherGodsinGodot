@@ -502,6 +502,13 @@ func is_hidden_from_viewer(viewer: Player = null) -> bool:
 	var owner_game_manager := card_owner.game_manager if card_owner != null else null
 	if owner_game_manager != null and is_magical_card() and owner_game_manager._has_pending_stack_action_for_card(self):
 		return false
+	if current_zone != null and current_zone.zone_type == Zone.ZoneType.DECK:
+		# Deck order is private. Opponents may know a primed/shelved card
+		# exists, but only learn its identity when it was publicly revealed or
+		# entered the deck from public information.
+		return current_zone.zone_owner != null \
+			and current_zone.zone_owner != viewer \
+			and not current_zone.is_deck_card_publicly_known(self)
 	var controller := get_controller()
 	var publicly_revealed_power := self is PowerCard and (self as PowerCard).is_publicly_revealed
 	var hidden_face_down := (is_face_down or is_prepared) and not publicly_revealed_power
@@ -529,6 +536,8 @@ func get_hidden_log_position_label() -> String:
 		controller = card_owner
 	var owner_prefix := controller.player_name + "'s " if controller != null and controller.player_name != "" else ""
 	match zone.zone_type:
+		Zone.ZoneType.DECK:
+			return owner_prefix + "deck"
 		Zone.ZoneType.FRONTLINE:
 			return owner_prefix + "Front Line position " + str(zone.zone_index + 1)
 		Zone.ZoneType.RESERVE:

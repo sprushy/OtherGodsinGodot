@@ -15,6 +15,19 @@ const LobbyProtocolScript = preload("res://scripts/network/LobbyProtocol.gd")
 const BADGE_SIZE := Vector2i(36, 36)
 const GOLD := Color("f1ce89")
 const MUTED := Color("acb9ce")
+# Mirrors DeckBuilderUI's deck ordering: gods → powers → creatures → equipment
+# → charms → spells → structures → hexes.
+const TYPE_SECTION_NAMES := {
+	0: "— Gods —",
+	1: "— Powers —",
+	2: "— Creatures —",
+	3: "— Equipment —",
+	4: "— Charms —",
+	5: "— Spells —",
+	6: "— Structures —",
+	7: "— Hexes —",
+	8: "— Other —",
+}
 
 var _panel: PanelContainer
 var _refresh_button: Button
@@ -44,6 +57,7 @@ var _search_debounce: Timer
 var _badge_viewports: Dictionary[String, SubViewport] = {}
 var _god_art_paths: Dictionary[String, String] = {}
 var _god_icon_viewports: Dictionary[String, SubViewport] = {}
+var _card_templates_by_name: Dictionary = {}
 
 func _ready() -> void:
 	name = "BotLadderView"
@@ -440,27 +454,107 @@ func show_deck(list_id: String, deck: Dictionary) -> void:
 	var reinforcements: Dictionary = deck["reinforcements"]
 	if not reinforcements.is_empty():
 		_add_card_section("Reinforcements", reinforcements)
-	var slots := TiamatScript.get_slot_card_names_from_setup(deck["special_setup"])
-	var setup_cards := {}
-	for card_name in slots:
-		if not str(card_name).is_empty():
-			setup_cards[card_name] = int(setup_cards.get(card_name, 0)) + 1
-	if not setup_cards.is_empty():
-		_add_card_section("Tiamat's power slots", setup_cards)
+	var god_name := str(deck.get("god_name", "")).strip_edges()
+	if god_name == TiamatScript.TIAMAT_CARD_NAME:
+		_add_brood_slot_section(TiamatScript.get_slot_card_names_from_setup(deck.get("special_setup", {})))
 	_deck_contents.scroll_to_line(0)
 
 func _add_card_section(heading: String, cards: Dictionary) -> void:
 	var names := cards.keys()
-	names.sort()
+	names.sort_custom(_compare_deck_card_names)
 	var count := 0
 	for copies in cards.values():
 		count += int(copies)
 	_deck_contents.push_color(GOLD)
 	_deck_contents.add_text("%s (%d cards)\n" % [heading, count])
 	_deck_contents.pop()
+	var last_section := ""
 	for card_name in names:
+		var section := str(TYPE_SECTION_NAMES.get(_deck_type_order(str(card_name)), "— Other —"))
+		if section != last_section:
+			last_section = section
+			_deck_contents.push_color(MUTED)
+			_deck_contents.add_text("%s\n" % section)
+			_deck_contents.pop()
 		_deck_contents.add_text("%d × %s\n" % [cards[card_name], card_name])
 	_deck_contents.add_text("\n")
+
+func _add_brood_slot_section(slots: Array) -> void:
+	var has_slot_cards := false
+	for slot_cards in slots:
+		if slot_cards is Array and not (slot_cards as Array).is_empty():
+			has_slot_cards = true
+			break
+	if not has_slot_cards:
+		return
+	_deck_contents.push_color(GOLD)
+	_deck_contents.add_text("Tiamat's brood slots\n")
+	_deck_contents.pop()
+	for slot_index in range(slots.size()):
+		var slot_text := "Slot %d: " % (slot_index + 1)
+		var slot_cards: Array = slots[slot_index]
+		if slot_cards.is_empty():
+			slot_text += "empty"
+		else:
+			var slot_counts := {}
+			for card_name in slot_cards:
+				var clean_name := str(card_name).strip_edges()
+				if clean_name.is_empty():
+					continue
+				slot_counts[clean_name] = int(slot_counts.get(clean_name, 0)) + 1
+			var parts := PackedStringArray()
+			for card_name in slot_counts.keys():
+				parts.append("%d × %s" % [slot_counts[card_name], card_name])
+			if parts.is_empty():
+				slot_text += "empty"
+			else:
+				slot_text += ", ".join(parts)
+		_deck_contents.add_text("%s\n" % slot_text)
+	_deck_contents.add_text("\n")
+
+func _compare_deck_card_names(a: String, b: String) -> bool:
+	var order_a := _deck_type_order(a)
+	var order_b := _deck_type_order(b)
+	if order_a != order_b:
+		return order_a < order_b
+	var a_name := str(a).to_lower()
+	var b_name := str(b).to_lower()
+	if a_name == b_name:
+		return a < b
+	return a_name < b_name
+
+func _deck_type_order(card_name: String) -> int:
+	var card := _get_card_template(card_name)
+	if card == null:
+		return 8
+	if card.is_god:
+		return 0
+	if card.is_power:
+		return 1
+	match card.card_type:
+		Card.CardType.CREATURE:
+			return 2
+		Card.CardType.EQUIPMENT:
+			return 3
+		Card.CardType.CHARM:
+			return 4
+		Card.CardType.SPELL:
+			return 5
+		Card.CardType.STRUCTURE:
+			return 6
+		Card.CardType.HEX:
+			return 7
+	return 8
+
+func _get_card_template(card_name: String) -> Card:
+	var clean_name := str(card_name).strip_edges()
+	if clean_name.is_empty():
+		return null
+	if _card_templates_by_name.is_empty():
+		for template: Card in CardCatalogScript.get_cached_card_templates():
+			_card_templates_by_name[str(template.card_name)] = template
+	var template: Card = _card_templates_by_name.get(clean_name, null)
+	return template
 
 func close_deck() -> bool:
 	if _selected_entry.is_empty():

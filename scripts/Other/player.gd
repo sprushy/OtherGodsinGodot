@@ -234,9 +234,10 @@ func move_card(card: Card, to_zone: Zone, deck_placement: Zone.DeckPlacement = Z
 			card.clear_board_leave_state()
 		return
 	
+	var deck_identity_public: Variant = _get_deck_identity_public(card, from_zone, destination_zone, deck_placement)
 	if from_zone:
 		from_zone.remove_card(card)
-	destination_zone.add_card(card, deck_placement)
+	destination_zone.add_card(card, deck_placement, deck_identity_public)
 	if destination_zone.is_in_play_zone():
 		card.reset_board_leave_hooks()
 	card_moved.emit(card, from_zone, destination_zone)
@@ -318,6 +319,45 @@ func draw_card() -> Card:
 		move_card(card, hand_zone)
 		if card.current_zone == hand_zone:
 			return card
+	return null
+
+## Decide whether opponents legitimately know a card's identity when it enters
+## a deck primed or shelved. Cards taken from public information (a face-up
+## board card, or a graveyard/abyss card everyone could see) stay known; cards
+## taken from a hand or an unknown deck position stay hidden.
+func _get_deck_identity_public(card: Card, from_zone: Zone, to_zone: Zone, deck_placement: Zone.DeckPlacement) -> Variant:
+	if to_zone == null or to_zone.zone_type != Zone.ZoneType.DECK:
+		return null
+	if deck_placement != Zone.DeckPlacement.PRIMED and deck_placement != Zone.DeckPlacement.SHELVED:
+		return null
+	if from_zone == null:
+		return false
+	match from_zone.zone_type:
+		Zone.ZoneType.GRAVEYARD, Zone.ZoneType.ABYSS:
+			# Graveyard and abyss contents are public to all players.
+			return true
+		Zone.ZoneType.DECK:
+			# Keep any identity opponents already learned (e.g. Odin revealed
+			# the top card before shelving it).
+			return from_zone.is_deck_card_publicly_known(card)
+		Zone.ZoneType.HAND:
+			return card.is_revealed_in_hand() \
+				or card.is_revealed_to_all() \
+				or (card is PowerCard and (card as PowerCard).is_publicly_revealed)
+		Zone.ZoneType.FRONTLINE, Zone.ZoneType.RESERVE, Zone.ZoneType.POWER_SLOT, Zone.ZoneType.GOD_SLOT:
+			var viewer := _get_opposing_viewer_of(card)
+			return viewer == null or not card.is_hidden_from_viewer(viewer)
+	return false
+
+func _get_opposing_viewer_of(card: Card) -> Player:
+	var owner_game_manager := game_manager
+	if owner_game_manager == null and card != null and card.card_owner != null:
+		owner_game_manager = card.card_owner.game_manager
+	if owner_game_manager == null:
+		return null
+	for player in owner_game_manager.players:
+		if player != null and player != self:
+			return player
 	return null
 
 func discard_card(card: Card) -> void:

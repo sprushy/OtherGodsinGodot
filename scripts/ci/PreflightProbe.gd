@@ -554,13 +554,31 @@ func _check_public_deck_knowledge(failures: PackedStringArray) -> void:
 	var mirror_deck := mirror.players[0].deck_zone
 	for viewer in [0, 1, GameState.SPECTATOR_VIEWER_INDEX]:
 		GameState.apply_to_manager(GameState.serialize(manager, viewer), mirror)
-		if mirror_deck.get_card_count() != 4 or mirror_deck.get_primed_top_card() == null \
-				or mirror_deck.get_primed_top_card().uid != second.uid \
-				or mirror_deck.get_known_deck_card(1) == null or mirror_deck.get_known_deck_card(1).uid != first.uid \
-				or mirror_deck.get_known_deck_card(2) != null \
-				or mirror_deck.get_known_deck_card(3) == null or mirror_deck.get_known_deck_card(3).uid != shelved.uid:
-			failures.append("Public deck cards lost their positions for viewer %d" % viewer)
-			break
+		if viewer == 0:
+			if mirror_deck.get_card_count() != 4 or mirror_deck.get_primed_top_card() == null \
+					or mirror_deck.get_primed_top_card().uid != second.uid \
+					or mirror_deck.get_known_deck_card(1) == null or mirror_deck.get_known_deck_card(1).uid != first.uid \
+					or mirror_deck.get_known_deck_card(2) != null \
+					or mirror_deck.get_known_deck_card(3) == null or mirror_deck.get_known_deck_card(3).uid != shelved.uid:
+				failures.append("The deck owner lost their own primed/shelved positions for viewer %d" % viewer)
+				break
+		else:
+			if mirror_deck.get_card_count() != 4 or mirror_deck.get_known_deck_card(2) != null:
+				failures.append("Unknown deck positions leaked to viewer %d" % viewer)
+				break
+			var placed_cards := [
+				mirror_deck.get_primed_top_card(),
+				mirror_deck.get_known_deck_card(1),
+				mirror_deck.get_known_deck_card(3),
+			]
+			var positions_visible := true
+			for placed_card in placed_cards:
+				if placed_card == null or placed_card.card_name != "Hidden card" or not placed_card.is_face_down:
+					positions_visible = false
+					break
+			if not positions_visible:
+				failures.append("Hidden primed/shelved positions lost their placeholders for viewer %d" % viewer)
+				break
 		if viewer != 0 and mirror.get_card_by_uid(hidden.uid) != null:
 			failures.append("Unknown deck card leaked to viewer %d" % viewer)
 			break
@@ -596,6 +614,26 @@ func _check_public_deck_knowledge(failures: PackedStringArray) -> void:
 				or not mirror_deck.cards[index].uid.is_empty():
 			failures.append("Shuffling did not clear public deck knowledge")
 			break
+
+	# Cards primed from public information stay known after a shuffle; cards
+	# primed from an unknown deck position remain hidden to the opponent.
+	deck.prime_card(second)
+	var grave_card := RedCap.new()
+	grave_card.card_owner = owner
+	owner.graveyard_zone.add_card(grave_card)
+	owner.move_card(grave_card, deck, Zone.DeckPlacement.PRIMED)
+	GameState.apply_to_manager(GameState.serialize(manager, 1), mirror)
+	var grave_view := mirror_deck.get_primed_top_card()
+	if grave_view == null or grave_view.uid != grave_card.uid \
+			or grave_view.card_name != grave_card.card_name \
+			or mirror_deck.get_deck_placement(grave_view) != Zone.DeckPlacement.PRIMED \
+			or not deck.is_deck_identity_public(grave_card):
+		failures.append("A graveyard-sourced primed card lost its public identity")
+	var second_view := mirror_deck.get_known_deck_card(1)
+	if second_view == null or second_view.card_name != "Hidden card":
+		failures.append("A deck-sourced primed card leaked its identity to the opponent")
+	if BotCardStrategyScript.visible(bot, second) or not BotCardStrategyScript.visible(bot, grave_card):
+		failures.append("Bot visibility did not distinguish public from unknown deck cards")
 
 func _check_json_store_round_trip(failures: PackedStringArray) -> void:
 	var storage_path := "user://ci_preflight_json_store.json"
@@ -870,10 +908,30 @@ func _check_ranked_bot_deck_generation(failures: PackedStringArray) -> void:
 		failures.append("Ranked Tezcatlipoca added Tonal Extraction without an eligible creature")
 	var thor := Thor.new()
 	for legendary in [false, true]:
-		var candidates := factory._get_regular_candidates(thor, {}, legendary, true)
+		# Circle of Rebirth only joins ranked decks with five Animal/Plant
+		# targets, so its candidate check runs against a seeded deck context.
+		var deck_context: Dictionary = {"Brown Bear": 3, "White Stag": 3} if legendary else {}
+		var candidates := factory._get_regular_candidates(thor, deck_context, legendary, true)
 		var expected := "Circle of Rebirth" if legendary else "Fall of the Mighty"
 		if not candidates.any(func(card: Card) -> bool: return card.card_name == expected):
 			failures.append("Ranked bot decks cannot generate %s" % expected)
+
+	var requirement_cases := [
+		["Gambanteinn", {}, false],
+		["Gambanteinn", {"Harii Shaman": 3, "Draug Revenant": 1}, true],
+		["Sharur, the Flying Mace", {}, false],
+		["Sharur, the Flying Mace", {"Berserker": 3, "Blessed Knights": 1}, true],
+		["Durinn Secondborn", {"Bearded Axe": 2}, false],
+		["Durinn Secondborn", {"Bearded Axe": 3}, true],
+		["Circle of Rebirth", {}, false],
+		["Sixth Sage An-Enlilda", {"E2-abzu": 1}, false],
+		["Sixth Sage An-Enlilda", {"E2-abzu": 2}, true],
+	]
+	for entry in requirement_cases:
+		var ruled_card: Card = factory._cards_by_name.get(str(entry[0]), null)
+		var supported: bool = factory._has_deckbuilding_requirements(ruled_card, entry[1], thor)
+		if supported != bool(entry[2]):
+			failures.append("Ranked bot deck support rule mismatch for %s" % str(entry[0]))
 
 	var deck := factory.build_random_deck(1337, TiamatThePrimordial.TIAMAT_CARD_NAME, true)
 	var player := _new_fixture_player()
@@ -2913,7 +2971,7 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 	for i in range(15):
 		protected_results.append(_bot_pool_result("protected_win_%d" % i, "protected_list_0", {}, "win"))
 	for i in range(8):
-		protected_results.append(_bot_pool_result("protected_loss_%d" % i, "protected_list_0", {}, "loss"))
+		protected_results.append(_bot_pool_result("protected_loss_%d" % i, "protected_list_0", {}, "loss", true))
 	protected_results.append(_bot_pool_result("protected_candidate", "", {"Thor": 1, "Common": 30, "Protected Challenger": 10}, "win"))
 	var protected_pool := RankedBotDeckPoolScript.new()
 	protected_pool.refresh(protected_results)
@@ -2923,7 +2981,7 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 		failures.append("A high-star bot was treated as weaker than a short-trial challenger")
 	for i in range(6):
 		var outcome := "loss" if i % 2 == 0 else "win"
-		results.append(_bot_pool_result("trial_%d" % i, "candidate", {}, outcome))
+		results.append(_bot_pool_result("trial_%d" % i, "candidate", {}, outcome, i % 2 == 0))
 	pool.refresh(results)
 	if pool.can_play_list("Thor", "list_0"):
 		failures.append("A bot list trial ended before seven completed matches")
@@ -2957,7 +3015,7 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 			early_retirement_results.append(_bot_pool_result("early_seed_%d_%d" % [i, game], "early_list_%d" % i, {}, "win"))
 	early_retirement_results.append(_bot_pool_result("early_candidate", "", {"Thor": 1, "Common": 30, "Early Challenger": 10}, "win"))
 	for i in range(2):
-		early_retirement_results.append(_bot_pool_result("early_loss_%d" % i, "early_candidate", {}, "loss"))
+		early_retirement_results.append(_bot_pool_result("early_loss_%d" % i, "early_candidate", {}, "loss", true))
 	var early_retirement_pool := RankedBotDeckPoolScript.new()
 	early_retirement_pool.refresh(early_retirement_results)
 	var early_summary: Dictionary = early_retirement_pool.get_ladder_summary()["gods"][0]
@@ -2965,7 +3023,7 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 			or early_summary["challenger"].get("trial_length") != 4 \
 			or early_retirement_pool.can_play_list("Thor", "early_list_0"):
 		failures.append("A challenger was removed before matching the incumbent's game count")
-	early_retirement_results.append(_bot_pool_result("early_loss_final", "early_candidate", {}, "loss"))
+	early_retirement_results.append(_bot_pool_result("early_loss_final", "early_candidate", {}, "loss", true))
 	early_retirement_pool.refresh(early_retirement_results)
 	early_summary = early_retirement_pool.get_ladder_summary()["gods"][0]
 	if not early_summary["challenger"].is_empty() or not early_retirement_pool.can_play_list("Thor", "early_list_0") \
@@ -2977,7 +3035,7 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 		variety_results.append(_bot_pool_result("variety_list_%d" % i, "", {"Thor": 1, "Common": 30, "Variant %d" % i: 10}, "win"))
 		for game in range(7):
 			var outcome := "loss" if i == 0 and game >= 4 else "win"
-			variety_results.append(_bot_pool_result("variety_seed_%d_%d" % [i, game], "variety_list_%d" % i, {}, outcome))
+			variety_results.append(_bot_pool_result("variety_seed_%d_%d" % [i, game], "variety_list_%d" % i, {}, outcome, i == 0 and game >= 4))
 	variety_results.append(_bot_pool_result("distinct", "", {"Thor": 1, "Different": 40}, "win"))
 	for i in range(7):
 		variety_results.append(_bot_pool_result("variety_%d" % i, "distinct", {}, "win"))
@@ -3002,7 +3060,32 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 	if int(streak_after_break.get("stars", 0)) != 9 or int(streak_after_break.get("draws", 0)) != 1:
 		failures.append("A bot draw did not reset the win streak before the next bonus star")
 
-func _bot_pool_result(match_id: String, list_id: String, cards: Dictionary, outcome: String) -> Dictionary:
+	var player_loss_results: Array[Dictionary] = []
+	for i in range(7):
+		player_loss_results.append(_bot_pool_result("player_loss_list_%d" % i, "", {"Thor": 1, "Common": 30, "Variant %d" % i: 10}, "win"))
+		for game in range(3):
+			player_loss_results.append(_bot_pool_result("player_loss_seed_%d_%d" % [i, game], "player_loss_list_%d" % i, {}, "win", true))
+	player_loss_results.append(_bot_pool_result("player_loss_challenger", "", {"Thor": 1, "Common": 30, "Player Loss Challenger": 10}, "win", true))
+	for i in range(6):
+		player_loss_results.append(_bot_pool_result("player_loss_trial_%d" % i, "player_loss_challenger", {}, "loss"))
+	player_loss_results.append(_bot_pool_result("player_loss_incumbent", "player_loss_list_0", {}, "loss"))
+	var player_loss_pool := RankedBotDeckPoolScript.new()
+	player_loss_pool.refresh(player_loss_results)
+	var player_loss_summary: Dictionary = player_loss_pool.get_ladder_summary()["gods"][0]
+	var player_loss_list := player_loss_pool.get_deck_details("player_loss_list_0")
+	if player_loss_summary["challenger"].get("matches_played") != 1 \
+			or player_loss_summary["challenger"].get("losses") != 0 \
+			or int(player_loss_list.get("losses", -1)) != 0 or int(player_loss_list.get("stars", -1)) != 4:
+		failures.append("A loss to a human player counted toward bot pool evaluation")
+	player_loss_results.append(_bot_pool_result("player_loss_trial_self_play", "player_loss_challenger", {}, "loss", true))
+	player_loss_pool.refresh(player_loss_results)
+	player_loss_summary = player_loss_pool.get_ladder_summary()["gods"][0]
+	if player_loss_summary["challenger"].is_empty() \
+			or player_loss_summary["challenger"].get("matches_played") != 2 \
+			or player_loss_summary["challenger"].get("losses") != 1:
+		failures.append("A self-play loss stopped counting toward bot pool evaluation")
+
+func _bot_pool_result(match_id: String, list_id: String, cards: Dictionary, outcome: String, is_self_play: bool = false) -> Dictionary:
 	return {
 		"match_id": match_id,
 		"list_id": list_id,
@@ -3011,6 +3094,7 @@ func _bot_pool_result(match_id: String, list_id: String, cards: Dictionary, outc
 		"special_setup": {},
 		"reinforcements": {},
 		"result": outcome,
+		"is_self_play": is_self_play,
 	}
 
 func _script_path(card: Card) -> String:

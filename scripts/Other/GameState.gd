@@ -5,6 +5,7 @@ class_name GameState
 const HIDDEN_MODE_NONE := 0
 const HIDDEN_MODE_HAND := 1
 const HIDDEN_MODE_BOARD := 2
+const HIDDEN_MODE_DECK := 3
 const SPECTATOR_VIEWER_INDEX := -2
 
 static var _card_script_cache: Dictionary = {}
@@ -109,13 +110,29 @@ static func _serialize_deck(deck: Zone, hide_unknown: bool, private_peek_count: 
 	for index in deck.cards.size():
 		var card := deck.cards[index]
 		var placement := deck.get_deck_placement(card)
-		if hide_unknown and placement == Zone.DeckPlacement.UNKNOWN and index >= private_peek_count:
+		var private_peek := hide_unknown and index < private_peek_count
+		if hide_unknown and placement == Zone.DeckPlacement.UNKNOWN and not private_peek:
+			continue
+		if hide_unknown and not private_peek and not deck.is_deck_card_publicly_known(card):
+			# Primed/shelved positions are public (both players watched the card
+			# enter the deck), but the identity stays hidden unless the opponent
+			# legitimately learned it (revealed, or taken from a face-up board
+			# card or the graveyard/abyss).
+			result.append({
+				uid = card.get("uid") if "uid" in card else "",
+				hidden = true,
+				hidden_mode = HIDDEN_MODE_DECK,
+				deck_index = index,
+				deck_placement = placement,
+			})
 			continue
 		var card_data := _serialize_card(card)
 		if hide_unknown:
 			card_data["deck_index"] = index
 		if placement != Zone.DeckPlacement.UNKNOWN:
 			card_data["deck_placement"] = placement
+			if deck.is_deck_identity_public(card):
+				card_data["deck_identity_public"] = true
 		result.append(card_data)
 	return result
 
@@ -536,7 +553,10 @@ static func _apply_deck(deck: Zone, cards_data: Array, deck_count: int) -> void:
 		var card := _deserialize_card(card_data)
 		if card != null:
 			deck.cards[index] = card
-			deck.set_deck_placement(card, int(card_data.get("deck_placement", Zone.DeckPlacement.UNKNOWN)) as Zone.DeckPlacement)
+			var placement := int(card_data.get("deck_placement", Zone.DeckPlacement.UNKNOWN)) as Zone.DeckPlacement
+			deck.set_deck_placement(card, placement)
+			if bool(card_data.get("deck_identity_public", false)):
+				deck.set_deck_identity_public(card, true)
 	for index in deck.cards.size():
 		var card := deck.cards[index]
 		if card == null:

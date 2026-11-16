@@ -112,7 +112,9 @@ func resolve_rally_choice(game_manager: GameManager, chosen_card: Card = null, s
 			controller.deck_zone.reveal_deck_card(card)
 			continue
 		if card.current_zone == controller.deck_zone:
-			controller.deck_zone.shelve_deck_card(card)
+			# These cards were just revealed publicly, so the shelve keeps
+			# their identity known to both players.
+			controller.deck_zone.shelve_deck_card(card, true)
 		shelved_cards.append(card)
 
 	var summon_text := ""
