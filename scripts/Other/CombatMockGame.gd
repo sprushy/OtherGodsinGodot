@@ -19773,7 +19773,7 @@ func _show_terror_impact_prompt(power: Terror, demon: Card, prompt_targets: Arra
 		return
 	var current_targets := _resolve_prompt_targets(power.get_valid_terror_targets(game_manager, demon), prompt_targets)
 	if current_targets.is_empty():
-		_set_action_label_text(_consume_resolution_feedback("%s spread terror through %s, but there was no lower-level enemy creature to return." % [
+		_set_action_label_text(_consume_resolution_feedback("%s spread terror through %s, but there was no equal- or lower-level enemy creature to return." % [
 			power.card_name,
 			demon.get_target_log_display_name(game_manager.get_feedback_viewer())
 		]))
@@ -21002,7 +21002,7 @@ func _finish_altar_void_play() -> void:
 func _try_resolve_stupefy_target(card: Card) -> bool:
 	if not awaiting_stupefy_target or stupefy_source == null:
 		return false
-	if card.card_type == Card.CardType.CREATURE and card.get_effective_level() <= stupefy_source.get_effective_level():
+	if card.card_type == Card.CardType.CREATURE:
 		var source_stupefy := stupefy_source
 		if game_manager.is_guardian_protected(card, source_stupefy):
 			_set_action_label_text(card.card_name + " is protected by Guardian!")
@@ -21015,7 +21015,7 @@ func _try_resolve_stupefy_target(card: Card) -> bool:
 		stupefy_source = null
 		update_ui()
 	else:
-		_set_action_label_text("Invalid target ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â choose a creature of level " + str(stupefy_source.get_effective_level()) + " or lower.")
+		_set_action_label_text("Invalid target - choose a creature.")
 	return true
 
 func _on_creature_stance_switch_clicked(card: Card, target_mode: Card.CreatureMode) -> void:
@@ -21363,7 +21363,7 @@ func _on_board_card_pressed(card: Card) -> void:
 		return
 
 	if awaiting_stupefy_target and stupefy_source != null \
-			and not (card.card_type == Card.CardType.CREATURE and card.get_effective_level() <= stupefy_source.get_effective_level()):
+			and card.card_type != Card.CardType.CREATURE:
 		_cancel_pending_target_selection(
 			_get_pending_target_selection_name()
 			+ " cancelled: invalid target "
@@ -21643,7 +21643,7 @@ func _on_enemy_card_pressed(target_card: Card) -> void:
 		return
 
 	if awaiting_stupefy_target and stupefy_source != null \
-			and not (target_card.card_type == Card.CardType.CREATURE and target_card.get_effective_level() <= stupefy_source.get_effective_level()):
+			and target_card.card_type != Card.CardType.CREATURE:
 		_cancel_pending_target_selection(
 			_get_pending_target_selection_name()
 			+ " cancelled: invalid target "
@@ -22137,7 +22137,7 @@ func _on_context_stupefy_pressed(card_uid: String) -> void:
 		return
 	awaiting_stupefy_target = true
 	stupefy_source = card
-	_set_action_label_text("Stupefy - click an enemy creature of level " + str(card.get_effective_level()) + " or lower")
+	_set_action_label_text("Stupefy - click a creature")
 
 func _on_context_nimue_entomb_pressed(card_uid: String) -> void:
 	_close_context_menu()

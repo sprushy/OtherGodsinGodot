@@ -201,9 +201,13 @@ func to_room_list_entry(sessions_by_id: Dictionary) -> Dictionary:
 	if is_bot_self_play:
 		entry["is_bot_self_play"] = true
 		var bot_names: Array[String] = []
+		var bot_stars_list: Array = []
 		for session_id in members:
 			bot_names.append(str(sessions_by_id.get(session_id, {}).get("player_name", "Bot")))
+			var submission := get_deck_submission(session_id)
+			bot_stars_list.append(maxi(-1, int(submission.get("bot_stars", 0))) if not submission.is_empty() else -1)
 		entry["bot_names"] = bot_names
+		entry["bot_stars_list"] = bot_stars_list
 	return entry
 
 static func compute_deck_hash(

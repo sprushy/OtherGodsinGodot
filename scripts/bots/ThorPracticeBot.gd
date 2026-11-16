@@ -40,6 +40,13 @@ const ECON_FORECAST_SUMMON_STR_PER_MANA := 8
 const RESERVE_PLACEMENT_STR_VALUE := 200
 const ASKELLADEN_BOUNCE_TARGET_SCORE := 1800
 const ASKELLADEN_RETREAT_SCORE_MARGIN := 400
+# Creature fighting presence is worth roughly a quarter of its board value per
+# missed own turn; a Tree of Life cycle keeps Kur-Jara off the board for 2-4
+# of those turns before it resurrects.
+const KUR_JARA_PRESENCE_TURNS := 4.0
+# Flat bonus while the grave still holds another Divine/Priest after the
+# current Tree of Life cycle, because the ability re-arms once it resolves.
+const KUR_JARA_ENGINE_CONTINUATION := 800
 
 var _active: bool = false
 var _step_queued: bool = false
@@ -327,46 +334,47 @@ func _handle_upkeep() -> void:
 					var mode_name := "stealth" if stealth else "aggressive" if mode == Card.CreatureMode.AGGRESSIVE else "defensive"
 					_submit_action({"type": "skoll_upkeep_summon", "skoll_uid": card.uid, "player_index": player_index, "zone_type": zone.zone_type, "zone_index": zone.zone_index, "mode": mode_name})
 					return
-	var choice := _choose_upkeep_option()
-	var brood_card := _choose_brood_card(zone, choice)
-	if brood_card != null and _submit_action({"type": "tiamat_upkeep_choice", "card_uid": brood_card.uid}):
+	var upkeep := _choose_upkeep_option(zone)
+	if str(upkeep.get("choice", "draw")) == "brood":
+		var brood_card: Card = upkeep.get("brood_card")
+		if brood_card != null and _submit_action({"type": "tiamat_upkeep_choice", "card_uid": brood_card.uid}):
+			return
+		_submit_action({"type": "upkeep_choice", "choice": "draw"})
 		return
 	_submit_action({
 		"type": "upkeep_choice",
-		"choice": choice,
+		"choice": str(upkeep.get("choice", "draw")),
 	})
 
-func _choose_brood_card(zone: Zone, upkeep_choice: String) -> Card:
+# The Matriarch Rule is Tiamat's third upkeep choice alongside draw and mana:
+# it adds one known brood card to hand and grants no draw and no mana, so it
+# can never stack with the other options. Price each candidate as the real
+# line it enables, paid from the current mana only: summon it now and attack
+# (Gallu over a 21-str body), or make the draw option's summon and bank the
+# known card instead of a random one. Values share _choose_upkeep_option's
+# scale, and the banked card's worth scales with hand urgency like the random
+# draw it displaces.
+func _choose_brood_option(zone: Zone, bank_plan_base: int, draw_need: float) -> Dictionary:
 	if not TiamatThePrimordial.can_offer_matriarch_rule(game_manager):
-		return null
-	var brood_cards := TiamatThePrimordial.get_available_matriarch_rule_cards(bot_player)
+		return {}
 	var best_card: Card = null
-	var best_score := 0
-	var extra_mana := 0
-	if upkeep_choice == "mana":
-		extra_mana = game_manager.get_effective_upkeep_mana_gain(game_manager.get_base_upkeep_mana_gain(), bot_player)
-	var hand_card := _get_best_affordable_hand_creature(extra_mana, zone)
-	if hand_card != null:
-		best_score = _score_creature_play(hand_card, zone, bot_player.mana + extra_mana)
-	if upkeep_choice == "mana":
-		if hand_card == null:
-			return null
-		best_score += 900
-	for card in brood_cards:
-		var score := _score_creature_play_in_zone(card, zone, bot_player.mana)
-		if not _opponent_board_is_empty() and _choose_creature_summon_mode(card) == Card.CreatureMode.DEFENSIVE:
-			var block_value := _estimate_defensive_summon_value(card, zone)
-			if block_value <= 0:
-				continue
-			score += int(block_value * 0.5)
-		if score > best_score:
+	var best_value := 0
+	for card in TiamatThePrimordial.get_available_matriarch_rule_cards(bot_player):
+		var summon_score := _score_creature_play_in_zone(card, zone, bot_player.mana)
+		if summon_score > -1000000:
+			summon_score += _estimate_summon_attack_value(card, zone, bot_player.mana)
+			if not _opponent_board_is_empty() and _choose_creature_summon_mode(card) == Card.CreatureMode.DEFENSIVE:
+				summon_score += int(maxi(0, _estimate_defensive_summon_value(card, zone)) * 0.5)
+		var bank_score := bank_plan_base + int(float(_deck_card_hand_value(card, bot_player.mana)) * draw_need)
+		var value := maxi(summon_score, bank_score)
+		if value > best_value:
 			best_card = card
-			best_score = score
-	if best_card == null and upkeep_choice == "draw" and bot_player.deck_zone.cards.is_empty():
-		return _pick_best_board_creature(brood_cards)
-	return best_card
+			best_value = value
+	if best_card == null:
+		return {}
+	return {"card": best_card, "value": best_value}
 
-func _choose_upkeep_option() -> String:
+func _choose_upkeep_option(zone: Zone) -> Dictionary:
 	var draw_mana_gain := GameManager.UPKEEP_DRAW_MANA_GAIN
 	var mana_gain := GameManager.UPKEEP_MANA_GAIN
 	if game_manager != null:
@@ -375,14 +383,11 @@ func _choose_upkeep_option() -> String:
 		draw_mana_gain = game_manager.get_effective_upkeep_mana_gain(draw_mana_gain, bot_player)
 		mana_gain = game_manager.get_effective_upkeep_mana_gain(mana_gain, bot_player)
 	if _upkeep_mana_enables_hermes_lethal():
-		return "mana"
+		return {"choice": "mana"}
 	var draw_budget := bot_player.mana + draw_mana_gain
 	var mana_budget := bot_player.mana + mana_gain
-	var best_now := _get_best_affordable_hand_creature(draw_mana_gain)
-	var best_with_bonus := _get_best_affordable_hand_creature(mana_gain)
-	if best_now == null and best_with_bonus != null:
-		return "mana"
-	var zone := _get_first_open_summon_zone(bot_player)
+	var best_now := _get_best_affordable_hand_creature(draw_mana_gain, zone)
+	var best_with_bonus := _get_best_affordable_hand_creature(mana_gain, zone)
 	var draw_score := 0 if best_now == null else _score_creature_play(best_now, zone, draw_budget)
 	var mana_score := 0 if best_with_bonus == null else _score_creature_play(best_with_bonus, zone, mana_budget)
 	if best_now != null:
@@ -393,10 +398,21 @@ func _choose_upkeep_option() -> String:
 	# income still buys (its value decays once the stock passes everything the
 	# remaining deck and board can pay for); the draw option is worth the
 	# expected hand value of the card it takes from the bot's own deck.
-	var hand_size := bot_player.hand_zone.cards.size()
-	var draw_need := 1.5 if hand_size <= 1 else 1.2 if hand_size <= 2 else 0.8 if hand_size >= 4 else 1.0
+	var draw_need := _upkeep_draw_need()
+	var draw_card_value := _expected_deck_draw_value(draw_budget)
 	var mana_option := mana_score + CardStrategy.mana_gain_value(self, mana_gain)
-	var draw_option := draw_score + int(float(_expected_deck_draw_value(draw_budget)) * draw_need)
+	var draw_option := draw_score + int(float(draw_card_value) * draw_need)
+	# The Matriarch take is a third, mutually exclusive choice: it grants no
+	# draw and no mana. Mana income decaying does not make it good — the random
+	# deck card stays the real rival — so it only wins by outscoring both.
+	var brood := _choose_brood_option(zone, draw_score, draw_need)
+	var brood_option := int(brood.get("value", 0))
+	if not brood.is_empty() and brood_option > mana_option and brood_option > draw_option:
+		return {"choice": "brood", "brood_card": brood.get("card")}
+	if best_now == null and best_with_bonus != null:
+		# The bonus mana unlocks the only hand summon; a random draw cannot
+		# fund it, so the income wins without a card comparison.
+		return {"choice": "mana"}
 	# Aphrodite's upkeep income only matters for the Violent Delights line: when
 	# the enslave line already fits the draw budget, keep drawing; when a real
 	# line needs the bonus mana, weigh it against the draw option; when no line
@@ -408,17 +424,17 @@ func _choose_upkeep_option() -> String:
 		if bool(mana_line.get("violent_delights", false)):
 			var draw_line := _plan_combat(attacks, [], null, 0, null, draw_budget)
 			if bool(draw_line.get("violent_delights", false)):
-				return "draw"
+				return {"choice": "draw"}
 			if int(mana_line["score"]) > draw_option:
-				return "mana"
+				return {"choice": "mana"}
 		else:
 			aphrodite_overrides_economy = true
 	if mana_option > draw_option and not aphrodite_overrides_economy:
-		return "mana"
+		return {"choice": "mana"}
 	if _upkeep_mana_enables_manifestation(mana_gain):
-		return "mana"
+		return {"choice": "mana"}
 	if _upkeep_mana_enables_tonal_extraction(mana_gain):
-		return "mana"
+		return {"choice": "mana"}
 	if bot_player.hand_zone.cards.size() >= 3:
 		for card in bot_player.hand_zone.cards:
 			if CardStrategy.supported(card) and card is SpellCard and card.sacrifice_cost == 0:
@@ -426,8 +442,14 @@ func _choose_upkeep_option() -> String:
 				if cost > draw_budget and cost <= mana_budget:
 					var target := CardStrategy.best_target(self, card, CardStrategy.targets(self, card))
 					if (not card.targets or target != null) and CardStrategy.effect_score(self, card, target) > ECON_CARD_VALUE:
-						return "mana"
-	return "draw"
+						return {"choice": "mana"}
+	return {"choice": "draw"}
+
+# How urgently the bot needs another card at upkeep: an empty hand pays a
+# premium for any card, a stocked hand discounts the random draw.
+func _upkeep_draw_need() -> float:
+	var hand_size := bot_player.hand_zone.cards.size()
+	return 1.5 if hand_size <= 1 else 1.2 if hand_size <= 2 else 0.8 if hand_size >= 4 else 1.0
 
 func _upkeep_mana_enables_hermes_lethal() -> bool:
 	var hermes := _find_player_god() as Hermes
@@ -4705,15 +4727,6 @@ func _can_evaluate_creature_play(card: Card, zone: Zone, available_mana: int) ->
 	if zone.zone_owner != bot_player or not zone.cards.is_empty():
 		return false
 	return bool(_build_creature_summon_payment_plan(card, available_mana).get("ok", false))
-
-func _pick_best_board_creature(cards: Array[Card]) -> Card:
-	var best_card: Card = null
-	for card in cards:
-		if card == null:
-			continue
-		if best_card == null or _is_board_creature_better(card, best_card):
-			best_card = card
-	return best_card
 
 func _is_projected_creature_better(candidate: Card, current_best: Card) -> bool:
 	if current_best == null:

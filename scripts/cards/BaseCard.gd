@@ -66,7 +66,7 @@ const KEYWORD_HINTS = {
 	"Brood Slots": "Instead of powers, these slots can hold face-up Ancient Demons or Dragons up to the listed total level.",
 	"Stone Infant": "Token creature with 17 STR, 17 RES, 1 SPD, and the types Token, Human, Stone, and Golem.",
 	"Stone Skin": "This creature cannot be sent to the graveyard by combat destruction.",
-	"Terror": "When this card enters the field, return a lower-level opposing creature to its owner's hand.",
+	"Terror": "When this card enters the field, return an equal- or lower-level opposing creature to its owner's hand.",
 	"God Death": "After you have had a God in play, if you control no face-up, awake God on the field, you gain 1 less upkeep mana, cannot use powers, and lose 7 followers at upkeep.",
 	"Status": "A status is an ongoing condition on a card, such as Sleep, Petrified, or Cannot Attack. Removing status changes clears those active statuses.",
 }

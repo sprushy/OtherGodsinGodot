@@ -5,6 +5,13 @@ extends RefCounted
 const BAD := -1000000
 const CARD_VALUE := 5000
 const MANA_VALUE := 1000
+# A face-up Kur-Jara on board is a repeatable value engine: Tree of Life
+# withdraws it into the grave with a chosen Divine/Priest and resurrects both
+# two own turns later, re-arming the ability while grave fuel remains. Price
+# that repeatable resurrection well above its statline. During a pending
+# cycle no new activation can start, and without grave fuel the engine is
+# only potential, so the premium decays.
+const KUR_JARA_ENGINE_PREMIUM := 2500
 # Mana keeps some residual worth even when the stock passes everything the
 # deck can still pay for: creature action taxes, equipment, and Guard always
 # exist as buyers. Unbounded sinks raise that floor (see _mana_value_floor).
@@ -149,10 +156,32 @@ static func value(bot, card: Card) -> int:
 	var score := CARD_VALUE + _strength_reach_points(card.get_effective_strength()) \
 		+ _resilience_survival_points(card.get_effective_resilience()) \
 		+ maxi(0, card.mana_cost) * 200
+	score += kur_jara_engine_premium(card)
 	if card.is_god and _would_destroying_god_cause_god_death(bot, card):
 		var owner := card.get_controller()
 		score += bot._score_follower_loss(owner, GameManager.GOD_DEATH_FOLLOWER_LOSS) + MANA_VALUE
 	return score
+
+static func kur_jara_engine_premium(card: Card) -> int:
+	if not (card is KurJara):
+		return 0
+	var zone := card.current_zone
+	if zone == null or not zone.is_board_zone() or card.is_face_down \
+			or card.is_sleeping or card.abilities_suppressed():
+		return 0
+	if card.get_tree_of_life_target() != null or card.get_tree_of_life_pending_destroy_count() > 0:
+		# A cycle is already running: the body survives in the grave and
+		# comes back, but nothing new can activate until it resolves.
+		return KUR_JARA_ENGINE_PREMIUM / 2
+	var fuel := false
+	if card.card_owner != null and card.card_owner.graveyard_zone != null:
+		for engine_card in card.card_owner.graveyard_zone.cards:
+			if engine_card != null and engine_card.card_type == Card.CardType.CREATURE \
+					and (engine_card.has_type("Divine") or engine_card.has_type("Priest")):
+				fuel = true
+				break
+	# Graves are public board knowledge, so fuel is visible to both sides.
+	return KUR_JARA_ENGINE_PREMIUM if fuel else KUR_JARA_ENGINE_PREMIUM / 3
 
 static func _would_destroying_god_cause_god_death(bot, god: Card) -> bool:
 	if bot == null or bot.game_manager == null or god == null or not god.is_god:

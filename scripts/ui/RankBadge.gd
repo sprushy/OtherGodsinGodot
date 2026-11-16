@@ -2,10 +2,7 @@ extends Control
 
 const Catalog = preload("res://scripts/core/RankBadgeCatalog.gd")
 const TextureCache = preload("res://scripts/ui/UITextureCache.gd")
-const COLORS := [
-	Color("aeb8c4"), Color("cb8d64"), Color("d1e5f3"), Color("f1c467"),
-	Color("7fe3f7"), Color("b69cf5"), Color("ffe7a3"),
-]
+const COLORS := Catalog.LEAGUE_COLORS
 const SHIELD := [
 	Vector2(0.50, 0.03), Vector2(0.90, 0.19), Vector2(0.95, 0.36),
 	Vector2(0.89, 0.74), Vector2(0.50, 0.98), Vector2(0.11, 0.74),

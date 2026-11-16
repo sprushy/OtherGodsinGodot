@@ -14,7 +14,7 @@ func _init() -> void:
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
 	targets = true
-	ability_text = "Your Demons gain [b]Terror[/b] ([b]Impact[/b]): Return an opponent's lower-level creature to its owner's hand."
+	ability_text = "Your Demons gain [b]Terror[/b] ([b]Impact[/b]): Return an opponent's equal- or lower-level creature to its owner's hand."
 	artist = "Lorinda Tomiko"
 	art_path = ART_PATH
 
@@ -24,7 +24,7 @@ func on_any_card_moved(game_manager: GameManager, moved_card: Card, from_zone: Z
 
 	var valid_targets := get_valid_terror_targets(game_manager, moved_card)
 	if valid_targets.is_empty():
-		game_manager.note_player_feedback("%s spread terror through %s, but there was no lower-level enemy creature to return." % [
+		game_manager.note_player_feedback("%s spread terror through %s, but there was no equal- or lower-level enemy creature to return." % [
 			card_name,
 			moved_card.get_target_log_display_name(game_manager.get_feedback_viewer())
 		])
@@ -117,4 +117,4 @@ func _is_valid_terror_target(card: Card, demon: Card) -> bool:
 		and not card.is_god \
 		and card.current_zone != null \
 		and card.current_zone.is_board_zone() \
-		and card.get_effective_level() < demon.get_effective_level()
+		and card.get_effective_level() <= demon.get_effective_level()

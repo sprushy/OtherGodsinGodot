@@ -13,7 +13,7 @@ func _init() -> void:
 	speed = 1
 	resilience = 16
 	strength = 19
-	ability_text = "Stupefy ([b]Major Action[/b]): Put an equal- or lower-level creature to [b]Sleep[/b] while Alu remains on the field."
+	ability_text = "Stupefy ([b]Major Action[/b]): Put a creature to [b]Sleep[/b] while Alu remains on the field."
 	flavor_text = ""
 	culture = "Ancient"
 	art_path = "res://images/card_art/creatures/alu.jpg"
@@ -48,8 +48,6 @@ func get_valid_targets(game_manager: GameManager) -> Array[Card]:
 					continue
 				if card.card_type != Card.CardType.CREATURE:
 					continue
-				if card.get_effective_level() > get_effective_level():
-					continue
 				valid_targets.append(card)
 	return valid_targets
 
@@ -58,7 +56,7 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 		return
 	if target == null or target not in get_valid_targets(game_manager):
 		if game_manager != null:
-			game_manager.note_player_feedback("%s fizzles: choose a creature of level %d or lower." % [card_name, get_effective_level()])
+			game_manager.note_player_feedback("%s fizzles: choose a creature." % card_name)
 		return
 	if game_manager != null and game_manager.is_guardian_protected(target, self):
 		game_manager.note_player_feedback(target.get_target_log_display_name(game_manager.get_feedback_viewer()) + " is protected by Guardian!")

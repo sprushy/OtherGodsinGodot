@@ -2,6 +2,18 @@ extends RefCounted
 
 const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
 const RankedProgressionScript = preload("res://scripts/server/RankedProgression.gd")
+## Rim color per ranked league (index matches RankedProgression.LEAGUES), shared
+## with RankBadge.gd so lobby list accents match the ladder badges.
+const LEAGUE_COLORS := [
+	Color("aeb8c4"), # Iron
+	Color("cb8d64"), # Bronze
+	Color("d1e5f3"), # Silver
+	Color("f1c467"), # Gold
+	Color("7fe3f7"), # Diamond
+	Color("b69cf5"), # Ascendant
+	Color("ffe7a3"), # Divine
+]
+const UNKNOWN_LEAGUE_COLOR := Color("5c6a7d")
 const DEFAULT_PORTRAITS := [
 	"Wolf Cub", "Minotaur Footsoldier", "Berserker", "En-hedu-anna",
 	"Nergal Lion", "Enki, Lord of Eridu", "Freyja",

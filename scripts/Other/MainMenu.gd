@@ -30,6 +30,8 @@ const RankBadgePickerScript = preload("res://scripts/ui/RankBadgePicker.gd")
 const BotLadderViewScript = preload("res://scripts/ui/BotLadderView.gd")
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const MatchSupervisorScript = preload("res://scripts/server/MatchSupervisor.gd")
+const RankedProgressionScript = preload("res://scripts/server/RankedProgression.gd")
+const MatchRankOutline = preload("res://scripts/ui/MatchRankOutline.gd")
 const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
 const ServerPathsScript = preload("res://scripts/server/ServerPaths.gd")
 const LobbyRoomScript = preload("res://scripts/server/LobbyRoom.gd")
@@ -3099,8 +3101,10 @@ func _on_local_bot_work_assigned(job: Dictionary) -> void:
 	var players: Array[String] = [first_id, second_id]
 	var submissions := {first_id: decks[0], second_id: decks[1]}
 	var identities := {
-		first_id: {"is_bot": true, "player_name": str(decks[0].get("deck_name", "Bot"))},
-		second_id: {"is_bot": true, "player_name": str(decks[1].get("deck_name", "Bot"))},
+		first_id: {"is_bot": true, "player_name": str(decks[0].get("deck_name", "Bot")),
+			"rank_badge": {"rank_name": str(RankedProgressionScript.summarize_bot_stars(int(decks[0].get("stars", 0)))["name"])}},
+		second_id: {"is_bot": true, "player_name": str(decks[1].get("deck_name", "Bot")),
+			"rank_badge": {"rank_name": str(RankedProgressionScript.summarize_bot_stars(int(decks[1].get("stars", 0)))["name"])}},
 	}
 	var match_port := _allocate_local_bot_match_port()
 	if match_port <= 0:
@@ -3297,8 +3301,9 @@ func _refresh_seek_list() -> void:
 				action_hint = "  Click to Watch"
 			else:
 				action_hint = "  Click to Observe"
-		seek_list.add_item("%s%s  %d/%d  %s%s" % [rank_tag, host_name, member_count, max_players, status, action_hint])
-		seek_list.set_item_metadata(seek_list.get_item_count() - 1, room.duplicate(true))
+		var row_index: int = seek_list.add_item("%s%s  %d/%d  %s%s" % [rank_tag, host_name, member_count, max_players, status, action_hint])
+		seek_list.set_item_metadata(row_index, room.duplicate(true))
+		_apply_match_row_rank_outline(row_index, _get_room_row_leagues(room), room.get("match_rank_names", []))
 		var request_next_match_id := str(room.get("request_next_match_id", ""))
 		if not request_next_match_id.is_empty() and _has_active_lobby_connection():
 			var action_index: int = seek_list.add_item("    Request Next")
@@ -3316,12 +3321,22 @@ func _refresh_seek_list() -> void:
 				continue
 			var local_match := _local_bot_match_workers.has(job_id)
 			var live_label := "Watch on this computer" if local_match else "Live · volunteer"
-			seek_list.add_item("%s vs %s  ·  %s" % [live_players[0].get("name", "Bot"), live_players[1].get("name", "Bot"), live_label])
-			var live_index: int = seek_list.get_item_count() - 1
+			var live_rank_names: Array = []
+			var live_leagues: Array = []
+			for live_player in live_players:
+				var live_rank := str(live_player.get("rank", "")).strip_edges()
+				live_rank_names.append(live_rank)
+				live_leagues.append(
+					RankBadgeCatalog.league_for_rank(live_rank)
+					if not live_rank.is_empty()
+					else _league_for_bot_stars(int(live_player.get("stars", 0)))
+				)
+			var live_index: int = seek_list.add_item("%s vs %s  ·  %s" % [live_players[0].get("name", "Bot"), live_players[1].get("name", "Bot"), live_label])
 			if local_match:
 				seek_list.set_item_metadata(live_index, {"local_bot_match_id": job_id})
 			else:
 				seek_list.set_item_disabled(live_index, true)
+			_apply_match_row_rank_outline(live_index, live_leagues, live_rank_names)
 		for raw_match_id in _local_bot_match_workers.keys():
 			var local_job_id := str(raw_match_id)
 			if listed_live_job_ids.has(local_job_id) or _local_bot_match_submitting.has(local_job_id):
@@ -3333,11 +3348,55 @@ func _refresh_seek_list() -> void:
 			var local_players: Array = session.get_public_player_names()
 			if local_players.size() != 2:
 				continue
+			var local_rank_names: Array = []
+			var local_leagues: Array = []
+			for badge in session.get_public_rank_badges():
+				var badge_rank := str(badge.get("rank_name", "")).strip_edges()
+				local_rank_names.append(badge_rank)
+				local_leagues.append(RankBadgeCatalog.league_for_rank(badge_rank))
 			var local_index: int = seek_list.add_item("%s vs %s  ·  Watch on this computer" % [local_players[0], local_players[1]])
 			seek_list.set_item_metadata(local_index, {"local_bot_match_id": local_job_id})
+			_apply_match_row_rank_outline(local_index, local_leagues, local_rank_names)
 	if seek_list.get_item_count() == 0:
 		seek_list.add_item("No live bot matches right now." if tab == 1 else "No open seeks or live matches right now.")
 		seek_list.set_item_disabled(0, true)
+
+## Colors a match row with a rank outline: half one player's rank color, half
+## the other's, so cross-rank matchups stand out while scanning the list.
+func _apply_match_row_rank_outline(index: int, leagues: Array, rank_names: Variant = null) -> void:
+	var known: Array[int] = []
+	for league in leagues:
+		var value := int(league)
+		if value >= 0 and value < RankBadgeCatalog.LEAGUE_COLORS.size():
+			known.append(value)
+	if known.is_empty() or seek_list == null:
+		return
+	seek_list.set_item_icon(index, MatchRankOutline.ring_texture(known))
+	var names: Array = rank_names if rank_names is Array else []
+	if names.size() == 2 and not str(names[0]).is_empty() and not str(names[1]).is_empty():
+		seek_list.set_item_tooltip(index, "%s vs %s" % [str(names[0]), str(names[1])])
+
+func _get_room_row_leagues(room: Dictionary) -> Array:
+	var rank_names: Variant = room.get("match_rank_names", [])
+	if rank_names is Array and not (rank_names as Array).is_empty():
+		var rank_leagues: Array = []
+		for rank_name in rank_names:
+			rank_leagues.append(RankBadgeCatalog.league_for_rank(str(rank_name)))
+		return rank_leagues
+	var bot_stars_list: Variant = room.get("bot_stars_list", [])
+	if bot_stars_list is Array and not (bot_stars_list as Array).is_empty():
+		var bot_leagues: Array = []
+		for stars in bot_stars_list:
+			bot_leagues.append(_league_for_bot_stars(int(stars)))
+		return bot_leagues
+	if _get_room_is_ranked(room) and room.has("bot_stars"):
+		return [_league_for_bot_stars(int(room["bot_stars"]))]
+	return []
+
+func _league_for_bot_stars(stars: int) -> int:
+	if stars < 0:
+		return -1
+	return int(RankedProgressionScript.summarize_bot_stars(stars)["league"])
 
 func _format_seek_format_label(room: Dictionary) -> String:
 	return "Bo%d %s" % [

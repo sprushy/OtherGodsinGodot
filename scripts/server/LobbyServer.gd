@@ -1475,8 +1475,10 @@ func _get_live_bot_work_matches() -> Array[Dictionary]:
 			"played_unix": int(job.get("started_unix", now_unix)),
 			"status": "live",
 			"players": [
-				{"name": str(first.get("deck_name", "Bot")), "result": "pending", "stars": int(first.get("stars", 0))},
-				{"name": str(second.get("deck_name", "Bot")), "result": "pending", "stars": int(second.get("stars", 0))},
+				{"name": str(first.get("deck_name", "Bot")), "result": "pending", "stars": int(first.get("stars", 0)),
+					"rank": str(RankedProgressionScript.summarize_bot_stars(int(first.get("stars", 0)))["name"])},
+				{"name": str(second.get("deck_name", "Bot")), "result": "pending", "stars": int(second.get("stars", 0)),
+					"rank": str(RankedProgressionScript.summarize_bot_stars(int(second.get("stars", 0)))["name"])},
 			],
 		})
 	matches.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a.get("played_unix", 0)) > int(b.get("played_unix", 0)))
@@ -2747,6 +2749,23 @@ func _get_local_bot_match_player_names(entry: Dictionary) -> Array:
 		names.append(str(identity.get("player_name", identity.get("username", "Player"))))
 	return names
 
+func _get_local_bot_match_player_rank_names(entry: Dictionary) -> Array:
+	var identities: Dictionary = entry.get("identity_by_session", {})
+	if not (identities is Dictionary):
+		return []
+	var rank_names: Array = []
+	for session_id in [str(entry.get("human_session_id", "")), str(entry.get("bot_session_id", ""))]:
+		var identity: Dictionary = (identities as Dictionary).get(session_id, {})
+		var badge: Variant = identity.get("rank_badge", {})
+		rank_names.append(str(badge.get("rank_name", "")) if badge is Dictionary else "")
+	return rank_names
+
+func _get_match_player_rank_names(badges: Array) -> Array:
+	var rank_names: Array = []
+	for badge in badges:
+		rank_names.append(str(badge.get("rank_name", "")) if badge is Dictionary else "")
+	return rank_names
+
 func _rejoin_room_for_session(session_id: String, room_id: String) -> void:
 	var normalized_room_id := room_id.strip_edges().to_upper()
 	if normalized_room_id.is_empty() or not rooms_by_id.has(normalized_room_id):
@@ -3681,13 +3700,16 @@ func _build_room_list(viewer_session_id: String = "") -> Array:
 						and not str(local_bot_entry.get("spectate_ip", "")).is_empty():
 					entry["spectatable"] = true
 					entry["match_player_names"] = _get_local_bot_match_player_names(local_bot_entry)
+					entry["match_rank_names"] = _get_local_bot_match_player_rank_names(local_bot_entry)
 			else:
 				entry["viewer_can_rejoin"] = (
 					not _get_matching_participant_session_id(viewer_session_id, room.members).is_empty()
 					and (match_session == null or match_supervisor.is_match_ready_for_clients(match_id))
 				)
-				if match_session != null and match_session.player_session_ids.size() == 2 and match_session.get_human_player_count() == 1:
-					entry["match_player_names"] = match_session.get_public_player_names()
+				if match_session != null and match_session.player_session_ids.size() == 2:
+					if match_session.get_human_player_count() == 1:
+						entry["match_player_names"] = match_session.get_public_player_names()
+					entry["match_rank_names"] = _get_match_player_rank_names(match_session.get_public_rank_badges())
 					if not _get_request_next_target(match_session, viewer).is_empty() \
 							and not match_session.next_requests_by_account.has(viewer.get("account_id", "")) \
 							and match_supervisor.is_match_ready_for_clients(match_id, false):
