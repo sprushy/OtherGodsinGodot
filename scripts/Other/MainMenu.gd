@@ -13530,6 +13530,10 @@ func _build_practice_thor_fuzz_snapshot(practice_game) -> String:
 		"p2_deck": player2.deck_zone.cards.size() if player2 != null and player2.deck_zone != null else -1,
 		"p1_board": _count_board_cards_for_player(player1),
 		"p2_board": _count_board_cards_for_player(player2),
+		"targeting": match_manager.is_targeting_active() if match_manager != null else false,
+		"targeting_name": str(match_manager.get_targeting_name()) if match_manager != null and match_manager.is_targeting_active() else "",
+		"click_selection_mandatory": bool(match_manager.pending_click_selection_confirm.is_valid() and not match_manager.pending_click_selection_allows_cancel) if match_manager != null else false,
+		"stack_top": _describe_smoke_stack_top(game_manager),
 	}
 	return JSON.stringify(snapshot)
 
@@ -13538,6 +13542,27 @@ func _count_pending_smoke_prompts(match_manager: MatchManager) -> int:
 		return 0
 	var pending_prompts = match_manager.get("_pending_ui_interactions")
 	return (pending_prompts as Array).size() if pending_prompts is Array else 0
+
+func _describe_smoke_stack_top(game_manager: GameManager) -> String:
+	if game_manager == null or game_manager.action_stack.is_empty():
+		return ""
+	var top_action: CardAction = game_manager.action_stack.back()
+	if top_action == null:
+		return ""
+	var parts: Array[String] = [
+		str(top_action.type),
+		str(top_action.event_name),
+	]
+	var source := top_action.card
+	if source != null:
+		parts.append("source=" + source.card_name)
+	var completion := str(top_action.event_data.get("deferred_authoritative_completion_command", "")).strip_edges()
+	if not completion.is_empty():
+		parts.append("deferred=" + completion)
+	var prompt_uids = top_action.event_data.get("pending_authoritative_prompt_uids", [])
+	if prompt_uids is Array and not (prompt_uids as Array).is_empty():
+		parts.append("prompt_uids=%s" % str((prompt_uids as Array).size()))
+	return "_".join(parts)
 
 func _list_pending_smoke_prompt_types(match_manager: MatchManager) -> Array:
 	var types: Array = []
