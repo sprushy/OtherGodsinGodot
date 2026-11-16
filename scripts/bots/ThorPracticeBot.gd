@@ -5998,16 +5998,25 @@ func _choose_creature_summon_mode(card: Card, opposing_creatures = null) -> Card
 	var resolved_opposing: Array[Card] = _get_board_creatures(opponent) if opposing_creatures == null else opposing_creatures
 	var has_clean_kills := _count_clean_attack_targets_for(card, resolved_opposing) > 0
 	var ready_protection := _get_own_protective_responses().size() > 0
+	var has_profitable_attacks := has_clean_kills \
+			or _is_projected_creature_strongest_on_board(card, resolved_opposing)
+	if not has_profitable_attacks:
+		# Fresh summons often lack a *clean* kill verdict (interceptor risk,
+		# survival uncertainty) while still having real work: any target the
+		# combat math destroys is a reasonably assumed profitable attack.
+		for enemy in resolved_opposing:
+			if enemy != null and CardStrategy.visible(self, enemy) \
+					and _would_destroy_target_in_battle(card, enemy):
+				has_profitable_attacks = true
+				break
 	# Aggressive stance defends at STR vs STR while defensive stance defends at
 	# STR vs RES, so a res-dominant body summoned aggressive throws away its
-	# better defense stat to poke with its worse one. An empty board is no
-	# reason for that: stance can switch later once there is real work for the
-	# strength, so res-dominant bodies default defensive unless a clean kill is
-	# available right now. Exception: with a banked protective reply and
-	# nothing on the board to defend against, the poke is the better plan -
-	# any clear attempt eats the reply instead, so the exposure forecast
-	# charges almost nothing for it.
-	if _get_projected_resilience(card) > _get_projected_strength(card) and not has_clean_kills \
+	# better defense stat to poke with its worse one. Only true walls pay
+	# that price: a res-tilted body with profitable work on the board is an
+	# attacker first (and can switch to defensive once the work dries up).
+	# Exception: with a banked protective reply and an empty board the poke
+	# is cheap, so the exposure forecast charges almost nothing for it.
+	if _get_projected_resilience(card) > _get_projected_strength(card) and not has_profitable_attacks \
 			and not (ready_protection and resolved_opposing.is_empty()):
 		return Card.CreatureMode.DEFENSIVE
 	if resolved_opposing.is_empty():
