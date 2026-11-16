@@ -8567,6 +8567,10 @@ func _bind_lobby_client_signals() -> void:
 		lobby_client.issue_report_result.connect(_on_bug_report_result)
 	if not lobby_client.match_assigned.is_connected(_on_remote_match_assigned):
 		lobby_client.match_assigned.connect(_on_remote_match_assigned)
+	if lobby_client.has_signal("local_bot_match_assigned") and not lobby_client.local_bot_match_assigned.is_connected(_on_local_bot_match_assigned):
+		lobby_client.local_bot_match_assigned.connect(_on_local_bot_match_assigned)
+	if lobby_client.has_signal("local_bot_match_confirmed") and not lobby_client.local_bot_match_confirmed.is_connected(_on_local_bot_match_confirmed):
+		lobby_client.local_bot_match_confirmed.connect(_on_local_bot_match_confirmed)
 	if lobby_client.has_signal("match_host_viability_requested") and not lobby_client.match_host_viability_requested.is_connected(_on_match_host_viability_requested):
 		lobby_client.match_host_viability_requested.connect(_on_match_host_viability_requested)
 	if not lobby_client.account_deck_list_received.is_connected(_on_account_deck_list_received):
@@ -9032,6 +9036,57 @@ func _on_local_match_assigned(match_info: Dictionary) -> void:
 	status_label.text = "Both players joined. Preparing the match server..."
 	_write_smoke_result("MATCH_ASSIGNED_HOST:%s" % str(match_info))
 	call_deferred("_launch_host_match_after_lobby_handoff", match_info)
+
+func _on_local_bot_match_assigned(match_info: Dictionary) -> void:
+	if _match_launch_queued:
+		return
+	_manual_rejoin_room_id = ""
+	_pending_rematch_room_id = ""
+	_pending_rematch_ready_submitted = false
+	_match_launch_queued = true
+	_write_smoke_trace("local_bot_match_assigned match=%s" % str(match_info.get("match_id", "")))
+	status_label.text = "Match found. Starting the bot challenge..."
+	call_deferred("_launch_local_bot_match", match_info)
+
+## Server-bot challenge matches run entirely in this client with in-process
+## authority (port 0 host); the lobby only records the reported result.
+func _launch_local_bot_match(match_info: Dictionary) -> void:
+	var decks: Dictionary = match_info.get("decks_by_session", {}) if match_info.get("decks_by_session", {}) is Dictionary else {}
+	var identities: Dictionary = match_info.get("identity_by_session", {}) if match_info.get("identity_by_session", {}) is Dictionary else {}
+	var session_ids: Array[String] = []
+	for session_id in match_info.get("player_session_ids", []):
+		session_ids.append(str(session_id))
+	var match_session = MatchSessionScript.new(
+		str(match_info.get("match_id", "")),
+		str(match_info.get("room_id", "")),
+		"127.0.0.1",
+		0,
+		session_ids,
+		decks,
+		identities
+	)
+	match_session.is_ranked = bool(match_info.get("is_ranked", false))
+	match_session.configure_series_format(1)
+	match_session.mark_active()
+	var local_match_info := match_info.duplicate(true)
+	local_match_info["player_index"] = 0
+	local_match_info["has_bot"] = true
+	local_match_info["local_bot_match"] = true
+	await _launch_assigned_match(true, "127.0.0.1", 0, local_match_info, match_session)
+	var mock_game = get_node_or_null("GameContainer/MockGame")
+	if mock_game != null and not mock_game.local_ranked_match_ended.is_connected(_on_local_bot_match_game_ended):
+		mock_game.local_ranked_match_ended.connect(_on_local_bot_match_game_ended)
+
+func _on_local_bot_match_game_ended(result: Dictionary) -> void:
+	if lobby_client == null or not lobby_client.is_authenticated():
+		return
+	lobby_client.submit_local_bot_match_result(result)
+
+func _on_local_bot_match_confirmed(success: bool, ranked_result: Dictionary, message: String) -> void:
+	var mock_game = get_node_or_null("GameContainer/MockGame")
+	if success and mock_game != null and mock_game.has_method("apply_local_ranked_result"):
+		mock_game.apply_local_ranked_result(ranked_result)
+	_maybe_request_profile_summary()
 
 func _on_remote_match_assigned(match_info: Dictionary) -> void:
 	var is_manual_rejoin_assignment := _is_manual_rejoin_assignment(match_info)

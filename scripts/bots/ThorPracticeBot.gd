@@ -3,6 +3,7 @@ class_name ThorPracticeBot
 
 const CardPromptPolicy = preload("res://scripts/bots/BotCardPromptPolicy.gd")
 const CardStrategy = preload("res://scripts/bots/BotCardStrategy.gd")
+const StrategyPosture = preload("res://scripts/bots/BotStrategyPosture.gd")
 
 var game_manager: GameManager = null
 var match_manager: MatchManager = null
@@ -49,6 +50,8 @@ var _last_submitted_prompt_id: int = -1
 var _strategy_activation_turns: Dictionary = {}
 var _pending_power_activation_uid := ""
 var _dellingr_revealed_target_uids: Dictionary = {}
+var _posture_cache := {"turn": -1, "value": {}}
+var _posture_evaluating := false
 
 func attach(
 	p_game_manager: GameManager,
@@ -85,6 +88,8 @@ func detach() -> void:
 	_pending_power_activation_uid = ""
 	_current_card_prompt_id = -1
 	_last_submitted_prompt_id = -1
+	_posture_cache = {"turn": -1, "value": {}}
+	_posture_evaluating = false
 
 func poll() -> void:
 	_queue_step()
@@ -451,6 +456,11 @@ func _choose_priority_response() -> Card:
 				if response_card is JiangZiyaFisherOfKings \
 						and (top_action.target == response_card or top_action.interceptor == response_card):
 					return response_card
+			for response_card in responses:
+				# Sighting is a free summon while one of our Warriors or
+				# Lupines attacks; always take the extra body.
+				if response_card is RavenStorm:
+					return response_card
 		for response_card in responses:
 			if response_card is E2Abzu and int(_score_priority_card(response_card, top_action, danger)["score"]) > 0:
 				return response_card
@@ -477,6 +487,9 @@ func _choose_priority_response() -> Card:
 	return null
 
 func _score_priority_card(card: Card, action: CardAction, danger: int) -> Dictionary:
+	if card is RavenStorm:
+		# Sighting summons this card from hand for free; the body is pure gain.
+		return {"score": 2000, "target": null}
 	if card is E2Abzu:
 		var best := {"score": CardStrategy.BAD, "target": null}
 		for target: Card in card.get_priority_field_targets(game_manager, action):
@@ -767,6 +780,23 @@ func _try_activate_best_god_ability() -> bool:
 			if submitted:
 				_dellingr_revealed_target_uids[reveal_target.uid] = true
 			return submitted
+	if god is ManannanMacLir:
+		# Mists hides every Triskelion creature in stealth. That sets up their
+		# Reveal triggers as ambushes and dodges a turn of targeted answers.
+		var manannan := god as ManannanMacLir
+		var mist_value := 0
+		for target in manannan.get_valid_targets(game_manager):
+			mist_value += _estimate_reveal_trigger_value(target) / 2
+			if target.creature_mode == Card.CreatureMode.AGGRESSIVE and _can_attack_followers_safely(target):
+				# Hiding would forfeit this attack.
+				mist_value -= _score_follower_loss(opponent, _get_direct_follower_damage(target)) / 2
+		var hidden_enemy_answers := 0
+		for hand_card in opponent.hand_zone.cards:
+			if not CardStrategy.visible(self, hand_card):
+				hidden_enemy_answers += 1
+		mist_value += mini(hidden_enemy_answers, 4) * 300
+		if mist_value - ManannanMacLir.ACTIVATION_COST * _mana_rate() > 800:
+			return _submit_action({"type": "god_ability", "god_uid": manannan.uid})
 	return false
 
 func _choose_freyja_resurrection(freyja: Freyja) -> Card:
@@ -1883,12 +1913,59 @@ func _get_best_strategy_action(attacks: Array[Dictionary], attack: Dictionary, d
 				continue
 			var id := CardStrategy.key(card)
 			var action_tax := game_manager.get_creature_action_mana_cost(card, "activate") if card is CreatureCard else 0
+			if card is Berserker:
+				# Rage is a combat buff with a sleep cost; only flip a fight
+				# with it (the attack planner sees the live buff afterwards).
+				var rage_score := CardStrategy.combat_gain(self, card, Berserker.RAGE_STR_BONUS, 0, null, 0, 0) - 1500
+				rage_score -= CardStrategy.mana_penalty(self, Berserker.RAGE_ACTIVATION_COST) + action_tax * _mana_rate()
+				if rage_score > 0:
+					var rage_plan := {"command": {"type": "activate_card_ability", "source_uid": card.uid}, "score": rage_score}
+					if _is_better_strategy_plan(rage_plan, best_plan):
+						best_plan = rage_plan
+				continue
+			if card is EnHeduAnna:
+				# Exaltation is available only when the god's power activated
+				# while she was face-up (can_activate gates that); it buys a
+				# stat boost plus a round of immunity from combat and targeting.
+				var exalt_option: Dictionary = card.get_exaltation_options()[0]
+				if card.creature_mode == Card.CreatureMode.AGGRESSIVE:
+					exalt_option = card.get_exaltation_options()[1]
+				var exalt_score := 1200 + _estimate_targeted_casualty_cost(card, card, {}) / 2
+				exalt_score -= action_tax * _mana_rate()
+				if exalt_score > 0:
+					var exalt_plan := {"command": {"type": "activate_card_ability", "source_uid": card.uid, "option": exalt_option}, "score": exalt_score}
+					if _is_better_strategy_plan(exalt_plan, best_plan):
+						best_plan = exalt_plan
+				continue
+			if card is Mopsus:
+				# Seer reveals feed the known-response model for the rest of
+				# the game; modest flat value per hidden enemy hand card.
+				var hidden_hand_cards: Array[Card] = []
+				for hand_card in opponent.hand_zone.cards:
+					if not CardStrategy.visible(self, hand_card):
+						hidden_hand_cards.append(hand_card)
+				var reveal_count: int = mini(card.get_seer_reveal_count(game_manager), hidden_hand_cards.size())
+				if reveal_count > 0:
+					var reveal_uids: Array[String] = []
+					for hand_card in hidden_hand_cards.slice(0, reveal_count):
+						reveal_uids.append(hand_card.uid)
+					var seer_score := 400 * reveal_uids.size() - action_tax * _mana_rate()
+					if seer_score > 0:
+						var seer_plan := {"command": {"type": "activate_card_ability", "source_uid": card.uid, "option": {"target_uids": reveal_uids}}, "score": seer_score}
+						if _is_better_strategy_plan(seer_plan, best_plan):
+							best_plan = seer_plan
+				continue
+			if card is WingedLion:
+				var flank := _plan_winged_lion_flank(card, action_tax)
+				if _is_better_strategy_plan(flank, best_plan):
+					best_plan = flank
+				continue
 			var targets := [null] if id == "Beyla" else CardStrategy.targets(self, card)
 			for target: Card in targets:
 				var score := CardStrategy.wake_gain(self, card) if id == "Beyla" else CardStrategy.target_score(self, card, target)
 				if score <= CardStrategy.BAD:
 					continue
-				var cost := 1 if id == "ClayEaters" else 2 if id in ["AncientPyre", "Gawain", "Beyla"] else 0
+				var cost := 1 if id == "ClayEaters" else 2 if id in ["AncientPyre", "Gawain", "Beyla", "SeventhSageUtuabzu"] else 0
 				if id == "Nimue" and target != null and target.card_type == Card.CardType.CREATURE:
 					cost = target.get_effective_level()
 				if bot_player.mana < cost + action_tax:
@@ -1910,6 +1987,10 @@ func _get_best_strategy_action(attacks: Array[Dictionary], attack: Dictionary, d
 					if id in ["Alu", "Lindwyrm", "Nimue"]:
 						plan["score"] -= _score_follower_loss(opponent, card.get_effective_strength())
 					plan["score"] += _effect_follower_safety_gain(card, target, danger)
+				if card is HariiShaman and target != null and target.has_type("Warrior") and not target.has_type("Animal"):
+					# Transforming a Warrior into an Animal needs the chosen
+					# subtype; Lupine is the support type Hunting Tactics reads.
+					plan["command"]["option"] = {"target_uid": target.uid, "animal_subtype": "Lupine"}
 				if _is_better_strategy_plan(plan, best_plan):
 					best_plan = plan
 			if id == "AncientPyre" and game_manager.can_player_lose_followers_now(opponent):
@@ -2593,6 +2674,22 @@ func _plan_equipment_pickup() -> Dictionary:
 				continue
 			for zone in player.frontline_zones + player.reserve_zones:
 				for card in zone.cards:
+					var steed := card as Pegasus
+					if steed != null and not steed.is_mounted_as_steed() \
+							and zone.zone_owner == bot_player \
+							and steed.can_be_used_as_steed_by(bearer, game_manager) \
+							and bearer.can_take_minor_creature_action() \
+							and game_manager.can_pay_creature_action_mana_cost(bearer, "mount"):
+						# Mounting trades the Pegasus body for Spd 5 plus Aerial
+						# and Evasive on the bearer, and frees its lane.
+						var speed_gain := maxi(0, Pegasus.STEED_SPEED - bearer.get_effective_speed())
+						var mount_score := 1800 + speed_gain * 400 - 700 \
+							- game_manager.get_creature_action_mana_cost(bearer, "mount") * _mana_rate()
+						if mount_score > int(best.get("score", 0)):
+							best = {
+								"score": mount_score,
+								"command": {"type": "equip_action", "card_uid": bearer.uid, "equipment_uid": steed.uid, "action": "pick_up"},
+							}
 					var equipment := card as EquipmentCard
 					if equipment == null or equipment.equipped_on != null or not equipment.can_equip_to(bearer):
 						continue
@@ -3328,7 +3425,8 @@ func _follower_safety_gain(danger: int, change: Dictionary) -> int:
 		return ECON_CARD_VALUE * 30 + difference * 100
 	if danger < bot_player.followers and after >= followers:
 		return -ECON_CARD_VALUE * 30
-	return difference * (600 if bot_player.followers < 25 else 200)
+	# A defending bot pays extra to keep followers on the board.
+	return int(round(difference * (600 if bot_player.followers < 25 else 200) * _posture_safety_multiplier()))
 
 # Preservation-only defensive stance switches trade attack tempo for card
 # safety. That trade is only worth it when the follower pool is actually
@@ -3340,12 +3438,19 @@ func _is_dangerously_low_on_followers() -> bool:
 		return bot_player.followers <= 25
 	return bot_player.followers <= 25 or bot_player.followers * 2 <= opponent.followers
 
-func _forecast_incoming_follower_loss(change: Dictionary = {}) -> int:
+func _forecast_incoming_follower_loss(change: Dictionary = {}, include_fatigue: bool = true) -> int:
 	if not bot_player.followers_enabled or opponent == null:
 		return 0
 	var removed: Array = change.get("removed", []).duplicate()
 	var followers := int(change.get("followers", bot_player.followers))
 	var upkeep_loss := _projected_upkeep_follower_loss(removed, followers)
+	if include_fatigue:
+		# Fatigue drains the turn player at their own upkeep from turn 49; the
+		# bot's next upkeep is part of the guaranteed loss it must survive.
+		# Combat-clock callers (locked board, posture) exclude it because they
+		# track fatigue as its own clock.
+		var next_own_upkeep_turn: int = game_manager.turn_number + (2 if game_manager.current_player == bot_player else 1)
+		upkeep_loss += game_manager.get_fatigue_follower_loss(next_own_upkeep_turn)
 	var followers_after_upkeep := maxi(0, followers - upkeep_loss)
 	if bool(change.get("block_attacks", false)) or followers_after_upkeep <= 0:
 		return mini(followers, upkeep_loss)
@@ -3622,6 +3727,15 @@ func _get_known_attack_response_cards(action: CardAction) -> Array[Card]:
 				continue
 			if game_manager.can_card_respond_to_action(card, action, opponent):
 				responses.append(card)
+	# Revealed hand responses (Seer, Dellingr, effects that expose the hand)
+	# are modeled exactly like their prepared counterparts, priced by mana.
+	for card in opponent.hand_zone.cards:
+		if not (card is TheInferno or card is VoidShield or card is Smite) or not CardStrategy.visible(self, card):
+			continue
+		if opponent.mana < game_manager.get_card_play_mana_cost(opponent, card, false):
+			continue
+		if game_manager.can_card_respond_to_action(card, action, opponent):
+			responses.append(card)
 	return responses
 
 func _estimate_known_attack_response(response: Card, action: CardAction, projected_summon: bool = false) -> Dictionary:
@@ -4135,6 +4249,40 @@ func _score_freed_frontline_lane(mover: Card, vacated_zone: Zone) -> int:
 		gain -= game_manager.get_creature_action_mana_cost(advancer, "move") * _mana_rate()
 		best = maxi(best, gain)
 	return best
+
+# Flank: Winged Lion repositions itself and one partner to any friendly slots
+# in a single activation. Score it as the best pair of move deltas it can
+# create, using the same move scoring as normal movement.
+func _plan_winged_lion_flank(lion: WingedLion, action_tax: int) -> Dictionary:
+	var best := {}
+	for partner in lion.get_valid_targets(game_manager):
+		for self_zone in lion.get_valid_self_zones(game_manager, partner):
+			for partner_zone in lion.get_valid_partner_zones(game_manager, partner, self_zone):
+				if self_zone == lion.current_zone and partner_zone == partner.current_zone:
+					continue
+				var score := _score_creature_move(lion, self_zone) + _score_creature_move(partner, partner_zone)
+				score -= action_tax * _mana_rate() + 300
+				if score > int(best.get("score", 0)):
+					best = {
+						"score": score,
+						"command": {
+							"type": "activate_card_ability",
+							"source_uid": lion.uid,
+							"option": {
+								"target_uid": partner.uid,
+								"self_zone": _zone_option(self_zone),
+								"partner_zone": _zone_option(partner_zone),
+							},
+						},
+					}
+	return best
+
+func _zone_option(zone: Zone) -> Dictionary:
+	return {
+		"player_index": game_manager.players.find(zone.zone_owner),
+		"zone_type": zone.zone_type,
+		"zone_index": zone.zone_index,
+	}
 
 func _try_attack() -> bool:
 	var attackers := _get_attack_ready_creatures()
@@ -5987,6 +6135,9 @@ func _add_deck_combat_rewards(action: CardAction, result: Dictionary) -> void:
 	var casualties: Array = result.get("casualties", [])
 	if casualties.is_empty() or bool(result.get("bot_wins", false)) or bool(result.get("opponent_wins", false)):
 		return
+	# Only some slayer branches seed this key, but the additions below always
+	# accumulate onto it. Normalize so a missing seed cannot error out.
+	result["deck_reward"] = int(result.get("deck_reward", 0))
 	var slayer := result.get("bot_slayer") as Card
 	if slayer is HyenaPack:
 		var zones: Array[Zone] = slayer.get_available_scavenge_zones()
@@ -6011,6 +6162,20 @@ func _add_deck_combat_rewards(action: CardAction, result: Dictionary) -> void:
 		for target: Card in slayer.get_valid_targets(game_manager):
 			value = maxi(value, _deck_card_hand_value(target, bot_player.mana))
 		result["deck_reward"] = value
+	elif slayer is Aurboda and game_manager.can_player_lose_followers_now(opponent):
+		# Pierce converts 7 followers from the opponent on Slay.
+		result["deck_reward"] += _score_follower_loss(opponent, 7) + CardStrategy.follower_gain(bot_player, 7)
+	elif slayer is AnkouServantToTheReaper and game_manager.can_player_add_to_hand_now(bot_player):
+		# Reap draws a card on Slay.
+		result["deck_reward"] += _expected_deck_draw_value(bot_player.mana)
+	var asakku_copies := 0
+	for ally in _get_board_creatures(bot_player):
+		if ally is Asakku and not ally.is_face_down and not ally.abilities_suppressed() \
+				and CardStrategy.visible(self, ally):
+			asakku_copies += 1
+	if asakku_copies > 0 and game_manager.can_player_gain_mana_now(bot_player):
+		# Offering pays 2 mana for every enemy creature destroyed in combat.
+		result["deck_reward"] += CardStrategy.mana_gain_value(self, 2 * mini(asakku_copies, 2))
 	if not _can_odin_draw_primed_card():
 		return
 	for card: Card in casualties:
@@ -6294,7 +6459,16 @@ func _add_combat_casualty(result: Dictionary, killer: Card, victim: Card) -> voi
 			var loses_frontline := victim.get_controller() == victim.card_owner \
 					and victim.current_zone in victim.card_owner.frontline_zones
 			value = mini(value, return_cost * _mana_rate() + (_mana_rate() / 2 if loses_frontline else 0))
+	if victim.get_controller() == opponent and victim.card_type == Card.CardType.CREATURE \
+			and victim not in result.get("returning_casualties", []):
+		value -= _opponent_freyja_reanimate_discount(victim)
 	_add_destroyed_card_to_economy(result, victim, value)
+	if victim.get_controller() == bot_player and killer.get_controller() == opponent:
+		# Their defender killing our creature unlocks Violent Delights for the
+		# opponent's next turn; charge part of the expected enslave target.
+		var enslave_risk := _opponent_aphrodite_enslavement_risk(victim)
+		if enslave_risk > 0:
+			result["enslavement_risk"] = int(result.get("enslavement_risk", 0)) + enslave_risk
 	if killer.get_controller() == bot_player and victim is CreatureCard and not victim.is_petrified() \
 			and not killer.abilities_suppressed() and not game_manager._should_class_rend(killer, victim):
 		var replacement: Zone = victim.get_self_graveyard_replacement_zone(game_manager, true, true, false) if victim is BaseCard else null
@@ -6317,9 +6491,53 @@ func _forecast_again_walker_return_cost(walker: AgainWalker, killer: Card) -> in
 			return cost
 	return 0
 
+func _find_opponent_god() -> GodCard:
+	if opponent == null or opponent.god_zone == null or opponent.god_zone.cards.is_empty():
+		return null
+	return opponent.god_zone.cards[0] as GodCard
+
+# Receiver of the Slain returns a slain Norse Warrior for one turn as a Spirit,
+# so the kill still lands eventually. Charge only the borrowed turn: the body
+# can block or attack once more before it is destroyed for good.
+func _opponent_freyja_reanimate_discount(victim: Card) -> int:
+	if victim == null or not victim.has_type("Warrior") or str(victim.culture).strip_edges() != "Norse":
+		return 0
+	var god := _find_opponent_god()
+	if not (god is Freyja) or god.is_muted or not CardStrategy.visible(self, god):
+		return 0
+	if opponent.mana + 4 < god.get_activation_mana_cost(game_manager):
+		return 0
+	return _get_card_economic_value(victim) / 3
+
+# Killing one of our creatures in combat unlocks Violent Delights on the
+# opponent's next turn. If their Aphrodite could pay and a target remains,
+# the forecast should expect to lose part of that creature's value.
+func _opponent_aphrodite_enslavement_risk(dying_victim: Card) -> int:
+	if opponent == null or game_manager == null:
+		return 0
+	var god := _find_opponent_god()
+	if not (god is AphroditeAreia) or god.is_muted or not CardStrategy.visible(self, god):
+		return 0
+	if opponent.mana + 4 < AphroditeAreia.ACTIVATION_COST:
+		return 0
+	var best := 0
+	for creature in _get_board_creatures(bot_player):
+		if creature == dying_victim or not CardStrategy.visible(self, creature) or creature.is_face_down:
+			continue
+		if not god.is_valid_activation_target(creature):
+			continue
+		if game_manager._is_protected_from_enslavement(creature):
+			continue
+		best = maxi(best, _get_card_economic_value(creature))
+	if best <= 0:
+		return 0
+	# She still has to reach her turn, pay, and find the window open.
+	return best / 4
+
 func _score_attack_economy(result: Dictionary) -> int:
 	var score := int(result.get("opponent_cards_lost", 0)) - int(result.get("bot_cards_lost", 0))
 	score += int(result.get("scavenge_value", 0)) + int(result.get("deck_reward", 0))
+	score -= int(result.get("enslavement_risk", 0))
 	score += int(result.get("reveal_bonus", 0))
 	score += _score_follower_loss(opponent, int(result.get("opponent_followers_lost", 0)))
 	score -= _score_follower_loss(bot_player, int(result.get("bot_followers_lost", 0)))
@@ -6340,6 +6558,15 @@ func _score_attack_economy(result: Dictionary) -> int:
 		score += ECON_CARD_VALUE * 20
 	if bool(result.get("opponent_wins", false)):
 		score -= ECON_CARD_VALUE * 20
+	if not _posture_evaluating:
+		var posture := str(_strategy_posture().get("posture", "balanced"))
+		if posture == "locked_behind" and int(result.get("opponent_cards_lost", 0)) > 0:
+			# The fatigue clock favors the opponent, so removing enemy bodies
+			# to break the lock is progress even at card parity.
+			score += ECON_CARD_VALUE / 2
+		elif posture == "locked_ahead" and int(result.get("bot_cards_lost", 0)) > 0:
+			# Ahead on the locked clock: protect the board and let fatigue win.
+			score -= ECON_CARD_VALUE / 2
 	return score
 
 # The current marginal per-mana rate. Card plays should prefer
@@ -6347,6 +6574,32 @@ func _score_attack_economy(result: Dictionary) -> int:
 # taxes of one or two mana can price at this single rate.
 func _mana_rate() -> int:
 	return CardStrategy.marginal_mana_value(self)
+
+# Strategic posture for this turn (race/defend/locked clocks). Cached per
+# turn; the evaluation itself runs scoring passes, so nested reads during
+# evaluation get the neutral posture instead of recursing.
+func _strategy_posture() -> Dictionary:
+	if game_manager == null or bot_player == null or opponent == null:
+		return StrategyPosture.neutral()
+	if int(_posture_cache["turn"]) == game_manager.turn_number and not (_posture_cache["value"] as Dictionary).is_empty():
+		return _posture_cache["value"]
+	if _posture_evaluating:
+		return StrategyPosture.neutral()
+	_posture_evaluating = true
+	var posture := StrategyPosture.evaluate(self)
+	_posture_evaluating = false
+	_posture_cache = {"turn": game_manager.turn_number, "value": posture}
+	return posture
+
+func _posture_damage_multiplier() -> float:
+	if _posture_evaluating:
+		return 1.0
+	return float(_strategy_posture().get("damage_multiplier", 1.0))
+
+func _posture_safety_multiplier() -> float:
+	if _posture_evaluating:
+		return 1.0
+	return float(_strategy_posture().get("safety_multiplier", 1.0))
 
 # Locked board state: neither side can push follower damage through. Ancient
 # Pyre's conversion then becomes the primary win condition, so surplus mana
@@ -6497,6 +6750,10 @@ func _score_follower_loss(player: Player, amount: int) -> int:
 			var danger := float(50 - followers_after_loss) / 50.0
 			pressure += pow(danger, 2.0) * 3.0
 		score += int(round(float(base_per_follower) * pressure))
+	if player == opponent:
+		# A racing bot values each point of opponent follower damage above its
+		# neutral rate: the clock, not the card economy, wins the game.
+		score = int(round(float(score) * _posture_damage_multiplier()))
 	return score
 
 func _get_attack_defender_card(action: CardAction) -> Card:
@@ -6771,6 +7028,7 @@ func _score_creature_play_in_zone(card: Card, zone: Zone, available_mana: int, i
 	score -= mana_cost * 120 * _mana_rate() / 1000
 	score -= int(payment_plan.get("penalty", 0))
 	score += _estimate_tonal_extraction_setup_bonus(card)
+	score += _summon_trigger_setup_bonus(card, zone)
 	if zone in bot_player.frontline_zones and _opponent_has_known_board_wipe(card, zone):
 		score -= _get_card_economic_value(card)
 	if card is Askelladen and _get_askelladen_problem_creature() != null:
@@ -6788,6 +7046,82 @@ func _score_creature_play_in_zone(card: Card, zone: Zone, available_mana: int, i
 			if field_card is HeavySnow and not field_card.is_face_down and not field_card.abilities_suppressed():
 				return -1000000
 	return score
+
+# Deployment-time credit for creature triggers the engine resolves but the
+# generic body score never sees. Each entry prices what playing the card
+# profitably actually earns so these bodies compete with stronger vanilla
+# stats exactly when their triggers are live.
+func _summon_trigger_setup_bonus(card: Card, zone: Zone) -> int:
+	if card == null or zone == null or card.abilities_suppressed_by_effects():
+		return 0
+	var bonus := 0
+	if card is Pazuzu:
+		# Locust Swarm drains 2 mana on entry and Locust Plague repeats the
+		# drain at every own upkeep while the body survives.
+		bonus += 900
+		if zone in bot_player.frontline_zones and opponent != null and opponent.mana >= 4:
+			bonus += 700
+	if card is Rabisu:
+		# Life Drain leeches stats from every sleeping creature on impact.
+		var sleeping := 0
+		for enemy in _get_board_creatures(opponent):
+			if CardStrategy.visible(self, enemy) and enemy.is_sleeping:
+				sleeping += 1
+		if sleeping > 0:
+			bonus += 700 * sleeping
+	if card is Caleuche:
+		var spirits := 0
+		for ally in _get_board_creatures(bot_player):
+			if ally != card and CardStrategy.visible(self, ally) and ally.has_type("Spirit"):
+				spirits += 1
+		bonus += mini(spirits, 4) * 1300
+	if card is GidimEnsi and zone in bot_player.frontline_zones:
+		# Its Guardian trigger sleeps anything that attacks the bot's followers,
+		# so the wall also deters the incoming push.
+		var gidim_danger := _forecast_incoming_follower_loss()
+		if gidim_danger > 0:
+			bonus += gidim_danger / 3
+	if card is HabrokParagonOfHawks:
+		# Breakout only needs this to be the lone body at the opponent's turn
+		# end; the recursion (bounce plus removal) starts from an empty board.
+		if _board_creature_count(bot_player) == 0:
+			bonus += 1500
+	if card is WolfCub or card is WolfAdolescent:
+		bonus += _wolf_maturation_setup_bonus(card)
+	if card is Isimud:
+		# Forerunner discounts Divine Manifestation summons by 6 while this
+		# body is on the field, and Revelation can deploy one directly.
+		for hand_card in bot_player.hand_zone.cards:
+			if hand_card != card and hand_card.has_type("Divine Manifestation"):
+				bonus += 1800
+				break
+	if card is EnHeduAnna:
+		if _en_hedu_anna_exaltation_setup_available():
+			bonus += 1200
+	return bonus
+
+func _wolf_maturation_setup_bonus(card: Card) -> int:
+	# Maturation upgrades the wolf into an in-deck Lupine at upkeep; credit
+	# half the best upgrade margin while the option stays live.
+	var level_cap := 4 if card is WolfCub else 5
+	var best := 0
+	for deck_card in bot_player.deck_zone.get_unordered_deck_cards():
+		if deck_card == card or not deck_card.has_type("Lupine") or deck_card.get_effective_level() > level_cap:
+			continue
+		best = maxi(best, _score_projected_card(deck_card))
+	if best <= 0:
+		return 0
+	return mini(2000, maxi(0, best - _score_projected_card(card)) / 2)
+
+func _en_hedu_anna_exaltation_setup_available() -> bool:
+	# Exaltation needs the god's own power to activate this turn while she is
+	# face-up on the field, so she pairs with an affordable god ability.
+	var god := _find_player_god()
+	if god == null or not god.has_method("can_activate") or not god.can_activate(game_manager):
+		return false
+	if god.has_method("get_activation_mana_cost") and god.get_activation_mana_cost(game_manager) > bot_player.mana:
+		return false
+	return true
 
 func _forecast_fenrir_devour(fenrir: Fenrir, danger: int, change: Dictionary, offered_uids: Array = []) -> Dictionary:
 	if fenrir.abilities_suppressed_by_effects():
@@ -7142,6 +7476,10 @@ func _score_summon_sacrifice_candidate(card: Card) -> int:
 		score += 2500
 	if card is EnkiLordOfEridu:
 		score += 2200
+	if card is Capricorn:
+		# Sacrificing Capricorn refunds 2 mana and returns it to hand, so it
+		# is the premium sacrifice payment rather than a body to protect.
+		score -= 2400
 	if card.has_type("Guardian"):
 		score += 500
 	if opponent != null and game_manager != null and card is BaseCard \

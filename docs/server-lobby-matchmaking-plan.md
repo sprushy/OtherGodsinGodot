@@ -514,13 +514,32 @@ or 20 minutes overall.
 
 Supervisor-hosted human matches (dedicated subprocess or in-process host) are
 capped at one concurrent match per logical core with one core reserved for the
-lobby; `OTHERGODS_MAX_HUMAN_MATCHES` overrides the limit. When the cap is
-reached, `MatchSupervisor.create_match` declines the new match instead of
-launching it, and both players receive "The server is full at the moment —
-sorry! Please try again in a few minutes." The room stays open so they can
-retry. Player-hosted matches never count against the cap (they run on the
-host's machine), and bot self-play is excluded because the scheduler sheds it
-to make room for humans.
+lobby; `OTHERGODS_MAX_HUMAN_MATCHES` overrides the limit. The production
+deployment (`scripts/server/lightsail/start_server.ps1`) sets it to `6` on the
+2 GB / 2 vCPU Lightsail box, sizing ~150 MB per match process with a 512 MB
+reserve. When the cap is reached, `MatchSupervisor.create_match` declines the
+new match instead of launching it, and both players receive "The server is full
+at the moment — sorry! Please try again in a few minutes." The room stays open
+so they can retry. Player-hosted matches never count against the cap (they run
+on the host's machine), and bot self-play is excluded because the scheduler
+sheds it to make room for humans.
+
+### Client-side server-bot challenges (local bot matches)
+
+Server-bot challenge matches (ranked and unranked human vs. lobby bot) do not
+count against the cap because they never run as server subprocesses: the lobby
+assigns them to the challenger's own client with in-process authority, the same
+topology practice matches use. The lobby (`LobbyServer._assign_local_bot_match`)
+sends `LOCAL_BOT_MATCH_ASSIGNED` with both decks and identities; the human runs
+as player index 0 and the bot as player 1. The game client reports the outcome
+via `LOCAL_BOT_MATCH_RESULT`, and the lobby records it through the normal
+`MatchHistoryStore` pipeline (so ranked progression and bot deck stars still
+advance). Results are client-authoritative for now — a deliberate tradeoff to
+free server capacity for human-vs-human matches. Local matches are Bo1 only,
+have no ranked turn clock, and accept no spectators. A match that never reports
+a result holds its room until `LOCAL_BOT_MATCH_RESULT_TIMEOUT_SECONDS` (3
+hours) expires it; forfeits through the in-game menu still end the game and are
+recorded, while abandoning mid-match frees the room with no result.
 
 Completed battles are recorded in `server_data/match_history_results`. Each
 record stores both bot outcomes, starting ranks, turns, and final follower

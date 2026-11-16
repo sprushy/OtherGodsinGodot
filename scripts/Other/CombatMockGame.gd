@@ -90,6 +90,8 @@ const DefaultMatchSetupScript = preload("res://scripts/server/DefaultMatchSetup.
 const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
+const LocalBotMatchGameInputScript = preload("res://scripts/bots/BotGameInput.gd")
+const LocalBotMatchPlayerBotScript = preload("res://scripts/bots/PracticeFuzzPlayerBot.gd")
 const PowerUnlockSoundPlayerScript = preload("res://scripts/audio/PowerUnlockSoundPlayer.gd")
 const LocustSwarmSoundPlayerScript = preload("res://scripts/audio/LocustSwarmSoundPlayer.gd")
 const StructureBuildSoundPlayerScript = preload("res://scripts/audio/StructureBuildSoundPlayer.gd")
@@ -159,6 +161,9 @@ const SNOWSTORM_CONTROL_GROUP := "other_gods_snowstorm_control"
 const DROUGHT_CONTROL_GROUP := "other_gods_drought_control"
 const DEBUG_CLIENT_STATE_LOGS := false
 const DEBUG_END_TURN_LOGS := false
+## How long the result presentation waits for a lobby confirmation of a
+## client-side ranked bot match before showing the overlay without it.
+const LOCAL_RANKED_RESULT_CONFIRM_TIMEOUT_MSEC := 2500
 
 signal forfeit_requested
 signal return_to_menu_requested
@@ -167,6 +172,9 @@ signal watch_next_bot_match_requested
 signal rematch_requested
 signal match_session_cleared
 signal match_loading_finished
+## Emitted when a client-side lobby bot match finishes so the caller (MainMenu)
+## can report the authoritative-local result to the lobby server.
+signal local_ranked_match_ended(result: Dictionary)
 ## Emitted when the match connection is unrecoverable from inside the game
 ## (join retries or the server's reconnect window ran out). MainMenu uses this
 ## to restore the lobby session and offer the rejoin flow while the seat lasts.
@@ -183,6 +191,8 @@ var match_client = null
 var _is_networked_client: bool = false
 var _is_observer_mode: bool = false
 var _is_local_hosted_bot_observer: bool = false
+var _local_bot_match_bot = null
+var _local_ranked_match_reported: bool = false
 var _observer_reveals_bot_hands: bool = false
 var _observer_feedback_viewer: Player = null
 var selected_card: Card = null
@@ -6452,6 +6462,7 @@ func start_game(
 	var match_players: Dictionary = _build_initial_match_players(default_match_setup, server_match_session, match_info)
 	player1 = match_players.get("player1", null)
 	player2 = match_players.get("player2", null)
+	_attach_local_bot_match_bot_if_needed(match_info, server_match_session)
 	if not game_manager.god_power_activated.is_connected(_on_god_power_activated):
 		game_manager.god_power_activated.connect(_on_god_power_activated)
 	if not game_manager.followers_converted.is_connected(_on_followers_converted):
@@ -6506,8 +6517,38 @@ func start_game(
 		return
 	_sync_priority_preferences_to_match(true)
 	game_manager.start_turn()
+	if _local_bot_match_bot != null and _local_bot_match_bot.has_method("poll"):
+		_local_bot_match_bot.poll()
 	update_ui()
 	_open_upkeep_choice_window()
+
+func _attach_local_bot_match_bot_if_needed(match_info: Dictionary, server_match_session) -> void:
+	if not bool(match_info.get("local_bot_match", false)) or _is_networked_client:
+		return
+	if game_manager == null or match_manager == null:
+		return
+	var bot_player_index := _find_local_bot_player_index(server_match_session)
+	if bot_player_index < 0 or bot_player_index >= game_manager.players.size():
+		return
+	var bot_input := LocalBotMatchGameInputScript.new(match_manager, bot_player_index)
+	_local_bot_match_bot = LocalBotMatchPlayerBotScript.new()
+	_local_bot_match_bot.attach(game_manager, match_manager, bot_input, bot_player_index)
+
+func _find_local_bot_player_index(server_match_session) -> int:
+	if server_match_session != null:
+		for player_index in range(server_match_session.player_session_ids.size()):
+			var session_id := str(server_match_session.player_session_ids[player_index])
+			var identity: Dictionary = server_match_session.player_identity_by_session.get(session_id, {})
+			if bool(identity.get("is_bot", false)):
+				return player_index
+	# Local bot matches place the bot in seat 1 by convention.
+	return 1
+
+func _detach_local_bot_match_bot() -> void:
+	if _local_bot_match_bot != null:
+		if _local_bot_match_bot.has_method("detach"):
+			_local_bot_match_bot.detach()
+		_local_bot_match_bot = null
 
 func _build_initial_match_players(default_match_setup, server_match_session = null, match_info: Dictionary = {}) -> Dictionary:
 	var match_players: Dictionary = {}
@@ -6528,6 +6569,8 @@ func _prepare_for_match_launch(status_message: String = "Connecting to match..."
 	_initial_state_sync_generation += 1
 	_pending_visual_game_result.clear()
 	_ranked_match_result.clear()
+	_detach_local_bot_match_bot()
+	_local_ranked_match_reported = false
 	_clear_resolution_effects()
 	_match_launch_loading = false
 	_clear_card_draw_animation()
@@ -29929,6 +29972,10 @@ func _can_offer_lobby_rematch() -> bool:
 		return false
 	if _current_match_info.is_empty():
 		return false
+	# Local bot matches close their lobby room on completion, so a rematch
+	# request would target a room that no longer exists.
+	if bool(_current_match_info.get("local_bot_match", false)):
+		return false
 	if str(_current_match_info.get("room_id", "")).strip_edges().is_empty():
 		return false
 	return not str(_current_match_info.get("match_id", "")).strip_edges().is_empty()
@@ -31785,6 +31832,9 @@ func _on_enemy_guard_changed(_new_guard: int) -> void:
 func _record_local_host_match_result(winner: Player, loser: Player) -> void:
 	if _local_match_result_recorded or _is_networked_client or not _is_real_network_host():
 		return
+	# Client-side server-bot challenges are recorded by the lobby instead.
+	if bool(_current_match_info.get("local_bot_match", false)):
+		return
 	if headless_match_host == null or headless_match_host.match_session == null or game_manager == null:
 		return
 	var host_server_mode := str(headless_match_host.match_session.server_mode).strip_edges()
@@ -31820,8 +31870,54 @@ func _on_game_ended(winner: Player, loser: Player) -> void:
 	if (_is_networked_client or _is_real_network_host()) and _should_defer_game_result_for_series():
 		return
 	_record_local_host_match_result(winner, loser)
+	if _is_local_bot_match():
+		_report_local_bot_match_result(winner, loser)
+		# Give the lobby a moment to confirm the reported result so the ranked
+		# panel can be part of the result overlay that appears next.
+		await _wait_for_local_ranked_result_confirmation()
 	var should_return_to_menu := _pending_forfeit_return_to_menu
 	_finalize_game_result_ui("", winner, loser, should_return_to_menu)
+
+func _is_local_bot_match() -> bool:
+	return bool(_current_match_info.get("local_bot_match", false)) and not _is_networked_client
+
+func _report_local_bot_match_result(winner: Player, loser: Player) -> void:
+	if _local_ranked_match_reported or not local_ranked_match_ended.has_connections():
+		return
+	_local_ranked_match_reported = true
+	var player_session_ids: Array = _current_match_info.get("player_session_ids", [])
+	var winner_index := -1
+	var loser_index := -1
+	if game_manager != null and winner != null:
+		winner_index = game_manager.players.find(winner)
+	if game_manager != null and loser != null:
+		loser_index = game_manager.players.find(loser)
+	var winner_session_id := ""
+	var loser_session_id := ""
+	if winner_index >= 0 and winner_index < player_session_ids.size():
+		winner_session_id = str(player_session_ids[winner_index])
+	if loser_index >= 0 and loser_index < player_session_ids.size():
+		loser_session_id = str(player_session_ids[loser_index])
+	local_ranked_match_ended.emit({
+		"match_id": str(_current_match_info.get("match_id", "")),
+		"winner_session_id": winner_session_id,
+		"loser_session_id": loser_session_id,
+		"winner_god_name": _get_player_god_name(winner),
+		"loser_god_name": _get_player_god_name(loser),
+	})
+
+func _wait_for_local_ranked_result_confirmation() -> void:
+	var deadline_msec := Time.get_ticks_msec() + LOCAL_RANKED_RESULT_CONFIRM_TIMEOUT_MSEC
+	while _ranked_match_result.is_empty() and not _game_result_presented and Time.get_ticks_msec() < deadline_msec:
+		if not is_inside_tree() or get_tree() == null:
+			return
+		await get_tree().process_frame
+
+## MainMenu calls this when the lobby confirms the reported result so the
+## result overlay's ranked panel reflects the recorded ladder change.
+func apply_local_ranked_result(ranked_result: Dictionary) -> void:
+	if ranked_result is Dictionary and not (ranked_result as Dictionary).is_empty():
+		_ranked_match_result = (ranked_result as Dictionary).duplicate(true)
 
 func _request_ui_refresh() -> void:
 	if _post_game_board_refresh_locked:

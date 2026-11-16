@@ -170,6 +170,13 @@ try {
     $godotLogPath = Join-Path $LogDir "server-$timestamp.godot.log"
     $tracePath = Join-Path $LogDir "server-$timestamp.trace.log"
 
+    # Human-vs-human match subprocess cap (cores-1 would be 1 on this 2 vCPU
+    # box). Server-bot challenge matches run in the challenger's client, so
+    # this budget stays reserved for real human matches.
+    if ([string]::IsNullOrEmpty($env:OTHERGODS_MAX_HUMAN_MATCHES)) {
+        $env:OTHERGODS_MAX_HUMAN_MATCHES = "6"
+    }
+
     $startArgs = @{
         FilePath = $launchPath
         ArgumentList = @(

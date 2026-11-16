@@ -25,7 +25,8 @@ const TACTICAL_CARDS := [
 	"Drought", "HeavySnow", "Storm", "SavingGrace", "JiangZiyaFisherOfKings", "ShroudOfTheAncients", "WildMagic",
 ]
 const ACTIVE_POWERS := ["AcceleratedFate", "OraclesSight", "BerserkerMead", "MechFactory", "Palisade", "ManaGuard"]
-const BOARD_ABILITIES := ["Alu", "Lindwyrm", "Lamashatu", "ClayEaters", "AncientPyre", "Watchtower", "Gawain", "Beyla", "Nimue", "JiangZiyaFisherOfKings"]
+const BOARD_ABILITIES := ["Alu", "Lindwyrm", "Lamashatu", "ClayEaters", "AncientPyre", "Watchtower", "Gawain", "Beyla", "Nimue", "JiangZiyaFisherOfKings",
+	"Berserker", "EnHeduAnna", "GududPriest", "HariiShaman", "Isimud", "Mopsus", "SeventhSageUtuabzu", "WingedLion"]
 const EQUIPMENT := ["BeardedAxe", "RunicShortsword", "ReedBow", "SharurTheFlyingMace", "SevenLeagueBoots", "DraupnirTheMultiplying", "Gambanteinn"]
 const STRUCTURES := ["AncientPyre", "Watchtower", "WardingStone", "DoorwayToTheVoid", "E2Abzu",
 	"AnointingStatue", "EriduCityOfSages", "GlitnirThePeaceful", "HildskjalfThroneOfOdin"]
@@ -820,6 +821,59 @@ static func target_score(bot, card: Card, target: Card, action: CardAction = nul
 			for status in card.get_removable_statuses(target):
 				score = maxi(score, healing_score(bot, target, status))
 			return score if own else BAD
+		"GududPriest":
+			# Creature Ward removes only creature-applied effects, so value is
+			# limited to those sources on either side of the board.
+			if target == null or target.card_type != Card.CardType.CREATURE or not visible(bot, target) \
+					or target.current_zone == null or not target.current_zone.is_board_zone():
+				return BAD
+			var ward_gain := 0
+			for status in target._get_effective_statuses():
+				var status_source := status.get("source_card") as Card
+				if status_source == null or status_source.card_type != Card.CardType.CREATURE:
+					continue
+				ward_gain += maxi(0, healing_score(bot, target, status))
+			for buff in target._get_effective_buffs():
+				var buff_source := buff.get("source_card") as Card
+				if buff_source == null or buff_source.card_type != Card.CardType.CREATURE:
+					continue
+				var buff_str := maxi(0, int(buff.get("str", 0)))
+				var buff_res := maxi(0, int(buff.get("res", 0)))
+				var buff_spd := maxi(0, int(buff.get("spd", 0)))
+				if target.get_controller() == bot.opponent:
+					ward_gain += buff_str * 100 + buff_res * 55 + buff_spd * 250
+				else:
+					ward_gain += maxi(0, -int(buff.get("str", 0))) * 100 \
+						+ maxi(0, -int(buff.get("res", 0))) * 55 \
+						+ maxi(0, -int(buff.get("spd", 0))) * 250
+			return ward_gain if ward_gain >= 500 else BAD
+		"HariiShaman":
+			return _harii_shaman_transform_gain(bot, card, target)
+		"Isimud":
+			if target == null or target == card or not target.has_type("Divine Manifestation") \
+					or target.current_zone != bot.bot_player.hand_zone:
+				return BAD
+			var revelation_zone: Zone = bot._get_first_open_summon_zone(bot.bot_player)
+			if revelation_zone == null:
+				return BAD
+			var revelation_cost: int = bot.game_manager.get_creature_summon_mana_cost(bot.bot_player, target, card, false) \
+				+ Isimud.REVELATION_SUMMON_TAX
+			if revelation_cost > bot.bot_player.mana:
+				return BAD
+			var revelation_score: int = bot._score_projected_card(target) \
+				+ bot._estimate_summon_attack_value(target, revelation_zone, bot.bot_player.mana - revelation_cost) * 3 / 4
+			revelation_score -= mana_penalty(bot, revelation_cost)
+			return revelation_score if revelation_score > 0 else BAD
+		"SeventhSageUtuabzu":
+			# Imbue Ally replays the target Sage's impact at the listed cost.
+			if target == null or target == card or not visible(bot, target):
+				return BAD
+			match key(target):
+				"FirstSageAdapa": return 2600
+				"ThirdSageEnmedugga": return 1400
+				"FourthSageEnmegalamma": return 2200
+				"SixthSageAnEnlilda": return 2400
+				_: return 1200
 		"OraclesSight":
 			return bot._get_hand_value(target) * 60 + (2000 if target is CreatureCard and bot._get_best_affordable_hand_creature(0) == null else 0)
 	return BAD
@@ -1071,6 +1125,44 @@ static func wake_gain(bot, source: Card, norse_only: bool = false) -> int:
 				continue
 			gain += (1 if player == bot.bot_player else -1) * value(bot, creature) / 2
 	return gain
+
+static func _active_hunting_tactics(bot) -> HuntingTactics:
+	for power in bot._get_player_powers():
+		var tactics := power as HuntingTactics
+		if tactics != null and tactics.is_effectively_active() and not tactics.abilities_suppressed():
+			return tactics
+	return null
+
+static func _is_hunting_tactics_attacker(card: Card) -> bool:
+	return card != null and card.card_type == Card.CardType.CREATURE \
+		and (card.has_type("Lupine") or (card.has_type("Human") and card.has_type("Warrior") and card.culture == "Norse"))
+
+# Transform only pays when it flips a real synergy: restoring an Animal into a
+# Norse Human Warrior under Thor's patron buff or Hunting Tactics eligibility,
+# or turning an unused Norse Warrior into a Lupine supporter for an eligible
+# attacker that currently has no support choices.
+static func _harii_shaman_transform_gain(bot, source: Card, target: Card) -> int:
+	if target == null or not visible(bot, target) or target.get_controller() != bot.bot_player \
+			or target.current_zone == null or not target.current_zone.is_board_zone():
+		return BAD
+	var tactics: HuntingTactics = _active_hunting_tactics(bot)
+	if target.has_type("Animal"):
+		var gain := 0
+		if bot._find_player_god() is Thor and not target.has_type("Warrior"):
+			gain += 900
+		if tactics != null and not _is_hunting_tactics_attacker(target) \
+				and target.culture == "Norse" and target.current_zone in bot.bot_player.frontline_zones:
+			gain += 1300
+		return gain if gain >= 900 else BAD
+	if tactics != null and target.has_type("Warrior") and target.culture == "Norse" and not target.has_type("Animal"):
+		for attacker in bot._get_board_creatures(bot.bot_player):
+			if attacker == target or attacker.current_zone == null \
+					or attacker.current_zone not in bot.bot_player.frontline_zones \
+					or attacker.is_sleeping or attacker.has_status_effect("cannot_attack"):
+				continue
+			if _is_hunting_tactics_attacker(attacker) and tactics.get_support_choices(attacker).is_empty():
+				return 1400
+	return BAD
 
 static func equipment_score(bot, equipment: Card, bearer: Card) -> int:
 	if not equipment.can_equip_to(bearer) or bearer.is_sleeping:

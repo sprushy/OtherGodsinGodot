@@ -55,6 +55,9 @@ const ROOM_LIST := "room_list"
 const ROOM_SNAPSHOT := "room_snapshot"
 const ROOM_ERROR := "room_error"
 const MATCH_ASSIGNED := "match_assigned"
+const LOCAL_BOT_MATCH_ASSIGNED := "local_bot_match_assigned"
+const LOCAL_BOT_MATCH_RESULT := "local_bot_match_result"
+const LOCAL_BOT_MATCH_CONFIRMED := "local_bot_match_confirmed"
 const REQUEST_NEXT_RECEIVED := "request_next_received"
 const REQUEST_NEXT_RESULT := "request_next_result"
 const LOBBY_RECONNECT_OK := "lobby_reconnect_ok"
@@ -138,6 +141,10 @@ static func validate_request(message: Dictionary) -> String:
 			if str(payload.get("room_id", "")).strip_edges().is_empty():
 				return "Missing room code."
 		REQUEST_NEXT:
+			var match_id = payload.get("match_id", "")
+			if not match_id is String or match_id.strip_edges().is_empty() or match_id.length() > 64:
+				return "Invalid match id."
+		LOCAL_BOT_MATCH_RESULT:
 			var match_id = payload.get("match_id", "")
 			if not match_id is String or match_id.strip_edges().is_empty() or match_id.length() > 64:
 				return "Invalid match id."

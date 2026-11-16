@@ -38,6 +38,8 @@ signal room_list_updated(rooms: Array)
 signal room_snapshot_updated(snapshot: Dictionary)
 signal room_error(message: String)
 signal match_assigned(match_info: Dictionary)
+signal local_bot_match_assigned(match_info: Dictionary)
+signal local_bot_match_confirmed(success: bool, ranked_result: Dictionary, message: String)
 signal request_next_received(requester_name: String)
 signal request_next_result(message: String)
 signal account_deck_list_received(decks: Array, preferred_deck_id: String)
@@ -447,6 +449,9 @@ func submit_deck(
 		payload["is_purpose_deck"] = true
 	_send_request(LobbyProtocolScript.SELECT_DECK, payload)
 
+func submit_local_bot_match_result(payload: Dictionary) -> void:
+	_send_request(LobbyProtocolScript.LOCAL_BOT_MATCH_RESULT, payload.duplicate(true))
+
 func request_account_decks() -> void:
 	_send_request(LobbyProtocolScript.REQUEST_ACCOUNT_DECKS)
 
@@ -715,6 +720,17 @@ func lobby_event(message: Dictionary) -> void:
 		LobbyProtocolScript.MATCH_ASSIGNED:
 			current_active_match_info = _prepare_match_info(payload)
 			match_assigned.emit(current_active_match_info)
+		LobbyProtocolScript.LOCAL_BOT_MATCH_ASSIGNED:
+			if is_authenticated():
+				current_active_match_info = _prepare_match_info(payload)
+				local_bot_match_assigned.emit(current_active_match_info)
+		LobbyProtocolScript.LOCAL_BOT_MATCH_CONFIRMED:
+			if is_authenticated():
+				local_bot_match_confirmed.emit(
+					bool(payload.get("success", false)),
+					payload.get("ranked_result", {}) if payload.get("ranked_result", {}) is Dictionary else {},
+					str(payload.get("message", ""))
+				)
 		LobbyProtocolScript.REQUEST_NEXT_RECEIVED:
 			if is_authenticated():
 				request_next_received.emit(str(payload.get("requester_name", "Player")))

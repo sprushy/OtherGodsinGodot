@@ -43,6 +43,10 @@ const BOT_SELF_PLAY_RETRY_SECONDS := 30
 ## worker simulates on the lobby's single main thread, so this stays small.
 const BOT_SELF_PLAY_MAX_IDLE_WORKERS := 2
 const BOT_SELF_PLAY_BLOCK_LOG_INTERVAL_SECONDS := 60.0
+## Server-bot challenge matches run in the challenger's own client (like the
+## volunteer bot workers); the lobby only brokers the pairing and records the
+## reported result. This bounds how long an unreported match may hold its room.
+const LOCAL_BOT_MATCH_RESULT_TIMEOUT_SECONDS := 3 * 60 * 60
 const ISSUE_REPORT_COOLDOWN_SECONDS := 60
 const BOT_PROPOSAL_COOLDOWN_SECONDS := 60
 const ALLOW_INSECURE_ACCOUNT_AUTH_ENV := "OTHERGODS_ALLOW_INSECURE_ACCOUNT_AUTH"
@@ -95,6 +99,7 @@ var _next_bot_self_play_msec := 0
 var _last_bot_self_play_block_reason := ""
 var _next_bot_self_play_block_log_msec := 0
 var _client_bot_jobs: Dictionary = {}
+var _local_bot_matches_by_id: Dictionary = {}
 var _issue_report_last_submit_by_peer: Dictionary = {}
 var _bot_proposal_last_submit_by_account: Dictionary = {}
 
@@ -130,6 +135,7 @@ func _process(delta: float) -> void:
 	_expire_client_bot_jobs()
 	_expire_disconnected_room_members()
 	_expire_abandoned_player_host_matches()
+	_expire_stale_local_bot_matches()
 	_ensure_server_bot_seeks()
 	_maintain_bot_self_play()
 
@@ -410,6 +416,8 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 				_send_error_to_peer(peer_id, "Join a room before changing ready state.")
 				return
 			_set_ready_for_session(str(ready_session.get("session_id", "")), bool(payload.get("is_ready", false)))
+		LobbyProtocolScript.LOCAL_BOT_MATCH_RESULT:
+			_handle_local_bot_match_result(peer_id, payload)
 		LobbyProtocolScript.REQUEST_RECONNECT_LOBBY:
 			_handle_reconnect_request(peer_id, payload)
 		LobbyProtocolScript.REPORT_HOST_VIABILITY:
@@ -2483,6 +2491,9 @@ func _observe_room_for_session(session_id: String, room_id: String) -> void:
 	if match_id.is_empty():
 		_send_error_to_session(session_id, "That room does not have an active match yet.")
 		return
+	if _local_bot_matches_by_id.has(match_id) or match_supervisor == null or match_supervisor.get_match(match_id) == null:
+		_send_error_to_session(session_id, "That match does not accept spectators.")
+		return
 	var match_session = match_supervisor.get_match(match_id)
 	if match_session == null:
 		_send_error_to_session(session_id, "That live match is no longer available to observe.")
@@ -2661,6 +2672,14 @@ func _assign_match(room: LobbyRoom) -> void:
 			"rank_badge": _get_match_rank_badge(account_id, room.best_of, bot_stars),
 		}
 
+	# Server-bot challenge matches run entirely inside the challenger's own
+	# client (in-process authority, like practice matches), keeping dedicated
+	# server subprocesses free for human-vs-human matches. The lobby still
+	# brokers the pairing and records the reported result.
+	if _is_server_bot_challenge_room(room):
+		_assign_local_bot_match(room, player_decks_by_session, player_identity_by_session)
+		return
+
 	var spectator_visibility := {} if room.is_bot_self_play else _build_spectator_visibility_by_session(room.members)
 	# Unranked matches prefer a player-hosted (listen-server) topology when the
 	# seek creator can host: one player runs the authoritative match and the
@@ -2681,6 +2700,184 @@ func _assign_match(room: LobbyRoom) -> void:
 		room.best_of
 	)
 	_finalize_match_assignment(room, match_session)
+
+## A server-bot challenge room pairs exactly one human with one bot session;
+## bot self-play rooms are supervised instead, and human rooms never qualify.
+func _is_server_bot_challenge_room(room: LobbyRoom) -> bool:
+	if room == null or room.is_bot_self_play or room.members.size() != 2:
+		return false
+	var has_bot := false
+	var has_human := false
+	for session_id in room.members:
+		if _is_server_bot_session(str(session_id)):
+			has_bot = true
+		else:
+			has_human = true
+	return has_bot and has_human
+
+## Assign a server-bot challenge match to the challenger's own client. The
+## human keeps player index 0 and the bot runs as player 1 with in-process
+## authority; the lobby records the reported result through the normal
+## MatchHistoryStore pipeline.
+func _assign_local_bot_match(
+	room: LobbyRoom,
+	player_decks_by_session: Dictionary,
+	player_identity_by_session: Dictionary
+) -> void:
+	var human_session_id := ""
+	var bot_session_id := ""
+	for session_id in room.members:
+		if _is_server_bot_session(str(session_id)):
+			bot_session_id = str(session_id)
+		else:
+			human_session_id = str(session_id)
+	if human_session_id.is_empty() or bot_session_id.is_empty():
+		_send_error_to_session(room.host_session_id, "Could not prepare the bot challenge.")
+		_close_room(room.room_id)
+		return
+
+	var match_id := "match_%s" % _generate_id(8)
+	var match_info: Dictionary = {
+		"match_id": match_id,
+		"room_id": room.room_id,
+		"is_ranked": room.is_ranked,
+		"best_of": 1,
+		"player_session_ids": [human_session_id, bot_session_id],
+		"human_session_id": human_session_id,
+		"bot_session_id": bot_session_id,
+		"decks_by_session": player_decks_by_session.duplicate(true),
+		"identity_by_session": player_identity_by_session.duplicate(true),
+	}
+	_local_bot_matches_by_id[match_id] = {
+		"match_id": match_id,
+		"room_id": room.room_id,
+		"human_session_id": human_session_id,
+		"bot_session_id": bot_session_id,
+		"is_ranked": room.is_ranked,
+		"decks_by_session": player_decks_by_session.duplicate(true),
+		"identity_by_session": player_identity_by_session.duplicate(true),
+		"assigned_unix": int(Time.get_unix_time_from_system()),
+		"reported": false,
+	}
+	room.status = LobbyRoomScript.STATUS_IN_MATCH
+	room.assigned_match_id = match_id
+	_emit_room_updates(room)
+	if _room_has_server_bot(room):
+		call_deferred("_ensure_server_bot_seeks")
+	_send_to_session(human_session_id, LobbyProtocolScript.LOCAL_BOT_MATCH_ASSIGNED, match_info)
+	_trace("assigned local bot match %s for room %s (ranked=%s)" % [match_id, room.room_id, str(room.is_ranked)])
+
+func _handle_local_bot_match_result(peer_id: int, payload: Dictionary) -> void:
+	var session: Dictionary = _get_session_for_peer(peer_id)
+	if session.is_empty():
+		_send_error_to_peer(peer_id, "Sign in before reporting match results.")
+		return
+	var human_session_id := str(session.get("session_id", ""))
+	var match_id := str(payload.get("match_id", "")).strip_edges()
+	var entry_variant = _local_bot_matches_by_id.get(match_id, null)
+	if entry_variant == null or not (entry_variant is Dictionary):
+		_send_error_to_peer(peer_id, "That match result was already settled or is unknown.")
+		return
+	var entry: Dictionary = entry_variant
+	if str(entry.get("human_session_id", "")) != human_session_id:
+		_send_error_to_peer(peer_id, "Only the challenger may report this match result.")
+		return
+	if bool(entry.get("reported", false)):
+		_send_error_to_peer(peer_id, "This match result was already reported.")
+		return
+
+	var bot_session_id := str(entry.get("bot_session_id", ""))
+	var winner_session_id := str(payload.get("winner_session_id", "")).strip_edges()
+	var winner_index := -1
+	var loser_index := -1
+	if not winner_session_id.is_empty():
+		var session_ids: Array[String] = [human_session_id, bot_session_id]
+		var found_winner := session_ids.find(winner_session_id)
+		if found_winner < 0:
+			_send_error_to_peer(peer_id, "Invalid match winner session.")
+			return
+		winner_index = found_winner
+		loser_index = 1 - found_winner
+	entry["reported"] = true
+
+	var match_session = MatchSessionScript.new(
+		match_id,
+		str(entry.get("room_id", "")),
+		"127.0.0.1",
+		0,
+		[human_session_id, bot_session_id] as Array[String],
+		(entry.get("decks_by_session", {}) as Dictionary).duplicate(true),
+		(entry.get("identity_by_session", {}) as Dictionary).duplicate(true)
+	)
+	match_session.is_ranked = bool(entry.get("is_ranked", false))
+	match_session.configure_series_format(1)
+	match_session.mark_finished()
+	_ensure_match_history_store()
+	var record_result: Dictionary = match_history_store.record_completed_match(
+		match_session,
+		winner_index,
+		loser_index,
+		str(payload.get("winner_god_name", "")).strip_edges(),
+		str(payload.get("loser_god_name", "")).strip_edges()
+	)
+	if not bool(record_result.get("success", false)):
+		entry["reported"] = false
+		var record_message := str(record_result.get("message", "")).strip_edges()
+		if record_message.is_empty():
+			record_message = "Could not record the match result."
+		_send_error_to_peer(peer_id, record_message)
+		return
+	_local_bot_matches_by_id.erase(match_id)
+	var room_id := str(entry.get("room_id", ""))
+	if not room_id.is_empty() and rooms_by_id.has(room_id):
+		_close_room(room_id)
+	call_deferred("_ensure_server_bot_seeks")
+	_broadcast_room_lists()
+	var ranked_result := {}
+	if record_result.get("entry", {}) is Dictionary and not (record_result["entry"] as Dictionary).is_empty():
+		ranked_result = _map_ranked_results_by_session(
+			record_result["entry"], human_session_id, bot_session_id)
+	_send_to_session(human_session_id, LobbyProtocolScript.LOCAL_BOT_MATCH_CONFIRMED, {
+		"match_id": match_id,
+		"success": true,
+		"ranked_result": ranked_result,
+	})
+	_trace("recorded local bot match result for %s (winner_index=%d)" % [match_id, winner_index])
+
+## Ranked result panels are keyed by player_index in MatchHistoryStore; the
+## client matches on its own session id instead.
+func _map_ranked_results_by_session(entry: Dictionary, human_session_id: String, bot_session_id: String) -> Dictionary:
+	if match_history_store == null:
+		return {}
+	var by_index: Dictionary = match_history_store.get_ranked_match_results(entry)
+	var by_session: Dictionary = {}
+	for index_variant in by_index.keys():
+		var session_id := human_session_id if int(index_variant) == 0 else bot_session_id
+		if not session_id.is_empty():
+			by_session[session_id] = by_index[index_variant]
+	return by_session
+
+## A room waiting on its challenger's client must not hold the bot list and
+## seek slots forever if the client quit or crashed without reporting.
+func _expire_stale_local_bot_matches() -> void:
+	if _local_bot_matches_by_id.is_empty():
+		return
+	var now_unix := int(Time.get_unix_time_from_system())
+	var expired_ids: Array[String] = []
+	for match_id_variant in _local_bot_matches_by_id.keys():
+		var match_id := str(match_id_variant)
+		var entry: Dictionary = _local_bot_matches_by_id[match_id]
+		if now_unix - int(entry.get("assigned_unix", 0)) >= LOCAL_BOT_MATCH_RESULT_TIMEOUT_SECONDS:
+			expired_ids.append(match_id)
+	for match_id in expired_ids:
+		var entry: Dictionary = _local_bot_matches_by_id[match_id]
+		_local_bot_matches_by_id.erase(match_id)
+		var room_id := str(entry.get("room_id", ""))
+		if not room_id.is_empty() and rooms_by_id.has(room_id):
+			_close_room(room_id)
+	if not expired_ids.is_empty():
+		call_deferred("_ensure_server_bot_seeks")
+		_broadcast_room_lists()
 
 func _get_match_rank_badge(account_id: String, best_of: int, bot_stars: int) -> Dictionary:
 	if bot_stars >= 0:
@@ -3382,6 +3579,9 @@ func _close_room(room_id: String, message: String = "") -> void:
 	var affected_sessions: Array[String] = []
 	for session_id in room.members:
 		affected_sessions.append(session_id)
+	var room_match_id := str(room.assigned_match_id).strip_edges()
+	if not room_match_id.is_empty():
+		_local_bot_matches_by_id.erase(room_match_id)
 	rooms_by_id.erase(room_id)
 	for session_id in affected_sessions:
 		if str(room_id_by_session.get(session_id, "")) == room_id:
