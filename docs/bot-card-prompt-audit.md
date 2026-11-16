@@ -37,7 +37,7 @@ runtime validation or optimal bot strategy.
 | Huginn | `huginn_perish_prime` | Choose an offered prime target |
 | Humbaba the Terrible | `humbaba_augury` | Choose an offered target |
 | Hunting Tactics | `hunting_tactics` | Choose an offered supporter; retain the attacker identifier |
-| Kur-Jara | `kur_jara_tree_of_life` | Choose low-value friendly creatures up to the required sacrifice count |
+| Kur-Jara | `kur_jara_tree_of_life` | Choose low-value friendly creatures up to the required sacrifice count; the activation itself is planned as a value engine (see Tree of Life below) |
 | Lailoken | `lailoken_reveal` | Choose an offered target |
 | Masmassu Priest, Grindylow | `masmassu_priest_reveal` | Choose an offered target |
 | Mummu, active | `mummu_entropy` | Prime an owned victim or shelve an enemy victim |
@@ -153,6 +153,17 @@ cards in the table. No new probe scripts or visual QA were added.
 - Legacy UI prompt names for Book of Life, Oracle's Sight, En-Hedu-Anna, Habrok,
   and Aphrodite also have fallback command builders. They are not counted among
   the 45 authoritative card-decision types above.
+- Kur-Jara's Tree of Life is planned as a repeatable value engine, not only as
+  an emergency dodge. A proactive activation gains the resurrected grave
+  Divine/Priest (landing in reserve before frontline, discounted by the
+  withheld advance turn) and re-arms the ability while more grave fuel remains;
+  it pays Kur-Jara's missed fighting turns plus the level-difference friendly
+  destructions from the cheapest friendlies, so targets above Kur-Jara's level
+  are only chosen when they justify the deaths. With incoming losses the same
+  activation doubles as a withdrawal that dodges combat and removal while
+  still returning its value later. Face-up Kur-Jara on board also carries an
+  engine premium while grave fuel exists: it is protected more, prioritized as
+  removal against the opponent, and kept out of sacrifice payments.
 
 ## Gaps corrected
 
@@ -253,3 +264,16 @@ cards in the table. No new probe scripts or visual QA were added.
   and 1/4 with this change set; the neutralized build also passed 1/2. The
   stall signature is identical across builds and turns, so the change set
   shifts game flow toward the pre-existing wedge but does not introduce it.
+
+### Kur-Jara value-engine model verification (2026-11-16)
+
+- `--check-only` passed for `BotCardStrategy.gd`, `ThorPracticeBot.gd`,
+  `BotCardPromptPolicy.gd`, `PracticeFuzzPlayerBot.gd`,
+  `HostHuntingTacticsBot.gd`, and `ServerBotGameInput.gd`.
+- Maintained `practice_thor` and `practice_thor_intercept` passed.
+- `practice_thor_fuzz` seed 1339 (the seed family that stalled in the
+  2026-11-15 sweep) completed three matches with winners and no stalls,
+  timeouts, or script errors given a larger harness window; the default
+  seed-1337 run still stops at its known turn-10 wedge, and that game's log
+  contains no Kur-Jara or Tree of Life activity, so the engine model is not
+  involved. No new probe scripts or visual QA were used.

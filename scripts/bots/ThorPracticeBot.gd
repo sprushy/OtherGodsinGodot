@@ -1949,7 +1949,14 @@ func _get_best_strategy_action(attacks: Array[Dictionary], attack: Dictionary, d
 			if _is_better_strategy_plan(infants_plan, best_plan):
 				best_plan = infants_plan
 			continue
-		if card is ErlqueensNightingale or card is KurJara or card is TezcatlipocaBlasphemer:
+		if card is KurJara:
+			# Tree of Life is planned on its own: a proactive resurrection
+			# cycle, plus a withdrawal dodge that still returns its value.
+			var kur_jara_plan := _plan_kur_jara_tree_of_life(card as KurJara, danger)
+			if _is_better_strategy_plan(kur_jara_plan, best_plan):
+				best_plan = kur_jara_plan
+			continue
+		if card is ErlqueensNightingale or card is TezcatlipocaBlasphemer:
 			var withdrawal := _plan_board_withdrawal(card, danger)
 			if _is_better_strategy_plan(withdrawal, best_plan):
 				best_plan = withdrawal
@@ -2595,13 +2602,101 @@ func _plan_board_withdrawal(source: Card, danger: int) -> Dictionary:
 			return {}
 		command["return_to_hand"] = true
 	else:
-		var targets: Array[Card] = source.get_valid_targets(game_manager)
-		var target := _choose_best_friendly_graveyard_target_for_source(source, targets)
-		if target == null:
-			return {}
-		command["target_uid"] = target.uid
+		return {}
 	var score := _follower_safety_gain(danger, {"removed": [source]}) - _get_card_economic_value(source) - tax
 	return {"score": score, "command": command} if score > 0 else {}
+
+# Tree of Life is a repeatable value engine: Kur-Jara withdraws into the grave
+# together with a chosen Divine/Priest, both resurrect two own turns later, and
+# the ability re-arms when the cycle resolves. A proactive cycle pays for
+# itself when the resurrect target outweighs Kur-Jara's missed fighting turns
+# plus the level-difference friendly destructions. With incoming losses the
+# same activation doubles as a withdrawal dodge that still returns its value
+# later, so it no longer counts as losing the card.
+func _plan_kur_jara_tree_of_life(kur_jara: KurJara, danger: int) -> Dictionary:
+	if kur_jara == null or kur_jara.is_face_down \
+			or kur_jara.abilities_suppressed() or kur_jara.is_activation_locked(game_manager) \
+			or not kur_jara.can_activate(game_manager) \
+			or not game_manager.can_pay_creature_action_mana_cost(kur_jara, "activate"):
+		return {}
+	var tax := game_manager.get_creature_action_mana_cost(kur_jara, "activate") * _mana_rate()
+	# The level cost is paid at resolution with the cheapest-to-lose friendly
+	# creatures (the destroy prompt ranks the same pool by ascending value).
+	var payables: Array = kur_jara.get_tree_of_life_destroy_candidates(game_manager)
+	payables = payables.filter(func(card: Card) -> bool: return card != kur_jara)
+	payables.sort_custom(func(a: Card, b: Card) -> bool: return _get_card_economic_value(a) < _get_card_economic_value(b))
+	# Resolution resurrects into the first open reserve lane and only falls
+	# back to the frontline, so forecast where each returned body lands.
+	var reserve_spaces := 0
+	var frontline_spaces := 0
+	for zone in bot_player.frontline_zones + bot_player.reserve_zones:
+		if not zone.cards.is_empty():
+			continue
+		if zone in bot_player.reserve_zones:
+			reserve_spaces += 1
+		else:
+			frontline_spaces += 1
+	var self_reserved := reserve_spaces > 0
+	var has_self_space := self_reserved or frontline_spaces > 0
+	if not has_self_space and danger <= 0:
+		# Nothing can resurrect and the ability would burn itself out in
+		# the grave; only a defensive dodge could justify that.
+		return {}
+	var remaining_reserve := reserve_spaces - (1 if self_reserved else 0)
+	var remaining_frontline := frontline_spaces - (0 if self_reserved else 1)
+	var chosen_reserved := remaining_reserve > 0
+	var has_chosen_space := chosen_reserved or remaining_frontline > 0
+	var dodge := _follower_safety_gain(danger, {"removed": [kur_jara]}) if danger > 0 else 0
+	var best := {}
+	for target in kur_jara.get_valid_targets(game_manager):
+		var destroy_count := maxi(0, target.get_effective_level() - kur_jara.get_effective_level())
+		var payment_cost := 0
+		for index in range(mini(destroy_count, payables.size())):
+			payment_cost += _get_card_economic_value(payables[index])
+		var target_gain := 0
+		if has_chosen_space:
+			target_gain = CardStrategy.value(self, target)
+			if chosen_reserved:
+				# A reserve landing must spend an advance turn before it can
+				# attack; that withheld near-term attack option is the same
+				# cost reserve placement pays elsewhere.
+				target_gain = maxi(0, target_gain - target.get_effective_strength() * RESERVE_PLACEMENT_STR_VALUE)
+		var score := 0
+		if not has_self_space:
+			score = dodge - _get_card_economic_value(kur_jara) - tax
+		else:
+			score = dodge + target_gain + _tree_of_life_continuation_bonus(kur_jara, target) \
+				- _tree_of_life_absence_cost(kur_jara, self_reserved) - payment_cost - tax
+		if score > int(best.get("score", 0)):
+			best = {
+				"command": {"type": "activate_card_ability", "source_uid": kur_jara.uid, "target_uid": target.uid},
+				"score": score,
+			}
+	return best
+
+func _tree_of_life_absence_cost(kur_jara: KurJara, resurrects_to_reserve: bool) -> int:
+	# The countdown skips the activation turn and ticks at the end of the next
+	# two own turns, so Kur-Jara loses this turn's action (when the window is
+	# still unused) plus two more before it rises; a reserve landing needs one
+	# more advance turn before it can attack again.
+	var missed_turns := 3 if kur_jara.can_take_major_creature_action() else 2
+	if resurrects_to_reserve:
+		missed_turns += 1
+	# Price the fighting presence alone: the engine premium is about the
+	# resurrection value, not what each missed combat turn forfeits.
+	var presence := CardStrategy.value(self, kur_jara) - CardStrategy.kur_jara_engine_premium(kur_jara)
+	return missed_turns * int(round(float(presence) / KUR_JARA_PRESENCE_TURNS))
+
+func _tree_of_life_continuation_bonus(kur_jara: KurJara, target: Card) -> int:
+	if target == null:
+		return 0
+	for engine_card in bot_player.graveyard_zone.cards:
+		if engine_card == null or engine_card == target \
+				or engine_card.card_type != Card.CardType.CREATURE:
+			continue
+		if engine_card.has_type("Divine") or engine_card.has_type("Priest"):
+			return KUR_JARA_ENGINE_CONTINUATION
+	return 0
 
 func _plan_moon_hunt(hati: Hati) -> Dictionary:
 	var command := {"type": "hati_moon_hunt", "decline": true}
@@ -4406,12 +4501,16 @@ func _try_attack() -> bool:
 	var supported_attack := _get_best_supported_attack(attackers, opposing_creatures)
 	if not supported_attack.is_empty():
 		return _submit_attack(supported_attack.get("attacker", null), supported_attack.get("target", null))
-	var standard_attack := _get_best_standard_attack(attackers, opposing_creatures)
-	if not standard_attack.is_empty():
-		return _submit_attack(standard_attack.get("attacker", null), standard_attack.get("target", null))
+	# Stealth kills outrank standard attacks: a stealth body pokes
+	# un-interceptable every turn it lives, so removing it is the best
+	# recurring-income denial available, and the plan is filtered to clean
+	# kills with the cheapest sufficient attacker.
 	var stealth_attack := _get_best_stealth_attack(attackers, opposing_creatures)
 	if not stealth_attack.is_empty():
 		return _submit_attack(stealth_attack.get("attacker", null), stealth_attack.get("target", null))
+	var standard_attack := _get_best_standard_attack(attackers, opposing_creatures)
+	if not standard_attack.is_empty():
+		return _submit_attack(standard_attack.get("attacker", null), standard_attack.get("target", null))
 	if not safe_followers_attack.is_empty():
 		return _submit_attack(safe_followers_attack.get("attacker", null), opponent)
 	return false
@@ -5043,6 +5142,13 @@ func _is_attack_safe_from_interceptors(attacker: Card, target: Card) -> bool:
 			continue
 		if _is_attack_target_tactically_bad(attacker, interceptor) or not _would_attacker_survive_battle(attacker, interceptor):
 			return false
+		# An interceptor the attacker cannot destroy absorbs the attack for
+		# free: the declared target is never fought, the major action and
+		# its mana are spent, and the defender will always choose that
+		# trade. A wall that intercepts everything it can reach makes the
+		# attack pointless even when the attacker survives it.
+		if not _would_destroy_target_in_battle(attacker, interceptor):
+			return false
 	return true
 
 func _is_askelladen(card: Card) -> bool:
@@ -5135,9 +5241,17 @@ func _get_direct_follower_damage(attacker: Card) -> int:
 func _get_best_stealth_attack(attackers: Array[Card], opposing_creatures: Array[Card]) -> Dictionary:
 	var best_attacker: Card = null
 	var best_target: Card = null
+	var best_target_value := -1
+	var best_attacker_value := 0
 	for target in opposing_creatures:
 		if target == null or not (target.is_stealth or target.is_face_down):
 			continue
+		# A stealth body attacks through intercepts and pokes unanswered every
+		# turn it lives, so killing it is recurring-income denial: these plans
+		# are priced as kills only. Any attacker that destroys the body and
+		# survives qualifies; the cheapest sufficient attacker takes the job
+		# and the most valuable stealth body is the target.
+		var target_value := _get_card_economic_value(target) if CardStrategy.visible(self, target) else CardStrategy.CARD_VALUE
 		for attacker in attackers:
 			if not _can_attack_creature(attacker, target):
 				continue
@@ -5145,9 +5259,17 @@ func _get_best_stealth_attack(attackers: Array[Card], opposing_creatures: Array[
 				continue
 			if not _is_attack_safe_from_interceptors(attacker, target):
 				continue
-			if best_attacker == null or _is_board_creature_better(attacker, best_attacker):
+			if not _would_destroy_target_in_battle(attacker, target):
+				continue
+			if not _would_attacker_survive_battle(attacker, target):
+				continue
+			var attacker_value := _get_card_economic_value(attacker)
+			if target_value > best_target_value \
+					or (target == best_target and attacker_value < best_attacker_value):
 				best_attacker = attacker
 				best_target = target
+				best_target_value = target_value
+				best_attacker_value = attacker_value
 	if best_attacker == null:
 		return {}
 	return {"attacker": best_attacker, "target": best_target}
@@ -5394,6 +5516,10 @@ func _get_mode_switch_score(creature: Card, opposing_creatures: Array[Card]) -> 
 	for target in opposing_creatures:
 		best_attack_score = maxi(best_attack_score, _score_standard_attack_plan(creature, target))
 	if best_attack_score <= -1000000:
+		# No profitable creature target, but a followers poke nobody can
+		# intercept is still an attack plan worth flipping aggressive for.
+		if _can_attack_followers_safely(creature):
+			return 500000 + _score_followers_attack(creature)
 		return -1
 	return 300000 + best_attack_score
 
@@ -5416,7 +5542,12 @@ func _get_defensive_mode_switch_score(creature: Card, opposing_creatures: Array[
 		if opposing_creatures.is_empty() and _can_attack_followers_safely(creature):
 			return -1
 	# Once the attack is spent, preserving the creature can justify a stance
-	# change even when follower pressure is low.
+	# change even when follower pressure is low - unless it holds a standing
+	# poke through an intercept-free lane: recurring follower damage
+	# outweighs one-time casualty savings, and turtle-flipping a poke body
+	# just taxes it a stance change every turn.
+	if _can_attack_followers_safely(creature) and not _is_dangerously_low_on_followers():
+		return -1
 	var savings := _stance_casualty_savings(creature, Card.CreatureMode.DEFENSIVE) \
 		- game_manager.get_creature_action_mana_cost(creature, "change stance") * _mana_rate()
 	return savings if savings > 0 else -1
@@ -5960,6 +6091,32 @@ func _score_god_manifestation(manifestation: Card, mana_paid: int, mode: Card.Cr
 		score += 800
 	if manifestation is ThorActive:
 		score += _count_other_friendly_warriors() * 250
+	# The manifested body is the team's god: if anything can plausibly destroy
+	# it next turn, the summon gambles the god-death follower loss and every
+	# remaining god ability for the team. Existing aggressive frontline
+	# attackers and affordable enemy summons both count; the charge is
+	# half-weighted like other next-turn exposure. Defensive stance defends
+	# at RES, aggressive at STR, so the exposure follows the planned stance.
+	var defense := manifestation.get_effective_resilience()
+	if mode == Card.CreatureMode.AGGRESSIVE:
+		defense = manifestation.get_effective_strength()
+	var death_exposure := false
+	for enemy in _get_board_creatures(opponent):
+		if enemy == null or not CardStrategy.visible(self, enemy) \
+				or _status_persists_to_next_turn(enemy, "cannot_attack", []) \
+				or enemy.current_zone == null or enemy.current_zone.zone_type != Zone.ZoneType.FRONTLINE \
+				or enemy.creature_mode != Card.CreatureMode.AGGRESSIVE:
+			continue
+		if enemy.get_effective_strength() > defense:
+			death_exposure = true
+			break
+	if not death_exposure and opponent != null:
+		var summon_budget := opponent.mana + game_manager.get_automatic_upkeep_mana_gain(opponent, game_manager.turn_number + 1) \
+			+ game_manager.get_effective_upkeep_mana_gain(game_manager.get_base_upkeep_mana_gain(), opponent)
+		if summon_budget > 0 and summon_budget * ECON_FORECAST_SUMMON_STR_PER_MANA > defense:
+			death_exposure = true
+	if death_exposure and CardStrategy._would_destroying_god_cause_god_death(self, manifestation):
+		score -= (ECON_CARD_VALUE + _score_follower_loss(bot_player, GameManager.GOD_DEATH_FOLLOWER_LOSS)) / 2
 	var best_hand := _get_best_affordable_hand_creature(0)
 	if best_hand != null and _get_play_cost(best_hand, false) > bot_player.mana - mana_paid:
 		score -= int(_score_projected_card(best_hand) * 0.7)
@@ -6963,6 +7120,9 @@ func _get_card_economic_value(card: Card) -> int:
 		if full_value > 0:
 			var discount := CardStrategy._debilitation_discount(self, card)
 			score = int(score * (1.0 - clampf(float(discount) / float(full_value), 0.0, 0.85)))
+	# The Tree of Life engine premium applies on board: protect it in removal
+	# responses, keep it out of sacrifice payments, and charge its loss more.
+	score += CardStrategy.kur_jara_engine_premium(card)
 	return score
 
 func _get_inactive_warding_stone_value(stone: WardingStone) -> int:
@@ -7149,21 +7309,6 @@ func _choose_best_friendly_board_target_for_source(_source: Card, targets: Array
 		if target.current_zone == null or not target.current_zone.is_board_zone():
 			continue
 		var score := _score_friendly_target(target)
-		if best_target == null or score > best_score:
-			best_target = target
-			best_score = score
-	return best_target
-
-func _choose_best_friendly_graveyard_target_for_source(_source: Card, targets: Array) -> Card:
-	var best_target: Card = null
-	var best_score := -1000000
-	for raw_target in targets:
-		var target := raw_target as Card
-		if target == null or target.card_owner != bot_player:
-			continue
-		if target.current_zone != bot_player.graveyard_zone:
-			continue
-		var score := _score_graveyard_target(target)
 		if best_target == null or score > best_score:
 			best_target = target
 			best_score = score
