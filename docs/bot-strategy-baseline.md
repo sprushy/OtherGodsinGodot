@@ -192,3 +192,29 @@ All are "covered," but these have known shallow spots:
 7. Then per-card depth fixes from §3.4 as needed, driven by observed bot-vs-bot losses in the ranked pool.
 
 Testing follows the repo conventions: no new ad-hoc probe scripts; use the existing practice smoke roles (`scripts\tmp\run_practice_smoke.ps1`) and manual two-window lobby tests, and watch bot-vs-bot ladder results for regressions.
+
+---
+
+## 5. Implementation Status (updated)
+
+Work-order items 1–4 are implemented. The uncommitted delta at the time of writing consists of two late fixes on top of the v0.2.367 snapshot (fatigue excluded from the combat forecast; Mopsus exact-count Seer selection).
+
+**Item 1 — posture/clock layer (done).** New `scripts/bots/BotStrategyPosture.gd` computes one posture per turn, cached in `ThorPracticeBot._strategy_posture()` with a reentrancy guard:
+
+- `race` (bot clock ≤ opponent clock + 1, or free damage): `_score_follower_loss` for opponent damage is scaled by `RACE_DAMAGE_MULTIPLIER` (1.35).
+- `defend` (opponent clock faster or a large incoming bite): `_follower_safety_gain` scaled by `DEFEND_SAFETY_MULTIPLIER` (1.3).
+- `locked_ahead` / `locked_behind`: only when `_locked_board_state()` and fatigue is actually active (turn ≥ 49); combat-trade scores get ±`CARD_VALUE/2` in `_score_attack_economy` to protect the board (ahead) or break the lock (behind).
+- Combat push and fatigue are separate clocks: `_forecast_incoming_follower_loss` stays combat-only (it must — `_compute_locked_board_state` uses it, and folding fatigue in would permanently disable locked-board detection after turn 49). The fatigue clock is computed directly from `get_fatigue_follower_loss` in the posture module.
+
+**Item 2 — opponent-response registry (partial).** `_get_known_attack_response_cards` now also models **revealed** enemy hand copies of The Inferno / Void Shield / Smite (visible via Seer/Dellingr reveals), priced by mana. Combat-killing casualties feed two new opponent-model terms in `_add_combat_casualty`: Freyja's Receiver of the Slain discount (killing a Norse Warrior is only a 1-turn borrow if she can pay) and Aphrodite's Violent Delights enslavement risk (their defender killing our creature unlocks her activation; charge `best_target/4`). Guan Yu and remaining enemy god abilities are still unmodeled.
+
+**Item 3 — creature ability activations (done for all 8).** `Berserker` (Rage only when it flips a fight), `En-hedu-anna` (Exaltation: RES for defenders, STR for attackers), `GududPriest` (Creature Ward, creature-source statuses/buffs only), `HariiShaman` (restore Animals under Thor patron; transform Warriors to Lupine when Hunting Tactics wants support), `Isimud` (Revelation summons a hand Divine Manifestation at +2 tax), `Mopsus` (Seer reveals, sized to `get_required_seer_target_count` so the selection can't fizzle), `SeventhSageUtuabzu` (Imbue Ally replay of Sage impacts), `WingedLion` (Flank pair-moves scored with `_score_creature_move`). All payloads were verified against each card's `activate()` option parsing; WingedLion zone options use the `player_index/zone_type/zone_index` dict format its resolver expects.
+
+**Item 4 — trigger valuation (done).** `_summon_trigger_setup_bonus` prices deployment-time triggers: Pazuzu (Locust drain), Rabisu (Life Drain vs. sleeping bodies), Caleuche (Spirit count), GidimEnsi (deterred push), Habrok (empty-board Breakout), Wolf Cub/Wolf Adolescent (maturation upgrade margin), Isimud (Forerunner discount), En-hedu-anna (god-ability pairing). `_score_summon_sacrifice_candidate` marks Capricorn as the premium sacrifice payment (refund + return to hand), and `_add_deck_combat_rewards` prices Aurboda's Pierce (7-follower convert), Ankou's Reap (draw), and Asakku's Offering (2 mana per kill). Pegasus steed mounting is planned in `_plan_equipment_pickup`, and Manannán mac Lir's Mists activation is scored in `_try_activate_best_god_ability` (`_estimate_reveal_trigger_value`/2 per hidden Triskelion, minus forfeited safe attacks, plus a per-hidden-answer bonus). Raven Storm's Sighting is taken unconditionally as a priority response (free body; zone auto-picked by the card).
+
+**Not yet done:** work-order items 5 (lane assignment pass), 6 (stealth table replacement), and 7 (per-card depth fixes from §3.4); the remaining enemy god abilities (Guan Yu etc.); and the deeper non-creature timing fixes in §3.4.
+
+**Verification notes.**
+- `practice_thor`, `practice_thor_summon`, and `practice_thor_intercept` smokes pass with the implementation.
+- `practice_thor_fuzz` has a **pre-existing** seed-dependent stall (silent, no script error): the game wedges with `priority_player=-1` and no further validated actions — reproduced at true baseline (pre-v0.2.367 bot files) on seeds 1337 and 4242, with and without this work. With this implementation, seed 4242 completed 3 of 6 fuzz games before hitting the same wedge. Validate fuzz changes by comparing completed-game counts per seed against baseline, not by expecting a clean 20-game run.
+

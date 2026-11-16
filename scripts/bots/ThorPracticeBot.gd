@@ -1941,13 +1941,15 @@ func _get_best_strategy_action(attacks: Array[Dictionary], attack: Dictionary, d
 				# Seer reveals feed the known-response model for the rest of
 				# the game; modest flat value per hidden enemy hand card.
 				var hidden_hand_cards: Array[Card] = []
-				for hand_card in opponent.hand_zone.cards:
+				for hand_card in card.get_valid_targets(game_manager):
 					if not CardStrategy.visible(self, hand_card):
 						hidden_hand_cards.append(hand_card)
-				var reveal_count: int = mini(card.get_seer_reveal_count(game_manager), hidden_hand_cards.size())
-				if reveal_count > 0:
+				# Seer demands exactly get_required_seer_target_count picks or
+				# it fizzles, so size the selection from that count.
+				var required_reveals: int = card.get_required_seer_target_count(game_manager)
+				if required_reveals > 0 and required_reveals <= hidden_hand_cards.size():
 					var reveal_uids: Array[String] = []
-					for hand_card in hidden_hand_cards.slice(0, reveal_count):
+					for hand_card in hidden_hand_cards.slice(0, required_reveals):
 						reveal_uids.append(hand_card.uid)
 					var seer_score := 400 * reveal_uids.size() - action_tax * _mana_rate()
 					if seer_score > 0:
@@ -3438,19 +3440,12 @@ func _is_dangerously_low_on_followers() -> bool:
 		return bot_player.followers <= 25
 	return bot_player.followers <= 25 or bot_player.followers * 2 <= opponent.followers
 
-func _forecast_incoming_follower_loss(change: Dictionary = {}, include_fatigue: bool = true) -> int:
+func _forecast_incoming_follower_loss(change: Dictionary = {}) -> int:
 	if not bot_player.followers_enabled or opponent == null:
 		return 0
 	var removed: Array = change.get("removed", []).duplicate()
 	var followers := int(change.get("followers", bot_player.followers))
 	var upkeep_loss := _projected_upkeep_follower_loss(removed, followers)
-	if include_fatigue:
-		# Fatigue drains the turn player at their own upkeep from turn 49; the
-		# bot's next upkeep is part of the guaranteed loss it must survive.
-		# Combat-clock callers (locked board, posture) exclude it because they
-		# track fatigue as its own clock.
-		var next_own_upkeep_turn: int = game_manager.turn_number + (2 if game_manager.current_player == bot_player else 1)
-		upkeep_loss += game_manager.get_fatigue_follower_loss(next_own_upkeep_turn)
 	var followers_after_upkeep := maxi(0, followers - upkeep_loss)
 	if bool(change.get("block_attacks", false)) or followers_after_upkeep <= 0:
 		return mini(followers, upkeep_loss)

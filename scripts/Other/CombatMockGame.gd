@@ -31916,8 +31916,19 @@ func _wait_for_local_ranked_result_confirmation() -> void:
 ## MainMenu calls this when the lobby confirms the reported result so the
 ## result overlay's ranked panel reflects the recorded ladder change.
 func apply_local_ranked_result(ranked_result: Dictionary) -> void:
-	if ranked_result is Dictionary and not (ranked_result as Dictionary).is_empty():
-		_ranked_match_result = (ranked_result as Dictionary).duplicate(true)
+	if not (ranked_result is Dictionary) or (ranked_result as Dictionary).is_empty():
+		return
+	var resolved: Dictionary = ranked_result
+	if not resolved.has("star_delta"):
+		# Older servers sent a per-session map; resolve this client's seat.
+		var session_ids: Array = _current_match_info.get("player_session_ids", [])
+		for session_id in session_ids:
+			var entry = resolved.get(str(session_id), null)
+			if entry is Dictionary and (entry as Dictionary).has("star_delta"):
+				resolved = entry
+				break
+	if resolved.has("star_delta"):
+		_ranked_match_result = resolved.duplicate(true)
 
 func _request_ui_refresh() -> void:
 	if _post_game_board_refresh_locked:

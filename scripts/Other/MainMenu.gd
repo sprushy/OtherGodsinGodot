@@ -13396,6 +13396,7 @@ func _build_practice_thor_fuzz_snapshot(practice_game) -> String:
 		"stack": game_manager.action_stack.size(),
 		"resolving": game_manager.resolving_stack_actions.size(),
 		"pending_prompts": _count_pending_smoke_prompts(match_manager),
+		"pending_prompt_types": _list_pending_smoke_prompt_types(match_manager),
 		"p1_followers": player1.followers if player1 != null else -1,
 		"p2_followers": player2.followers if player2 != null else -1,
 		"p1_mana": player1.mana if player1 != null else -1,
@@ -13414,6 +13415,16 @@ func _count_pending_smoke_prompts(match_manager: MatchManager) -> int:
 		return 0
 	var pending_prompts = match_manager.get("_pending_ui_interactions")
 	return (pending_prompts as Array).size() if pending_prompts is Array else 0
+
+func _list_pending_smoke_prompt_types(match_manager: MatchManager) -> Array:
+	var types: Array = []
+	var pending_prompts = match_manager.get("_pending_ui_interactions") if match_manager != null else null
+	if not (pending_prompts is Array):
+		return types
+	for entry in pending_prompts:
+		if entry is Dictionary and not str((entry as Dictionary).get("type", "")).is_empty():
+			types.append(str((entry as Dictionary).get("type", "")))
+	return types
 
 func _count_board_cards_for_player(player: Player) -> int:
 	if player == null:

@@ -2833,29 +2833,19 @@ func _handle_local_bot_match_result(peer_id: int, payload: Dictionary) -> void:
 		_close_room(room_id)
 	call_deferred("_ensure_server_bot_seeks")
 	_broadcast_room_lists()
+	# The result screen wants a single player's ranked result dict, so send the
+	# challenger's entry (player index 0) rather than a per-session map.
 	var ranked_result := {}
 	if record_result.get("entry", {}) is Dictionary and not (record_result["entry"] as Dictionary).is_empty():
-		ranked_result = _map_ranked_results_by_session(
-			record_result["entry"], human_session_id, bot_session_id)
+		var by_index: Dictionary = match_history_store.get_ranked_match_results(record_result["entry"])
+		if by_index.get(0, {}) is Dictionary:
+			ranked_result = by_index[0]
 	_send_to_session(human_session_id, LobbyProtocolScript.LOCAL_BOT_MATCH_CONFIRMED, {
 		"match_id": match_id,
 		"success": true,
 		"ranked_result": ranked_result,
 	})
 	_trace("recorded local bot match result for %s (winner_index=%d)" % [match_id, winner_index])
-
-## Ranked result panels are keyed by player_index in MatchHistoryStore; the
-## client matches on its own session id instead.
-func _map_ranked_results_by_session(entry: Dictionary, human_session_id: String, bot_session_id: String) -> Dictionary:
-	if match_history_store == null:
-		return {}
-	var by_index: Dictionary = match_history_store.get_ranked_match_results(entry)
-	var by_session: Dictionary = {}
-	for index_variant in by_index.keys():
-		var session_id := human_session_id if int(index_variant) == 0 else bot_session_id
-		if not session_id.is_empty():
-			by_session[session_id] = by_index[index_variant]
-	return by_session
 
 ## A room waiting on its challenger's client must not hold the bot list and
 ## seek slots forever if the client quit or crashed without reporting.
