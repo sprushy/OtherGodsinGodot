@@ -27,6 +27,24 @@ const TACTICAL_CARDS := [
 const ACTIVE_POWERS := ["AcceleratedFate", "OraclesSight", "BerserkerMead", "MechFactory", "Palisade", "ManaGuard"]
 const BOARD_ABILITIES := ["Alu", "Lindwyrm", "Lamashatu", "ClayEaters", "AncientPyre", "Watchtower", "Gawain", "Beyla", "Nimue", "JiangZiyaFisherOfKings",
 	"Berserker", "EnHeduAnna", "GududPriest", "HariiShaman", "Isimud", "Mopsus", "SeventhSageUtuabzu", "WingedLion"]
+# Creatures whose face-up value stealth suppresses, so they must not be summoned
+# face-down. Card._abilities_disabled_by_hidden_state() turns every creature
+# ability off while is_stealth is set, and the engine gates impact/kill/death
+# hooks plus these self-gated passives on abilities_suppressed(). Reveal-trigger
+# creatures (Afanc, PictishBeast, Grindylow, Lailoken...) are excluded on
+# purpose: their payoff fires on reveal and is valued by the bot separately.
+const STEALTH_SUPPRESSED_KEYS := [
+	"AgainWalker", "AnkouServantToTheReaper", "AsagTheDestroyer", "Asakku", "Asaruludu",
+	"Aurboda", "BlessedKnights", "Caleuche", "DurinnSecondborn", "EnkiLordOfEridu",
+	"ErlqueensNightingale", "Fenrir", "FirstSageAdapa", "FourthSageEnmegalamma", "GalaTura",
+	"Garm", "GiantMasterArchitect", "Gilgamesh", "GugalannaBullOfHeaven", "Gullinbursti",
+	"HariiFransiscan", "HariiJarl", "HelBlarDraug", "HumbabaTheTerrible", "HyenaPack",
+	"MalinalxochitlAcolyte", "MinotaurFootsoldier", "Nagual", "NergalLion", "PaiLongAutumnKing",
+	"Pazuzu", "Pegasus", "RabidWolf", "Rabisu", "RedCap",
+	"SixthSageAnEnlilda", "StoneMonkey", "SulakTheUnclean", "TelchineApprentice", "Thiazi",
+	"ThirdSageEnmedugga", "TianlongHolyDragon", "UriskGrovekeepers", "WhiteStag", "WolfAdolescent",
+	"WolfCub",
+]
 const EQUIPMENT := ["BeardedAxe", "RunicShortsword", "ReedBow", "SharurTheFlyingMace", "SevenLeagueBoots", "DraupnirTheMultiplying", "Gambanteinn"]
 const STRUCTURES := ["AncientPyre", "Watchtower", "WardingStone", "DoorwayToTheVoid", "E2Abzu",
 	"AnointingStatue", "EriduCityOfSages", "GlitnirThePeaceful", "HildskjalfThroneOfOdin"]

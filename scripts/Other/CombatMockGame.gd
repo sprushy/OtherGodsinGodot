@@ -6550,6 +6550,25 @@ func _detach_local_bot_match_bot() -> void:
 			_local_bot_match_bot.detach()
 		_local_bot_match_bot = null
 
+## Register a lobby-approved spectator on this client-hosted match's session so
+## their direct join authenticates. Returns false when the match is not (yet)
+## hosted here, in which case the caller queues the approval.
+func apply_match_spectator(match_id: String, observer_session_id: String, observer_match_token: String, visible_player_indices: Array) -> bool:
+	if observer_session_id.is_empty() or observer_match_token.is_empty():
+		return false # Malformed approval; no ack so the lobby times out.
+	if headless_match_host == null or headless_match_host.match_session == null:
+		return false
+	var match_session = headless_match_host.match_session
+	if str(match_session.match_id).strip_edges() != match_id:
+		return false
+	match_session.spectator_match_tokens_by_session[observer_session_id] = observer_match_token
+	var sanitized: Array[int] = []
+	for index in visible_player_indices:
+		if index is int or index is float:
+			sanitized.append(int(index))
+	match_session.spectator_visible_player_indices_by_session[observer_session_id] = sanitized
+	return true
+
 func _build_initial_match_players(default_match_setup, server_match_session = null, match_info: Dictionary = {}) -> Dictionary:
 	var match_players: Dictionary = {}
 	if _is_networked_client:

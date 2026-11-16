@@ -535,11 +535,39 @@ as player index 0 and the bot as player 1. The game client reports the outcome
 via `LOCAL_BOT_MATCH_RESULT`, and the lobby records it through the normal
 `MatchHistoryStore` pipeline (so ranked progression and bot deck stars still
 advance). Results are client-authoritative for now — a deliberate tradeoff to
-free server capacity for human-vs-human matches. Local matches are Bo1 only,
-have no ranked turn clock, and accept no spectators. A match that never reports
+free server capacity for human-vs-human matches. Local matches are Bo1 only
+and have no ranked turn clock. A match that never reports
 a result holds its room until `LOCAL_BOT_MATCH_RESULT_TIMEOUT_SECONDS` (3
 hours) expires it; forfeits through the in-game menu still end the game and are
 recorded, while abandoning mid-match frees the room with no result.
+
+### Direct-connect spectating for client-hosted matches
+
+Spectator streams never relay through the lobby server. The spectator connects
+straight to the hosting client's ENet port, and the host's existing
+`GameEventBroadcaster`/`GameState` machinery already sends spectators a masked,
+personalized `full_state` (hand privacy follows the friend card-visibility
+preference; the bot's hand is always visible).
+
+- **Local bot challenges**: the challenger's client binds a random ephemeral
+  UDP port (`spectate_listen` in the match info, handled by
+  `HeadlessMatchHost.setup_transport`), probes UPnP reachability on a worker
+  (`HostReachabilityProbe`), and reports the endpoint via
+  `LOCAL_BOT_MATCH_SPECTATE_INFO`. Watchable rooms are flagged `spectatable`
+  in the room list and render as "Click to Watch" in the seek list. If UPnP
+  fails the match simply is not advertised as watchable.
+- **Player-hosted matches**: the same watch flow now works; previously the
+  host's rebuilt `MatchSession` never learned spectator tokens, so spectators
+  were always denied. The lobby now pushes `MATCH_SPECTATOR_APPROVED` (token +
+  friend-based visibility) to the host client and waits for
+  `MATCH_SPECTATOR_ACK` before handing the spectator their match info — a
+  spectator join with an unregistered token is denied without retry.
+- Credentials live on the host client's `MatchSession`
+  (`apply_match_spectator` in `CombatMockGame.gd`), applied either immediately
+  or from `_pending_spectator_approvals` after the match finishes launching.
+- Server cost is a handful of one-time rendezvous messages per spectator; host
+  upload bandwidth scales with spectator count. UPnP mappings are released
+  when returning to the menu from the match.
 
 Completed battles are recorded in `server_data/match_history_results`. Each
 record stores both bot outcomes, starting ranks, turns, and final follower

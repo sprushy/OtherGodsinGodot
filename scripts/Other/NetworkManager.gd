@@ -47,6 +47,9 @@ var is_server: bool = false
 var last_client_address: String = "127.0.0.1"
 var last_client_port: int = 12345
 var last_server_error: int = OK
+## Actual bound UDP port after create_server; OS-assigned when created with
+## port 0 (client-hosted spectate listeners).
+var last_bound_port: int = 0
 var trace_file_path: String = ""
 var use_current_scene_relative_path: bool = false
 var managed_multiplayer_root_path: NodePath = NodePath("")
@@ -159,6 +162,7 @@ func create_server(port: int = 12345, assign_local_host_player: bool = true) -> 
 		is_server = true
 		local_player_index = 0 if assign_local_host_player else -1
 		player_peer_ids.clear()
+		last_bound_port = port
 		if assign_local_host_player:
 			player_peer_ids[0] = 1  # server's own peer_id in ENet is always 1
 		print("Server started on port ", port)

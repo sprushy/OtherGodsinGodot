@@ -40,6 +40,7 @@ signal room_error(message: String)
 signal match_assigned(match_info: Dictionary)
 signal local_bot_match_assigned(match_info: Dictionary)
 signal local_bot_match_confirmed(success: bool, ranked_result: Dictionary, message: String)
+signal match_spectator_approved(match_id: String, observer_session_id: String, observer_match_token: String, visible_player_indices: Array)
 signal request_next_received(requester_name: String)
 signal request_next_result(message: String)
 signal account_deck_list_received(decks: Array, preferred_deck_id: String)
@@ -452,6 +453,20 @@ func submit_deck(
 func submit_local_bot_match_result(payload: Dictionary) -> void:
 	_send_request(LobbyProtocolScript.LOCAL_BOT_MATCH_RESULT, payload.duplicate(true))
 
+func submit_local_bot_match_spectate_info(match_id: String, viable: bool, spectate_ip: String, spectate_port: int) -> void:
+	_send_request(LobbyProtocolScript.LOCAL_BOT_MATCH_SPECTATE_INFO, {
+		"match_id": match_id.strip_edges(),
+		"viable": viable,
+		"spectate_ip": spectate_ip.strip_edges(),
+		"spectate_port": spectate_port,
+	})
+
+func ack_match_spectator(match_id: String, observer_session_id: String) -> void:
+	_send_request(LobbyProtocolScript.MATCH_SPECTATOR_ACK, {
+		"match_id": match_id.strip_edges(),
+		"observer_session_id": observer_session_id.strip_edges(),
+	})
+
 func request_account_decks() -> void:
 	_send_request(LobbyProtocolScript.REQUEST_ACCOUNT_DECKS)
 
@@ -730,6 +745,14 @@ func lobby_event(message: Dictionary) -> void:
 					bool(payload.get("success", false)),
 					payload.get("ranked_result", {}) if payload.get("ranked_result", {}) is Dictionary else {},
 					str(payload.get("message", ""))
+				)
+		LobbyProtocolScript.MATCH_SPECTATOR_APPROVED:
+			if is_authenticated():
+				match_spectator_approved.emit(
+					str(payload.get("match_id", "")).strip_edges(),
+					str(payload.get("observer_session_id", "")).strip_edges(),
+					str(payload.get("observer_match_token", "")).strip_edges(),
+					payload.get("visible_player_indices", []) if payload.get("visible_player_indices", []) is Array else []
 				)
 		LobbyProtocolScript.REQUEST_NEXT_RECEIVED:
 			if is_authenticated():

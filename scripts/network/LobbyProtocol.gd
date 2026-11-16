@@ -58,6 +58,9 @@ const MATCH_ASSIGNED := "match_assigned"
 const LOCAL_BOT_MATCH_ASSIGNED := "local_bot_match_assigned"
 const LOCAL_BOT_MATCH_RESULT := "local_bot_match_result"
 const LOCAL_BOT_MATCH_CONFIRMED := "local_bot_match_confirmed"
+const LOCAL_BOT_MATCH_SPECTATE_INFO := "local_bot_match_spectate_info"
+const MATCH_SPECTATOR_APPROVED := "match_spectator_approved"
+const MATCH_SPECTATOR_ACK := "match_spectator_ack"
 const REQUEST_NEXT_RECEIVED := "request_next_received"
 const REQUEST_NEXT_RESULT := "request_next_result"
 const LOBBY_RECONNECT_OK := "lobby_reconnect_ok"
@@ -148,6 +151,17 @@ static func validate_request(message: Dictionary) -> String:
 			var match_id = payload.get("match_id", "")
 			if not match_id is String or match_id.strip_edges().is_empty() or match_id.length() > 64:
 				return "Invalid match id."
+		LOCAL_BOT_MATCH_SPECTATE_INFO:
+			var match_id = payload.get("match_id", "")
+			if not match_id is String or match_id.strip_edges().is_empty() or match_id.length() > 64:
+				return "Invalid match id."
+		MATCH_SPECTATOR_ACK:
+			var match_id = payload.get("match_id", "")
+			if not match_id is String or match_id.strip_edges().is_empty() or match_id.length() > 64:
+				return "Invalid match id."
+			var observer_session_id = payload.get("observer_session_id", "")
+			if not observer_session_id is String or observer_session_id.strip_edges().is_empty() or observer_session_id.length() > 64:
+				return "Invalid observer session id."
 		SELECT_DECK:
 			var has_deck_id := not str(payload.get("deck_id", "")).strip_edges().is_empty()
 			var has_cards := payload.has("cards") and payload.get("cards") is Dictionary

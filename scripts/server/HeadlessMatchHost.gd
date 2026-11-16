@@ -66,8 +66,12 @@ func setup_transport(
 
 	network_manager = nm_script.new()
 	network_manager.name = network_manager_name
+	# Client-hosted bot challenges with spectating bind a real socket and must
+	# use the default multiplayer API scope, exactly like player-hosted matches.
+	var spectate_listen := is_host and server_port <= 0 and not shared_worker \
+		and bool(client_match_info.get("spectate_listen", false))
 	# In-process matches must not inherit the authenticated lobby's transport.
-	if shared_worker or (not is_client and (not is_host or server_port <= 0)):
+	if shared_worker or (not is_client and (not is_host or (server_port <= 0 and not spectate_listen))):
 		network_manager.use_current_scene_relative_path = true
 	if shared_worker:
 		# The multiplayer scope is this match subtree, keeping server-side APIs
@@ -76,7 +80,19 @@ func setup_transport(
 	transport_root.add_child(network_manager)
 
 	if is_host:
-		if server_port <= 0:
+		if spectate_listen:
+			# Client-hosted bot challenge with spectating: bind a random
+			# ephemeral UDP port instead of staying purely in-process.
+			var rng := RandomNumberGenerator.new()
+			rng.randomize()
+			var bind_error: Error = ERR_CANT_CREATE
+			for attempt in range(8):
+				bind_error = network_manager.create_server(rng.randi_range(20000, 45000), assign_local_host_player)
+				if bind_error == OK:
+					break
+			if bind_error != OK:
+				_configure_in_process_authority(assign_local_host_player)
+		elif server_port <= 0:
 			_configure_in_process_authority(assign_local_host_player)
 		else:
 			network_manager.create_server(server_port, assign_local_host_player)

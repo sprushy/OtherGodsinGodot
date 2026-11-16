@@ -47,6 +47,9 @@ const BOT_SELF_PLAY_BLOCK_LOG_INTERVAL_SECONDS := 60.0
 ## volunteer bot workers); the lobby only brokers the pairing and records the
 ## reported result. This bounds how long an unreported match may hold its room.
 const LOCAL_BOT_MATCH_RESULT_TIMEOUT_SECONDS := 3 * 60 * 60
+## How long the lobby waits for a client-hosted match's host to acknowledge a
+## spectator approval before telling the spectator the match is not watchable.
+const MATCH_SPECTATOR_ACK_TIMEOUT_SECONDS := 5.0
 const ISSUE_REPORT_COOLDOWN_SECONDS := 60
 const BOT_PROPOSAL_COOLDOWN_SECONDS := 60
 const ALLOW_INSECURE_ACCOUNT_AUTH_ENV := "OTHERGODS_ALLOW_INSECURE_ACCOUNT_AUTH"
@@ -100,6 +103,7 @@ var _last_bot_self_play_block_reason := ""
 var _next_bot_self_play_block_log_msec := 0
 var _client_bot_jobs: Dictionary = {}
 var _local_bot_matches_by_id: Dictionary = {}
+var _spectator_acks_by_key: Dictionary = {}
 var _issue_report_last_submit_by_peer: Dictionary = {}
 var _bot_proposal_last_submit_by_account: Dictionary = {}
 
@@ -418,6 +422,10 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 			_set_ready_for_session(str(ready_session.get("session_id", "")), bool(payload.get("is_ready", false)))
 		LobbyProtocolScript.LOCAL_BOT_MATCH_RESULT:
 			_handle_local_bot_match_result(peer_id, payload)
+		LobbyProtocolScript.LOCAL_BOT_MATCH_SPECTATE_INFO:
+			_handle_local_bot_match_spectate_info(peer_id, payload)
+		LobbyProtocolScript.MATCH_SPECTATOR_ACK:
+			_handle_match_spectator_ack(peer_id, payload)
 		LobbyProtocolScript.REQUEST_RECONNECT_LOBBY:
 			_handle_reconnect_request(peer_id, payload)
 		LobbyProtocolScript.REPORT_HOST_VIABILITY:
@@ -2491,8 +2499,11 @@ func _observe_room_for_session(session_id: String, room_id: String) -> void:
 	if match_id.is_empty():
 		_send_error_to_session(session_id, "That room does not have an active match yet.")
 		return
-	if _local_bot_matches_by_id.has(match_id) or match_supervisor == null or match_supervisor.get_match(match_id) == null:
-		_send_error_to_session(session_id, "That match does not accept spectators.")
+	if _local_bot_matches_by_id.has(match_id):
+		_observe_local_bot_match(session_id, match_id)
+		return
+	if match_supervisor == null:
+		_send_error_to_session(session_id, "Match supervisor is unavailable.")
 		return
 	var match_session = match_supervisor.get_match(match_id)
 	if match_session == null:
@@ -2511,7 +2522,176 @@ func _observe_room_for_session(session_id: String, room_id: String) -> void:
 	else:
 		visible_player_indices = _get_friend_visible_player_indices(session_id, match_session.player_session_ids)
 	match_supervisor.set_spectator_visible_player_indices(match_id, session_id, visible_player_indices)
+	# For player-hosted matches the authority lives in the host's client, so the
+	# host must know the spectator's token before the spectator connects (a
+	# join with an unknown token is denied outright).
+	if match_session.is_player_host():
+		var approved := await _push_spectator_approval_to_host(
+			match_id,
+			str(match_session.host_session_id),
+			session_id,
+			match_session.get_spectator_match_token(session_id),
+			visible_player_indices
+		)
+		if not approved:
+			_send_error_to_session(session_id, "That live match is not accepting spectators right now.")
+			return
 	_send_to_session(session_id, LobbyProtocolScript.MATCH_ASSIGNED, match_session.to_spectator_match_info(session_id))
+
+## Broker a spectator into a client-side bot challenge: hand the challenger's
+## client the spectator's token and visibility, then point the spectator at
+## the challenger's spectate endpoint.
+func _observe_local_bot_match(session_id: String, match_id: String) -> void:
+	var entry_variant = _local_bot_matches_by_id.get(match_id, null)
+	if entry_variant == null or not (entry_variant is Dictionary):
+		_send_error_to_session(session_id, "That match is no longer available.")
+		return
+	var entry: Dictionary = entry_variant
+	var spectate_ip := str(entry.get("spectate_ip", "")).strip_edges()
+	var spectate_port := int(entry.get("spectate_port", 0))
+	if spectate_ip.is_empty() or spectate_port <= 0:
+		_send_error_to_session(session_id, "That bot challenge is not accepting spectators.")
+		return
+	var human_session_id := str(entry.get("human_session_id", ""))
+	var bot_session_id := str(entry.get("bot_session_id", ""))
+	if session_id == human_session_id:
+		_send_error_to_session(session_id, "You are playing in this match.")
+		return
+	var player_session_ids: Array[String] = [human_session_id, bot_session_id]
+	var visible_player_indices := _get_friend_visible_player_indices(session_id, player_session_ids)
+	# The bot has no private hand, so its cards are always fair game to watch.
+	var bot_index := player_session_ids.find(bot_session_id)
+	if bot_index >= 0 and not visible_player_indices.has(bot_index):
+		visible_player_indices.append(bot_index)
+	visible_player_indices.sort()
+	var observer_match_token := _generate_spectator_token()
+	var spectator_tokens: Dictionary = entry.get("spectator_match_tokens_by_session", {})
+	if not (spectator_tokens is Dictionary):
+		spectator_tokens = {}
+	spectator_tokens[session_id] = observer_match_token
+	entry["spectator_match_tokens_by_session"] = spectator_tokens
+
+	var approved := await _push_spectator_approval_to_host(
+		match_id, human_session_id, session_id, observer_match_token, visible_player_indices)
+	if not approved:
+		_send_error_to_session(session_id, "That bot challenge is not accepting spectators right now.")
+		return
+
+	var identities: Dictionary = entry.get("identity_by_session", {})
+	if not (identities is Dictionary):
+		identities = {}
+	var player_names: Array = []
+	var rank_badges: Array = []
+	for player_session_id in player_session_ids:
+		var identity: Dictionary = (identities as Dictionary).get(player_session_id, {})
+		player_names.append(str(identity.get("player_name", identity.get("username", "Player"))))
+		rank_badges.append(identity.get("rank_badge", {}))
+	var bot_submission: Dictionary = (entry.get("decks_by_session", {}) as Dictionary).get(bot_session_id, {})
+	if not (bot_submission is Dictionary):
+		bot_submission = {}
+	_send_to_session(session_id, LobbyProtocolScript.MATCH_ASSIGNED, {
+		"match_id": match_id,
+		"room_id": str(entry.get("room_id", "")),
+		"server_ip": spectate_ip,
+		"match_port": spectate_port,
+		"match_websocket_url": "",
+		"player_index": -1,
+		"observer_mode": true,
+		"observer_session_id": session_id,
+		"observer_match_token": observer_match_token,
+		"player_names": player_names,
+		"rank_badges": rank_badges,
+		"bot_player_stars": int(bot_submission.get("bot_stars", 0)),
+		"has_bot": true,
+		"is_bot_self_play": false,
+		"status": "active",
+		"server_mode": "in_process_host",
+		"is_ranked": bool(entry.get("is_ranked", false)),
+		"series": {},
+		"reconnect_window_seconds": 0,
+		"waiting_for_reconnect": false,
+	})
+	_trace("observer %s joined local bot match %s" % [session_id, match_id])
+
+## Push a spectator's credentials to a client-hosted match's host and wait for
+## its acknowledgement so the spectator never dials an unprepared host.
+func _push_spectator_approval_to_host(
+	match_id: String,
+	host_session_id: String,
+	observer_session_id: String,
+	observer_match_token: String,
+	visible_player_indices: Array[int]
+) -> bool:
+	if host_session_id.is_empty() or observer_match_token.is_empty():
+		return false
+	var ack_key := "%s|%s" % [match_id, observer_session_id]
+	_spectator_acks_by_key.erase(ack_key)
+	_send_to_session(host_session_id, LobbyProtocolScript.MATCH_SPECTATOR_APPROVED, {
+		"match_id": match_id,
+		"observer_session_id": observer_session_id,
+		"observer_match_token": observer_match_token,
+		"visible_player_indices": visible_player_indices,
+	})
+	var waited_seconds := 0.0
+	while waited_seconds < MATCH_SPECTATOR_ACK_TIMEOUT_SECONDS:
+		if _spectator_acks_by_key.has(ack_key):
+			_spectator_acks_by_key.erase(ack_key)
+			return true
+		if not is_inside_tree() or get_tree() == null:
+			return false
+		await get_tree().create_timer(0.2).timeout
+		waited_seconds += 0.2
+	_spectator_acks_by_key.erase(ack_key)
+	return false
+
+func _handle_match_spectator_ack(_peer_id: int, payload: Dictionary) -> void:
+	var match_id := str(payload.get("match_id", "")).strip_edges()
+	var observer_session_id := str(payload.get("observer_session_id", "")).strip_edges()
+	if match_id.is_empty() or observer_session_id.is_empty():
+		return
+	_spectator_acks_by_key["%s|%s" % [match_id, observer_session_id]] = true
+
+func _handle_local_bot_match_spectate_info(peer_id: int, payload: Dictionary) -> void:
+	var session: Dictionary = _get_session_for_peer(peer_id)
+	if session.is_empty():
+		return
+	var session_id := str(session.get("session_id", ""))
+	var match_id := str(payload.get("match_id", "")).strip_edges()
+	var entry_variant = _local_bot_matches_by_id.get(match_id, null)
+	if entry_variant == null or not (entry_variant is Dictionary):
+		return
+	var entry: Dictionary = entry_variant
+	if str(entry.get("human_session_id", "")) != session_id:
+		return
+	var viable := bool(payload.get("viable", false))
+	var spectate_ip := str(payload.get("spectate_ip", "")).strip_edges()
+	var spectate_port := int(payload.get("spectate_port", 0))
+	if not viable or spectate_ip.is_empty() or spectate_port <= 0:
+		viable = false
+	entry["spectate_ip"] = spectate_ip if viable else ""
+	entry["spectate_port"] = spectate_port if viable else 0
+	var room_id := str(entry.get("room_id", ""))
+	if viable and not room_id.is_empty() and rooms_by_id.has(room_id):
+		_emit_room_updates(rooms_by_id[room_id])
+	_trace("local bot match %s spectate endpoint viable=%s" % [match_id, str(viable)])
+
+func _generate_spectator_token() -> String:
+	var crypto := Crypto.new()
+	var random_bytes := crypto.generate_random_bytes(20)
+	var output := ""
+	for random_byte in random_bytes:
+		output += "%02x" % int(random_byte)
+	return output
+
+func _get_local_bot_match_player_names(entry: Dictionary) -> Array:
+	var identities: Dictionary = entry.get("identity_by_session", {})
+	if not (identities is Dictionary):
+		return []
+	var names: Array = []
+	for session_id in [str(entry.get("human_session_id", "")), str(entry.get("bot_session_id", ""))]:
+		var identity: Dictionary = (identities as Dictionary).get(session_id, {})
+		names.append(str(identity.get("player_name", identity.get("username", "Player"))))
+	return names
 
 func _rejoin_room_for_session(session_id: String, room_id: String) -> void:
 	var normalized_room_id := room_id.strip_edges().to_upper()
@@ -2758,6 +2938,8 @@ func _assign_local_bot_match(
 		"identity_by_session": player_identity_by_session.duplicate(true),
 		"assigned_unix": int(Time.get_unix_time_from_system()),
 		"reported": false,
+		"spectate_ip": "",
+		"spectate_port": 0,
 	}
 	room.status = LobbyRoomScript.STATUS_IN_MATCH
 	room.assigned_match_id = match_id
@@ -3436,16 +3618,26 @@ func _build_room_list(viewer_session_id: String = "") -> Array:
 			var match_session: MatchSession = get_match_session(match_id)
 			if room.is_bot_self_play and (match_session == null or not match_supervisor.is_match_ready_for_clients(match_id)):
 				continue
-			entry["viewer_can_rejoin"] = (
-				not _get_matching_participant_session_id(viewer_session_id, room.members).is_empty()
-				and (match_session == null or match_supervisor.is_match_ready_for_clients(match_id))
-			)
-			if match_session != null and match_session.player_session_ids.size() == 2 and match_session.get_human_player_count() == 1:
-				entry["match_player_names"] = match_session.get_public_player_names()
-				if not _get_request_next_target(match_session, viewer).is_empty() \
-						and not match_session.next_requests_by_account.has(viewer.get("account_id", "")) \
-						and match_supervisor.is_match_ready_for_clients(match_id, false):
-					entry["request_next_match_id"] = match_id
+			var local_bot_entry_variant = _local_bot_matches_by_id.get(match_id, null)
+			if local_bot_entry_variant is Dictionary:
+				# Client-hosted bot challenges have no supervised session; expose
+				# the challenger's spectate endpoint so others can watch live.
+				var local_bot_entry: Dictionary = local_bot_entry_variant
+				if int(local_bot_entry.get("spectate_port", 0)) > 0 \
+						and not str(local_bot_entry.get("spectate_ip", "")).is_empty():
+					entry["spectatable"] = true
+					entry["match_player_names"] = _get_local_bot_match_player_names(local_bot_entry)
+			else:
+				entry["viewer_can_rejoin"] = (
+					not _get_matching_participant_session_id(viewer_session_id, room.members).is_empty()
+					and (match_session == null or match_supervisor.is_match_ready_for_clients(match_id))
+				)
+				if match_session != null and match_session.player_session_ids.size() == 2 and match_session.get_human_player_count() == 1:
+					entry["match_player_names"] = match_session.get_public_player_names()
+					if not _get_request_next_target(match_session, viewer).is_empty() \
+							and not match_session.next_requests_by_account.has(viewer.get("account_id", "")) \
+							and match_supervisor.is_match_ready_for_clients(match_id, false):
+						entry["request_next_match_id"] = match_id
 		rooms.append(entry)
 	return rooms
 

@@ -4508,13 +4508,12 @@ func _should_summon_creature_stealthily(card: Card, zone: Zone, mode: Card.Creat
 	if card == null or zone == null or mode != Card.CreatureMode.DEFENSIVE:
 		return false
 	var card_key := CardStrategy.key(card)
-	var ability_text := card.ability_text.to_lower().replace("[b]", "").replace("[/b]", "")
-	# Stealth suppresses ordinary face-up passives and impact abilities, so keep
-	# those bodies visible when they can provide value immediately.
-	if card_key in CardStrategy.BOARD_ABILITIES \
-			or "passive" in ability_text \
-			or "impact" in ability_text \
-			or "on summon" in ability_text:
+	# Stealth suppresses every creature ability while hidden (stealth sets
+	# Card._abilities_disabled_by_hidden_state), so keep bodies with face-up
+	# impact/kill/passive value visible: STEALTH_SUPPRESSED_KEYS lists creatures
+	# whose engine hooks are gated on abilities_suppressed(), and
+	# BOARD_ABILITIES covers activated abilities.
+	if card_key in CardStrategy.BOARD_ABILITIES or card_key in CardStrategy.STEALTH_SUPPRESSED_KEYS:
 		return false
 	if zone not in bot_player.frontline_zones:
 		return _prefers_stealth_summon(card)

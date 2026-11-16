@@ -96,7 +96,15 @@ func _destroy_opponent_targeters(game_manager: GameManager, target: Card) -> Arr
 			continue
 		if not _action_targets_card(action, target, target_uid):
 			continue
-		if action in game_manager.action_stack:
+		# Actions carrying a deferred attack's completion chain (e.g. Askelladen's
+		# Tactical Retreat, which is queued while the attack waits for the retreat
+		# decision) must resolve and fizzle instead of being erased — erasing them
+		# would strand the deferred attack they complete.
+		var response_action = action.response_to
+		var action_completes_deferred_attack := response_action != null \
+			and response_action is CardAction \
+			and (response_action as CardAction).event_data.has("deferred_authoritative_completion_command")
+		if not action_completes_deferred_attack and action in game_manager.action_stack:
 			game_manager.action_stack.erase(action)
 		if source_card.current_zone != null and source_card.current_zone != source_card.card_owner.graveyard_zone:
 			game_manager.request_send_to_graveyard(source_card, func() -> void:
@@ -123,6 +131,10 @@ func _action_targets_card(action: CardAction, target: Card, target_uid: String =
 		return false
 	if _same_card(action.target, target, target_uid):
 		return true
+	if action.target is Array:
+		for candidate in action.target:
+			if _same_card(candidate, target, target_uid):
+				return true
 	if _same_card(action.interceptor, target, target_uid):
 		return true
 	if _same_card(action.attacker, target, target_uid):

@@ -166,6 +166,13 @@ var _local_bot_match_supervisor: MatchSupervisor
 var _local_bot_match_lease_timer: Timer
 var _watch_next_local_bot_match_pending: bool = false
 var _local_bot_match_submitting: Dictionary = {}
+var _local_bot_spectate_probe_thread: Thread = null
+var _local_bot_spectate_match_id: String = ""
+var _local_bot_spectate_bind_port: int = 0
+var _local_bot_spectate_external_port: int = 0
+var _local_bot_spectate_client_id: int = 0
+var _local_bot_spectate_session_id: String = ""
+var _pending_spectator_approvals: Dictionary = {}
 var _bot_match_retry_timer: Timer
 var _continuous_bot_match_ids: Dictionary = {}
 var _lobby_session_id: String = ""
@@ -1497,6 +1504,7 @@ func _refresh_server_version_overlay_visibility() -> void:
 
 func _process(delta: float) -> void:
 	_poll_host_viability_probe()
+	_poll_local_bot_spectate_probe()
 	if not _deferred_required_update.is_empty() and not _should_defer_required_update():
 		var pending_update := _deferred_required_update
 		_deferred_required_update = {}
@@ -3283,7 +3291,12 @@ func _refresh_seek_list() -> void:
 		var rank_tag := "[%s]  " % _format_seek_format_label(room)
 		var action_hint := "  Click to Join"
 		if room_status == LobbyRoomScript.STATUS_IN_MATCH:
-			action_hint = "  Click to Rejoin" if bool(room.get("viewer_can_rejoin", false)) else "  Click to Observe"
+			if bool(room.get("viewer_can_rejoin", false)):
+				action_hint = "  Click to Rejoin"
+			elif bool(room.get("spectatable", false)):
+				action_hint = "  Click to Watch"
+			else:
+				action_hint = "  Click to Observe"
 		seek_list.add_item("%s%s  %d/%d  %s%s" % [rank_tag, host_name, member_count, max_players, status, action_hint])
 		seek_list.set_item_metadata(seek_list.get_item_count() - 1, room.duplicate(true))
 		var request_next_match_id := str(room.get("request_next_match_id", ""))
@@ -8571,6 +8584,8 @@ func _bind_lobby_client_signals() -> void:
 		lobby_client.local_bot_match_assigned.connect(_on_local_bot_match_assigned)
 	if lobby_client.has_signal("local_bot_match_confirmed") and not lobby_client.local_bot_match_confirmed.is_connected(_on_local_bot_match_confirmed):
 		lobby_client.local_bot_match_confirmed.connect(_on_local_bot_match_confirmed)
+	if lobby_client.has_signal("match_spectator_approved") and not lobby_client.match_spectator_approved.is_connected(_on_match_spectator_approved):
+		lobby_client.match_spectator_approved.connect(_on_match_spectator_approved)
 	if lobby_client.has_signal("match_host_viability_requested") and not lobby_client.match_host_viability_requested.is_connected(_on_match_host_viability_requested):
 		lobby_client.match_host_viability_requested.connect(_on_match_host_viability_requested)
 	if not lobby_client.account_deck_list_received.is_connected(_on_account_deck_list_received):
@@ -9072,10 +9087,13 @@ func _launch_local_bot_match(match_info: Dictionary) -> void:
 	local_match_info["player_index"] = 0
 	local_match_info["has_bot"] = true
 	local_match_info["local_bot_match"] = true
+	local_match_info["spectate_listen"] = true
 	await _launch_assigned_match(true, "127.0.0.1", 0, local_match_info, match_session)
 	var mock_game = get_node_or_null("GameContainer/MockGame")
 	if mock_game != null and not mock_game.local_ranked_match_ended.is_connected(_on_local_bot_match_game_ended):
 		mock_game.local_ranked_match_ended.connect(_on_local_bot_match_game_ended)
+	_flush_pending_spectator_approvals()
+	_begin_local_bot_spectate_advertising(local_match_info, mock_game)
 
 func _on_local_bot_match_game_ended(result: Dictionary) -> void:
 	if lobby_client == null or not lobby_client.is_authenticated():
@@ -9087,6 +9105,108 @@ func _on_local_bot_match_confirmed(success: bool, ranked_result: Dictionary, mes
 	if success and mock_game != null and mock_game.has_method("apply_local_ranked_result"):
 		mock_game.apply_local_ranked_result(ranked_result)
 	_maybe_request_profile_summary()
+
+func _on_match_spectator_approved(match_id: String, observer_session_id: String, observer_match_token: String, visible_player_indices: Array) -> void:
+	if _try_apply_match_spectator(match_id, observer_session_id, observer_match_token, visible_player_indices):
+		return
+	# The match may still be launching; hold the approval until it is up.
+	var approvals: Array = _pending_spectator_approvals.get(match_id, [])
+	if not (approvals is Array):
+		approvals = []
+	approvals.append({
+		"match_id": match_id,
+		"observer_session_id": observer_session_id,
+		"observer_match_token": observer_match_token,
+		"visible_player_indices": visible_player_indices,
+	})
+	_pending_spectator_approvals[match_id] = approvals
+
+## Register a lobby-approved spectator on this client-hosted match and
+## acknowledge it so the lobby can safely point the spectator at us.
+func _try_apply_match_spectator(match_id: String, observer_session_id: String, observer_match_token: String, visible_player_indices: Array) -> bool:
+	var mock_game = get_node_or_null("GameContainer/MockGame")
+	if mock_game == null or not mock_game.has_method("apply_match_spectator"):
+		return false
+	if not mock_game.apply_match_spectator(match_id, observer_session_id, observer_match_token, visible_player_indices):
+		return false
+	if lobby_client != null and lobby_client.is_authenticated():
+		lobby_client.ack_match_spectator(match_id, observer_session_id)
+	return true
+
+## Re-apply spectator approvals that arrived while the client-hosted match was
+## still launching.
+func _flush_pending_spectator_approvals() -> void:
+	if _pending_spectator_approvals.is_empty():
+		return
+	var pending: Dictionary = _pending_spectator_approvals.duplicate(true)
+	_pending_spectator_approvals.clear()
+	for match_id_variant in pending.keys():
+		var match_id := str(match_id_variant)
+		for approval in pending[match_id_variant]:
+			if not (approval is Dictionary):
+				continue
+			var approval_dict: Dictionary = approval
+			_try_apply_match_spectator(
+				match_id,
+				str(approval_dict.get("observer_session_id", "")),
+				str(approval_dict.get("observer_match_token", "")),
+				approval_dict.get("visible_player_indices", [])
+			)
+
+## If the client-hosted bot challenge bound a spectate port, probe UPnP
+## reachability on a worker and advertise the endpoint to the lobby so other
+## players can watch the match live from the seek list.
+func _begin_local_bot_spectate_advertising(local_match_info: Dictionary, mock_game) -> void:
+	if lobby_client == null or not lobby_client.is_authenticated() or _is_local_lobby_host:
+		return
+	var match_id := str(local_match_info.get("match_id", "")).strip_edges()
+	if match_id.is_empty() or mock_game == null or mock_game.network_manager == null:
+		return
+	var bound_port := int(mock_game.network_manager.get("last_bound_port"))
+	if bound_port <= 0:
+		# Binding failed; the match stays private (no spectate offer).
+		return
+	if _local_bot_spectate_probe_thread != null:
+		return
+	_local_bot_spectate_match_id = match_id
+	_local_bot_spectate_bind_port = bound_port
+	_local_bot_spectate_client_id = lobby_client.get_instance_id()
+	_local_bot_spectate_session_id = lobby_client.current_session_id
+	_local_bot_spectate_probe_thread = Thread.new()
+	# Only pass the port to the static probe; it never accesses scene nodes.
+	var start_error := _local_bot_spectate_probe_thread.start(HostReachabilityProbeScript.probe.bind(bound_port))
+	if start_error != OK:
+		_local_bot_spectate_probe_thread = null
+		lobby_client.submit_local_bot_match_spectate_info(match_id, false, "", 0)
+
+func _poll_local_bot_spectate_probe() -> void:
+	if _local_bot_spectate_probe_thread == null or _local_bot_spectate_probe_thread.is_alive():
+		return
+	var result: Dictionary = _local_bot_spectate_probe_thread.wait_to_finish()
+	_local_bot_spectate_probe_thread = null
+	var match_id := _local_bot_spectate_match_id
+	_local_bot_spectate_match_id = ""
+	_local_bot_spectate_bind_port = 0
+	if lobby_client == null or not lobby_client.is_authenticated():
+		return
+	if lobby_client.get_instance_id() != _local_bot_spectate_client_id \
+			or lobby_client.current_session_id != _local_bot_spectate_session_id:
+		return
+	var viable := bool(result.get("viable", false))
+	var reachable_ip := str(result.get("reachable_ip", ""))
+	var reachable_port := int(result.get("reachable_port", 0))
+	if viable and reachable_port > 0:
+		_local_bot_spectate_external_port = reachable_port
+	lobby_client.submit_local_bot_match_spectate_info(match_id, viable, reachable_ip, reachable_port)
+
+## Remove the UPnP port mapping created for spectating a client-hosted bot
+## challenge. Best-effort: failures are ignored.
+func _release_local_bot_spectate_mapping() -> void:
+	if _local_bot_spectate_external_port <= 0:
+		return
+	var port_to_release := _local_bot_spectate_external_port
+	_local_bot_spectate_external_port = 0
+	HostReachabilityProbeScript.remove_mapping(port_to_release)
 
 func _on_remote_match_assigned(match_info: Dictionary) -> void:
 	var is_manual_rejoin_assignment := _is_manual_rejoin_assignment(match_info)
@@ -9132,6 +9252,7 @@ func _launch_assigned_match(
 	if is_host:
 		await get_node("GameContainer/MockGame").start_game(true, false, server_ip, match_port, match_info, server_match_session)
 		show_game()
+		_flush_pending_spectator_approvals()
 		if _hunting_tactics_smoke_active:
 			await _drive_hunting_tactics_smoke(true)
 			return
@@ -9630,6 +9751,7 @@ func _return_to_menu() -> void:
 	_pending_rematch_ready_submitted = false
 	_suppress_active_match_auto_resume_from_embedded_games()
 	_release_player_host_port_mapping()
+	_release_local_bot_spectate_mapping()
 	multiplayer_container.visible = return_to_multiplayer
 	show_menu()
 	_match_launch_queued = false
@@ -13397,6 +13519,7 @@ func _build_practice_thor_fuzz_snapshot(practice_game) -> String:
 		"resolving": game_manager.resolving_stack_actions.size(),
 		"pending_prompts": _count_pending_smoke_prompts(match_manager),
 		"pending_prompt_types": _list_pending_smoke_prompt_types(match_manager),
+		"authoritative_pending": bool(match_manager.get("_authoritative_stack_resolution_pending")) if match_manager != null else false,
 		"p1_followers": player1.followers if player1 != null else -1,
 		"p2_followers": player2.followers if player2 != null else -1,
 		"p1_mana": player1.mana if player1 != null else -1,

@@ -7118,9 +7118,18 @@ func _process_combat_retreat_decision(command: Dictionary) -> bool:
 	if bool(command.get("retreat", false)):
 		_clear_pending_retreat_state()
 		if not _queue_askelladen_retreat_priority_action(current_prompt, action, target):
-			game_manager.send_to_deck_bottom_with_hook(action.attacker)
-			game_manager.send_to_deck_bottom_with_hook(target)
-			last_resolution_text = "Tactical Retreat! Both creatures returned to the bottom of their decks."
+			var fallback_targets: Array[Card] = [action.attacker, target]
+			var fallback_split := _split_retreat_targets(current_prompt, fallback_targets)
+			for fallback_victim in fallback_split["shelved"]:
+				game_manager.send_to_deck_bottom_with_hook(fallback_victim)
+			if fallback_split["negated"].is_empty():
+				last_resolution_text = "Tactical Retreat! Both creatures returned to the bottom of their decks."
+			else:
+				var fallback_negated: Array[Card] = fallback_split["negated"]
+				var fallback_negated_names: Array[String] = []
+				for fallback_negated_target in fallback_negated:
+					fallback_negated_names.append(fallback_negated_target.card_name)
+				last_resolution_text = "Tactical Retreat fizzles — %s negated the effect." % " and ".join(fallback_negated_names)
 			_complete_deferred_authoritative_action(action, "combat_retreat_decision")
 		return true
 	if not pending_retreat_prompt_uids.is_empty():
@@ -7193,10 +7202,55 @@ func _resolve_askelladen_retreat_priority_action(ask_card: Askelladen, attack_ac
 			game_manager.note_player_feedback("%s's Tactical Retreat is negated." % ask_card.card_name)
 			_complete_deferred_authoritative_action(attack_action, "combat_retreat_decision")
 			return
-	game_manager.send_to_deck_bottom_with_hook(attack_action.attacker)
-	game_manager.send_to_deck_bottom_with_hook(target)
-	game_manager.note_player_feedback("Tactical Retreat! Both creatures returned to the bottom of their decks.")
+	if ask_card.current_zone == null or not ask_card.current_zone.is_board_zone():
+		# Askelladen left the board after retreat was chosen (e.g. Exorcism destroyed
+		# it in response), so there is nothing left to retreat with.
+		game_manager.note_player_feedback("Tactical Retreat fizzles — %s is no longer on the board." % ask_card.card_name)
+		_complete_deferred_authoritative_action(attack_action, "combat_retreat_decision")
+		return
+	var retreat_split := _split_retreat_targets(ask_card, retreat_targets)
+	var retreat_victims: Array[Card] = retreat_split["shelved"]
+	var negated_targets: Array[Card] = retreat_split["negated"]
+	for retreat_victim in retreat_victims:
+		game_manager.send_to_deck_bottom_with_hook(retreat_victim)
+	if negated_targets.is_empty():
+		game_manager.note_player_feedback("Tactical Retreat! Both creatures returned to the bottom of their decks.")
+	else:
+		var negated_names: Array[String] = []
+		for negated_target in negated_targets:
+			negated_names.append(negated_target.card_name)
+		if retreat_victims.is_empty():
+			game_manager.note_player_feedback("Tactical Retreat fizzles — %s negated the effect." % " and ".join(negated_names))
+		else:
+			var victim_names: Array[String] = []
+			for retreat_victim in retreat_victims:
+				victim_names.append(retreat_victim.card_name)
+			var retreat_text := "Tactical Retreat! %s returned to the bottom of %s deck, but %s negated the effect." % [
+				" and ".join(victim_names),
+				"its" if retreat_victims.size() == 1 else "their",
+				" and ".join(negated_names),
+			]
+			game_manager.note_player_feedback(retreat_text)
 	_complete_deferred_authoritative_action(attack_action, "combat_retreat_decision")
+
+## Splits Tactical Retreat participants into creatures that are shelved and
+## creatures whose Exorcism-style effect negation blocks being shelved. Only
+## effects from other cards are negated ("except its own"), so Askelladen is
+## never blocked from retreating itself.
+func _split_retreat_targets(ask_card: Askelladen, retreat_targets: Array[Card]) -> Dictionary:
+	var shelved: Array[Card] = []
+	var negated: Array[Card] = []
+	for retreat_target in retreat_targets:
+		if retreat_target == null:
+			continue
+		if retreat_target.current_zone == null or not retreat_target.current_zone.is_board_zone():
+			# Already left the board since retreat was chosen; leave it where it is.
+			continue
+		if retreat_target != ask_card and retreat_target.negates_external_effects():
+			negated.append(retreat_target)
+			continue
+		shelved.append(retreat_target)
+	return {"shelved": shelved, "negated": negated}
 
 func _get_pending_retreat_prompt() -> Askelladen:
 	if pending_retreat_prompt_uids.is_empty():
