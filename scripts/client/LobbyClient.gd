@@ -41,6 +41,7 @@ signal match_assigned(match_info: Dictionary)
 signal local_bot_match_assigned(match_info: Dictionary)
 signal local_bot_match_confirmed(success: bool, ranked_result: Dictionary, message: String)
 signal match_spectator_approved(match_id: String, observer_session_id: String, observer_match_token: String, visible_player_indices: Array)
+signal match_spectator_punch_requested(match_id: String, observer_session_id: String, punch_ip: String, punch_port: int)
 signal request_next_received(requester_name: String)
 signal request_next_result(message: String)
 signal account_deck_list_received(decks: Array, preferred_deck_id: String)
@@ -78,10 +79,12 @@ var current_accepts_game_updates: bool = false
 var current_server_version: String = ""
 var supports_bot_ladder: bool = false
 var supports_ladder_pages: bool = false
+var supports_ladder_filter: bool = false
 var current_allow_friend_observers_to_see_cards: bool = true
 var current_active_match_info: Dictionary = {}
 var current_room_snapshot: Dictionary = {}
 var current_preferred_account_deck_id: String = ""
+var current_punch_reflector_port: int = 0
 var trace_network: bool = false
 var trace_file_path: String = ""
 var multiplayer_mount_path: NodePath = NodePath("")
@@ -453,12 +456,21 @@ func submit_deck(
 func submit_local_bot_match_result(payload: Dictionary) -> void:
 	_send_request(LobbyProtocolScript.LOCAL_BOT_MATCH_RESULT, payload.duplicate(true))
 
-func submit_local_bot_match_spectate_info(match_id: String, viable: bool, spectate_ip: String, spectate_port: int) -> void:
+func submit_local_bot_match_spectate_info(match_id: String, viable: bool, spectate_ip: String, spectate_port: int, via_punch: bool = false) -> void:
 	_send_request(LobbyProtocolScript.LOCAL_BOT_MATCH_SPECTATE_INFO, {
 		"match_id": match_id.strip_edges(),
 		"viable": viable,
 		"spectate_ip": spectate_ip.strip_edges(),
 		"spectate_port": spectate_port,
+		"via_punch": via_punch,
+	})
+
+## Announce that this spectator bounced the punch reflector from its live
+## matchmaking socket, so the lobby can hand the host our public endpoint.
+func submit_match_spectator_punch_ready(match_id: String, observer_session_id: String) -> void:
+	_send_request(LobbyProtocolScript.LOCAL_BOT_MATCH_PUNCH_READY, {
+		"match_id": match_id.strip_edges(),
+		"observer_session_id": observer_session_id.strip_edges(),
 	})
 
 func ack_match_spectator(match_id: String, observer_session_id: String) -> void:
@@ -508,13 +520,15 @@ func request_profile_summary() -> void:
 func set_rank_badge(best_of: int, league: int, portrait: Dictionary) -> void:
 	_send_request(LobbyProtocolScript.SET_RANK_BADGE, {"best_of": best_of, "league": league, "portrait": portrait})
 
-func request_ladder(best_of: int, page: int, request_id: int, search_query: String = "") -> void:
+func request_ladder(best_of: int, page: int, request_id: int, search_query: String = "",
+		player_type: String = LobbyProtocolScript.LADDER_FILTER_EVERYONE) -> void:
 	if not is_authenticated():
 		return
 	if supports_ladder_pages:
 		_send_request(LobbyProtocolScript.REQUEST_BOT_LADDER, {
 			"best_of": best_of, "page": page, "request_id": request_id,
 			"search_query": search_query.strip_edges().substr(0, 64),
+			"player_type": player_type,
 		})
 	elif supports_bot_ladder:
 		_send_request(LobbyProtocolScript.REQUEST_BOT_LADDER)
@@ -531,9 +545,12 @@ func request_bot_work(bot_id: String = "", excluded_list_ids: Array = []) -> voi
 	if is_authenticated():
 		_send_request(LobbyProtocolScript.REQUEST_BOT_WORK, {"bot_id": bot_id, "excluded_list_ids": excluded_list_ids})
 
-func report_bot_work_started(job_id: String) -> void:
+func report_bot_work_started(job_id: String, turn_count: int = 0) -> void:
 	if is_authenticated():
-		_send_request(LobbyProtocolScript.REPORT_BOT_WORK_STARTED, {"job_id": job_id})
+		_send_request(LobbyProtocolScript.REPORT_BOT_WORK_STARTED, {
+			"job_id": job_id,
+			"turn_count": maxi(0, turn_count),
+		})
 
 func cancel_bot_work(job_id: String) -> void:
 	if is_authenticated():
@@ -650,6 +667,7 @@ func lobby_event(message: Dictionary) -> void:
 		LobbyProtocolScript.HELLO_OK:
 			supports_bot_ladder = bool(payload.get("supports_bot_ladder", false))
 			supports_ladder_pages = bool(payload.get("supports_ladder_pages", false))
+			supports_ladder_filter = bool(payload.get("supports_ladder_filter", false))
 			_cancel_initial_auth_request()
 			_cancel_auth_response_timeout()
 			_finish_auto_reconnect()
@@ -674,6 +692,7 @@ func lobby_event(message: Dictionary) -> void:
 		LobbyProtocolScript.LOBBY_RECONNECT_OK:
 			supports_bot_ladder = bool(payload.get("supports_bot_ladder", false))
 			supports_ladder_pages = bool(payload.get("supports_ladder_pages", false))
+			supports_ladder_filter = bool(payload.get("supports_ladder_filter", false))
 			_cancel_initial_auth_request()
 			_cancel_auth_response_timeout()
 			_finish_auto_reconnect()
@@ -703,6 +722,7 @@ func lobby_event(message: Dictionary) -> void:
 			)
 		LobbyProtocolScript.ROOM_LIST:
 			_set_current_server_version(str(payload.get("server_version", current_server_version)))
+			current_punch_reflector_port = int(payload.get("punch_reflector_port", 0))
 			room_list_updated.emit(payload.get("rooms", []))
 		LobbyProtocolScript.ROOM_SNAPSHOT:
 			_set_current_server_version(str(payload.get("server_version", current_server_version)))
@@ -748,11 +768,22 @@ func lobby_event(message: Dictionary) -> void:
 				)
 		LobbyProtocolScript.MATCH_SPECTATOR_APPROVED:
 			if is_authenticated():
+				# The host may have missed the room list that carries the punch
+				# reflector port; an approval is the last reliable hint today.
+				current_punch_reflector_port = int(payload.get("punch_reflector_port", current_punch_reflector_port))
 				match_spectator_approved.emit(
 					str(payload.get("match_id", "")).strip_edges(),
 					str(payload.get("observer_session_id", "")).strip_edges(),
 					str(payload.get("observer_match_token", "")).strip_edges(),
 					payload.get("visible_player_indices", []) if payload.get("visible_player_indices", []) is Array else []
+				)
+		LobbyProtocolScript.MATCH_SPECTATOR_PUNCH:
+			if is_authenticated():
+				match_spectator_punch_requested.emit(
+					str(payload.get("match_id", "")).strip_edges(),
+					str(payload.get("observer_session_id", "")).strip_edges(),
+					str(payload.get("punch_ip", "")).strip_edges(),
+					int(payload.get("punch_port", 0))
 				)
 		LobbyProtocolScript.REQUEST_NEXT_RECEIVED:
 			if is_authenticated():
@@ -1025,6 +1056,7 @@ func _finalize_unexpected_disconnect() -> void:
 func _clear_session_fields() -> void:
 	supports_bot_ladder = false
 	supports_ladder_pages = false
+	supports_ladder_filter = false
 	current_session_id = ""
 	current_reconnect_token = ""
 	current_profile_id = ""

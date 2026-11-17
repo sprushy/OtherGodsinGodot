@@ -37,7 +37,7 @@ class VolunteerLobbyClient extends LobbyClient:
 	func request_bot_work(_bot_id: String = "", _excluded_list_ids: Array = []) -> void:
 		pass
 
-	func report_bot_work_started(job_id: String) -> void:
+	func report_bot_work_started(job_id: String, _turn_count: int = 0) -> void:
 		started.append(job_id)
 
 	func submit_bot_work_result(job_id: String, winner_index: int, turns: int) -> void:

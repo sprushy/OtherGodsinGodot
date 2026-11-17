@@ -1262,6 +1262,30 @@ static func weather_score(bot, weather: Card) -> int:
 			gain += 6000
 	return gain
 
+# A face-up Storm silences every non-passive creature ability the moment the
+# card enters the field (Storm.on_any_card_moved refreshes the field during
+# the summon's move, before the impact resolves), so impact payoffs such as
+# Fenrir's Devour can never fire while one is live. Returns true when an
+# active, visible Storm that survives the planned removals would silence the
+# arriving creature. Creatures already on the field are excluded: their live
+# silence state is known and checked at the call site.
+static func summon_impact_silenced_by_storm(bot, creature: Card, removed: Array = []) -> bool:
+	if creature == null or bot == null or bot.game_manager == null:
+		return false
+	if creature.current_zone != null and creature.current_zone.is_board_zone():
+		return false
+	for field_card in bot.game_manager.get_field_cards():
+		var storm := field_card as Storm
+		if storm == null or storm in removed or not visible(bot, storm) \
+				or storm.current_zone == null or not storm.current_zone.is_board_zone() \
+				or storm.is_face_down or storm.abilities_suppressed():
+			continue
+		if storm._weather_effect_is_blocked(creature):
+			continue
+		if storm._has_non_passive_creature_ability(creature):
+			return true
+	return false
+
 static func wake_gain(bot, source: Card, norse_only: bool = false) -> int:
 	var gain := 0
 	for player in [bot.bot_player, bot.opponent]:

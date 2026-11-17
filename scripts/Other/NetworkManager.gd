@@ -30,6 +30,12 @@ const TRANSPORT_WEBSOCKET := "websocket"
 # synthetic range, so cross-transport id collisions are impossible.
 const WS_PEER_ID_BASE := 8589934592
 const MatchCommandRegistryScript = preload("res://scripts/Other/MatchCommandRegistry.gd")
+const PunchReflectorScript = preload("res://scripts/network/PunchReflector.gd")
+
+# NAT hole punching cadence. Punch packets repeat at the registry/keepalive
+# rate; a punch target expires when the spectator it serves stops dialing.
+const PUNCH_TARGET_TTL_SECONDS := 60.0
+const PUNCH_PACKET_INTERVAL_SECONDS := 1.0
 
 signal command_received(command: Dictionary, sender_info: Dictionary)
 signal game_event_received(event_type: String, data: Dictionary)
@@ -68,6 +74,10 @@ var _registered_multiplayer_root_path: NodePath = NodePath("")
 var _suppress_disconnect_events_until_msec: int = 0
 var _client_websocket_url: String = ""
 var _websocket_mount: Node = null
+# NAT hole punching: public endpoints to keep open for spectators, keyed by
+# observer session id; plus the tick accumulator for the punch _process loop.
+var _punch_targets: Dictionary = {}
+var _punch_elapsed: float = 0.0
 
 ## Maps player_index (0/1) to their ENet peer_id.
 ## Player 0 = host (peer_id 1), Player 1 = first remote client.
@@ -288,6 +298,8 @@ func _exit_tree() -> void:
 	_registered_multiplayer_root_path = NodePath("")
 	if is_instance_valid(_websocket_mount):
 		_websocket_mount.queue_free()
+	_websocket_mount = null
+	clear_spectator_punch()
 
 func disconnect_client(suppress_disconnect_events: bool = true) -> void:
 	if suppress_disconnect_events:
@@ -306,6 +318,7 @@ func disconnect_client(suppress_disconnect_events: bool = true) -> void:
 	peer = ENetMultiplayerPeer.new()
 	is_server = false
 	local_player_index = -1
+	clear_spectator_punch()
 	player_peer_ids.clear()
 	spectator_peer_ids.clear()
 	spectator_visible_player_indices_by_peer.clear()
@@ -321,6 +334,83 @@ func reconnect_client(address: String = "", port: int = -1) -> Error:
 	if not websocket_url.is_empty():
 		return create_client_websocket(websocket_url)
 	return create_client(connect_address, connect_port)
+
+# ---------------------------------------------------------------------------
+# NAT hole punching for spectating client-hosted matches
+# ---------------------------------------------------------------------------
+
+## Send one punch-discovery packet from this peer's own UDP socket to the
+## lobby's punch reflector. The reflector records the packet's public sender
+## endpoint under the match/role key, so lobby signaling can tell the other
+## side exactly which NAT mapping will carry the real ENet traffic.
+func send_punch_bounce(reflector_ip: String, reflector_port: int, match_id: String, bounce_kind: String) -> Error:
+	var enet_connection := _get_bound_enet_connection()
+	if enet_connection == null:
+		return ERR_UNAVAILABLE
+	if reflector_ip.strip_edges().is_empty() or reflector_port <= 0 or match_id.strip_edges().is_empty():
+		return ERR_INVALID_PARAMETER
+	enet_connection.socket_send(
+		reflector_ip.strip_edges(),
+		reflector_port,
+		PunchReflectorScript.make_marker(bounce_kind, match_id)
+	)
+	return OK
+
+## Open this host's NAT toward one spectator's public endpoint before the
+## spectator's ENet connect packets arrive (restricted-cone routers drop
+## unsolicited UDP from unknown endpoints). Punches repeat at a low rate until
+## expiry; re-calling with the same observer refreshes endpoint and timer.
+func begin_spectator_punch(observer_session_id: String, target_ip: String, target_port: int) -> Error:
+	var punch_id := observer_session_id.strip_edges()
+	if punch_id.is_empty() or target_ip.strip_edges().is_empty() or target_port <= 0:
+		return ERR_INVALID_PARAMETER
+	_punch_targets[punch_id] = {
+		"ip": target_ip.strip_edges(),
+		"port": target_port,
+		"expires_msec": Time.get_ticks_msec() + int(PUNCH_TARGET_TTL_SECONDS * 1000.0),
+	}
+	# Fire the first punch on the next frame; the spectator may be dialing now.
+	_punch_elapsed = PUNCH_PACKET_INTERVAL_SECONDS
+	return OK
+
+func clear_spectator_punch() -> void:
+	_punch_targets.clear()
+	_punch_elapsed = 0.0
+
+func _get_bound_enet_connection() -> ENetConnection:
+	var enet_peer := peer as ENetMultiplayerPeer
+	if enet_peer == null:
+		return null
+	if enet_peer.get_connection_status() == MultiplayerPeer.CONNECTION_DISCONNECTED:
+		return null
+	return enet_peer.get_host()
+
+func _process(delta: float) -> void:
+	if _punch_targets.is_empty():
+		return
+	_punch_elapsed += delta
+	if _punch_elapsed < PUNCH_PACKET_INTERVAL_SECONDS:
+		return
+	_punch_elapsed = 0.0
+	var enet_connection := _get_bound_enet_connection()
+	if enet_connection == null:
+		return
+	var expired_ids := []
+	for punch_id in _punch_targets.keys():
+		var target = _punch_targets.get(punch_id, {})
+		if not (target is Dictionary):
+			expired_ids.append(punch_id)
+			continue
+		if Time.get_ticks_msec() > int((target as Dictionary).get("expires_msec", 0)):
+			expired_ids.append(punch_id)
+			continue
+		enet_connection.socket_send(
+			str((target as Dictionary).get("ip", "")),
+			int((target as Dictionary).get("port", 0)),
+			PunchReflectorScript.make_marker(PunchReflectorScript.PUNCH_KIND_PACKET, "")
+		)
+	for punch_id in expired_ids:
+		_punch_targets.erase(punch_id)
 
 ## Apply loss-tolerant ENet timeouts to one connected peer. Per-side only, so
 ## mixed client/server versions stay compatible: whichever side still runs the

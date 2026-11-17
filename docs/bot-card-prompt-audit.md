@@ -277,3 +277,26 @@ cards in the table. No new probe scripts or visual QA were added.
   seed-1337 run still stops at its known turn-10 wedge, and that game's log
   contains no Kur-Jara or Tree of Life activity, so the engine model is not
   involved. No new probe scripts or visual QA were used.
+
+### God Death bleed clock and Fenrir/Storm summon-gate verification (2026-11-17)
+
+- `--check-only` passed for `BotCardStrategy.gd`, `ThorPracticeBot.gd`,
+  `BotStrategyPosture.gd`, `BotCardPromptPolicy.gd`,
+  `PracticeFuzzPlayerBot.gd`, `HostHuntingTacticsBot.gd`,
+  `BotGameInput.gd`, `ServerBotGameInput.gd`, and
+  `NetworkClientSmokeBot.gd`.
+- Maintained `practice_thor` and `practice_thor_intercept` passed.
+- The default `practice_thor_fuzz` seed-1337 run stopped at its known
+  quiescent wedge (`stack=0 priority_player=-1 pending_prompts=0`) at turn 8
+  with no script errors in the run log. A clean HEAD worktree (659685b)
+  reproduced the same failure — same seed, turn 8, identical signature — so
+  it is the documented pre-existing stall (see `docs/bot-strategy-baseline.md`
+  verification notes, which record seed 1337 wedging at index 0 turn 8 at
+  true baseline), not caused by this change set.
+- `practice_thor_fuzz` seed 1339 with a larger harness window (3 games,
+  `smoke_match_frames=6000`, `smoke_stall_frames=720`) passed: three matches
+  completed with winners (Thor 2, player 1) and no stalls, timeouts, or
+  script errors.
+- Individual card interactions (God Death unlock urgency, Fenrir held under a
+  live Storm) still need manual play checks. No new probe scripts or visual
+  QA were used.

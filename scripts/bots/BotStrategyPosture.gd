@@ -20,6 +20,11 @@ extends RefCounted
 #   a bonus even at card parity.
 # - "balanced": no posture pressure; scoring runs at neutral weights.
 #
+# God Death is folded into both clocks: a player without a face-up awake god
+# bleeds 7 followers at every own upkeep (and skips the automatic upkeep mana
+# gain) no matter what either board blocks, so the bleeding side's clock is
+# real even behind a wall.
+#
 # The evaluate() result is cached per turn by the bot (like the locked-board
 # cache), with a reentrancy guard in the bot so nested scoring passes during
 # evaluation read neutral weights instead of recursing.
@@ -45,13 +50,23 @@ static func evaluate(bot) -> Dictionary:
 	if bot == null or bot.game_manager == null or bot.bot_player == null or bot.opponent == null:
 		return neutral()
 	var result := neutral()
-	var bot_push := _sustained_push(bot)
-	var opponent_push: int = bot._forecast_incoming_follower_loss()
+	var bot_attack_push := _sustained_push(bot)
+	var opponent_attack_push: int = bot._forecast_incoming_follower_loss()
+	# God Death taxes the dying player's own upkeep no matter what either board
+	# does: blocking cannot stop it, and the affected player also skips the
+	# automatic upkeep mana gain. Add that guaranteed bleed to the clock the
+	# bleeding player faces so a walled-in bot plans to force the wall open (or
+	# develop bodies that can) instead of trading into it.
+	var bot_bleed := _god_death_bleed(bot, bot.bot_player)
+	var opponent_bleed := _god_death_bleed(bot, bot.opponent)
+	var bot_push := bot_attack_push + opponent_bleed
+	var opponent_push := opponent_attack_push + bot_bleed
 	# Radiant Wisdom-style conversion (Baldr Active): follower damage becomes
 	# follower gain, so each point of a converter's push also heals its owner
-	# every turn and doubles the race swing.
-	var bot_conversion_gain: int = bot_push if _has_live_converter(bot, bot.bot_player) else 0
-	var opponent_conversion_gain: int = opponent_push if _has_live_converter(bot, bot.opponent) else 0
+	# every turn and doubles the race swing. God Death is not combat damage, so
+	# the bleed never feeds a converter.
+	var bot_conversion_gain: int = bot_attack_push if _has_live_converter(bot, bot.bot_player) else 0
+	var opponent_conversion_gain: int = opponent_attack_push if _has_live_converter(bot, bot.opponent) else 0
 	# Net clocks: recurring upkeep heals (Baldr's Blessed One) slow a clock
 	# that does not out-damage them; a faster clock ignores the heal.
 	var bot_net_push: int = bot_push - _upkeep_follower_gain(bot, bot.opponent) - opponent_conversion_gain
@@ -127,6 +142,20 @@ static func _upkeep_follower_gain(bot, player: Player) -> int:
 		if god is Baldr and not god.is_muted:
 			return Baldr.FOLLOWERS_GAINED_PER_TURN
 	return 0
+
+
+# Guaranteed God Death bleed at the player's own upkeeps: 7 followers per turn
+# plus the skipped automatic upkeep mana gain. The god-zone/board state that
+# decides god death is public, and an active follower-loss prevention stems
+# the bleed while it lasts.
+static func _god_death_bleed(bot, player: Player) -> int:
+	if bot == null or bot.game_manager == null or player == null:
+		return 0
+	if not bot.game_manager.is_player_under_god_death(player):
+		return 0
+	if bot.game_manager.has_turn_follower_loss_prevention(player):
+		return 0
+	return GameManager.GOD_DEATH_FOLLOWER_LOSS
 
 
 # Upkeeps (of this player's own turns) until fatigue alone reduces their

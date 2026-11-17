@@ -551,11 +551,27 @@ preference; the bot's hand is always visible).
 
 - **Local bot challenges**: the challenger's client binds a random ephemeral
   UDP port (`spectate_listen` in the match info, handled by
-  `HeadlessMatchHost.setup_transport`), probes UPnP reachability on a worker
-  (`HostReachabilityProbe`), and reports the endpoint via
-  `LOCAL_BOT_MATCH_SPECTATE_INFO`. Watchable rooms are flagged `spectatable`
-  in the room list and render as "Click to Watch" in the seek list. If UPnP
-  fails the match simply is not advertised as watchable.
+  `HeadlessMatchHost.setup_transport`) and advertises how it can be reached,
+  in order of preference:
+  1. **Same-machine/lobby-host shortcut**: the client that spawned a local
+     lobby skips probing entirely and advertises its LAN address directly; its
+     spectators sit on the same machine or network, where the router's external
+     IP would be unreachable anyway (`_get_lan_spectate_ip` in `MainMenu.gd`).
+  2. **UPnP**: a worker probe (`HostReachabilityProbe`) tries to create and
+     verify a mapping for the bound port and reports the external endpoint via
+     `LOCAL_BOT_MATCH_SPECTATE_INFO`.
+  3. **NAT hole punching**: when UPnP fails, the host bounces the lobby's
+     punch reflector (see below) from the exact ENet socket the spectate
+     server listens on and re-reports via `LOCAL_BOT_MATCH_SPECTATE_INFO` with
+     `via_punch: true`; the lobby reads the reflector's recorded bounce and
+     stores that public endpoint for the room. Bounces continue every 10 s as
+     a NAT keepalive while the challenge runs.
+  Watchable rooms are flagged `spectatable` in the room list and render as
+  "Click to Watch" in the seek list. If no endpoint exists at all the room is
+  flagged `local_bot_match` without `spectatable` and the seek row shows "Not
+  watchable" instead of a clickable observe hint; the lobby also rejects
+  `OBSERVE_ROOM` for it, so stale rows cannot dead-end a spectator in the
+  loading overlay.
 - **Player-hosted matches**: the same watch flow now works; previously the
   host's rebuilt `MatchSession` never learned spectator tokens, so spectators
   were always denied. The lobby now pushes `MATCH_SPECTATOR_APPROVED` (token +
@@ -568,6 +584,45 @@ preference; the bot's hand is always visible).
 - Server cost is a handful of one-time rendezvous messages per spectator; host
   upload bandwidth scales with spectator count. UPnP mappings are released
   when returning to the menu from the match.
+
+#### NAT hole punching (PunchReflector)
+
+UPnP and LAN shortcuts cover most hosts, but the remaining case is a challenger
+behind a router without UPnP. Punching still uses the match ENet server as the
+only transport — the lobby runs a tiny stateless UDP reflector
+(`scripts/network/PunchReflector.gd`, port `PUNCH_REFLECTOR_PORT` 22346 with a
+short fallback scan, started/stopped with the lobby). It records the public
+ip:port each marker packet arrives from and hands that record to lobby
+signaling; it never relays match traffic.
+
+- **Discovery** is done from the sockets that actually carry the match, using
+  `ENetConnection.socket_send`:
+  - The host sends marker packets (kind `host`, tagged with the match id) from
+    its spectate ENet socket every second until the lobby confirms, then every
+    10 s as a keepalive. Because the socket is the one bound by
+    `spectate_listen`, the recorded endpoint is exactly what spectators must
+    dial, for any NAT that keeps endpoint-independent UDP mappings.
+  - An assigned spectator sends marker packets (kind `client`, tagged with the
+    match id and its observer session id) from its dialing ENet socket while
+    it is connecting, and reports readiness via
+    `LOCAL_BOT_MATCH_PUNCH_READY`.
+- **Signaling** stays on the reliable lobby connection:
+  - Punch-mode spectate reports (`via_punch`) are merged only when a fresh
+    host bounce is on record; the resulting endpoint flows into the room list
+    and `MATCH_ASSIGNED` (`spectate_via_punch`, `punch_reflector_port`), so
+    rows flip to "Click to Watch" once discovery lands.
+  - After the spectator is assigned, the lobby relays its recorded bounce to
+    the host as `MATCH_SPECTATOR_PUNCH` (rate-limited to 1/s), and the host
+    punches that endpoint from its ENet socket for ~60 s (re-punched on every
+    spectator reconnect report).
+- **Dial**: the spectator connects as a normal ENet client to the advertised
+  public endpoint; the host punch opens its NAT on restricted routers before
+  the first connect packets arrive, and MatchClient's existing retry loop
+  re-bounces and re-reports if the first attempt races the punch.
+- Punching is best-effort: symmetric/port-preserving NATs on either side can
+  still deny it, in which case the room stays unwatchable and the UPnP/LAN
+  paths remain the reliable options. The reflector prunes old bounces and the
+  health of the whole path degrades to today's behavior if it is unavailable.
 
 Completed battles are recorded in `server_data/match_history_results`. Each
 record stores both bot outcomes, starting ranks, turns, and final follower

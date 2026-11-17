@@ -49,6 +49,7 @@ var _deck_timeout: Timer
 var _selected_list_id := ""
 var _selected_entry: Dictionary = {}
 var _paging_supported := false
+var _filter_supported := false
 var _current_page := 0
 var _last_page := 0
 var _ladder_entries: Array = []
@@ -133,7 +134,7 @@ func _ready() -> void:
 	_player_filter.add_item("Everyone", 0)
 	_player_filter.add_item("Players", 1)
 	_player_filter.add_item("Bots", 2)
-	_player_filter.item_selected.connect(func(_index: int) -> void: _render_ladder_rows())
+	_player_filter.item_selected.connect(func(_index: int) -> void: _on_player_filter_selected())
 	_filter_bar.add_child(_player_filter)
 
 	_table = Tree.new()
@@ -216,6 +217,9 @@ func set_paging_supported(supported: bool) -> void:
 		_current_page = 0
 		_last_page = 0
 
+func set_filter_supported(supported: bool) -> void:
+	_filter_supported = supported
+
 func get_best_of() -> int:
 	return _format.get_selected_id()
 
@@ -224,6 +228,25 @@ func get_current_page() -> int:
 
 func get_search_query() -> String:
 	return _search.text.strip_edges()
+
+func get_player_filter() -> String:
+	match _player_filter.get_selected_id():
+		1:
+			return LobbyProtocolScript.LADDER_FILTER_PLAYERS
+		2:
+			return LobbyProtocolScript.LADDER_FILTER_BOTS
+	return LobbyProtocolScript.LADDER_FILTER_EVERYONE
+
+func _on_player_filter_selected() -> void:
+	if not _filter_supported:
+		# Older lobby servers cannot filter standings server-side, so keep the
+		# local per-page filter instead of re-requesting.
+		_render_ladder_rows()
+		return
+	_current_page = 0
+	_last_page = 0
+	_clear_ladder_rows()
+	page_requested.emit(0)
 
 func _on_search_text_changed(_text: String) -> void:
 	_current_page = 0
@@ -237,7 +260,9 @@ func show_summary(summary: Dictionary) -> void:
 	var has_bot := entries.any(func(entry: Dictionary) -> bool: return bool(entry.get("is_bot", false)))
 	var message := ""
 	if entries.is_empty():
-		message = "No matching ladder entries." if not get_search_query().is_empty() else "No ladder entries yet."
+		var has_narrowing := not get_search_query().is_empty() \
+			or get_player_filter() != LobbyProtocolScript.LADDER_FILTER_EVERYONE
+		message = "No matching ladder entries." if has_narrowing else "No ladder entries yet."
 	elif not _paging_supported:
 		message = "Best-of-one ladder. Select a bot to see its deck." if has_bot else "Best-of-one ladder."
 	elif has_bot:
@@ -293,7 +318,9 @@ func _render_ladder_rows() -> void:
 			row.set_custom_color(1, GOLD)
 			has_visible_bot = true
 	if _ladder_entries.is_empty():
-		_status.text = "No matching ladder entries." if not get_search_query().is_empty() else "No ladder entries yet."
+		var has_narrowing := not get_search_query().is_empty() \
+			or get_player_filter() != LobbyProtocolScript.LADDER_FILTER_EVERYONE
+		_status.text = "No matching ladder entries." if has_narrowing else "No ladder entries yet."
 	elif visible_count == 0:
 		_status.text = "No matching entries on this page."
 	elif not has_visible_bot and _status_message.begins_with("Select a bot"):

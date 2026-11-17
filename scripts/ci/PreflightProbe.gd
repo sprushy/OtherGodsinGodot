@@ -2708,6 +2708,7 @@ func _check_ladder_pages(failures: PackedStringArray) -> void:
 	var network := NetworkManagerScript.new()
 	var names := {}
 	var bot_count := 0
+	var bot_position := 0
 	var portraits_valid := true
 	var capped_entry_count := mini(player_count + 1, 100)
 	var last_page := ceili(float(capped_entry_count) / LobbyProtocolScript.LADDER_PAGE_SIZE) - 1
@@ -2724,6 +2725,7 @@ func _check_ladder_pages(failures: PackedStringArray) -> void:
 				break
 			if row.get("is_bot", false):
 				bot_count += 1
+				bot_position = int(row.get("ladder_position", 0))
 				if page != 0 or str(row.get("list_id", "")).is_empty():
 					failures.append("Bo1 standings did not rank the winning bot or include its deck link")
 			else:
@@ -2739,6 +2741,34 @@ func _check_ladder_pages(failures: PackedStringArray) -> void:
 		failures.append("Ladder did not show ranked bots in their match format")
 	if not bo3["ladder"].any(func(row: Dictionary) -> bool: return row.get("portrait") == portrait):
 		failures.append("Bo3 ladder did not include the player's saved crop")
+	var filter_validation := LobbyProtocolScript.validate_request(LobbyProtocolScript.make_message(
+		LobbyProtocolScript.REQUEST_BOT_LADDER,
+		{"best_of": 1, "page": 0, "request_id": 1, "player_type": LobbyProtocolScript.LADDER_FILTER_PLAYERS}))
+	var invalid_filter_validation := LobbyProtocolScript.validate_request(LobbyProtocolScript.make_message(
+		LobbyProtocolScript.REQUEST_BOT_LADDER,
+		{"best_of": 1, "page": 0, "request_id": 1, "player_type": "creatures"}))
+	if not filter_validation.is_empty() or invalid_filter_validation.is_empty():
+		failures.append("Ladder player filter validation did not accept valid filters and reject invalid ones")
+	var players_last_page := ceili(float(player_count) / LobbyProtocolScript.LADDER_PAGE_SIZE) - 1
+	var players_seen := {}
+	var deep_player_positions_kept := false
+	for page in range(players_last_page + 1):
+		var typed := lobby._build_ladder_page({"best_of": 1, "request_id": 2 + page, "page": page, "player_type": LobbyProtocolScript.LADDER_FILTER_PLAYERS})
+		if typed["page"] != page or typed["last_page"] != players_last_page:
+			failures.append("Player-filtered ladder reported incorrect page metadata")
+		for row: Dictionary in typed["ladder"]:
+			if row.get("is_bot", false):
+				failures.append("Player-filtered ladder still included bots")
+			players_seen[row["name"]] = true
+			if int(row.get("ladder_position", 0)) > LobbyProtocolScript.LADDER_PAGE_SIZE:
+				deep_player_positions_kept = true
+	if players_seen.size() != player_count or not deep_player_positions_kept:
+		failures.append("Player-filtered ladder did not compact ranked players onto consecutive pages with true positions")
+	var bots_page := lobby._build_ladder_page({"best_of": 1, "request_id": 99, "page": 0, "player_type": LobbyProtocolScript.LADDER_FILTER_BOTS})
+	if bots_page["ladder"].size() != 1 or bots_page["last_page"] != 0 \
+			or not bots_page["ladder"][0].get("is_bot", false) \
+			or int(bots_page["ladder"][0].get("ladder_position", 0)) != bot_position:
+		failures.append("Bot-filtered ladder did not keep the bot's overall ladder position")
 	var legacy_summary := lobby._build_ladder_page({})
 	if legacy_summary["ladder"].size() != 100:
 		failures.append("Legacy ladder response did not cap standings at the top 100")

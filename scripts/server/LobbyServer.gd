@@ -7,6 +7,7 @@ const LobbyRoomScript = preload("res://scripts/server/LobbyRoom.gd")
 const MatchSupervisorScript = preload("res://scripts/server/MatchSupervisor.gd")
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const NetworkManagerScript = preload("res://scripts/Other/NetworkManager.gd")
+const PunchReflectorScript = preload("res://scripts/network/PunchReflector.gd")
 const WebSocketEndpointsScript = preload("res://scripts/network/WebSocketEndpoints.gd")
 const ProfileStoreScript = preload("res://scripts/server/ProfileStore.gd")
 const AccountStoreScript = preload("res://scripts/server/AccountStore.gd")
@@ -50,6 +51,12 @@ const LOCAL_BOT_MATCH_RESULT_TIMEOUT_SECONDS := 3 * 60 * 60
 ## How long the lobby waits for a client-hosted match's host to acknowledge a
 ## spectator approval before telling the spectator the match is not watchable.
 const MATCH_SPECTATOR_ACK_TIMEOUT_SECONDS := 5.0
+# Hole punching: a single reflector socket next to the lobby keeps zero-session
+# UDP bounce records; the fallback port scan covers crowded deployments.
+const PUNCH_REFLECTOR_PORT_ATTEMPTS := 10
+const PUNCH_DISCOVERY_BOUNCE_TTL_SECONDS := 30.0
+const PUNCH_CLIENT_BOUNCE_TTL_SECONDS := 20.0
+const LOCAL_BOT_MATCH_PUNCH_RELAY_INTERVAL_MSEC := 1000
 const ISSUE_REPORT_COOLDOWN_SECONDS := 60
 const BOT_PROPOSAL_COOLDOWN_SECONDS := 60
 const ALLOW_INSECURE_ACCOUNT_AUTH_ENV := "OTHERGODS_ALLOW_INSECURE_ACCOUNT_AUTH"
@@ -83,6 +90,7 @@ var local_session_id: String = ""
 var match_supervisor = null
 var network_manager: Node = null
 var ws_transport: Node = null
+var punch_reflector: Node = null
 var profile_store = null
 var account_store = null
 var recovery_mailer = null
@@ -100,6 +108,8 @@ var _bot_deck_rng := RandomNumberGenerator.new()
 var _lobby_frame_seconds := 0.0
 var _next_bot_self_play_msec := 0
 var _last_bot_self_play_block_reason := ""
+var _punch_reflector_port: int = 0
+var _punch_ready_last_msec_by_key: Dictionary = {}
 var _next_bot_self_play_block_log_msec := 0
 var _client_bot_jobs: Dictionary = {}
 var _local_bot_matches_by_id: Dictionary = {}
@@ -188,10 +198,32 @@ func start_server(p_advertised_host: String = "127.0.0.1", port: int = LobbyProt
 			return ws_err
 
 	is_listening = true
+	_start_punch_reflector()
 	_trace("listening on %s:%d" % [advertised_host, lobby_port])
 	status_changed.emit("Lobby server listening on %s:%d" % [advertised_host, lobby_port])
 	_ensure_server_bot_seeks()
 	return OK
+
+## UDP bounce endpoint for NAT hole punching. Failure never blocks the lobby:
+## clients without it simply stay on the UPnP/LAN spectate paths.
+func _start_punch_reflector() -> void:
+	if punch_reflector != null:
+		return
+	var candidate := PunchReflectorScript.new()
+	candidate.name = "PunchReflector"
+	add_child(candidate)
+	var base_port := int(LobbyProtocolScript.PUNCH_REFLECTOR_PORT)
+	for attempt in PUNCH_REFLECTOR_PORT_ATTEMPTS:
+		var port := base_port + attempt
+		if candidate.setup(port):
+			punch_reflector = candidate
+			_punch_reflector_port = port
+			_trace("punch reflector listening on port %d" % port)
+			return
+	candidate.queue_free()
+	status_changed.emit("Punch reflector could not bind port %d..%d; spectating falls back to UPnP and LAN only." % [
+		base_port, base_port + PUNCH_REFLECTOR_PORT_ATTEMPTS - 1
+	])
 
 ## Secondary transport for restrictive networks: WebSocket over TCP, so clients
 ## behind firewalls that drop UDP can still reach the lobby. Runs as a second
@@ -226,6 +258,12 @@ func stop_server() -> void:
 		ws_transport.disconnect_client()
 		ws_transport.queue_free()
 		ws_transport = null
+	if punch_reflector != null:
+		punch_reflector.shutdown()
+		punch_reflector.queue_free()
+		punch_reflector = null
+	_punch_reflector_port = 0
+	_punch_ready_last_msec_by_key.clear()
 	if network_manager != null:
 		network_manager.set("websocket_transport", null)
 		network_manager.disconnect_client()
@@ -426,6 +464,8 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 			_handle_local_bot_match_spectate_info(peer_id, payload)
 		LobbyProtocolScript.MATCH_SPECTATOR_ACK:
 			_handle_match_spectator_ack(peer_id, payload)
+		LobbyProtocolScript.LOCAL_BOT_MATCH_PUNCH_READY:
+			_handle_local_bot_match_punch_ready(peer_id, payload)
 		LobbyProtocolScript.REQUEST_RECONNECT_LOBBY:
 			_handle_reconnect_request(peer_id, payload)
 		LobbyProtocolScript.REPORT_HOST_VIABILITY:
@@ -772,6 +812,7 @@ func _complete_login_for_peer(
 		"server_version": _get_server_version(),
 		"supports_bot_ladder": true,
 		"supports_ladder_pages": true,
+		"supports_ladder_filter": true,
 		"room": room_snapshot,
 		"active_match_info": active_match_info,
 	})
@@ -838,6 +879,7 @@ func _handle_reconnect_request(peer_id: int, payload: Dictionary) -> void:
 		"server_version": _get_server_version(),
 		"supports_bot_ladder": true,
 		"supports_ladder_pages": true,
+		"supports_ladder_filter": true,
 		"room": room_snapshot,
 		"active_match_info": active_match_info,
 	})
@@ -1408,6 +1450,10 @@ func _handle_report_bot_work_started(peer_id: int, payload: Dictionary) -> void:
 	if str(job.get("session_id", "")).is_empty():
 		job["session_id"] = str(session.get("session_id", ""))
 	job["status"] = "running"
+	# Hosts piggyback the match's current turn count on each lease heartbeat so
+	# the live list can show how far each game has progressed.
+	if payload.has("turn_count"):
+		job["turn_count"] = clampi(int(payload.get("turn_count", 0)), 0, 9999)
 	var heartbeat_unix := int(Time.get_unix_time_from_system())
 	job["heartbeat_unix"] = heartbeat_unix
 	job["expires_unix"] = heartbeat_unix + 90
@@ -1470,19 +1516,45 @@ func _get_live_bot_work_matches() -> Array[Dictionary]:
 		var second: Dictionary = job.get("deck_b", {})
 		if first.is_empty() or second.is_empty():
 			continue
+		var first_stars := int(first.get("stars", 0))
+		var second_stars := int(second.get("stars", 0))
+		var first_league := int(RankedProgressionScript.summarize_bot_stars(first_stars)["league"])
+		var second_league := int(RankedProgressionScript.summarize_bot_stars(second_stars)["league"])
 		matches.append({
 			"match_id": "volunteer_%s" % str(job_id),
 			"played_unix": int(job.get("started_unix", now_unix)),
 			"status": "live",
+			"turn_count": maxi(0, int(job.get("turn_count", 0))),
 			"players": [
-				{"name": str(first.get("deck_name", "Bot")), "result": "pending", "stars": int(first.get("stars", 0)),
-					"rank": str(RankedProgressionScript.summarize_bot_stars(int(first.get("stars", 0)))["name"])},
-				{"name": str(second.get("deck_name", "Bot")), "result": "pending", "stars": int(second.get("stars", 0)),
-					"rank": str(RankedProgressionScript.summarize_bot_stars(int(second.get("stars", 0)))["name"])},
+				{"name": str(first.get("deck_name", "Bot")), "result": "pending", "stars": first_stars,
+					"rank": str(RankedProgressionScript.summarize_bot_stars(first_stars)["name"])},
+				{"name": str(second.get("deck_name", "Bot")), "result": "pending", "stars": second_stars,
+					"rank": str(RankedProgressionScript.summarize_bot_stars(second_stars)["name"])},
 			],
+			# Sort keys: higher-ranked matchups list first regardless of when
+			# they started. Stripped before the page is sent.
+			"_league_high": maxi(first_league, second_league),
+			"_league_low": mini(first_league, second_league),
+			"_stars_high": maxi(first_stars, second_stars),
+			"_stars_low": mini(first_stars, second_stars),
 		})
-	matches.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a.get("played_unix", 0)) > int(b.get("played_unix", 0)))
+	matches.sort_custom(_compare_live_bot_match_rank)
+	for entry in matches:
+		entry.erase("_league_high")
+		entry.erase("_league_low")
+		entry.erase("_stars_high")
+		entry.erase("_stars_low")
 	return matches
+
+## Live bot match ordering: highest-ranked matchup first, then the weaker half
+## of the matchup, then star counts, with start time only breaking ties.
+func _compare_live_bot_match_rank(a: Dictionary, b: Dictionary) -> bool:
+	for key in ["_league_high", "_league_low", "_stars_high", "_stars_low"]:
+		var a_value := int(a.get(key, -1))
+		var b_value := int(b.get(key, -1))
+		if a_value != b_value:
+			return a_value > b_value
+	return int(a.get("played_unix", 0)) > int(b.get("played_unix", 0))
 
 func _broadcast_bot_match_history() -> void:
 	var page: Dictionary = match_history_store.get_recent_bot_matches(50)
@@ -1699,6 +1771,16 @@ func _build_ladder_page(request: Dictionary) -> Dictionary:
 	)
 	for index in range(ladder.size()):
 		ladder[index]["ladder_position"] = index + 1
+	var player_type := str(request.get("player_type", LobbyProtocolScript.LADDER_FILTER_EVERYONE))
+	if player_type == LobbyProtocolScript.LADDER_FILTER_PLAYERS or player_type == LobbyProtocolScript.LADDER_FILTER_BOTS:
+		# Filter before paging so one type's standings compact into consecutive
+		# pages while rows keep their overall ladder positions.
+		var bots_only := player_type == LobbyProtocolScript.LADDER_FILTER_BOTS
+		var typed_rows: Array[Dictionary] = []
+		for row in ladder:
+			if bool(row.get("is_bot", false)) == bots_only:
+				typed_rows.append(row)
+		ladder = typed_rows
 	var search_query := str(request.get("search_query", "")).strip_edges().to_lower()
 	if not search_query.is_empty():
 		var matching_rows: Array[Dictionary] = []
@@ -1707,7 +1789,7 @@ func _build_ladder_page(request: Dictionary) -> Dictionary:
 					or str(row.get("owner_name", "")).to_lower().contains(search_query):
 				matching_rows.append(row)
 		ladder = matching_rows
-	if search_query.is_empty() and ladder.size() > 100:
+	if search_query.is_empty() and player_type == LobbyProtocolScript.LADDER_FILTER_EVERYONE and ladder.size() > 100:
 		ladder.resize(100)
 	if not is_paged:
 		return {"ladder": _public_ladder_rows(ladder)}
@@ -2606,7 +2688,7 @@ func _observe_local_bot_match(session_id: String, match_id: String) -> void:
 	var spectate_ip := str(entry.get("spectate_ip", "")).strip_edges()
 	var spectate_port := int(entry.get("spectate_port", 0))
 	if spectate_ip.is_empty() or spectate_port <= 0:
-		_send_error_to_session(session_id, "That bot challenge is not accepting spectators.")
+		_send_error_to_session(session_id, "That bot challenge can't be watched live from the host's network.")
 		return
 	var human_session_id := str(entry.get("human_session_id", ""))
 	var bot_session_id := str(entry.get("bot_session_id", ""))
@@ -2666,6 +2748,8 @@ func _observe_local_bot_match(session_id: String, match_id: String) -> void:
 		"series": {},
 		"reconnect_window_seconds": 0,
 		"waiting_for_reconnect": false,
+		"spectate_via_punch": bool(entry.get("spectate_via_punch", false)),
+		"punch_reflector_port": _punch_reflector_port,
 	})
 	_trace("observer %s joined local bot match %s" % [session_id, match_id])
 
@@ -2687,6 +2771,7 @@ func _push_spectator_approval_to_host(
 		"observer_session_id": observer_session_id,
 		"observer_match_token": observer_match_token,
 		"visible_player_indices": visible_player_indices,
+		"punch_reflector_port": _punch_reflector_port,
 	})
 	var waited_seconds := 0.0
 	while waited_seconds < MATCH_SPECTATOR_ACK_TIMEOUT_SECONDS:
@@ -2722,14 +2807,81 @@ func _handle_local_bot_match_spectate_info(peer_id: int, payload: Dictionary) ->
 	var viable := bool(payload.get("viable", false))
 	var spectate_ip := str(payload.get("spectate_ip", "")).strip_edges()
 	var spectate_port := int(payload.get("spectate_port", 0))
+	var punched := false
+	if bool(payload.get("via_punch", false)):
+		# Hole-punch fallback: the host bounced our reflector through the exact
+		# socket its ENet spectate server listens on, so the recorded bounce is
+		# the observable public endpoint. A missing bounce keeps whatever
+		# endpoint (if any) this match already advertised.
+		var bounce := _get_punch_bounce("host:%s" % match_id, PUNCH_DISCOVERY_BOUNCE_TTL_SECONDS)
+		if not bounce.is_empty():
+			spectate_ip = str(bounce.get("ip", ""))
+			spectate_port = int(bounce.get("port", 0))
+			viable = spectate_port > 0 and not spectate_ip.is_empty()
+			punched = viable
+		else:
+			return
+	elif viable:
+		entry.erase("spectate_via_punch")
 	if not viable or spectate_ip.is_empty() or spectate_port <= 0:
 		viable = false
+	if punched:
+		entry["spectate_via_punch"] = true
 	entry["spectate_ip"] = spectate_ip if viable else ""
 	entry["spectate_port"] = spectate_port if viable else 0
 	var room_id := str(entry.get("room_id", ""))
 	if viable and not room_id.is_empty() and rooms_by_id.has(room_id):
 		_emit_room_updates(rooms_by_id[room_id])
-	_trace("local bot match %s spectate endpoint viable=%s" % [match_id, str(viable)])
+	_trace("local bot match %s spectate endpoint viable=%s via_punch=%s" % [match_id, str(viable), str(punched)])
+
+## Relay an approved spectator's punch endpoint to a client-hosted match's
+## host so it can open its NAT toward that spectator before the ENet dial.
+func _handle_local_bot_match_punch_ready(peer_id: int, payload: Dictionary) -> void:
+	var session: Dictionary = _get_session_for_peer(peer_id)
+	if session.is_empty() or punch_reflector == null:
+		return
+	var session_id := str(session.get("session_id", ""))
+	var match_id := str(payload.get("match_id", "")).strip_edges()
+	var entry_variant = _local_bot_matches_by_id.get(match_id, null)
+	if entry_variant == null or not (entry_variant is Dictionary):
+		return
+	var entry: Dictionary = entry_variant
+	var spectator_tokens = entry.get("spectator_match_tokens_by_session", {})
+	if not (spectator_tokens is Dictionary) or not (spectator_tokens as Dictionary).has(session_id):
+		return
+	var bounce := _get_punch_bounce("client:%s:%s" % [match_id, session_id], PUNCH_CLIENT_BOUNCE_TTL_SECONDS)
+	if bounce.is_empty():
+		return
+	var punch_ip := str(bounce.get("ip", ""))
+	var punch_port := int(bounce.get("port", 0))
+	if punch_ip.is_empty() or punch_port <= 0:
+		return
+	var rate_key := "%s|%s" % [match_id, session_id]
+	var now_msec := Time.get_ticks_msec()
+	if _punch_ready_last_msec_by_key.size() > 256:
+		var stale_cutoff := now_msec - LOCAL_BOT_MATCH_PUNCH_RELAY_INTERVAL_MSEC * 60
+		for stale_key in _punch_ready_last_msec_by_key.keys():
+			if int(_punch_ready_last_msec_by_key[stale_key]) < stale_cutoff:
+				_punch_ready_last_msec_by_key.erase(stale_key)
+	# The reflector only stores the latest endpoint, so throttle relays; a
+	# reconnecting spectator's fresher bounce arrives right after the interval.
+	if now_msec - int(_punch_ready_last_msec_by_key.get(rate_key, -LOCAL_BOT_MATCH_PUNCH_RELAY_INTERVAL_MSEC)) \
+			< LOCAL_BOT_MATCH_PUNCH_RELAY_INTERVAL_MSEC:
+		return
+	_punch_ready_last_msec_by_key[rate_key] = now_msec
+	_send_to_session(str(entry.get("human_session_id", "")), LobbyProtocolScript.MATCH_SPECTATOR_PUNCH, {
+		"match_id": match_id,
+		"observer_session_id": session_id,
+		"punch_ip": punch_ip,
+		"punch_port": punch_port,
+	})
+	_trace("relay spectator punch target for match %s observer %s" % [match_id, session_id])
+
+func _get_punch_bounce(key: String, max_age_seconds: float) -> Dictionary:
+	if punch_reflector == null:
+		return {}
+	var bounce: Dictionary = punch_reflector.get_bounce(key, max_age_seconds)
+	return bounce if bounce is Dictionary else {}
 
 func _generate_spectator_token() -> String:
 	var crypto := Crypto.new()
@@ -3628,6 +3780,7 @@ func _broadcast_room_lists() -> void:
 		_send_to_peer(int(peer_id), LobbyProtocolScript.ROOM_LIST, {
 			"rooms": _build_room_list(session_id),
 			"server_version": _get_server_version(),
+			"punch_reflector_port": _punch_reflector_port,
 		})
 	room_list_updated.emit(_build_room_list(local_session_id))
 
@@ -3636,6 +3789,7 @@ func _send_room_list_to_peer(peer_id: int) -> void:
 	_send_to_peer(peer_id, LobbyProtocolScript.ROOM_LIST, {
 		"rooms": _build_room_list(session_id),
 		"server_version": _get_server_version(),
+		"punch_reflector_port": _punch_reflector_port,
 	})
 
 func _send_friends_state_to_account(account_id: String) -> void:
@@ -3696,6 +3850,7 @@ func _build_room_list(viewer_session_id: String = "") -> Array:
 				# Client-hosted bot challenges have no supervised session; expose
 				# the challenger's spectate endpoint so others can watch live.
 				var local_bot_entry: Dictionary = local_bot_entry_variant
+				entry["local_bot_match"] = true
 				if int(local_bot_entry.get("spectate_port", 0)) > 0 \
 						and not str(local_bot_entry.get("spectate_ip", "")).is_empty():
 					entry["spectatable"] = true

@@ -2,11 +2,15 @@ extends RefCounted
 class_name LobbyProtocol
 
 const PORT: int = 22345
+const PUNCH_REFLECTOR_PORT: int = 22346
 # Plain WebSocket backend, reached through a TLS reverse proxy on public 443.
 const WS_PORT: int = 24443
 const MATCH_PORT: int = 12345
 const PASSWORD_RESET_CODE_LENGTH := 6
 const LADDER_PAGE_SIZE := 50
+const LADDER_FILTER_EVERYONE := "everyone"
+const LADDER_FILTER_PLAYERS := "players"
+const LADDER_FILTER_BOTS := "bots"
 
 const LOGIN_GUEST := "login_guest"
 const LOGIN_ACCOUNT := "login_account"
@@ -61,6 +65,8 @@ const LOCAL_BOT_MATCH_CONFIRMED := "local_bot_match_confirmed"
 const LOCAL_BOT_MATCH_SPECTATE_INFO := "local_bot_match_spectate_info"
 const MATCH_SPECTATOR_APPROVED := "match_spectator_approved"
 const MATCH_SPECTATOR_ACK := "match_spectator_ack"
+const LOCAL_BOT_MATCH_PUNCH_READY := "local_bot_match_punch_ready"
+const MATCH_SPECTATOR_PUNCH := "match_spectator_punch"
 const REQUEST_NEXT_RECEIVED := "request_next_received"
 const REQUEST_NEXT_RESULT := "request_next_result"
 const LOBBY_RECONNECT_OK := "lobby_reconnect_ok"
@@ -162,6 +168,10 @@ static func validate_request(message: Dictionary) -> String:
 			var observer_session_id = payload.get("observer_session_id", "")
 			if not observer_session_id is String or observer_session_id.strip_edges().is_empty() or observer_session_id.length() > 64:
 				return "Invalid observer session id."
+		LOCAL_BOT_MATCH_PUNCH_READY:
+			var punch_match_id = payload.get("match_id", "")
+			if not punch_match_id is String or punch_match_id.strip_edges().is_empty() or punch_match_id.length() > 64:
+				return "Invalid match id."
 		SELECT_DECK:
 			var has_deck_id := not str(payload.get("deck_id", "")).strip_edges().is_empty()
 			var has_cards := payload.has("cards") and payload.get("cards") is Dictionary
@@ -235,6 +245,8 @@ static func validate_request(message: Dictionary) -> String:
 				var page = payload.get("page")
 				if not request_id is int or not page is int or page < 0 or payload.get("best_of") not in [1, 3]:
 					return "Invalid ladder page request."
+				if payload.get("player_type", LADDER_FILTER_EVERYONE) not in [LADDER_FILTER_EVERYONE, LADDER_FILTER_PLAYERS, LADDER_FILTER_BOTS]:
+					return "Invalid ladder player filter."
 			if payload.has("search_query"):
 				var search_query = payload["search_query"]
 				if not search_query is String or search_query.length() > 64:

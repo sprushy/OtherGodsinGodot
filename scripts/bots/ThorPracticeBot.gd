@@ -29,6 +29,10 @@ const COMBAT_REMOVAL_SEARCH_WIDTH := 32
 const COMBAT_RESPONSE_SEARCH_WIDTH := 24
 const ECON_MANA_VALUE := 1000
 const ECON_FOLLOWERS_PER_CARD := 25
+# God Death makes the enemy board's defensive value a countdown: blocking never
+# stops the 7/turn bleed, so combat that a removal unlocks from a locked board
+# is priced at double worth while the bot is the one bleeding.
+const GOD_DEATH_UNLOCK_URGENCY := 2
 # Rough mid-catalog strength per mana used to guess how large a creature the
 # opponent could deploy next turn when their hand is not revealed.
 const ECON_FORECAST_SUMMON_STR_PER_MANA := 8
@@ -2190,8 +2194,17 @@ func _plan_paired_removals(options: Array[Dictionary], attacks: Array[Dictionary
 func _plan_removal_setup(plan: Dictionary, attacks: Array[Dictionary], baseline: Dictionary, danger: int, removed: Array, cost: int, committed: Card = null, can_pair: bool = true, reserved_cards: Array = []) -> Dictionary:
 	var opened := _plan_combat(attacks, removed, committed, cost)
 	var combat_score := int(opened.get("score", 0))
+	var unlock_value := combat_score - int(baseline.get("score", 0))
+	if unlock_value > 0 and game_manager.is_player_under_god_death(bot_player) \
+			and removed.any(func(victim: Card) -> bool: return victim != null and victim.get_controller() == opponent):
+		# Under the god-death clock no amount of blocking stops the bleed, so
+		# the enemy body's defensive presence buys the opponent nothing real.
+		# Unlocking the push is the only plan that changes the clock; price
+		# the unlocked combat above its raw one-turn worth instead of letting
+		# it sit behind marginal lines while 7 followers burn every upkeep.
+		unlock_value *= GOD_DEATH_UNLOCK_URGENCY
 	var best := plan.merged({
-		"score": int(plan["score"]) + combat_score - int(baseline.get("score", 0)) + _follower_safety_gain(danger, {"removed": removed}),
+		"score": int(plan["score"]) + unlock_value + _follower_safety_gain(danger, {"removed": removed}),
 		"combat_score": combat_score, "lethal": bool(opened.get("lethal", false)),
 	}, true)
 	if not can_pair or best["lethal"] or game_manager.has_resolved_attack_this_turn \
@@ -4153,6 +4166,18 @@ func _combat_outcome_with_remaining_guard(outcome: Dictionary, line: Dictionary)
 			damage = game_manager._get_combat_follower_conversion_amount(source, damage)
 			result["bot_followers_gained" if side == "opponent" else "opponent_followers_gained"] = mini(remaining, damage)
 		result[loss_key] = mini(remaining, damage)
+	var conversion_defender := result.get("defensive_conversion_defender") as Card
+	if conversion_defender != null:
+		# This line may have spent guard on the converted loss after the
+		# candidate's outcome was priced with the full guard, so redo the
+		# transfer with the recomputed loss instead of the stale gain.
+		var winner := conversion_defender.get_controller() as Player
+		if winner != null and winner.followers_enabled:
+			result.erase("bot_followers_gained" if winner == bot_player else "opponent_followers_gained")
+			var loser_loss_key := "opponent_followers_lost" if winner == bot_player else "bot_followers_lost"
+			var converted := int(result.get(loser_loss_key, 0))
+			if converted > 0:
+				result["bot_followers_gained" if winner == bot_player else "opponent_followers_gained"] = converted
 	return result
 
 func _combat_line_key(line: Dictionary) -> String:
@@ -6433,6 +6458,20 @@ func _estimate_projected_attack_economy(action: CardAction, stats: Dictionary, i
 		amount = mini(player.followers, amount)
 		result[loss_key] = amount
 		result["opponent_wins" if player == bot_player else "bot_wins"] = amount >= player.followers and amount > 0
+	# Failed defensive combat transfers the attacker's converted loss to the
+	# defender's controller: the engine converts exactly what the attacker
+	# actually loses (after halving, guard, and follower caps), so credit the
+	# receiving side with that final amount rather than the raw difference.
+	var conversion_defender := result.get("defensive_conversion_defender") as Card
+	if conversion_defender != null and action != null and action.attacker != null:
+		var winner_controller := conversion_defender.get_controller()
+		if winner_controller != null and winner_controller != action.attacker.get_controller() \
+				and winner_controller.followers_enabled:
+			var loser_loss_key := "opponent_followers_lost" if winner_controller == bot_player else "bot_followers_lost"
+			var converted := int(result.get(loser_loss_key, 0))
+			if converted > 0:
+				var gain_key := "bot_followers_gained" if winner_controller == bot_player else "opponent_followers_gained"
+				result[gain_key] = int(result.get(gain_key, 0)) + converted
 	if include_retreat:
 		result = _estimate_retreat_economy(action, result, stats)
 	if action != null and action.type == CardAction.Type.ATTACK:
@@ -6748,6 +6787,11 @@ func _estimate_raw_attack_economy(action: CardAction, stats: Dictionary, project
 	else:
 		if attack_strength_vs_defense < defender_resilience:
 			_add_follower_loss_to_economy(result, attacker.get_controller(), defender_resilience - attack_strength_vs_defense)
+			# The engine transfers the failed attack's difference to the
+			# defender's controller, so the raw loss undercounts the swing.
+			# _estimate_projected_attack_economy banks the gain on the
+			# attacker's final converted loss.
+			result["defensive_conversion_defender"] = defender
 		if game_manager._has_ferocious_defence(defender.get_controller()):
 			_add_combat_casualty(result, defender, attacker)
 			_add_combat_casualty(result, defender, partner)
@@ -7531,6 +7575,13 @@ func _en_hedu_anna_exaltation_setup_available() -> bool:
 
 func _forecast_fenrir_devour(fenrir: Fenrir, danger: int, change: Dictionary, offered_uids: Array = []) -> Dictionary:
 	if fenrir.abilities_suppressed_by_effects():
+		return {}
+	if (fenrir.current_zone == null or not fenrir.current_zone.is_board_zone()) \
+			and CardStrategy.summon_impact_silenced_by_storm(self, fenrir, change.get("removed", [])):
+		# Devour is an impact payoff: a live Storm silences it the moment the
+		# creature enters the field, so the sacrifice cost would buy a body
+		# without the planned value. Skip the whole plan until the Storm is
+		# gone instead of paying two creatures for a dead trigger.
 		return {}
 	var removed: Array = change.get("removed", [])
 	var best := {}

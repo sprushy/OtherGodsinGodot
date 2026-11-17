@@ -163,6 +163,14 @@ func start_shared_bot_match(session: MatchSession) -> bool:
 	match_created.emit(session)
 	return true
 
+## Current turn number for an in-process shared bot match, or 0 when the match
+## has not started, runs as a dedicated subprocess, or already closed.
+func get_bot_match_turn_count(match_id: String) -> int:
+	var match_server = _shared_bot_match_servers.get(match_id.strip_edges(), null)
+	if not is_instance_valid(match_server) or match_server.game_manager == null:
+		return 0
+	return maxi(0, int(match_server.game_manager.turn_number))
+
 ## Returns "" when a background bot worker may launch, otherwise a short
 ## reason naming the port or disk constraint that blocks it.
 func get_background_worker_capacity_blocker() -> String:
