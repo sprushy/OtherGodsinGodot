@@ -104,6 +104,7 @@ var server_bot_deck_factory = null
 var _seek_timeout_check_elapsed: float = 0.0
 var _server_bot_seed_counter: int = 0
 var _ranked_bot_deck_pool := RankedBotDeckPoolScript.new()
+var _known_community_bot_ids: Dictionary = {}
 var _bot_deck_rng := RandomNumberGenerator.new()
 var _lobby_frame_seconds := 0.0
 var _next_bot_self_play_msec := 0
@@ -1469,6 +1470,10 @@ func _handle_delete_bot(peer_id: int, payload: Dictionary) -> void:
 			"success": false, "message": "The server could not delete that bot.", "bot_id": bot_id,
 		})
 		return
+	# Expunge the deleted bot's record from the ranked bot ladder so it no
+	# longer appears in standings or recent bot activity.
+	_ranked_bot_deck_pool.invalidate_replay()
+	_refresh_ranked_bot_deck_pool()
 	_send_to_peer(peer_id, LobbyProtocolScript.BOT_DELETED, {
 		"success": true, "message": "Bot deleted from the community pool.", "bot_id": bot_id,
 	})
@@ -1764,9 +1769,11 @@ func _handle_request_bot_ladder(peer_id: int, message_type: String, payload: Dic
 			"deck": deck_details,
 		})
 		return
-	_send_to_peer(peer_id, LobbyProtocolScript.BOT_LADDER, _build_ladder_page(payload))
+	var session_for_ladder := _get_session_for_peer(peer_id)
+	var ladder_username := str(session_for_ladder.get("username", "")).strip_edges()
+	_send_to_peer(peer_id, LobbyProtocolScript.BOT_LADDER, _build_ladder_page(payload, ladder_username))
 
-func _build_ladder_page(request: Dictionary) -> Dictionary:
+func _build_ladder_page(request: Dictionary, current_username: String = "") -> Dictionary:
 	var is_paged := request.has("request_id")
 	var best_of := int(request["best_of"]) if is_paged else 1
 	var ladder: Array[Dictionary] = match_history_store.get_human_ladder(account_store.get_ladder_usernames(), best_of)
@@ -1784,9 +1791,11 @@ func _build_ladder_page(request: Dictionary) -> Dictionary:
 					bot_deck.get("cards", {}),
 					bot_deck.get("reinforcements", {})
 				)
+				var bot_owner_name := str(bot.get("owner_name", "")).strip_edges()
 				ladder.append({"name": bot["name"], "list_id": bot["list_id"], "points": bot["stars"],
 					"rank": rank["name"], "stars": rank["stars"], "is_bot": true,
-					"owner_name": str(bot.get("owner_name", "")),
+					"owner_name": bot_owner_name,
+					"can_delete": (not bot_owner_name.is_empty() and bot_owner_name == current_username.strip_edges()),
 					"portrait": portrait,
 					"wins": int(bot.get("wins", 0)), "losses": int(bot.get("losses", 0)), "draws": int(bot.get("draws", 0)),
 					"main_gods": [str(god.get("god_name", ""))],
@@ -2357,17 +2366,27 @@ func _refresh_ranked_bot_deck_pool() -> void:
 	_ensure_match_history_store()
 	_ensure_server_bot_deck_factory()
 	var community_bot_ids := _get_community_bot_ids()
+	if not _same_community_bot_ids(_known_community_bot_ids, community_bot_ids):
+		_ranked_bot_deck_pool.invalidate_replay()
+	_known_community_bot_ids = community_bot_ids.duplicate()
 	var results: Array[Dictionary] = []
 	for raw_result in match_history_store.get_bot_deck_results():
+		var result: Dictionary = raw_result.duplicate(true)
+		var list_id := str(result.get("list_id", "")).strip_edges()
 		# Results recorded before community bots joined the ladder stored the
 		# submitter's bot id without a community flag: restore the flag so the
 		# pool replay keeps those results on the bot's ladder entry.
-		if community_bot_ids.has(str(raw_result.get("list_id", ""))):
-			var result: Dictionary = raw_result.duplicate(true)
+		if community_bot_ids.has(list_id):
 			result["is_community_bot"] = true
 			results.append(result)
+		elif bool(result.get("is_community_bot", false)):
+			# A deleted community bot's historical results must not keep
+			# (or recreate) a ladder entry: treat them as non-community so the
+			# ranked pool ignores them during replay.
+			result["is_community_bot"] = false
+			results.append(result)
 		else:
-			results.append(raw_result)
+			results.append(result)
 	_ranked_bot_deck_pool.refresh(results)
 
 func _get_community_bot_ids() -> Dictionary:
@@ -2384,6 +2403,14 @@ func _get_community_bot_ids() -> Dictionary:
 		file_name = directory.get_next()
 	directory.list_dir_end()
 	return ids
+
+func _same_community_bot_ids(left: Dictionary, right: Dictionary) -> bool:
+	if left.size() != right.size():
+		return false
+	for key in left:
+		if not right.has(key):
+			return false
+	return true
 
 func _duplicate_dictionary(value) -> Dictionary:
 	if value is Dictionary:

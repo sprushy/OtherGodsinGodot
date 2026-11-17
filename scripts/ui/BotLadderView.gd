@@ -5,6 +5,7 @@ signal refresh_requested
 signal page_requested(page: int)
 signal search_requested(query: String)
 signal deck_requested(list_id: String)
+signal delete_requested(list_id: String)
 
 const TITLE_FONT = preload("res://fonts/custom_ui/Norsebold.otf")
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
@@ -44,6 +45,7 @@ var _next_page: Button
 var _page_label: Label
 var _back_button: Button
 var _view_deck_button: Button
+var _delete_button: Button
 var _deck_contents: RichTextLabel
 var _deck_timeout: Timer
 var _selected_list_id := ""
@@ -110,6 +112,8 @@ func _ready() -> void:
 	_back_button.hide()
 	_view_deck_button = _add_button(header, "View bot deck", _request_selected_deck)
 	_view_deck_button.hide()
+	_delete_button = _add_button(header, "Delete bot", _request_delete_selected)
+	_delete_button.hide()
 	_close_button = _add_button(header, "Close", close_requested.emit)
 	_status = Label.new()
 	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -400,6 +404,7 @@ func _open_selected_entry() -> void:
 	_deck_contents.show()
 	_back_button.show()
 	_view_deck_button.visible = not _selected_list_id.is_empty()
+	_delete_button.visible = not _selected_list_id.is_empty() and bool(_selected_entry.get("can_delete", false))
 	_table.hide()
 	_filter_bar.hide()
 	_status.hide()
@@ -409,6 +414,8 @@ func _open_selected_entry() -> void:
 	var focus_order: Array[Control] = [_back_button]
 	if _view_deck_button.visible:
 		focus_order.append(_view_deck_button)
+	if _delete_button.visible:
+		focus_order.append(_delete_button)
 	focus_order.append_array([_close_button, _deck_contents])
 	_set_focus_order(focus_order)
 	_back_button.grab_focus()
@@ -460,8 +467,14 @@ func _request_selected_deck() -> void:
 		return
 	_deck_contents.text = "Loading %s…" % str(_selected_entry.get("name", "bot deck"))
 	_view_deck_button.hide()
+	_delete_button.hide()
 	_deck_timeout.start()
 	deck_requested.emit(_selected_list_id)
+
+func _request_delete_selected() -> void:
+	if _selected_list_id.is_empty():
+		return
+	delete_requested.emit(_selected_list_id)
 
 func show_deck(list_id: String, deck: Dictionary) -> void:
 	if _selected_list_id.is_empty() or list_id != _selected_list_id:
@@ -472,6 +485,7 @@ func show_deck(list_id: String, deck: Dictionary) -> void:
 		return
 	_deck_contents.clear()
 	_view_deck_button.hide()
+	_delete_button.hide()
 	_deck_contents.push_color(GOLD)
 	_deck_contents.add_text(str(deck["name"]) + "\n\n")
 	_deck_contents.pop()
@@ -599,6 +613,7 @@ func close_deck() -> bool:
 	_deck_contents.hide()
 	_back_button.hide()
 	_view_deck_button.hide()
+	_delete_button.hide()
 	_status.visible = not _status.text.is_empty()
 	_refresh_button.show()
 	_format.visible = _paging_supported

@@ -40,6 +40,10 @@ var _eliminated_bot_match_ids: Dictionary = {}
 func set_deck_auditor(auditor: Callable) -> void:
 	_deck_auditor = auditor
 
+func invalidate_replay() -> void:
+	_replayed_match_count = -1
+	_last_replayed_id = ""
+
 func refresh(results: Array[Dictionary]) -> void:
 	if _replayed_match_count == results.size():
 		_ensure_unique_deck_names()

@@ -3050,6 +3050,13 @@ func _on_bot_deleted(success: bool, message: String, bot_id: String) -> void:
 	status_label.text = message
 	if success:
 		lobby_client.request_my_bots()
+		if is_instance_valid(_bot_ladder_view):
+			_request_bot_ladder()
+
+func _on_bot_ladder_delete_requested(list_id: String) -> void:
+	if lobby_client == null or not lobby_client.is_authenticated():
+		return
+	lobby_client.delete_bot(list_id)
 
 func _start_selected_bot_match() -> void:
 	if _my_bot_option == null or _my_bot_option.selected < 0 or _my_bot_option.selected >= _my_bot_entries.size():
@@ -11006,9 +11013,12 @@ func _open_bot_ladder() -> void:
 	_bot_ladder_view = BotLadderViewScript.new()
 	_bot_ladder_view.close_requested.connect(_close_bot_ladder)
 	_bot_ladder_view.refresh_requested.connect(_request_bot_ladder)
+	if not lobby_client.bot_deleted.is_connected(_on_bot_deleted):
+		lobby_client.bot_deleted.connect(_on_bot_deleted)
 	_bot_ladder_view.page_requested.connect(_request_bot_ladder)
 	_bot_ladder_view.search_requested.connect(_on_bot_ladder_search_requested)
 	_bot_ladder_view.deck_requested.connect(_request_bot_deck)
+	_bot_ladder_view.delete_requested.connect(_on_bot_ladder_delete_requested)
 	add_child(_bot_ladder_view)
 	_request_bot_ladder()
 
