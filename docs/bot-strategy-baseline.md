@@ -15,6 +15,7 @@ No code changes are included here; this is the planning baseline those changes s
 
 - `CARD_VALUE = 5000` — one card.
 - `MANA_VALUE = 1000` per mana, with a saturation curve (`BotCardStrategy._mana_saturation_ceiling`) so mana past everything the deck can still pay for decays toward a floor; unbounded sinks (Ancient Pyre, Mana Guard) raise the floor.
+  - Update (2026-11-17): the ceiling now also counts target-priced board abilities (`BotCardStrategy.board_ability_save_ceiling`). Nimue's Entomb charges the target's level, so a premium visible enemy body (e.g. a manifested Thor Active at Lvl 7) is spend potential even when today's mana is short — without this the bot spent down every turn and never banked enough to Entomb it, exactly the "worth saving for in a locked board state" failure.
 - Followers are worth ~200/point above 50, ~350 between 25–50, ~600 below 25 (`_score_follower_loss`), lethal/lethal-prevention is `±CARD_VALUE * 20..30`.
 - A card on board is worth `CARD_VALUE + projected_score/2`, discounted by disables (`_debilitation_discount`).
 

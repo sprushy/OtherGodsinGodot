@@ -82,6 +82,7 @@ func run() -> bool:
 	_check_bot_jiang_counterstroke(failures)
 	_check_bot_reveal_defense(failures)
 	_check_bot_next_turn_lethal(failures)
+	_check_bot_entomb_save_ceiling(failures)
 	_check_standing_bot_seeks(failures)
 	_check_ladder_pages(failures)
 	_check_request_next(failures)
@@ -1984,17 +1985,18 @@ func _check_bot_violent_delights_upkeep(failures: PackedStringArray) -> void:
 	captive.speed = 1
 	captive.creature_mode = Card.CreatureMode.AGGRESSIVE
 	opponent.reserve_zones[0].add_card(captive)
-	if bot._choose_upkeep_option() != "mana":
+	var upkeep_zone := bot._get_first_open_summon_zone(player)
+	if str(bot._choose_upkeep_option(upkeep_zone).get("choice", "")) != "mana":
 		failures.append("Aphrodite did not take mana for a combat kill followed by Violent Delights")
 	player.mana = AphroditeAreia.ACTIVATION_COST
 	var line := bot._plan_combat(bot._get_combat_candidates())
 	if line.get("target") != defender or not line.get("violent_delights", false):
 		failures.append("Aphrodite did not plan the qualifying attack with mana available for Violent Delights")
-	if bot._choose_upkeep_option() != "draw":
+	if str(bot._choose_upkeep_option(upkeep_zone).get("choice", "")) != "draw":
 		failures.append("Aphrodite took extra mana when she could already afford the Violent Delights line")
 	player.mana = AphroditeAreia.ACTIVATION_COST - 1
 	opponent.reserve_zones[0].remove_card(captive)
-	if bot._choose_upkeep_option() != "draw":
+	if str(bot._choose_upkeep_option(upkeep_zone).get("choice", "")) != "draw":
 		failures.append("Aphrodite planned to enslave a creature that would be destroyed in combat")
 	bot.detach()
 
@@ -2599,6 +2601,35 @@ func _check_bot_next_turn_lethal(failures: PackedStringArray) -> void:
 	var wipe: Dictionary = bot._plan_power_unlock(danger).get("command", {})
 	if wipe.get("power_uid") != ragnarok.uid:
 		failures.append("Bot overlooked a legal Ragnarok unlock that prevents lethal")
+	bot.detach()
+
+func _check_bot_entomb_save_ceiling(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	player.mana = 3
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var nimue := Nimue.new()
+	nimue.card_owner = player
+	nimue.creature_mode = Card.CreatureMode.DEFENSIVE
+	player.reserve_zones[0].add_card(nimue)
+	var manifestation := ThorActive.new()
+	manifestation.card_owner = opponent
+	manifestation.creature_mode = Card.CreatureMode.DEFENSIVE
+	opponent.frontline_zones[0].add_card(manifestation)
+	# The Entomb costs the target's level and the bot cannot afford it yet:
+	# the saturation ceiling must still count it as spend potential so the
+	# bot banks mana for the activation instead of spending down each turn.
+	var ceiling := BotCardStrategyScript._mana_saturation_ceiling(bot)
+	if ceiling < manifestation.get_effective_level():
+		failures.append("Mana ceiling ignored a live premium Entomb target the bot should be saving for")
 	bot.detach()
 
 func _check_standing_bot_seeks(failures: PackedStringArray) -> void:

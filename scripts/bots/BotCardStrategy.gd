@@ -266,11 +266,36 @@ static func _mana_saturation_ceiling(bot) -> int:
 			top = maxi(top, activation_cost(bot, card))
 		if card is GodCard and card.has_method("get_activation_mana_cost"):
 			top = maxi(top, card.get_activation_mana_cost(bot.game_manager))
+		top = maxi(top, board_ability_save_ceiling(bot, card))
 	if top <= 0:
 		return 0
 	var income: int = bot.game_manager.get_automatic_upkeep_mana_gain(player, bot.game_manager.turn_number + 1) \
 		+ bot.game_manager.get_effective_upkeep_mana_gain(bot.game_manager.get_base_upkeep_mana_gain(), player)
 	return top + income
+
+# Board abilities priced by their target (Nimue's Entomb charges the target's
+# level) are spend potential even when today's mana is short. A premium
+# visible enemy body on the board keeps mana worth banking until the
+# activation is actually affordable, the same way an expensive card in the
+# deck does; without this the bot spends down every turn and never reaches
+# the level of a high-cost target it should be saving for.
+static func board_ability_save_ceiling(bot, card: Card) -> int:
+	if bot == null or bot.opponent == null or not (card is Nimue) \
+			or card.current_zone == null or not card.current_zone.is_board_zone() \
+			or card.abilities_suppressed():
+		return 0
+	var best_level := 0
+	for zone in bot.opponent.frontline_zones + bot.opponent.reserve_zones:
+		if zone == null:
+			continue
+		for target in zone.cards:
+			if target == null or not visible(bot, target) \
+					or target.card_type != Card.CardType.CREATURE:
+				continue
+			best_level = maxi(best_level, target.get_effective_level())
+	if best_level <= 0:
+		return 0
+	return best_level + bot.game_manager.get_creature_action_mana_cost(card, "activate")
 
 # Mana never falls to zero because action taxes, equipment, and Guard remain.
 # Unbounded sinks lift the floor further, and a sink that advances the actual

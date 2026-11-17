@@ -63,6 +63,13 @@ var _pending_power_activation_uid := ""
 var _dellingr_revealed_target_uids: Dictionary = {}
 var _posture_cache := {"turn": -1, "value": {}}
 var _posture_evaluating := false
+# Opt-in decision tracing for summon planning. Set OTHERGODS_BOT_DECISION_LOG=1
+# on the bot's process (practice window or headless server) to print every
+# evaluated summon plan with its score components, so a chosen chump blocker
+# can be diffed against the rejected alternative on the same turn.
+var _decision_log_env := OS.get_environment("OTHERGODS_BOT_DECISION_LOG").strip_edges().to_lower()
+var _decision_log_enabled: bool = not _decision_log_env.is_empty() \
+		and _decision_log_env != "0" and _decision_log_env != "false"
 
 func attach(
 	p_game_manager: GameManager,
@@ -352,15 +359,17 @@ func _handle_upkeep() -> void:
 
 # The Matriarch Rule is Tiamat's third upkeep choice alongside draw and mana:
 # it adds one known brood card to hand and grants no draw and no mana, so it
-# can never stack with the other options. Price each candidate as the real
-# line it enables, paid from the current mana only: summon it now and attack
-# (Gallu over a 21-str body), or make the draw option's summon and bank the
-# known card instead of a random one. Values share _choose_upkeep_option's
-# scale, and the banked card's worth scales with hand urgency like the random
-# draw it displaces.
+# can never stack with the other options. The brood slot is a warehouse, not a
+# deck — a slotted card keeps just as well, so a take is only worth the upkeep
+# choice when it does something now: a this-turn play line (summon it and
+# attack — Gallu over a 21-str body), or a real option increase (a starved
+# hand, or no deck left to draw from). Values share _choose_upkeep_option's
+# scale; bank_plan_base is the draw option's summon so the bank plan prices
+# the same turn with the known card instead of a random one.
 func _choose_brood_option(zone: Zone, bank_plan_base: int, draw_need: float) -> Dictionary:
 	if not TiamatThePrimordial.can_offer_matriarch_rule(game_manager):
 		return {}
+	var banking_pays := draw_need >= 1.2 or bot_player.deck_zone.cards.is_empty()
 	var best_card: Card = null
 	var best_value := 0
 	for card in TiamatThePrimordial.get_available_matriarch_rule_cards(bot_player):
@@ -369,7 +378,9 @@ func _choose_brood_option(zone: Zone, bank_plan_base: int, draw_need: float) -> 
 			summon_score += _estimate_summon_attack_value(card, zone, bot_player.mana)
 			if not _opponent_board_is_empty() and _choose_creature_summon_mode(card) == Card.CreatureMode.DEFENSIVE:
 				summon_score += int(maxi(0, _estimate_defensive_summon_value(card, zone)) * 0.5)
-		var bank_score := bank_plan_base + int(float(_deck_card_hand_value(card, bot_player.mana)) * draw_need)
+		var bank_score := 0
+		if banking_pays:
+			bank_score = bank_plan_base + int(float(_deck_card_hand_value(card, bot_player.mana)) * draw_need)
 		var value := maxi(summon_score, bank_score)
 		if value > best_value:
 			best_card = card
@@ -404,8 +415,12 @@ func _choose_upkeep_option(zone: Zone) -> Dictionary:
 	# expected hand value of the card it takes from the bot's own deck.
 	var draw_need := _upkeep_draw_need()
 	var draw_card_value := _expected_deck_draw_value(draw_budget)
+	# The upkeep draw is playable this turn, so digging credits the deck's
+	# remaining answers priced against the current board — not just average
+	# card quality.
+	var dig_gain := _expected_deck_dig_gain(draw_budget, _forecast_incoming_follower_loss())
 	var mana_option := mana_score + CardStrategy.mana_gain_value(self, mana_gain)
-	var draw_option := draw_score + int(float(draw_card_value) * draw_need)
+	var draw_option := draw_score + int(float(draw_card_value) * draw_need) + dig_gain
 	# The Matriarch take is a third, mutually exclusive choice: it grants no
 	# draw and no mana. Mana income decaying does not make it good — the random
 	# deck card stays the real rival — so it only wins by outscoring both.
@@ -1443,6 +1458,8 @@ func _should_activate_prepared_mead_for_enki() -> bool:
 func _plan_creature_summon(danger: int = -1, attacks: Array[Dictionary] = [], baseline: Dictionary = {}, removed_by_setup: Array = [], setup_cost: int = 0, setup: Dictionary = {}) -> Dictionary:
 	if game_manager == null or opponent == null:
 		return {}
+	var plan_log: Array[Dictionary] = []
+	var log_enabled := _decision_log_enabled
 	var zones := _get_open_summon_lane_candidates(bot_player)
 	if zones.is_empty():
 		return {}
@@ -1587,10 +1604,32 @@ func _plan_creature_summon(danger: int = -1, attacks: Array[Dictionary] = [], ba
 					if not stealth and danger > 0 and fenrir == null:
 						safety = _score_summon_removal(creature, danger, change, safety)
 					candidate += safety
+					var casualty_cost := 0
 					if not lethal:
-						candidate -= _estimate_projected_summon_casualty_cost(
+						casualty_cost = _estimate_projected_summon_casualty_cost(
 							creature, summon_zone, projected_defensive, removed + cleared, stats, stealth
 						)
+						candidate -= casualty_cost
+					if log_enabled:
+						plan_log.append({
+							"key": "%s|%d|%d|%d|%s" % [creature.uid, summon_zone.zone_type, summon_zone.zone_index, summon_mode, str(stealth)],
+							"name": creature.card_name,
+							"zone_type": summon_zone.zone_type,
+							"zone_index": summon_zone.zone_index,
+							"mode": summon_mode,
+							"stealth": stealth,
+							"base": score,
+							"block": defensive_value if projected_defensive and removed_by_setup.is_empty() else 0,
+							"attack": attack_value,
+							"devour": int(devour.get("value", 0)),
+							"safety": safety,
+							"casualty": casualty_cost,
+							"pay": prior_payment_penalty - int(command.get("payment_penalty", 0)),
+							"reveal": reveal_value if defensive and stealth and reveal_defender else 0,
+							"search": search_value if not stealth else 0,
+							"lethal": lethal,
+							"candidate": candidate,
+						})
 					var prefers_hidden_tie: bool = candidate > 0 and candidate == best_score and prefer_stealth and stealth \
 						and best.get("command", {}).get("card_uid") == creature.uid and not best["command"]["stealth"]
 					var improves_combat := uses_recruit and (lethal or (candidate > 0 and attack_value > 0))
@@ -1614,7 +1653,37 @@ func _plan_creature_summon(danger: int = -1, attacks: Array[Dictionary] = [], ba
 			best = best_attack_setup
 		best = best.duplicate()
 		best["attack_setup"] = best_attack_setup
+	if log_enabled:
+		_log_summon_plans(danger, plan_log, best, removed_by_setup.size(), setup_cost)
 	return best
+
+# Prints the evaluated summon candidates from one _plan_creature_summon call,
+# best first, with the score terms that built each candidate. The chosen plan
+# is marked so a losing alternative can be diffed term by term.
+func _log_summon_plans(danger: int, plan_log: Array[Dictionary], best: Dictionary, setup_removed: int, setup_cost: int) -> void:
+	if plan_log.is_empty():
+		return
+	plan_log.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a["candidate"]) > int(b["candidate"]))
+	var best_key := ""
+	if best.get("command", {}).has("card_uid"):
+		var command: Dictionary = best["command"]
+		best_key = "%s|%d|%d|%d|%s" % [command["card_uid"], command["zone_type"], command["zone_index"], command["mode"], str(command["stealth"])]
+	print("BOT_SUMMON turn=%d danger=%d followers=%d mana=%d setup_removed=%d setup_cost=%d" % [
+		game_manager.turn_number if game_manager else -1,
+		danger, bot_player.followers, bot_player.mana, setup_removed, setup_cost,
+	])
+	for i in mini(10, plan_log.size()):
+		var entry: Dictionary = plan_log[i]
+		var zone_label := "F" if int(entry["zone_type"]) == Zone.ZoneType.FRONTLINE \
+				else ("R" if int(entry["zone_type"]) == Zone.ZoneType.RESERVE else "?")
+		var mode_label := "AGG" if int(entry["mode"]) == Card.CreatureMode.AGGRESSIVE else "DEF"
+		var marker := " <== chosen" if str(entry["key"]) == best_key else ""
+		print("  %d) %s z=%s%d mode=%s stealth=%s | base=%d blk=%d atk=%d dev=%d saf=%d cas=%d pay=%d rev=%d srch=%d lethal=%s => %d%s" % [
+			i + 1, entry["name"], zone_label, entry["zone_index"], mode_label, str(entry["stealth"]),
+			entry["base"], entry["block"], entry["attack"], entry["devour"], entry["safety"],
+			entry["casualty"], entry["pay"], entry["reveal"], entry["search"],
+			str(entry["lethal"]), entry["candidate"], marker,
+		])
 
 func _estimate_summon_search_value(creature: Card, mana: int, danger: int) -> int:
 	if not (CardStrategy.key(creature) == "FourthSageEnmegalamma" \
@@ -4896,7 +4965,17 @@ func _get_projected_strength(card: Card) -> int:
 		total += card.strength * 2
 	if _would_receive_thor_buff(card):
 		total += 3
+	if _would_sulak_surprise_on_reveal(card):
+		total += card.strength
 	return total
+
+# Sulak's Surprise! doubles his strength on the turn he is revealed, so a
+# hand or brood-slot Sulak attacks (and prices) at double strength even
+# though the buff does not exist yet. On-board copies are handled above by
+# the effective-strength early return.
+func _would_sulak_surprise_on_reveal(card: Card) -> bool:
+	return card is SulakTheUnclean and card.card_owner == bot_player \
+		and not card.abilities_suppressed_by_effects()
 
 func _would_receive_gawain_sun_blessing(card: Card) -> bool:
 	return card is Gawain and card.card_owner == bot_player \
@@ -5545,6 +5624,15 @@ func _get_mode_switch_score(creature: Card, opposing_creatures: Array[Card]) -> 
 		# intercept is still an attack plan worth flipping aggressive for.
 		if _can_attack_followers_safely(creature):
 			return 500000 + _score_followers_attack(creature)
+		# Str-tilted body with no plan at all: flip anyway. Aggressive stance
+		# defends at STR, which for a str>res body is strictly harder to kill
+		# than its defensive RES (Humbaba 27/20 defends at 27 aggressive vs 20
+		# defensive), and the exposure forecast charges nothing for str>=res
+		# bodies. This rescues strong attackers stuck defensive with no legal
+		# plan this turn; the defensive flip scorer refuses str-tilted savings
+		# (negative), so the two scorers cannot oscillate.
+		if _get_projected_strength(creature) > _get_projected_resilience(creature):
+			return 1000 + _get_projected_strength(creature) * 10
 		return -1
 	return 300000 + best_attack_score
 
@@ -6180,22 +6268,26 @@ func _choose_creature_summon_mode(card: Card, opposing_creatures = null) -> Card
 	var resolved_opposing: Array[Card] = _get_board_creatures(opponent) if opposing_creatures == null else opposing_creatures
 	var has_clean_kills := _count_clean_attack_targets_for(card, resolved_opposing) > 0
 	var ready_protection := _get_own_protective_responses().size() > 0
+	# Real work check, usable by any statline: a target the creature destroys
+	# and survives the fight against is a reasonably profitable attack even
+	# when it is not fully "clean" (interceptor risk keeps the strict verdict
+	# rare, and strong attackers like Asag 33/21 kept falling through to the
+	# defensive default because of it). Clean kills, board dominance, and the
+	# res-tilted exemption below all reuse this.
 	var has_profitable_attacks := has_clean_kills \
 			or _is_projected_creature_strongest_on_board(card, resolved_opposing)
 	if not has_profitable_attacks:
-		# Fresh summons often lack a *clean* kill verdict (interceptor risk,
-		# survival uncertainty) while still having real work: any target the
-		# combat math destroys is a reasonably assumed profitable attack.
 		for enemy in resolved_opposing:
-			if enemy != null and CardStrategy.visible(self, enemy) \
-					and _would_destroy_target_in_battle(card, enemy):
+			if enemy == null or not CardStrategy.visible(self, enemy):
+				continue
+			if _would_destroy_target_in_battle(card, enemy) and _would_attacker_survive_battle(card, enemy):
 				has_profitable_attacks = true
 				break
 	# Aggressive stance defends at STR vs STR while defensive stance defends at
 	# STR vs RES, so a res-dominant body summoned aggressive throws away its
 	# better defense stat to poke with its worse one. Only true walls pay
-	# that price: a res-tilted body with profitable work on the board is an
-	# attacker first (and can switch to defensive once the work dries up).
+	# that price: any body with profitable work on the board is an attacker
+	# first (and can switch to defensive once the work dries up).
 	# Exception: with a banked protective reply and an empty board the poke
 	# is cheap, so the exposure forecast charges almost nothing for it.
 	if _get_projected_resilience(card) > _get_projected_strength(card) and not has_profitable_attacks \
@@ -6203,9 +6295,7 @@ func _choose_creature_summon_mode(card: Card, opposing_creatures = null) -> Card
 		return Card.CreatureMode.DEFENSIVE
 	if resolved_opposing.is_empty():
 		return Card.CreatureMode.AGGRESSIVE
-	if has_clean_kills:
-		return Card.CreatureMode.AGGRESSIVE
-	if _is_projected_creature_strongest_on_board(card, resolved_opposing):
+	if has_profitable_attacks:
 		return Card.CreatureMode.AGGRESSIVE
 	if _should_summon_as_aggressive_into_defensive_wall(card, resolved_opposing):
 		return Card.CreatureMode.AGGRESSIVE
@@ -7091,6 +7181,58 @@ func _expected_deck_draw_value(mana: int) -> int:
 	for card in deck:
 		total += _deck_card_hand_value(card, mana)
 	return total / deck.size()
+
+# Expected answer-hunting value of the upkeep draw. A card drawn at upkeep is
+# playable this turn, so the deck's remaining spells and charms are priced on
+# their real lines against the current board (Inferno, Fall of the Mighty,
+# Divine Lightning when its targets are actually there) and averaged over the
+# whole deck: one live answer among forty cards barely moves the draw option,
+# a deck full of them makes digging real. Creatures are excluded — their
+# summon lines are separate tempo, and the clean-kill flag inside
+# _deck_card_tactical_gain is a relative-pick heuristic rather than an
+# absolute value. Preparation rules, affordability, and open reserve zones
+# are already enforced inside _deck_card_tactical_gain, so answers that could
+# not actually be played this turn price as zero.
+func _expected_deck_dig_gain(mana: int, danger: int) -> int:
+	var deck := bot_player.deck_zone.cards
+	if deck.is_empty():
+		return 0
+	var primed := bot_player.deck_zone.get_primed_top_card()
+	if primed != null:
+		if primed is SpellCard or primed is CharmCard:
+			return _deck_card_tactical_gain(primed, mana, danger)
+		return 0
+	var total := 0
+	var best := 0
+	var answers := 0
+	for card in deck:
+		if card is SpellCard or card is CharmCard:
+			var gain := _deck_card_tactical_gain(card, mana, danger)
+			total += gain
+			best = maxi(best, gain)
+			answers += 1
+	if answers == 0:
+		return 0
+	var expectation := total / deck.size()
+	# Play to the outs: when the normal lines are losing — the opponent's kill
+	# clock is faster, or a locked board outlives the bot on fatigue — the
+	# drawn answer is not average value, it is the one line that flips the
+	# game. Weight its hit chance by how far behind the bot is instead of
+	# letting deck-size dilution bury it. Ahead or even, no tail: expectation
+	# only.
+	var posture := _strategy_posture()
+	var out_weight := 0.0
+	if str(posture.get("posture", "balanced")) == "locked_behind":
+		out_weight = 2.0
+	else:
+		var clock_deficit := int(posture.get("bot_clock", StrategyPosture.NO_CLOCK)) \
+			- int(posture.get("opponent_clock", StrategyPosture.NO_CLOCK))
+		if clock_deficit > 0:
+			out_weight = 1.0 + minf(4.0, float(clock_deficit))
+	if out_weight <= 0.0:
+		return expectation
+	var tail := float(best) * (float(answers) / float(deck.size())) * out_weight
+	return maxi(expectation, int(tail))
 
 func _add_destroyed_card_to_economy(result: Dictionary, card: Card, value_override: int = -1) -> void:
 	if card == null:
