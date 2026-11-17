@@ -6,6 +6,7 @@ signal page_requested(page: int)
 signal search_requested(query: String)
 signal deck_requested(list_id: String)
 signal delete_requested(list_id: String)
+signal add_deck_requested(deck: Dictionary)
 
 const TITLE_FONT = preload("res://fonts/custom_ui/Norsebold.otf")
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
@@ -46,6 +47,9 @@ var _page_label: Label
 var _back_button: Button
 var _view_deck_button: Button
 var _delete_button: Button
+var _delete_confirm: ConfirmationDialog
+var _add_deck_button: Button
+var _loaded_deck: Dictionary = {}
 var _deck_contents: RichTextLabel
 var _deck_timeout: Timer
 var _selected_list_id := ""
@@ -112,8 +116,16 @@ func _ready() -> void:
 	_back_button.hide()
 	_view_deck_button = _add_button(header, "View bot deck", _request_selected_deck)
 	_view_deck_button.hide()
-	_delete_button = _add_button(header, "Delete bot", _request_delete_selected)
+	_delete_button = _add_button(header, "Delete bot", _confirm_delete_selected)
 	_delete_button.hide()
+	_add_deck_button.hide()
+	_add_deck_button = _add_button(header, "Add to my decks", _request_add_loaded_deck)
+	_add_deck_button.hide()
+	_delete_confirm = ConfirmationDialog.new()
+	_delete_confirm.dialog_text = "Delete this bot from the community pool? This cannot be undone."
+	_delete_confirm.ok_button_text = "Delete"
+	_delete_confirm.confirmed.connect(_request_delete_selected)
+	add_child(_delete_confirm)
 	_close_button = _add_button(header, "Close", close_requested.emit)
 	_status = Label.new()
 	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -468,13 +480,23 @@ func _request_selected_deck() -> void:
 	_deck_contents.text = "Loading %s…" % str(_selected_entry.get("name", "bot deck"))
 	_view_deck_button.hide()
 	_delete_button.hide()
+	_add_deck_button.hide()
 	_deck_timeout.start()
 	deck_requested.emit(_selected_list_id)
+
+func _confirm_delete_selected() -> void:
+	if _delete_confirm != null and not _selected_list_id.is_empty():
+		_delete_confirm.popup_centered()
 
 func _request_delete_selected() -> void:
 	if _selected_list_id.is_empty():
 		return
 	delete_requested.emit(_selected_list_id)
+
+func _request_add_loaded_deck() -> void:
+	if _loaded_deck.is_empty():
+		return
+	add_deck_requested.emit(_loaded_deck.duplicate(true))
 
 func show_deck(list_id: String, deck: Dictionary) -> void:
 	if _selected_list_id.is_empty() or list_id != _selected_list_id:
@@ -482,10 +504,15 @@ func show_deck(list_id: String, deck: Dictionary) -> void:
 	_deck_timeout.stop()
 	if deck.is_empty():
 		_deck_contents.text = "This list is no longer available. Go back and refresh the ladder."
+		_loaded_deck = {}
+		_add_deck_button.hide()
 		return
+	_loaded_deck = deck.duplicate(true)
 	_deck_contents.clear()
 	_view_deck_button.hide()
 	_delete_button.hide()
+	_add_deck_button.hide()
+	_add_deck_button.show()
 	_deck_contents.push_color(GOLD)
 	_deck_contents.add_text(str(deck["name"]) + "\n\n")
 	_deck_contents.pop()
@@ -614,6 +641,7 @@ func close_deck() -> bool:
 	_back_button.hide()
 	_view_deck_button.hide()
 	_delete_button.hide()
+	_add_deck_button.hide()
 	_status.visible = not _status.text.is_empty()
 	_refresh_button.show()
 	_format.visible = _paging_supported

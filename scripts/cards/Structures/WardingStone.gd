@@ -25,7 +25,7 @@ func get_attack_restriction_turns_remaining(game_manager: GameManager = null) ->
 		return 0
 	return maxi(0, int(restriction.get("turns", 0)))
 
-func get_turn_countdown_badge_text(game_manager: GameManager = null) -> String:
+func get_turn_countdown_badge_text(_game_manager: GameManager = null) -> String:
 	return ""
 
 func get_turn_countdown_badge_hover_text(game_manager: GameManager = null) -> String:

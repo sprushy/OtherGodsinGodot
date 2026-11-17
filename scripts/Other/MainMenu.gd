@@ -3058,6 +3058,31 @@ func _on_bot_ladder_delete_requested(list_id: String) -> void:
 		return
 	lobby_client.delete_bot(list_id)
 
+func _on_bot_ladder_add_deck_requested(deck: Dictionary) -> void:
+	if _local_profile_store == null:
+		return
+	var profile_id: String = _local_profile_store.get_current_profile_id()
+	if profile_id.is_empty():
+		profile_id = str(lobby_client.current_profile_id).strip_edges() if lobby_client != null else ""
+	if profile_id.is_empty():
+		status_label.text = "Sign in to save decks."
+		return
+	var deck_name := str(deck.get("name", "Bot deck")).strip_edges()
+	if deck_name.is_empty():
+		deck_name = "Bot deck"
+	var saved: Dictionary = _local_profile_store.save_deck(
+		profile_id,
+		deck_name,
+		deck.get("cards", {}),
+		"",
+		deck.get("special_setup", {}),
+		deck.get("reinforcements", {})
+	)
+	if saved.is_empty():
+		status_label.text = "Could not save that deck."
+	else:
+		status_label.text = "Saved %s to your decks." % str(saved.get("name", deck_name))
+
 func _start_selected_bot_match() -> void:
 	if _my_bot_option == null or _my_bot_option.selected < 0 or _my_bot_option.selected >= _my_bot_entries.size():
 		return
@@ -11019,6 +11044,7 @@ func _open_bot_ladder() -> void:
 	_bot_ladder_view.search_requested.connect(_on_bot_ladder_search_requested)
 	_bot_ladder_view.deck_requested.connect(_request_bot_deck)
 	_bot_ladder_view.delete_requested.connect(_on_bot_ladder_delete_requested)
+	_bot_ladder_view.add_deck_requested.connect(_on_bot_ladder_add_deck_requested)
 	add_child(_bot_ladder_view)
 	_request_bot_ladder()
 

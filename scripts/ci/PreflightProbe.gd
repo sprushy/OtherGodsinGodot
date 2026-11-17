@@ -1231,6 +1231,50 @@ func _check_bot_speed_one_stealth(failures: PackedStringArray) -> void:
 		failures.append("Bot did not submit the Stealth summon for Sulak")
 	bot.detach()
 
+	var sage_game := _new_fixture_game()
+	var sage_player := _new_fixture_player()
+	var sage_opponent := _new_fixture_player()
+	sage_game.players.assign([sage_player, sage_opponent])
+	sage_game.current_player = sage_player
+	sage_game.other_player = sage_opponent
+	sage_game.turn_number = 3
+	sage_game._upkeep_resolved_turn = sage_game.turn_number
+	sage_game.has_resolved_attack_this_turn = true
+	var sage_manager := _new_fixture_match(sage_game)
+	var sage_bot := _new_fixture_bot()
+	sage_bot.attach(sage_game, sage_manager, ServerBotGameInput.new(sage_manager, 0), 0)
+	var sage := SixthSageAnEnlilda.new()
+	sage.card_owner = sage_player
+	sage_player.hand_zone.add_card(sage)
+	var dwelling := E2Abzu.new()
+	dwelling.card_owner = sage_player
+	sage_player.deck_zone.add_card(dwelling)
+	var sage_threat := CreatureCard.new()
+	sage_threat.card_owner = sage_opponent
+	sage_threat.creature_mode = Card.CreatureMode.AGGRESSIVE
+	sage_threat.speed = 1
+	sage_threat.strength = 13
+	sage_opponent.frontline_zones[0].add_card(sage_threat)
+	if sage.get_valid_targets(sage_game).is_empty():
+		failures.append("Fixture lost the Ancient Dwelling the Sixth Sage can Conjure")
+	if sage_bot._prefers_stealth_summon(sage):
+		failures.append("Bot prefers hiding a Sixth Sage whose Conjure Home can still fetch an Ancient Dwelling")
+	var sage_danger := sage_bot._forecast_incoming_follower_loss()
+	var sage_plan: Dictionary = sage_bot._plan_creature_summon(sage_danger).get("command", {})
+	if sage_plan.get("card_uid") == sage.uid and sage_plan.get("stealth", false):
+		failures.append("Bot hid the Sixth Sage and forfeited its Conjure Home impact")
+	sage_player.deck_zone.remove_card(dwelling)
+	if not sage_bot._prefers_stealth_summon(sage):
+		failures.append("Bot forgot an Impact with no targets left may hide again")
+	var printed_impact := CreatureCard.new()
+	printed_impact.card_owner = sage_player
+	printed_impact.ability_text = "Sample ([b]Impact[/b]): stay face-up to resolve."
+	if not sage_bot._stealth_would_forfeit_value(printed_impact):
+		failures.append("Bot only protected listed cards instead of any printed Impact body")
+	if sage_bot._stealth_would_forfeit_value(sage_threat):
+		failures.append("Bot protected a plain body with no printed Impact and no suppressed hooks")
+	sage_bot.detach()
+
 func _check_bot_reserve_summon_threat(failures: PackedStringArray) -> void:
 	var game := _new_fixture_game()
 	var player := _new_fixture_player()

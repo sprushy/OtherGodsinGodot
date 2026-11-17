@@ -4374,7 +4374,7 @@ func _choose_interceptor(data: Dictionary) -> String:
 	var action := CardAction.new()
 	action.type = CardAction.Type.ATTACK
 	action.attacker = attacker
-	action.target = target if target != null else bot_player
+	action.target = target if target != null else (bot_player as Variant)
 	action.united_front_partner = match_manager._get_declared_attack_partner(attacker)
 	if action.united_front_partner != null and not CardStrategy.visible(self, action.united_front_partner):
 		return ""
@@ -4854,19 +4854,37 @@ func _build_creature_play_command(card: Card, zone: Zone, mode: Card.CreatureMod
 		command["payment_penalty"] = payment_plan["penalty"]
 	return command
 
+# Whether hiding this card would forfeit real value. Stealth switches off every
+# creature ability while hidden (stealth sets Card._abilities_disabled_by_hidden_state),
+# and an Impact never comes back: it only resolves on a face-up hand summon, so
+# any card printing an Impact trigger must stay face-up while that trigger has
+# something to resolve. A target-gated Impact with no legal targets left —
+# nothing left to Conjure, Silence, or Acquire — is moot, and hiding that body
+# is free. BOARD_ABILITIES keep their activated-ability value protected
+# regardless, and STEALTH_SUPPRESSED_KEYS still covers the kill/death/passive
+# bodies with no printed Impact.
+func _stealth_would_forfeit_value(card: Card) -> bool:
+	if card == null:
+		return false
+	var card_key := CardStrategy.key(card)
+	if card_key in CardStrategy.BOARD_ABILITIES:
+		return true
+	if card.declares_impact_trigger() and not card.abilities_suppressed_by_effects():
+		if not card.has_method("get_valid_targets") or not card.get_valid_targets(game_manager).is_empty():
+			return true
+		return false
+	return card_key in CardStrategy.STEALTH_SUPPRESSED_KEYS
+
 func _prefers_stealth_summon(card: Card) -> bool:
-	return card.get_effective_speed() == 1
+	# The summon planner treats any speed-1 body as a stealth candidate, so the
+	# suppression check must gate this too: never hide a card whose face-up
+	# hooks stealth would switch off.
+	return not _stealth_would_forfeit_value(card) and card.get_effective_speed() == 1
 
 func _should_summon_creature_stealthily(card: Card, zone: Zone, mode: Card.CreatureMode) -> bool:
 	if card == null or zone == null or mode != Card.CreatureMode.DEFENSIVE:
 		return false
-	var card_key := CardStrategy.key(card)
-	# Stealth suppresses every creature ability while hidden (stealth sets
-	# Card._abilities_disabled_by_hidden_state), so keep bodies with face-up
-	# impact/kill/passive value visible: STEALTH_SUPPRESSED_KEYS lists creatures
-	# whose engine hooks are gated on abilities_suppressed(), and
-	# BOARD_ABILITIES covers activated abilities.
-	if card_key in CardStrategy.BOARD_ABILITIES or card_key in CardStrategy.STEALTH_SUPPRESSED_KEYS:
+	if _stealth_would_forfeit_value(card):
 		return false
 	if zone not in bot_player.frontline_zones:
 		return _prefers_stealth_summon(card)

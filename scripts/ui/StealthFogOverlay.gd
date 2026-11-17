@@ -122,10 +122,10 @@ func _sync_layer_size() -> void:
 func _animate_mist_layers() -> void:
 	if _layer_materials.is_empty():
 		return
-	var seed := variant_seed if variant_seed != 0 else get_instance_id()
-	var cluster_phase := _seeded_range(seed, 1, 0.0, TAU)
-	var sway_multiplier := _seeded_range(seed, 2, 0.72, 1.06)
-	var speed_multiplier := _seeded_range(seed, 3, 0.84, 1.22)
+	var seed_value := variant_seed if variant_seed != 0 else get_instance_id()
+	var cluster_phase := _seeded_range(seed_value, 1, 0.0, TAU)
+	var sway_multiplier := _seeded_range(seed_value, 2, 0.72, 1.06)
+	var speed_multiplier := _seeded_range(seed_value, 3, 0.84, 1.22)
 	for i in range(_layer_materials.size()):
 		var material := _layer_materials[i]
 		if material == null:
@@ -225,8 +225,8 @@ func _update_alpha() -> void:
 		var material := _layer_materials[i]
 		if material == null:
 			continue
-		var seed := variant_seed if variant_seed != 0 else get_instance_id()
-		var layer_seed := seed + i * 101
+		var seed_value := variant_seed if variant_seed != 0 else get_instance_id()
+		var layer_seed := seed_value + i * 101
 		material.set_shader_parameter(
 			"fog_alpha",
 			maxf(0.0, fog_alpha - float(i) * 0.060) * _seeded_range(layer_seed, 11, 0.88, 1.10)
@@ -235,10 +235,10 @@ func _update_alpha() -> void:
 func _configure_variant() -> void:
 	if _layer_materials.is_empty():
 		return
-	var seed := variant_seed
-	if seed == 0:
-		seed = get_instance_id()
-	var angle := _seeded_range(seed, 4, 0.0, TAU)
+	var seed_value := variant_seed
+	if seed_value == 0:
+		seed_value = get_instance_id()
+	var angle := _seeded_range(seed_value, 4, 0.0, TAU)
 	var drift_direction := Vector2(cos(angle), sin(angle) * 0.72)
 	if drift_direction.length_squared() <= 0.001:
 		drift_direction = Vector2(1.0, -0.55)
@@ -248,7 +248,7 @@ func _configure_variant() -> void:
 		var material := _layer_materials[i]
 		if material == null:
 			continue
-		var layer_seed := seed + i * 101
+		var layer_seed := seed_value + i * 101
 		material.set_shader_parameter("phase", float(i) * 3.17 + _seeded_range(layer_seed, 10, 0.0, TAU))
 		material.set_shader_parameter("cloud_scale", (1.12 + float(i) * 0.26) * _seeded_range(layer_seed, 12, 0.90, 1.18))
 		material.set_shader_parameter("drift_speed", (0.090 + float(i) * 0.034) * _seeded_range(layer_seed, 13, 0.82, 1.28))
@@ -520,8 +520,8 @@ static func _load_texture(path: String) -> Texture2D:
 		return ImageTexture.create_from_image(image)
 	return null
 
-func _seeded_unit(seed: int, salt: int) -> float:
-	return float(posmod(("%d:%d" % [seed, salt]).hash(), 10000)) / 10000.0
+func _seeded_unit(seed_value: int, salt: int) -> float:
+	return float(posmod(("%d:%d" % [seed_value, salt]).hash(), 10000)) / 10000.0
 
-func _seeded_range(seed: int, salt: int, min_value: float, max_value: float) -> float:
-	return lerpf(min_value, max_value, _seeded_unit(seed, salt))
+func _seeded_range(seed_value: int, salt: int, min_value: float, max_value: float) -> float:
+	return lerpf(min_value, max_value, _seeded_unit(seed_value, salt))

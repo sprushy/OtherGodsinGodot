@@ -18,8 +18,11 @@ signal god_power_activated(turn_number: int, player: Player, god: Card, target: 
 signal card_summoned(player: Player, card: Card, from_zone: Zone, to_zone: Zone, summon_source: Card, face_down: bool, stealth: bool)
 signal hand_card_entered_play(player: Player, card: Card)
 signal followers_converted(from_player: Player, to_player: Player, amount: int)
+@warning_ignore("unused_signal")
 signal board_effect_requested(effect_name: String, target_player: Player)
+@warning_ignore("unused_signal")
 signal card_effect_requested(effect_name: String, target_card: Card)
+@warning_ignore("unused_signal")
 signal field_effect_requested(effect_name: String, source_card: Card)
 
 enum GamePhase { MULLIGAN, MAIN, COMBAT, END }

@@ -91,6 +91,14 @@ static func apply_keyword_hints(text: String) -> String:
 			"[hint=\"" + hint_text + "\"][b]" + keyword + "[/b][/hint]")
 	return result
 
+# True when this card's printed abilities carry an Impact-style trigger marker
+# ("(Impact)" or "(Universal Impact)", bold tags and case ignored). Those
+# triggers only resolve when the card enters the field face-up from the hand,
+# so a stealth summon forfeits them outright.
+func declares_impact_trigger() -> bool:
+	var plain := ability_text.replace("[b]", "").replace("[/b]", "").to_lower()
+	return "(impact)" in plain or "(universal impact)" in plain
+
 static func apply_action_cost_symbols(text: String, card = null) -> String:
 	if text.strip_edges() == "":
 		return text

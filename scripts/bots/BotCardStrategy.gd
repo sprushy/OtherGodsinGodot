@@ -50,9 +50,13 @@ const BOARD_ABILITIES := ["Alu", "Lindwyrm", "Lamashatu", "ClayEaters", "Ancient
 # Creatures whose face-up value stealth suppresses, so they must not be summoned
 # face-down. Card._abilities_disabled_by_hidden_state() turns every creature
 # ability off while is_stealth is set, and the engine gates impact/kill/death
-# hooks plus these self-gated passives on abilities_suppressed(). Reveal-trigger
-# creatures (Afanc, PictishBeast, Grindylow, Lailoken...) are excluded on
-# purpose: their payoff fires on reveal and is valued by the bot separately.
+# hooks plus these self-gated passives on abilities_suppressed(). Printed
+# Impact triggers are protected generically by BaseCard.declares_impact_trigger()
+# in the bot's stealth gate, so this list is the backstop for those bodies and
+# the registry for kill/death/passive-only ones. Reveal-trigger
+# creatures (Afanc, PictishBeast, Grindylow, Lailoken, SulakTheUnclean...) are
+# excluded on purpose: their payoff fires on reveal and is valued by the bot
+# separately.
 const STEALTH_SUPPRESSED_KEYS := [
 	"AgainWalker", "AnkouServantToTheReaper", "AsagTheDestroyer", "Asakku", "Asaruludu",
 	"Aurboda", "BlessedKnights", "Caleuche", "DurinnSecondborn", "EnkiLordOfEridu",
@@ -61,7 +65,7 @@ const STEALTH_SUPPRESSED_KEYS := [
 	"HariiFransiscan", "HariiJarl", "HelBlarDraug", "HumbabaTheTerrible", "HyenaPack",
 	"MalinalxochitlAcolyte", "MinotaurFootsoldier", "Nagual", "NergalLion", "PaiLongAutumnKing",
 	"Pazuzu", "Pegasus", "RabidWolf", "Rabisu", "RedCap",
-	"SixthSageAnEnlilda", "StoneMonkey", "SulakTheUnclean", "TelchineApprentice", "Thiazi",
+	"SixthSageAnEnlilda", "StoneMonkey", "TelchineApprentice", "Thiazi",
 	"ThirdSageEnmedugga", "TianlongHolyDragon", "UriskGrovekeepers", "WhiteStag", "WolfAdolescent",
 	"WolfCub",
 ]
@@ -122,13 +126,13 @@ static func follower_gain(player: Player, amount: int) -> int:
 	return amount * (600 if player.followers < 25 else 350 if player.followers < 50 else 200)
 
 static func _meta_curve_share(anchor_stats: Array, anchor_shares: Array, stat: int) -> float:
-	var value := maxi(0, stat)
+	var clamped_value := maxi(0, stat)
 	for index in range(1, anchor_stats.size()):
-		if value <= int(anchor_stats[index]):
+		if clamped_value <= int(anchor_stats[index]):
 			var span := float(anchor_stats[index] - anchor_stats[index - 1])
 			if span <= 0.0:
 				return float(anchor_shares[index])
-			var progress := float(value - int(anchor_stats[index - 1])) / span
+			var progress := float(clamped_value - int(anchor_stats[index - 1])) / span
 			return lerpf(float(anchor_shares[index - 1]), float(anchor_shares[index]), progress)
 	return float(anchor_shares[anchor_shares.size() - 1])
 
@@ -709,8 +713,8 @@ static func removal_targets(bot, source: Card, target: Card = null, action: Card
 static func stat_changes(bot, card: Card, target: Card) -> Dictionary:
 	match key(card):
 		"VisionOfOdin":
-			var sign := 1 if target.culture == "Norse" else -1
-			return {"str": sign * VisionOfOdin.STR_SWING, "res": 0, "spd": sign * VisionOfOdin.SPEED_SWING}
+			var sign_value := 1 if target.culture == "Norse" else -1
+			return {"str": sign_value * VisionOfOdin.STR_SWING, "res": 0, "spd": sign_value * VisionOfOdin.SPEED_SWING}
 		"Hermes": return {"str": 0, "res": 0, "spd": Hermes.SPEED_BONUS}
 		"Snowball": return {"str": -2, "res": 0, "spd": 0}
 		"SapStrength": return {"str": -10, "res": 0, "spd": 0}
@@ -1336,7 +1340,7 @@ static func _is_hunting_tactics_attacker(card: Card) -> bool:
 # Norse Human Warrior under Thor's patron buff or Hunting Tactics eligibility,
 # or turning an unused Norse Warrior into a Lupine supporter for an eligible
 # attacker that currently has no support choices.
-static func _harii_shaman_transform_gain(bot, source: Card, target: Card) -> int:
+static func _harii_shaman_transform_gain(bot, _source: Card, target: Card) -> int:
 	if target == null or not visible(bot, target) or target.get_controller() != bot.bot_player \
 			or target.current_zone == null or not target.current_zone.is_board_zone():
 		return BAD

@@ -30030,6 +30030,16 @@ func _on_peer_disconnected(_peer_id: int) -> void:
 	if _game_finished:
 		return
 	if headless_match_host != null and headless_match_host.match_session != null:
+		# Client-hosted matches (bot challenges and player-hosted listen
+		# servers) also carry spectator peers, so a disconnecting peer is not
+		# necessarily the opponent. The match session only opens a reconnect
+		# window for authenticated player peers; ignore disconnects it did not
+		# record (spectators leaving must not pause the match or dismiss the
+		# local player's prompts).
+		var host_session = headless_match_host.match_session
+		if host_session.has_method("is_waiting_for_reconnect") \
+				and not host_session.is_waiting_for_reconnect():
+			return
 		_set_match_reconnect_wait(true, "Opponent disconnected. Waiting for reconnect...")
 		_set_action_label_text(_match_reconnect_wait_message)
 		_dismiss_transient_prompts()

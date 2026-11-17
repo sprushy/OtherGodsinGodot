@@ -1894,7 +1894,7 @@ func _build_ability_badge(
 	if mouse_filter_mode == -1:
 		badge.mouse_filter = Control.MOUSE_FILTER_PASS if hover_text.strip_edges() != "" else Control.MOUSE_FILTER_IGNORE
 	else:
-		badge.mouse_filter = mouse_filter_mode
+		badge.mouse_filter = mouse_filter_mode as Control.MouseFilter
 	badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if clickable else Control.CURSOR_ARROW
 	badge.z_index = z_index
 	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)

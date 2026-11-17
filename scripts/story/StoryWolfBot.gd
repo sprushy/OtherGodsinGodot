@@ -1,7 +1,7 @@
 extends "res://scripts/bots/ThorPracticeBot.gd"
 
-func _choose_upkeep_option() -> String:
-	return "draw"
+func _choose_upkeep_option(zone: Zone) -> Dictionary:
+	return {"choice": "draw"}
 
 func _try_attack() -> bool:
 	var attackers := _get_attack_ready_creatures()
@@ -27,3 +27,4 @@ func _on_match_ui_interaction(prompt_player_index: int, type: String, data: Dict
 		})
 		return
 	super._on_match_ui_interaction(prompt_player_index, type, data)
+

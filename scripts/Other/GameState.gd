@@ -593,7 +593,7 @@ static func _link_equipment_in_zone(zone: Zone) -> void:
 				if card not in creature.equipment:
 					creature.equipment.append(card)
 
-static func _restore_card_uid_references(gm: GameManager, uid_map: Dictionary) -> void:
+static func _restore_card_uid_references(_gm: GameManager, uid_map: Dictionary) -> void:
 	for card_value in uid_map.values():
 		var card := card_value as Card
 		if card == null:

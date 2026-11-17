@@ -1023,11 +1023,11 @@ func _get_stealth_fog_variant_seed(control: Control) -> int:
 		seed_parts.append(str(control.get_instance_id()))
 	return posmod("|".join(seed_parts).hash(), 1000000)
 
-func _seeded_unit(seed: int, salt: int) -> float:
-	return float(posmod(("%d:%d" % [seed, salt]).hash(), 10000)) / 10000.0
+func _seeded_unit(seed_value: int, salt: int) -> float:
+	return float(posmod(("%d:%d" % [seed_value, salt]).hash(), 10000)) / 10000.0
 
-func _seeded_range(seed: int, salt: int, min_value: float, max_value: float) -> float:
-	return lerpf(min_value, max_value, _seeded_unit(seed, salt))
+func _seeded_range(seed_value: int, salt: int, min_value: float, max_value: float) -> float:
+	return lerpf(min_value, max_value, _seeded_unit(seed_value, salt))
 
 func _configure_stealth_fog_cluster_variant(fog_cluster: Node3D, variant_seed: int) -> void:
 	if fog_cluster == null or not is_instance_valid(fog_cluster):

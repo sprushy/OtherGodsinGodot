@@ -21,7 +21,7 @@ func _init() -> void:
 	art_path = ART_PATH
 	art_variants = [ART_PATH, ALT_ART_PATH]
 
-func on_global_turn_end(game_manager: GameManager, ending_player: Player) -> void:
+func on_global_turn_end(game_manager: GameManager, _ending_player: Player) -> void:
 	_update_art_variant(game_manager)
 	if game_manager == null:
 		return
@@ -33,7 +33,7 @@ func on_global_turn_end(game_manager: GameManager, ending_player: Player) -> voi
 		_sleep_all_creatures(game_manager)
 
 func on_creature_summoned(
-	player: Player,
+	_player: Player,
 	card: Card,
 	_from_zone: Zone,
 	_to_zone: Zone,
