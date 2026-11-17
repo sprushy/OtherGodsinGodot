@@ -60,6 +60,10 @@ static func build_command(bot, type: String, data: Dictionary) -> Dictionary:
 			command["target_uid"] = _best_good_fortune_target(bot, source, data.get("target_uids", []))
 		elif type == "first_sage_adapa_impact" and source is FirstSageAdapa:
 			command["target_uid"] = _best_silence_target(bot, source, data.get("target_uids", []))
+		elif type == "fourth_sage_enmegalamma_impact":
+			command["target_uid"] = _best_fourth_sage_target(bot, source, data.get("target_uids", []))
+		elif type == "seventh_sage_utuabzu_impact":
+			command["target_uid"] = _best_seventh_sage_channel_target(bot, data.get("target_uids", []))
 		elif type == "tonal_extraction" and source is TonalExtraction:
 			var targets: Array[Card] = []
 			for target in source.get_valid_targets(bot.game_manager):
@@ -74,7 +78,10 @@ static func build_command(bot, type: String, data: Dictionary) -> Dictionary:
 			var target: Card = bot.game_manager.get_card_by_uid(str(command.get("target_uid", "")))
 			if target != null:
 				var danger: int = bot._forecast_incoming_follower_loss()
-				var gain: int = bot._deck_pick_value(target, bot.bot_player.mana, danger)
+				# The Sage voids itself to Conjure Home, so it is not on the
+				# board the Duat would lock: exclude it from the chain's
+				# own-sleeper pricing.
+				var gain: int = bot._deck_pick_value(target, bot.bot_player.mana, danger, [source])
 				var loss: int = bot._get_card_economic_value(source)
 				if not bot.game_manager.can_player_add_to_hand_now(bot.bot_player) \
 						or gain + bot._follower_safety_gain(danger, {"removed": [source]}) <= loss:
@@ -314,6 +321,50 @@ static func _best_silence_target(bot, source: FirstSageAdapa, target_uids: Array
 		if score > best_score or (score == best_score and score > 0 and target.uid < best_uid):
 			best_score = score
 			best_uid = target.uid
+	return best_uid
+
+# The Fourth Sage acquires its Mer Sage by paying half the target's level, so
+# the pick ranks the deck card's value net of that mana — including the
+# combo lines the acquisition walks into (the Sixth Sage's Conjure Home
+# fetching the Sleep of the Duat, or Enki under a live Duat).
+static func _best_fourth_sage_target(bot, source: Card, target_uids: Array) -> String:
+	var best_uid := ""
+	var best_score := Strategy.BAD
+	var danger := -1
+	for raw_uid in target_uids:
+		var uid := str(raw_uid)
+		var target: Card = bot.game_manager.get_card_by_uid(uid)
+		if target == null:
+			continue
+		if danger < 0:
+			danger = bot._forecast_incoming_follower_loss()
+		var score: int = bot._deck_pick_value(target, bot.bot_player.mana, danger)
+		if source.has_method("get_acquisition_cost"):
+			score -= Strategy.mana_penalty(bot, source.get_acquisition_cost(target))
+		if score > best_score:
+			best_score = score
+			best_uid = uid
+	return best_uid
+
+# Channel Ally picks the Sage whose replayed impact is worth the most right
+# now — the Fourth Sage's Search from the Void or the field, the Sixth Sage's
+# Conjure Home while it still stands to void itself — rather than the most
+# valuable body. Falls back to the first offered target so the mandatory
+# choice always resolves.
+static func _best_seventh_sage_channel_target(bot, target_uids: Array) -> String:
+	var best_uid := ""
+	var best_score := 0
+	for raw_uid in target_uids:
+		var uid := str(raw_uid)
+		var target: Card = bot.game_manager.get_card_by_uid(uid)
+		if target == null:
+			continue
+		var score := Strategy.seventh_sage_channel_gain(bot, target)
+		if score > best_score:
+			best_score = score
+			best_uid = uid
+	if best_uid.is_empty() and not target_uids.is_empty():
+		return str(target_uids[0])
 	return best_uid
 
 static func _best_uid(bot, data: Dictionary, key: String, harmful: bool) -> String:

@@ -19,11 +19,14 @@ func _init() -> void:
 	resilience = 20
 	strength = 20
 	targets = true
-	ability_text = "[b]Wolf Master[/b]: [b]Shuffle[/b] this card from your hand. For your turn summon, you may summon a Lupine from your deck, paying its summon cost.\n[b]Devour[/b] ([b]Impact[/b]): Destroy a creature at least 2 levels weaker than this card and gain its Str and Res."
+	ability_text = "[b]Wolf Master[/b]: [b]Shuffle[/b] this card from your hand. For your turn summon, you may summon a Lupine from your deck, paying its summon cost.\n[b]Devour[/b] ([b]Impact[/b]): Destroy a creature at least 2 levels weaker than this card and gain its Str and Res.\n[b]Sleep Immunity[/b]."
 	culture = "Norse"
 	artist = "Riccardo Zoppello"
 	art_path = ART_PATH
 	art_variants = [ART_PATH, ALT_ART_PATH]
+
+func is_immune_to_sleep() -> bool:
+	return true
 
 func get_hand_ability_label() -> String:
 	return "Wolf Master"

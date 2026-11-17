@@ -53,6 +53,7 @@ const SUBMIT_ISSUE_REPORT := "submit_issue_report"
 const SUBMIT_BOT_PROPOSAL := "submit_bot_proposal"
 const SUBMIT_BOT_DECK := "submit_bot_deck"
 const REQUEST_MY_BOTS := "request_my_bots"
+const DELETE_BOT := "delete_bot"
 
 const HELLO_OK := "hello_ok"
 const ROOM_LIST := "room_list"
@@ -88,6 +89,7 @@ const ISSUE_REPORT_RESULT := "issue_report_result"
 const BOT_PROPOSAL_RESULT := "bot_proposal_result"
 const BOT_DECK_SUBMISSION_RESULT := "bot_deck_submission_result"
 const MY_BOTS := "my_bots"
+const BOT_DELETED := "bot_deleted"
 
 static func make_message(message_type: String, payload: Dictionary = {}) -> Dictionary:
 	return {
@@ -268,6 +270,10 @@ static func validate_request(message: Dictionary) -> String:
 				return "Invalid bot gauntlet exclusions."
 		REQUEST_MY_BOTS:
 			pass
+		DELETE_BOT:
+			var bot_id = payload.get("bot_id", "")
+			if not bot_id is String or bot_id.is_empty() or bot_id.length() > 80:
+				return "Invalid community bot id."
 		SUBMIT_BOT_DECK:
 			var deck = payload.get("deck", {})
 			if not deck is Dictionary or JSON.stringify(deck).length() > 30000:

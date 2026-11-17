@@ -726,6 +726,9 @@ static func extract_card_keywords(card: Card, config: Dictionary = {}) -> Array[
 		if keyword in BaseCard.KEYWORD_HINTS and not seen.has(keyword):
 			found.append(keyword)
 			seen[keyword] = true
+	if "Fractions" not in seen and BaseCard.ability_text_uses_fractions(card.ability_text):
+		found.append("Fractions")
+		seen["Fractions"] = true
 	return found
 
 static func extract_card_keyword_sections(card: Card, config: Dictionary = {}) -> Array[Dictionary]:

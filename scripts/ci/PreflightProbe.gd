@@ -62,6 +62,7 @@ func run() -> bool:
 	_check_rank_badges(failures)
 	_check_dedicated_ranked_history(failures)
 	_check_ranked_bot_pool(failures)
+	_check_community_bot_rank_badge(failures)
 	_check_ranked_bot_deck_generation(failures)
 	_check_ranked_bot_manifestations(failures)
 	_check_bot_power_followthrough(failures)
@@ -3148,6 +3149,88 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 			or player_loss_summary["challenger"].get("matches_played") != 2 \
 			or player_loss_summary["challenger"].get("losses") != 1:
 		failures.append("A self-play loss stopped counting toward bot pool evaluation")
+
+## A user-submitted bot must carry its replayed ladder record into every hosted
+## match so its rank badge keeps updating, instead of restarting at zero stars.
+func _check_community_bot_rank_badge(failures: PackedStringArray) -> void:
+	var storage_file := "preflight_community_bot_%d.json" % OS.get_process_id()
+	var store := MatchHistoryStoreScript.new(storage_file, true)
+	var lobby := LobbyServerScript.new()
+	lobby.match_history_store = store
+	var owner_id := "community_owner_%d" % OS.get_process_id()
+	var bot_dir := ServerPathsScript.get_server_data_file_path("community_bot_pool")
+	var bot_id := "probebot_%d" % OS.get_process_id()
+	var fresh_bot_id := "freshbot_%d" % OS.get_process_id()
+	var bot_fixture := {
+		"bot_id": bot_id,
+		"account_id": owner_id,
+		"owner_name": "Probe Owner",
+		"bot_name": "Probe Bot",
+		"deck_name": "Thor: Probe Bot",
+		"god_name": "Thor",
+		"cards": {"Thor": 1, "Berserker": 3},
+		"special_setup": {},
+		"reinforcements": {},
+	}
+	var fresh_fixture := bot_fixture.duplicate(true)
+	fresh_fixture["bot_id"] = fresh_bot_id
+	fresh_fixture["bot_name"] = "Fresh Bot"
+	fresh_fixture["deck_name"] = "Thor: Fresh Bot"
+	var bot_path := bot_dir.path_join("%s.json" % bot_id)
+	var fresh_path := bot_dir.path_join("%s.json" % fresh_bot_id)
+	if not JsonStoreScript.save_json(bot_path, bot_fixture, "preflight_probe") \
+			or not JsonStoreScript.save_json(fresh_path, fresh_fixture, "preflight_probe"):
+		failures.append("Could not write the community bot fixtures")
+		return
+	var community_deck := bot_fixture.duplicate(true)
+	community_deck["bot_god_name"] = "Thor"
+	community_deck["bot_list_id"] = bot_id
+	community_deck["list_id"] = bot_id
+	community_deck["is_community_bot"] = true
+	community_deck["stars"] = 0
+	community_deck["win_streak"] = 0
+	var foe_deck := {
+		"deck_name": "Thor: Foe",
+		"god_name": "Thor",
+		"bot_god_name": "Thor",
+		"stars": 0,
+		"win_streak": 0,
+		"cards": {"Thor": 1, "Askelladen": 3},
+		"special_setup": {},
+		"reinforcements": {},
+	}
+	var session := MatchSessionScript.new("community_bot_win_%d" % OS.get_process_id(), "preflight_room", "127.0.0.1", 12345, ["BOT_COMMUNITY", "BOT_FOE"], {
+		"BOT_COMMUNITY": community_deck,
+		"BOT_FOE": foe_deck,
+	}, {
+		"BOT_COMMUNITY": {"is_bot": true, "player_name": "Thor: Probe Bot"},
+		"BOT_FOE": {"is_bot": true, "player_name": "Thor: Foe"},
+	})
+	session.is_ranked = true
+	session.configure_series_format(1)
+	# Three self-play wins award 1 + 1 + 2 (streak bonus) = 4 stars, which moves
+	# the bot out of the zero-star division so the badge change is observable.
+	for win_index in range(3):
+		session.match_id = "community_bot_win_%d_%d" % [OS.get_process_id(), win_index]
+		var recorded: Dictionary = store.record_completed_match(session, 0, 1, "Thor", "Thor")
+		if not bool(recorded.get("success", false)):
+			failures.append("Could not record the community bot self-play win")
+			break
+	var found := lobby._find_community_bot(owner_id, bot_id)
+	var zero_star_rank := str(RankedProgressionScript.summarize_bot_stars(0)["name"])
+	var found_rank := str(RankedProgressionScript.summarize_bot_stars(int(found.get("stars", 0)))["name"])
+	if found.is_empty() or int(found.get("stars", -1)) != 4 or int(found.get("bot_stars", -1)) != 4 \
+			or int(found.get("win_streak", -1)) != 3 or found_rank == zero_star_rank:
+		failures.append("A hosted community bot did not carry its current ladder stars and streak")
+	var fresh := lobby._find_community_bot(owner_id, fresh_bot_id)
+	if fresh.is_empty() or int(fresh.get("stars", -1)) != 0 or int(fresh.get("bot_stars", -1)) != 0 \
+			or int(fresh.get("win_streak", -1)) != 0:
+		failures.append("A community bot without recorded results did not default to zero stars")
+	for fixture_path in [bot_path, fresh_path]:
+		DirAccess.remove_absolute(fixture_path)
+		DirAccess.remove_absolute(fixture_path + ".bak")
+		DirAccess.remove_absolute(fixture_path + ".tmp")
+	lobby.free()
 
 func _bot_pool_result(match_id: String, list_id: String, cards: Dictionary, outcome: String, is_self_play: bool = false) -> Dictionary:
 	return {

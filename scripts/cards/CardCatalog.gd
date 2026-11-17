@@ -244,6 +244,7 @@ const CARD_SCRIPT_PATHS := [
 	"res://scripts/cards/Structures/EriduCityOfSages.gd",
 	"res://scripts/cards/Structures/GlitnirThePeaceful.gd",
 	"res://scripts/cards/Structures/HildskjalfThroneOfOdin.gd",
+	"res://scripts/cards/Structures/SleepOfTheDuat.gd",
 	"res://scripts/cards/Structures/Watchtower.gd",
 	"res://scripts/cards/Structures/WardingStone.gd",
 ]

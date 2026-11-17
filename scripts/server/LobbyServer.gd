@@ -436,6 +436,8 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 			_handle_submit_bot_deck(peer_id, payload)
 		LobbyProtocolScript.REQUEST_MY_BOTS:
 			_handle_request_my_bots(peer_id)
+		LobbyProtocolScript.DELETE_BOT:
+			_handle_delete_bot(peer_id, payload)
 		LobbyProtocolScript.REPORT_BOT_WORK_STARTED:
 			_handle_report_bot_work_started(peer_id, payload)
 		LobbyProtocolScript.CANCEL_BOT_WORK:
@@ -1160,8 +1162,16 @@ func _find_community_bot(account_id: String, bot_id: String) -> Dictionary:
 	bot["bot_list_id"] = bot_id
 	bot["list_id"] = bot_id
 	bot["bot_god_name"] = str(bot.get("god_name", ""))
-	bot["bot_stars"] = 0
-	bot["stars"] = 0
+	# Attach the ladder record replayed from this bot's stored results so its
+	# rank badge, live-match rows, and win-streak scoring keep updating as it
+	# plays, instead of restarting at zero stars in every hosted match.
+	_refresh_ranked_bot_deck_pool()
+	var record := _ranked_bot_deck_pool.get_deck_details(bot_id)
+	var stars := int(record.get("stars", 0))
+	bot["bot_stars"] = stars
+	bot["stars"] = stars
+	bot["bot_win_streak"] = int(record.get("win_streak", 0))
+	bot["win_streak"] = int(record.get("win_streak", 0))
 	return bot
 
 ## Community bots use the same "God: Name" ladder format as the rest of the
@@ -1435,6 +1445,33 @@ func _handle_request_my_bots(peer_id: int) -> void:
 				file_name = directory.get_next()
 			directory.list_dir_end()
 	_send_to_peer(peer_id, LobbyProtocolScript.MY_BOTS, {"bots": bots})
+
+func _handle_delete_bot(peer_id: int, payload: Dictionary) -> void:
+	var session := _get_session_for_peer(peer_id)
+	var account_id := str(session.get("account_id", ""))
+	var bot_id := str(payload.get("bot_id", "")).strip_edges()
+	if account_id.is_empty() or bot_id.is_empty() or bot_id.contains("/") or bot_id.contains("\\"):
+		_send_to_peer(peer_id, LobbyProtocolScript.BOT_DELETED, {
+			"success": false, "message": "Could not delete that bot.", "bot_id": bot_id,
+		})
+		return
+	var bot_dir := ServerPathsScript.get_server_data_file_path("community_bot_pool")
+	var bot_path := bot_dir.path_join("%s.json" % bot_id)
+	var bot := JsonStoreScript.load_dictionary(bot_path, {}, "CommunityBotPool")
+	if bot.is_empty() or str(bot.get("account_id", "")) != account_id:
+		_send_to_peer(peer_id, LobbyProtocolScript.BOT_DELETED, {
+			"success": false, "message": "That bot does not exist or is not yours.", "bot_id": bot_id,
+		})
+		return
+	var directory := DirAccess.open(bot_dir)
+	if directory == null or directory.remove("%s.json" % bot_id) != OK:
+		_send_to_peer(peer_id, LobbyProtocolScript.BOT_DELETED, {
+			"success": false, "message": "The server could not delete that bot.", "bot_id": bot_id,
+		})
+		return
+	_send_to_peer(peer_id, LobbyProtocolScript.BOT_DELETED, {
+		"success": true, "message": "Bot deleted from the community pool.", "bot_id": bot_id,
+	})
 
 func _handle_report_bot_work_started(peer_id: int, payload: Dictionary) -> void:
 	var session := _get_session_for_peer(peer_id)

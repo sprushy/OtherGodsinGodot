@@ -48,6 +48,8 @@ func get_valid_targets(game_manager: GameManager) -> Array[Card]:
 					continue
 				if card.card_type != Card.CardType.CREATURE:
 					continue
+				if card.is_immune_to_sleep():
+					continue
 				valid_targets.append(card)
 	return valid_targets
 

@@ -1100,6 +1100,9 @@ func add_status_effect(
 	source_owner: Player = null,
 	extra_metadata: Dictionary = {}
 ) -> void:
+	# Sleep-immune creatures (e.g. Incorporeal) are immune to Sleep.
+	if status_name == "sleep" and is_immune_to_sleep():
+		return
 	var status := {
 		"name": status_name,
 		"source": source,
@@ -1194,7 +1197,13 @@ func remove_effects_from_player(player: Player) -> void:
 	if active_buffs.size() != previous_buff_count or active_statuses.size() != previous_status_count:
 		_emit_visual_state_changed()
 
+func is_immune_to_sleep() -> bool:
+	return incorporeal
+
 func apply_sleep(source_card: Card) -> void:
+	# Sleep-immune creatures (e.g. Incorporeal) are immune to Sleep; do not change stance or add the status.
+	if is_immune_to_sleep():
+		return
 	if card_type == CardType.CREATURE and current_zone != null and current_zone.is_board_zone():
 		creature_mode = CreatureMode.DEFENSIVE
 	# Refresh this source without replacing sleeps with independent durations.

@@ -382,6 +382,10 @@ func _choose_brood_option(zone: Zone, bank_plan_base: int, draw_need: float) -> 
 		if banking_pays:
 			bank_score = bank_plan_base + int(float(_deck_card_hand_value(card, bot_player.mana)) * draw_need)
 		var value := maxi(summon_score, bank_score)
+		# A Demon or Spirit coster starts the Altar of Dreams line: the take
+		# banks the chain's continuation when the sleepers it will Void are
+		# still reachable, beyond the generic warehouse value above.
+		value += CardStrategy.brood_take_line_gain(self, card)
 		if value > best_value:
 			best_card = card
 			best_value = value
@@ -1693,7 +1697,12 @@ func _estimate_summon_search_value(creature: Card, mana: int, danger: int) -> in
 		return 0
 	var value := 0
 	for target: Card in creature.get_valid_targets(game_manager):
-		value = maxi(value, _deck_pick_value(target, mana, danger))
+		var pick := _deck_pick_value(target, mana, danger)
+		if CardStrategy.key(creature) == "FourthSageEnmegalamma":
+			# Search Sage acquires its target by paying half its level, so
+			# the mana leaves the same turn the summon does.
+			pick -= CardStrategy.mana_penalty(self, creature.get_acquisition_cost(target))
+		value = maxi(value, pick)
 	return mini(ECON_CARD_VALUE * 2, value)
 
 func _estimate_face_up_summon_value(creature: Card, zone: Zone, defensive: bool, mana: int, removed: Array) -> int:
@@ -2412,6 +2421,35 @@ func _effect_follower_safety_gain(card: Card, target: Card, danger: int) -> int:
 			if target != null and zone != null:
 				change.merge({"summon": target, "zone": zone, "stance": target, "defensive": false})
 			return _follower_safety_gain(danger, change)
+		"TabletOfLife":
+			var tablet_zone := _get_first_open_summon_zone(bot_player)
+			if target == null or tablet_zone == null:
+				return 0
+			if target.get_effective_level() < 3:
+				var tablet_change := {}
+				tablet_change.merge({"summon": target, "zone": tablet_zone, "stance": target, "defensive": false})
+				return _follower_safety_gain(danger, tablet_change)
+			# Level 3+ Tablets destroy the resurrected creature at turn's end, so
+			# it cannot stand as a defender on the opponent's next turn. It can
+			# still attack this turn, so value it highly when it can remove an
+			# aggressive opposing attacker.
+			var can_kill_attacker := false
+			for enemy in _get_board_creatures(opponent):
+				if enemy == null or enemy.creature_mode != Card.CreatureMode.AGGRESSIVE:
+					continue
+				if enemy.is_sleeping or enemy.has_status_effect("cannot_attack"):
+					continue
+				if not CardStrategy.visible(self, enemy):
+					continue
+				if not game_manager.can_cards_engage_each_other(target, enemy):
+					continue
+				if target.get_effective_strength() >= enemy.get_effective_strength():
+					can_kill_attacker = true
+					break
+			if not can_kill_attacker:
+				return 0
+			var desperate := danger >= bot_player.followers or bot_player.followers <= 25
+			return (ECON_CARD_VALUE * 30) if desperate else 8000
 	return 0
 
 func _plan_special_card(card: Card, attacks: Array[Dictionary], attack: Dictionary, danger: int) -> Dictionary:
@@ -2897,7 +2935,7 @@ func _plan_strategy_support(danger: int = -1) -> Dictionary:
 	var discard: Card = null
 	var best_score := 0
 	for card in bot_player.hand_zone.cards:
-		if (card.discard_cost > 0 and not card is EriduCityOfSages) or card.sacrifice_cost > 0:
+		if (card.discard_cost > 0 and not (card is EriduCityOfSages or card is SleepOfTheDuat)) or card.sacrifice_cost > 0:
 			continue
 		if card is EquipmentCard:
 			for bearer in _get_board_creatures(bot_player):
@@ -2915,7 +2953,7 @@ func _plan_strategy_support(danger: int = -1) -> Dictionary:
 				continue
 			var score := CardStrategy.structure_score(self, card)
 			var payment: Card = null
-			if card is EriduCityOfSages:
+			if card is EriduCityOfSages or card is SleepOfTheDuat:
 				payment = _choose_lowest_priority_card(card.get_valid_play_discards(bot_player), [])
 				if payment == null:
 					continue
@@ -3281,16 +3319,22 @@ func _plan_special_power(power: PowerCard, danger: int, combat: Dictionary, unlo
 
 func _walk_of_the_sage_gain(target: Card, cost: int) -> int:
 	var gain := 0
-	var reserve := _get_first_open_reserve_zone(bot_player)
 	for card in bot_player.hand_zone.cards + game_manager.get_field_cards(bot_player, false):
 		if card is SeventhSageUtuabzu and card.current_zone == bot_player.hand_zone \
 				and target.has_type("Sage") and target.culture == "Ancient":
 			gain = maxi(gain, 4800)
 		elif card is VisionOfTartarus and _board_creature_count(opponent) > 0:
 			gain = maxi(gain, 3400 if card.is_prepared else 2600)
-		elif card is E2Abzu and target.has_type("Mer") and game_manager.can_player_add_to_hand_now(bot_player) \
-				and (card.current_zone.is_board_zone() or reserve != null):
-			gain = maxi(gain, _deck_card_hand_value(target, bot_player.mana - cost + 2) - 2400)
+	# E2-abzu turns the Void into a tutor: with the Walk and the structure
+	# both available, every Mer Mage still in the deck is gettable on demand,
+	# so the target is priced with its full line value once the structure's
+	# level-under-mana retrieval rule is satisfied.
+	if CardStrategy.walk_tutor_can_reach(self, target) \
+			and game_manager.can_player_add_to_hand_now(bot_player):
+		var danger := _forecast_incoming_follower_loss()
+		var tutor_gain := _deck_pick_value(target, bot_player.mana - cost + 2, danger) \
+			- CardStrategy.mana_penalty(self, E2Abzu.RETURN_TO_HAND_COST) - 1200
+		gain = maxi(gain, tutor_gain)
 	if game_manager._get_active_powers().any(func(power: PowerCard) -> bool: return power is ACostToWalkTheWorlds):
 		gain -= _score_follower_loss(bot_player, ACostToWalkTheWorlds.LOSS_AMOUNT)
 	return gain
@@ -3572,8 +3616,9 @@ func _deck_card_hand_value(card: Card, mana: int) -> int:
 		value += ECON_CARD_VALUE / 3
 	return value
 
-func _deck_pick_value(card: Card, mana: int, danger: int) -> int:
-	return _deck_card_hand_value(card, mana) + _deck_card_tactical_gain(card, mana, danger)
+func _deck_pick_value(card: Card, mana: int, danger: int, excluded: Array = []) -> int:
+	return _deck_card_hand_value(card, mana) + _deck_card_tactical_gain(card, mana, danger) \
+		+ CardStrategy.deck_pick_line_gain(self, card, excluded)
 
 func _deck_card_tactical_gain(card: Card, mana: int, danger: int, removed: Array = [], follower_cost: int = 0) -> int:
 	var affordable := mana >= _get_play_cost(card, false)
@@ -5350,12 +5395,9 @@ func _get_best_stealth_attack(attackers: Array[Card], opposing_creatures: Array[
 	for target in opposing_creatures:
 		if target == null or not (target.is_stealth or target.is_face_down):
 			continue
-		# A stealth body attacks through intercepts and pokes unanswered every
-		# turn it lives, so killing it is recurring-income denial: these plans
-		# are priced as kills only. Any attacker that destroys the body and
-		# survives qualifies; the cheapest sufficient attacker takes the job
-		# and the most valuable stealth body is the target.
 		var target_value := _get_card_economic_value(target) if CardStrategy.visible(self, target) else CardStrategy.CARD_VALUE
+		var cheapest_attacker: Card = null
+		var cheapest_attacker_value := 0
 		for attacker in attackers:
 			if not _can_attack_creature(attacker, target):
 				continue
@@ -5368,12 +5410,16 @@ func _get_best_stealth_attack(attackers: Array[Card], opposing_creatures: Array[
 			if not _would_attacker_survive_battle(attacker, target):
 				continue
 			var attacker_value := _get_card_economic_value(attacker)
-			if target_value > best_target_value \
-					or (target == best_target and attacker_value < best_attacker_value):
-				best_attacker = attacker
-				best_target = target
-				best_target_value = target_value
-				best_attacker_value = attacker_value
+			if cheapest_attacker == null or attacker_value < cheapest_attacker_value:
+				cheapest_attacker = attacker
+				cheapest_attacker_value = attacker_value
+		if cheapest_attacker == null:
+			continue
+		if best_attacker == null or target_value > best_target_value or (target_value == best_target_value and cheapest_attacker_value < best_attacker_value):
+			best_attacker = cheapest_attacker
+			best_target = target
+			best_target_value = target_value
+			best_attacker_value = cheapest_attacker_value
 	if best_attacker == null:
 		return {}
 	return {"attacker": best_attacker, "target": best_target}
@@ -6046,7 +6092,7 @@ func _get_attack_ready_creatures(projected_mana: int = -1) -> Array[Card]:
 		for card in zone.cards:
 			if card == null or card.card_type != Card.CardType.CREATURE or card.get_controller() != bot_player:
 				continue
-			if card.creature_mode != Card.CreatureMode.AGGRESSIVE:
+			if card.creature_mode != Card.CreatureMode.AGGRESSIVE and not card.is_stealth:
 				continue
 			if card.is_sleeping or not card.get_status_effect("cannot_attack").is_empty():
 				continue
@@ -7647,6 +7693,25 @@ func _summon_trigger_setup_bonus(card: Card, zone: Zone) -> int:
 	if card == null or zone == null or card.abilities_suppressed_by_effects():
 		return 0
 	var bonus := 0
+	if card.has_type("Divine Manifestation"):
+		# A Divine Manifestation on either side wakes every sleeper the Duat
+		# put down on both boards and keeps the structure from sleeping anyone
+		# new while it lives. The wake adjustment prices that trade against
+		# both boards, so the bot frees a locked enemy board only when its own
+		# sleepers and the body are worth more.
+		bonus += CardStrategy.divine_manifestation_wake_adjustment(self, card)
+	if card is SixthSageAnEnlilda:
+		# Conjure Home voids this body to Acquire an Ancient Dwelling, so the
+		# summon doubles as a tutor whenever the best Dwelling the deck still
+		# holds beats the body it costs — the same trade the impact's decline
+		# check prices when the prompt arrives.
+		var sage_danger := _forecast_incoming_follower_loss()
+		var best_dwelling := 0
+		for target: Card in card.get_valid_targets(game_manager):
+			best_dwelling = maxi(best_dwelling, _deck_pick_value(target, bot_player.mana, sage_danger, [card]))
+		var body_loss := _get_card_economic_value(card)
+		if best_dwelling > body_loss:
+			bonus += mini(best_dwelling - body_loss, ECON_CARD_VALUE)
 	if card is Pazuzu:
 		# Locust Swarm drains 2 mana on entry and Locust Plague repeats the
 		# drain at every own upkeep while the body survives.
@@ -7654,13 +7719,38 @@ func _summon_trigger_setup_bonus(card: Card, zone: Zone) -> int:
 		if zone in bot_player.frontline_zones and opponent != null and opponent.mana >= 4:
 			bonus += 700
 	if card is Rabisu:
-		# Life Drain leeches stats from every sleeping creature on impact.
-		var sleeping := 0
-		for enemy in _get_board_creatures(opponent):
-			if CardStrategy.visible(self, enemy) and enemy.is_sleeping:
-				sleeping += 1
-		if sleeping > 0:
-			bonus += 700 * sleeping
+		# Life Drain (Impact) leeches 3 Str/Res from every sleeping creature on
+		# both boards — enemy sleepers are weakened, own sleepers are leeched
+		# too — and grants Rabisu +3/+3 per drained body. Price the real swing:
+		# victim losses use the body-value curves at the drained statline, and
+		# Rabisu's permanent gain is credited on its own statline, so draining
+		# tiny sleepers or weakening own sleepers no longer counts as free value.
+		var drained_count := 0
+		var victim_swing := 0
+		for board_player in [opponent, bot_player]:
+			if board_player == null:
+				continue
+			for sleeper in _get_board_creatures(board_player):
+				if not CardStrategy.visible(self, sleeper) or not sleeper.is_sleeping:
+					continue
+				if game_manager.is_immune_to_source(sleeper, card):
+					continue
+				var str_loss := mini(Rabisu.DRAIN_PER_SLEEPING_CREATURE, sleeper.get_effective_strength())
+				var res_loss := mini(Rabisu.DRAIN_PER_SLEEPING_CREATURE, sleeper.get_effective_resilience())
+				if str_loss <= 0 and res_loss <= 0:
+					continue
+				drained_count += 1
+				var loss: int = CardStrategy._strength_reach_points(sleeper.get_effective_strength() - str_loss) \
+					- CardStrategy._strength_reach_points(sleeper.get_effective_strength()) \
+					+ CardStrategy._resilience_survival_points(sleeper.get_effective_resilience() - res_loss) \
+					- CardStrategy._resilience_survival_points(sleeper.get_effective_resilience())
+				victim_swing += -loss if board_player == opponent else loss
+		if drained_count > 0:
+			var rabisu_gain: int = CardStrategy._strength_reach_points(card.get_effective_strength() + Rabisu.DRAIN_PER_SLEEPING_CREATURE * drained_count) \
+				- CardStrategy._strength_reach_points(card.get_effective_strength()) \
+				+ CardStrategy._resilience_survival_points(card.get_effective_resilience() + Rabisu.DRAIN_PER_SLEEPING_CREATURE * drained_count) \
+				- CardStrategy._resilience_survival_points(card.get_effective_resilience())
+			bonus += maxi(0, victim_swing + rabisu_gain)
 	if card is Caleuche:
 		var spirits := 0
 		for ally in _get_board_creatures(bot_player):
@@ -7682,11 +7772,23 @@ func _summon_trigger_setup_bonus(card: Card, zone: Zone) -> int:
 		bonus += _wolf_maturation_setup_bonus(card)
 	if card is Isimud:
 		# Forerunner discounts Divine Manifestation summons by 6 while this
-		# body is on the field, and Revelation can deploy one directly.
+		# body is on the field, and Revelation can deploy one directly. With
+		# the Walk + E2-abzu tutor live, a Mer Mage manifestation still in
+		# the deck (Enki is the flagship) is one combo from Revelation.
+		var revelation_payoff := 0
 		for hand_card in bot_player.hand_zone.cards:
 			if hand_card != card and hand_card.has_type("Divine Manifestation"):
-				bonus += 1800
+				revelation_payoff += 1800
 				break
+		if revelation_payoff == 0:
+			for deck_card in bot_player.deck_zone.get_unordered_deck_cards():
+				if deck_card == card or not deck_card.has_type("Divine Manifestation"):
+					continue
+				var continuation := CardStrategy.isimud_revelation_continuation(self, deck_card)
+				if continuation > 0:
+					revelation_payoff += continuation
+					break
+		bonus += revelation_payoff
 	if card is EnHeduAnna:
 		if _en_hedu_anna_exaltation_setup_available():
 			bonus += 1200

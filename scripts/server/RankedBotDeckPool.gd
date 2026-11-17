@@ -177,6 +177,7 @@ func _deck_details(list: Dictionary) -> Dictionary:
 		"losses": int(list.get("losses", 0)),
 		"draws": int(list.get("draws", 0)),
 		"stars": int(list.get("stars", 0)),
+		"win_streak": int(list.get("win_streak", 0)),
 		"cards": list["cards"].duplicate(),
 		"reinforcements": list["reinforcements"].duplicate(),
 		"special_setup": list["special_setup"].duplicate(true),

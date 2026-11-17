@@ -68,6 +68,8 @@ func get_valid_targets(game_manager: GameManager) -> Array[Card]:
 				if card == null or card.card_type != Card.CardType.CREATURE:
 					continue
 				if can_sleep:
+					if card.is_immune_to_sleep():
+						continue
 					valid_targets.append(card)
 					continue
 				if can_force_aggressive and card.creature_mode != Card.CreatureMode.AGGRESSIVE:

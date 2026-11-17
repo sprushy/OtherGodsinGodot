@@ -169,6 +169,8 @@ var _host_bot_gauntlet_opponents: Dictionary = {}
 var _my_bot_entries: Array = []
 var _my_bot_dialog: AcceptDialog
 var _my_bot_option: OptionButton
+var _my_bot_delete_button: Button
+var _my_bot_delete_confirm: ConfirmationDialog
 var _choose_bot_gauntlet := false
 var _bot_match_hosting_enabled := false
 var _pending_local_bot_match_modes: Array[bool] = []
@@ -2997,6 +2999,8 @@ func _open_my_bot_picker(for_gauntlet: bool = false) -> void:
 		return
 	if not lobby_client.my_bots_received.is_connected(_on_my_bots_received):
 		lobby_client.my_bots_received.connect(_on_my_bots_received)
+	if not lobby_client.bot_deleted.is_connected(_on_bot_deleted):
+		lobby_client.bot_deleted.connect(_on_bot_deleted)
 	lobby_client.request_my_bots()
 	status_label.text = "Loading your submitted bots..."
 
@@ -3011,12 +3015,41 @@ func _on_my_bots_received(bots: Array) -> void:
 		_my_bot_dialog.dialog_text = "Select a submitted bot to host."
 		_my_bot_option = OptionButton.new()
 		_my_bot_dialog.add_child(_my_bot_option)
+		if OS.is_debug_build():
+			_my_bot_delete_button = Button.new()
+			_my_bot_delete_button.text = "Delete Bot (debug)"
+			_my_bot_delete_button.pressed.connect(_confirm_delete_selected_bot)
+			_my_bot_dialog.add_child(_my_bot_delete_button)
+			_my_bot_delete_confirm = ConfirmationDialog.new()
+			_my_bot_delete_confirm.dialog_text = "Delete this bot from the community pool? This cannot be undone."
+			_my_bot_delete_confirm.ok_button_text = "Delete"
+			_my_bot_delete_confirm.confirmed.connect(_delete_selected_bot)
+			add_child(_my_bot_delete_confirm)
 		add_child(_my_bot_dialog)
 		_my_bot_dialog.confirmed.connect(_start_selected_bot_match)
 	_my_bot_option.clear()
 	for bot: Dictionary in _my_bot_entries:
 		_my_bot_option.add_item("%s · %s" % [str(bot.get("deck_name", "Bot")), str(bot.get("god_name", ""))])
 	_my_bot_dialog.popup_centered()
+
+func _confirm_delete_selected_bot() -> void:
+	if _my_bot_delete_confirm != null and _my_bot_option != null and _my_bot_option.selected >= 0:
+		_my_bot_delete_confirm.popup_centered()
+
+func _delete_selected_bot() -> void:
+	if _my_bot_option == null or _my_bot_option.selected < 0 or _my_bot_option.selected >= _my_bot_entries.size():
+		return
+	var bot := _my_bot_entries[_my_bot_option.selected] as Dictionary
+	var bot_id := str(bot.get("bot_id", bot.get("bot_list_id", "")))
+	if bot_id.is_empty() or lobby_client == null or not lobby_client.is_authenticated():
+		return
+	status_label.text = "Deleting bot..."
+	lobby_client.delete_bot(bot_id)
+
+func _on_bot_deleted(success: bool, message: String, bot_id: String) -> void:
+	status_label.text = message
+	if success:
+		lobby_client.request_my_bots()
 
 func _start_selected_bot_match() -> void:
 	if _my_bot_option == null or _my_bot_option.selected < 0 or _my_bot_option.selected >= _my_bot_entries.size():

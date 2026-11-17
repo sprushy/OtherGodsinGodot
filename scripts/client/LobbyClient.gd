@@ -61,6 +61,7 @@ signal issue_report_result(success: bool, message: String)
 signal bot_proposal_result(success: bool, message: String)
 signal bot_deck_submission_result(success: bool, message: String, bot: Dictionary)
 signal my_bots_received(bots: Array)
+signal bot_deleted(success: bool, message: String, bot_id: String)
 signal connection_failed(message: String)
 signal disconnected_from_lobby()
 signal match_host_viability_requested()
@@ -598,6 +599,10 @@ func request_my_bots() -> void:
 	if is_authenticated():
 		_send_request(LobbyProtocolScript.REQUEST_MY_BOTS)
 
+func delete_bot(bot_id: String) -> void:
+	if is_authenticated():
+		_send_request(LobbyProtocolScript.DELETE_BOT, {"bot_id": bot_id})
+
 func request_friends() -> void:
 	_send_request(LobbyProtocolScript.REQUEST_FRIENDS)
 
@@ -826,6 +831,8 @@ func lobby_event(message: Dictionary) -> void:
 			bot_deck_submission_result.emit(bool(payload.get("success", false)), str(payload.get("message", "")), payload.get("bot", {}))
 		LobbyProtocolScript.MY_BOTS:
 			my_bots_received.emit(payload.get("bots", []))
+		LobbyProtocolScript.BOT_DELETED:
+			bot_deleted.emit(bool(payload.get("success", false)), str(payload.get("message", "")), str(payload.get("bot_id", "")))
 		LobbyProtocolScript.FRIENDS_STATE:
 			friends_state_received.emit(payload)
 		LobbyProtocolScript.ACCOUNT_SETTINGS_UPDATED:

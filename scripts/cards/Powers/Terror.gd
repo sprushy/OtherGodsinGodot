@@ -14,22 +14,31 @@ func _init() -> void:
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
 	targets = true
-	ability_text = "Your Demons gain [b]Terror[/b] ([b]Impact[/b]): Return an opponent's equal- or lower-level creature to its owner's hand."
+	ability_text = "Your Demons gain [b]Terror[/b] ([b]Impact[/b]): Return an opponent's lower-level creature to its owner's hand."
 	artist = "Lorinda Tomiko"
 	art_path = ART_PATH
 
-func on_any_card_moved(game_manager: GameManager, moved_card: Card, from_zone: Zone, to_zone: Zone) -> void:
-	if not _can_trigger_terror(game_manager, moved_card, from_zone, to_zone):
+func on_creature_summoned(
+	_player: Player,
+	card: Card,
+	from_zone: Zone,
+	to_zone: Zone,
+	_summon_source: Card,
+	face_down: bool,
+	_stealth: bool,
+	game_manager: GameManager
+) -> void:
+	if not _can_trigger_terror(card, from_zone, to_zone, face_down, game_manager):
 		return
 
-	var valid_targets := get_valid_terror_targets(game_manager, moved_card)
+	var valid_targets := get_valid_terror_targets(game_manager, card)
 	if valid_targets.is_empty():
-		game_manager.note_player_feedback("%s spread terror through %s, but there was no equal- or lower-level enemy creature to return." % [
+		game_manager.note_player_feedback("%s spread terror through %s, but there was no lower-level enemy creature to return." % [
 			card_name,
-			moved_card.get_target_log_display_name(game_manager.get_feedback_viewer())
+			card.get_target_log_display_name(game_manager.get_feedback_viewer())
 		])
 		return
-	var controller := moved_card.get_controller()
+	var controller := card.get_controller()
 	if game_manager != null and controller != null:
 		var target_uids: Array[String] = []
 		for target in valid_targets:
@@ -37,7 +46,7 @@ func on_any_card_moved(game_manager: GameManager, moved_card: Card, from_zone: Z
 				target_uids.append(target.uid)
 		game_manager.decision_requested.emit(controller, "terror_impact", {
 			"source_uid": uid,
-			"demon_uid": moved_card.uid,
+			"demon_uid": card.uid,
 			"target_uids": target_uids,
 			"queue_with_priority": true,
 			"event_name": "terror_impact",
@@ -96,25 +105,28 @@ func resolve_terror_impact(game_manager: GameManager, demon: Card, target: Card)
 		demon_name
 	]
 
-func _can_trigger_terror(game_manager: GameManager, moved_card: Card, from_zone: Zone, to_zone: Zone) -> bool:
+func _can_trigger_terror(card: Card, from_zone: Zone, to_zone: Zone, face_down: bool, game_manager: GameManager) -> bool:
 	return is_effectively_active() \
 		and game_manager != null \
-		and moved_card != null \
-		and moved_card.card_type == Card.CardType.CREATURE \
-		and moved_card.get_controller() == get_controller() \
-		and moved_card.has_type("Demon") \
-		and not moved_card.abilities_suppressed() \
+		and card != null \
+		and card.card_type == Card.CardType.CREATURE \
+		and card.get_controller() == get_controller() \
+		and card.has_type("Demon") \
+		and not card.abilities_suppressed() \
+		and not face_down \
+		and not card.is_face_down \
 		and to_zone != null \
 		and to_zone.is_board_zone() \
-		and (from_zone == null or not from_zone.is_board_zone()) \
-		and not moved_card.is_face_down \
-		and not moved_card.is_prepared
+		and from_zone != null \
+		and from_zone.zone_type == Zone.ZoneType.HAND \
+		and not card.is_prepared
 
 func _is_valid_terror_target(card: Card, demon: Card) -> bool:
 	return card != null \
 		and demon != null \
 		and card.card_type == Card.CardType.CREATURE \
 		and not card.is_god \
+		and not card.is_face_down \
 		and card.current_zone != null \
 		and card.current_zone.is_board_zone() \
-		and card.get_effective_level() <= demon.get_effective_level()
+		and card.get_effective_level() < demon.get_effective_level()

@@ -58,7 +58,7 @@ const KEYWORD_HINTS = {
 	"Upkeep": "This effect happens during upkeep at the beginning of your turn.",
 	"Harbor": "Place a qualifying card under this card. Harbored cards are not on the field until returned.",
 	"Shift": "Switch this card between its listed forms.",
-	"Incorporeal": "Can only be engaged by Spirits or Mages. Can only engage Spirits or Mages.",
+	"Incorporeal": "Can only be engaged by Spirits or Mages. Can only engage Spirits or Mages. Sleep Immunity.",
 	"Slay": "This effect triggers when this card destroys another creature in combat.",
 	"Slain": "This card was destroyed in combat and sent to the graveyard.",
 	"Trollskap": "If this card is destroyed by an effect, return it to your hand instead.",
@@ -66,13 +66,21 @@ const KEYWORD_HINTS = {
 	"Brood Slots": "Instead of powers, these slots can hold face-up Ancient Demons or Dragons up to the listed total level.",
 	"Stone Infant": "Token creature with 17 STR, 17 RES, 1 SPD, and the types Token, Human, Stone, and Golem.",
 	"Stone Skin": "This creature cannot be sent to the graveyard by combat destruction.",
-	"Terror": "When this card enters the field, return an equal- or lower-level opposing creature to its owner's hand.",
+	"Terror": "When this card enters the field, return a lower-level opposing creature to its owner's hand.",
 	"God Death": "After you have had a God in play, if you control no face-up, awake God on the field, you gain 1 less upkeep mana, cannot use powers, and lose 7 followers at upkeep.",
 	"Status": "A status is an ongoing condition on a card, such as Sleep, Petrified, or Cannot Attack. Removing status changes clears those active statuses.",
+	"Fractions": "When an ability asks for a fraction of a value, such as half, Other Gods rounds down unless the card specifically says otherwise.",
 }
+
+static var _fractional_terms_regex: RegEx
 
 static func _escape_hint_text(text: String) -> String:
 	return text.replace("\"", "&quot;")
+
+static func ability_text_uses_fractions(text: String) -> bool:
+	if _fractional_terms_regex == null:
+		_fractional_terms_regex = RegEx.create_from_string("(?i)\\b(halve|halved|halves|half|divided by|fractions?|fractional)\\b")
+	return _fractional_terms_regex.search(text) != null
 
 # Wraps bold keywords in [hint=...] BBCode so RichTextLabel shows tooltips.
 static func apply_keyword_hints(text: String) -> String:

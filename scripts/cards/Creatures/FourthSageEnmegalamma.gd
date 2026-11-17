@@ -10,7 +10,7 @@ func _init() -> void:
 	speed = 1
 	resilience = 15
 	strength = 14
-	ability_text = "[b]Search[/b] Sage ([b]Impact[/b]): You may [b]Acquire[/b] a Mer Sage, except another copy of this card."
+	ability_text = "[b]Search[/b] Sage ([b]Impact[/b]): You may [b]Acquire[/b] a Mer Sage, except another copy of this card, by paying mana equal to half their level."
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricardo Zoppello"
@@ -43,9 +43,14 @@ func get_valid_targets(_game_manager: GameManager) -> Array[Card]:
 	if controller == null or controller.deck_zone == null:
 		return valid_targets
 	for card in controller.deck_zone.cards:
-		if _is_valid_search_target(card, controller):
+		if _is_valid_search_target(card, controller) and controller.mana >= get_acquisition_cost(card):
 			valid_targets.append(card)
 	return valid_targets
+
+func get_acquisition_cost(target: Card) -> int:
+	if target == null:
+		return 0
+	return maxi(0, target.level) / 2
 
 func resolve_search_sage_impact(game_manager: GameManager, target: Card) -> String:
 	var controller := get_controller()
@@ -54,6 +59,11 @@ func resolve_search_sage_impact(game_manager: GameManager, target: Card) -> Stri
 	var valid_targets := get_valid_targets(game_manager)
 	if target == null or target not in valid_targets:
 		return card_name + " found no valid Mer Sage to add."
+
+	var cost := get_acquisition_cost(target)
+	if cost > 0 and not controller.spend_mana(cost):
+		_shuffle_deck(controller)
+		return "%s could not pay %d mana to Acquire %s." % [card_name, cost, target.card_name]
 
 	controller.move_card(target, controller.hand_zone)
 	if target.current_zone != controller.hand_zone:

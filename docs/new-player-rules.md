@@ -41,7 +41,7 @@ Spells, Hexes, and Charms usually show Speed instead of creature stats. Their Sp
 
 Many cards also have subtype words such as Mage, Warrior, Dragon, Spirit, Aerial, Norse Creature, or Ancient Creature. These are not just flavor. Card effects often care about them.
 
-When a card effect uses division or asks for half of a value, round down unless the card specifically says otherwise.
+When a card effect uses division or asks for half of a value, round down unless the card specifically says otherwise. Card details surface this as the Fractions keyword: any ability that produces a fraction shows it, and its reminder text states that Other Gods rounds down.
 
 ## 4. Know The Card Types
 

@@ -11937,6 +11937,8 @@ func _extract_card_keywords(card: Card) -> Array[String]:
 		var kw := m.get_string(1)
 		if kw in BaseCard.KEYWORD_HINTS and kw not in found:
 			found.append(kw)
+	if "Fractions" not in found and BaseCard.ability_text_uses_fractions(card.ability_text):
+		found.append("Fractions")
 	return found
 
 func _build_hand_info_sections(card: Card) -> Array[Dictionary]:
@@ -19259,7 +19261,7 @@ func _show_fourth_sage_enmegalamma_impact_prompt(card, prompt_targets: Array = [
 		return
 
 	_show_card_selection_overlay(
-		"Choose a Mer Sage for " + card.card_name,
+		"Choose a Mer Sage for " + card.card_name + " (pay mana equal to half their level)",
 		current_targets,
 		on_choose_sage,
 		on_cancel_sage
@@ -19773,7 +19775,7 @@ func _show_terror_impact_prompt(power: Terror, demon: Card, prompt_targets: Arra
 		return
 	var current_targets := _resolve_prompt_targets(power.get_valid_terror_targets(game_manager, demon), prompt_targets)
 	if current_targets.is_empty():
-		_set_action_label_text(_consume_resolution_feedback("%s spread terror through %s, but there was no equal- or lower-level enemy creature to return." % [
+		_set_action_label_text(_consume_resolution_feedback("%s spread terror through %s, but there was no lower-level enemy creature to return." % [
 			power.card_name,
 			demon.get_target_log_display_name(game_manager.get_feedback_viewer())
 		]))

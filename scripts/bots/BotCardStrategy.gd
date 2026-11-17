@@ -67,7 +67,7 @@ const STEALTH_SUPPRESSED_KEYS := [
 ]
 const EQUIPMENT := ["BeardedAxe", "RunicShortsword", "ReedBow", "SharurTheFlyingMace", "SevenLeagueBoots", "DraupnirTheMultiplying", "Gambanteinn"]
 const STRUCTURES := ["AncientPyre", "Watchtower", "WardingStone", "DoorwayToTheVoid", "E2Abzu",
-	"AnointingStatue", "EriduCityOfSages", "GlitnirThePeaceful", "HildskjalfThroneOfOdin"]
+	"AnointingStatue", "EriduCityOfSages", "GlitnirThePeaceful", "HildskjalfThroneOfOdin", "SleepOfTheDuat"]
 const PLANNED_POWERS := ["AnankesBinding", "Breidablik", "WalkOfTheSage", "DivineCaprice", "FireAndGold"]
 const PASSIVE_POWERS := ["ACostToWalkTheWorlds", "AdvancedBuildingTechniques", "FeastOfAmbrosiaAndNectar",
 	"ImmortalTechniques", "LawsOfCivilization"]
@@ -855,6 +855,8 @@ static func target_score(bot, card: Card, target: Card, action: CardAction = nul
 		"Alu":
 			if not enemy or not visible(bot, target):
 				return BAD
+			if target.is_immune_to_sleep():
+				return BAD
 			var target_value := value(bot, target)
 			return _disable_gain(bot, target, {"cannot_attack": target_value * 0.5, "cannot_intercept": target_value * 0.3})
 		"Nimue":
@@ -898,7 +900,7 @@ static func target_score(bot, card: Card, target: Card, action: CardAction = nul
 					if buff.get("source_card") == card and buff.get("effect_type") == "suckle":
 						return BAD
 			var score := stat_gain(bot, card, target, action)
-			if key(card) == "BerserkerMead":
+			if key(card) == "BerserkerMead" and not target.is_immune_to_sleep():
 				score -= 1500 # Sleeping through the next turn costs another action.
 			return score
 		"TabletOfLife", "Hringhorni":
@@ -1019,12 +1021,7 @@ static func target_score(bot, card: Card, target: Card, action: CardAction = nul
 			# Imbue Ally replays the target Sage's impact at the listed cost.
 			if target == null or target == card or not visible(bot, target):
 				return BAD
-			match key(target):
-				"FirstSageAdapa": return 2600
-				"ThirdSageEnmedugga": return 1400
-				"FourthSageEnmegalamma": return 2200
-				"SixthSageAnEnlilda": return 2400
-				_: return 1200
+			return seventh_sage_channel_gain(bot, target)
 		"OraclesSight":
 			return bot._get_hand_value(target) * 60 + (2000 if target is CreatureCard and bot._get_best_affordable_hand_creature(0) == null else 0)
 	return BAD
@@ -1377,6 +1374,15 @@ static func equipment_score(bot, equipment: Card, bearer: Card) -> int:
 	if key(equipment) not in EQUIPMENT:
 		return BAD
 	var gain := stat_gain(bot, equipment, bearer)
+	if equipment is SharurTheFlyingMace:
+		# The mace is nearly lossless: destroy/steal answers only cost its
+		# owner 4 mana, and a dead bearer leaves it on the field ready to
+		# re-equip, so charge half a card instead of a full card loss. Its +9
+		# Str is the largest equipment swing in the catalog and stays on the
+		# bearer permanently, so keep a positive floor once a legal bearer
+		# exists instead of waiting for a forecastable combat flip.
+		var sharur_base := maxi(gain + 2000 - CARD_VALUE / 2, 600)
+		return sharur_base - mana_penalty(bot, activation_cost(bot, equipment))
 	if key(equipment) == "BeardedAxe" and bearer.culture == "Norse" and bearer.has_type("Warrior"):
 		# Score the conditional axe bonus only against defensive creatures.
 		for defender in bot._get_board_creatures(bot.opponent):
@@ -1402,6 +1408,11 @@ static func equipment_pickup_score(bot, equipment: EquipmentCard, bearer: Card) 
 	# even low-impact gear a baseline value over passing, then account for its
 	# stat changes and any special combat benefit.
 	var gain := stat_gain(bot, equipment, bearer)
+	if equipment is SharurTheFlyingMace:
+		# Re-equipping re-arms the catalog's largest strength swing and keeps
+		# the legendary out of enemy steal reach, so value the pickup above the
+		# generic unequipped-gear baseline.
+		return 3200 + gain
 	if key(equipment) == "BeardedAxe" and bearer.culture == "Norse" and bearer.has_type("Warrior"):
 		for defender in bot._get_board_creatures(bot.opponent):
 			if not visible(bot, defender) or defender.creature_mode != Card.CreatureMode.DEFENSIVE or bearer not in bot._get_attack_ready_creatures() or not bot._can_attack_creature(bearer, defender):
@@ -1493,6 +1504,15 @@ static func structure_score(bot, structure: Card) -> int:
 					enemy_count += 1
 			if friend_count > enemy_count and not bot.opponent.hand_zone.cards.is_empty():
 				gain = 5500 + mini(3, friend_count - enemy_count) * 1800
+		"SleepOfTheDuat":
+			# The chain value nets the board-wide sleep against both sides
+			# and adds the Altar of Dreams summon line the sleepers fuel,
+			# including the upkeep mana and spare discard that still arrive
+			# over the line's turns.
+			var duat_chain := duat_chain_value(bot)
+			if duat_chain <= BAD:
+				return BAD
+			gain = duat_chain
 		"HildskjalfThroneOfOdin":
 			if bot.bot_player.deck_zone.cards.size() > 2 or bot.opponent.deck_zone.cards.size() > 2:
 				gain = 8600 if bot._find_player_god() is Odin else 6800
@@ -1677,6 +1697,11 @@ static func unlock_score(bot, power: PowerCard, unlock_cost: int = -1) -> int:
 		var repeat_value := 0 if id in ["BerserkerMead", "ManaGuard"] else MANA_VALUE
 		var cost := guard_mana(bot, budget) if id == "ManaGuard" else activation_cost(bot, power)
 		return activation + mana_penalty(bot, cost) - mana_penalty(bot, unlock_cost + cost) + repeat_value
+	elif id == "AltarOfDreams":
+		# The Altar is worth the Void-fuelled summons it enables, not merely
+		# the Demons standing around: sleepers on either side of the field
+		# become premium sacrifice payment once the power is live.
+		gain = altar_unlock_line_gain(bot)
 	elif PASSIVE_TYPES.has(id):
 		for card in bot._get_board_creatures(bot.bot_player) + bot.bot_player.hand_zone.cards:
 			for type in PASSIVE_TYPES[id]:
@@ -1747,3 +1772,578 @@ static func unlock_score(bot, power: PowerCard, unlock_cost: int = -1) -> int:
 			elif posture == "locked_behind":
 				gain += CARD_VALUE / 2
 	return gain - mana_penalty(bot, unlock_cost)
+
+# ============================================================================
+# Cross-turn combo lines: Sleep of the Duat, Altar of Dreams, and the Sages
+#
+# One creature summon per turn stretches the Asag line across three of the
+# bot's turns: the Fourth Sage lands and acquires the Sixth Sage, the Sixth
+# Sage lands the next turn and voids itself to Conjure Home the Sleep of the
+# Duat, and only after the end of that turn puts the board to sleep can a
+# Demon's sacrifice be paid by Voiding a sleeper with the Altar of Dreams.
+# No single step is worth much alone, so every decision along the chain
+# prices its own step with the projected continuation, including resources
+# that only arrive over those turns: upcoming upkeep mana can fund a later
+# Altar unlock, and the structure's spare discard can arrive as the next
+# upkeep draw instead of sitting in hand right now.
+# ============================================================================
+
+# Voiding an enemy sleeper with the Altar is removal into the Abyss: it
+# dodges destruction wards, death triggers, and graveyard replacement.
+const ALTAR_VOID_REMOVAL_PREMIUM := 1500
+# Share of the chain's value an earlier step still banks when one decision
+# (a summon or a brood take) stands between it and the payoff.
+const LINE_CONTINUATION_SHARE := 0.75
+
+# Mana the bot can plan on across the line's turns: current stock plus each
+# upcoming upkeep's automatic gain and mana-option gain. The Matriarch brood
+# take grants no income on its own turn, which the upkeep choice itself
+# already prices, so projections cover the upkeeps after it.
+static func projected_upkeep_mana(bot, own_turns: int) -> int:
+	if bot == null or bot.bot_player == null or bot.game_manager == null:
+		return 0
+	var total: int = bot.bot_player.mana
+	for _index in range(maxi(0, own_turns)):
+		total += bot.game_manager.get_automatic_upkeep_mana_gain(bot.bot_player, -1)
+		total += bot.game_manager.get_effective_upkeep_mana_gain(
+			bot.game_manager.get_base_upkeep_mana_gain(), bot.bot_player)
+	return total
+
+# Fresh value of one creature being asleep under the Duat: sleep locks attack
+# and intercept for as long as the structure lives, priced with the same
+# weights the bot gives Alu's single-target sleep.
+static func duat_sleep_lock_value(bot, creature: Card) -> int:
+	if creature == null or not visible(bot, creature) \
+			or creature.current_zone == null or not creature.current_zone.is_board_zone() \
+			or creature.is_face_down or creature.is_stealth or creature.is_immune_to_sleep():
+		return 0
+	return int(value(bot, creature) * 0.8)
+
+# A Divine Manifestation on either side wakes everyone, so the Duat cannot
+# do anything while one is on the field.
+static func divine_manifestation_on_field(bot) -> bool:
+	if bot == null or bot.game_manager == null:
+		return false
+	for player in bot.game_manager.players:
+		if player == null:
+			continue
+		for card in player.god_zone.cards:
+			if card != null and not card.is_face_down and card.has_type("Divine Manifestation"):
+				return true
+		for zone in player.frontline_zones + player.reserve_zones:
+			for card in zone.cards:
+				if card != null and not card.is_face_down and not card.is_stealth \
+						and card.has_type("Divine Manifestation"):
+					return true
+	return false
+
+static func active_sleep_of_the_duat(bot) -> SleepOfTheDuat:
+	if bot == null or bot.game_manager == null:
+		return null
+	for field_card in bot.game_manager.get_field_cards():
+		var duat := field_card as SleepOfTheDuat
+		if duat != null and duat._is_effectively_active():
+			return duat
+	return null
+
+static func find_altar_of_dreams(bot) -> AltarOfDreams:
+	if bot == null or bot.bot_player == null:
+		return null
+	for zone in bot.bot_player.power_zones:
+		for power in zone.cards:
+			var altar := power as AltarOfDreams
+			if altar != null:
+				return altar
+	return null
+
+# The Demon or Spirit whose sacrifice cost the Altar can replace; Asag is the
+# flagship. Gods and active gods are never Altar payments.
+static func _is_demon_or_spirit_coster(card: Card) -> bool:
+	return card != null \
+		and card.card_type == Card.CardType.CREATURE \
+		and not (card is ActiveGodCard) \
+		and card.sacrifice_cost > 0 \
+		and (card.has_type("Demon") or card.has_type("Spirit"))
+
+# Whether the Duat can still reach the field from wherever the bot currently
+# stands in the line: already live, in hand, one Sixth Sage summon away
+# (Conjure Home tutors it from the deck), or the full Fourth Sage chain with
+# both Sages still to walk. The bot can jump in at any of these points.
+static func duat_reachable(bot) -> bool:
+	if bot == null or bot.bot_player == null or bot.game_manager == null:
+		return false
+	if divine_manifestation_on_field(bot):
+		return false
+	if active_sleep_of_the_duat(bot) != null:
+		return true
+	var fourth_in_hand := false
+	var sixth_in_hand := false
+	var duat_available := false
+	for card in bot.bot_player.hand_zone.cards:
+		if card is SleepOfTheDuat:
+			duat_available = true
+		elif key(card) == "FourthSageEnmegalamma":
+			fourth_in_hand = true
+		elif card is SixthSageAnEnlilda:
+			sixth_in_hand = true
+	if duat_available:
+		return true
+	var sixth_in_deck := false
+	var duat_in_deck := false
+	var sixth_deck_card: Card = null
+	for card in bot.bot_player.deck_zone.get_unordered_deck_cards():
+		if card is SixthSageAnEnlilda:
+			sixth_in_deck = true
+			sixth_deck_card = card
+		elif card is SleepOfTheDuat:
+			duat_in_deck = true
+	# The Sixth Sage in hand tutors the structure straight from the deck; the
+	# Fourth Sage in hand can still acquire the Sixth Sage beside it. The
+	# Walk of the Sage + E2-abzu tutor can also pull the Sixth Sage out of
+	# the deck without either Sage in hand.
+	if not duat_in_deck:
+		return false
+	if sixth_in_hand:
+		return true
+	if fourth_in_hand and sixth_in_deck:
+		return true
+	if sixth_in_deck and walk_tutor_can_reach(bot, sixth_deck_card):
+		return true
+	# The Seventh Sage can replay a fielded Sixth Sage's Conjure Home, which
+	# voids the Sixth Sage to fetch the structure straight from the deck.
+	if duat_in_deck:
+		var sixth_on_field := false
+		var seventh_available := false
+		for creature in bot._get_board_creatures(bot.bot_player):
+			if creature is SixthSageAnEnlilda and not creature.is_face_down:
+				sixth_on_field = true
+			elif creature is SeventhSageUtuabzu and not creature.is_face_down and not creature.is_stealth:
+				seventh_available = true
+		for hand_card in bot.bot_player.hand_zone.cards:
+			if hand_card is SeventhSageUtuabzu:
+				seventh_available = true
+		if sixth_on_field and seventh_available:
+			return true
+	return false
+
+# The Demon or Spirit the Altar line summons: brood slots and hand are
+# executable now (brood cards one upkeep take away), the deck is half a draw
+# away and priced at half.
+static func best_altar_coster(bot) -> Card:
+	if bot == null or bot.bot_player == null:
+		return null
+	var best: Card = null
+	var best_score := 0
+	var sources: Array[Card] = []
+	for zone in bot.bot_player.power_zones:
+		for card in zone.cards:
+			if _is_demon_or_spirit_coster(card):
+				sources.append(card)
+	for card in bot.bot_player.hand_zone.cards:
+		if _is_demon_or_spirit_coster(card):
+			sources.append(card)
+	for card in sources:
+		var score: int = bot._score_projected_card(card) \
+			+ (500 if card.current_zone in bot.bot_player.power_zones else 0)
+		if score > best_score:
+			best_score = score
+			best = card
+	if bot.bot_player.deck_zone != null:
+		for card in bot.bot_player.deck_zone.get_unordered_deck_cards():
+			if not _is_demon_or_spirit_coster(card):
+				continue
+			var score := int(bot._score_projected_card(card) * 0.5)
+			if score > best_score:
+				best_score = score
+				best = card
+	return best
+
+# Projected payoff of the Altar line: the Demon or Spirit body plus the
+# sleeper it voids as sacrifice payment. `duat_will_land` also counts the
+# enemy board a Duat that is live, in hand, or being fetched will put to
+# sleep; without it only creatures asleep right now (from any sleep source)
+# are payment. `turns_ahead` discounts a payoff still behind another summon.
+static func altar_demon_payoff(bot, turns_ahead: int, duat_will_land: bool) -> Dictionary:
+	var result := {"gain": 0, "coster": null, "void_target": null}
+	if bot == null or bot.bot_player == null or bot.game_manager == null or bot.opponent == null:
+		return result
+	var altar := find_altar_of_dreams(bot)
+	if altar == null:
+		return result
+	if altar.is_face_down:
+		# The unlock can land on any turn of the line, so upkeep income the
+		# bot still banks over the line's turns counts toward it.
+		if projected_upkeep_mana(bot, 2) < altar.get_unlock_mana_cost(bot.game_manager):
+			return result
+	var coster := best_altar_coster(bot)
+	if coster == null or bot._get_first_open_summon_zone(bot.bot_player) == null:
+		return result
+	var fuel: Array[Card] = []
+	for player in bot.game_manager.players:
+		if player == null:
+			continue
+		for zone in player.frontline_zones + player.reserve_zones:
+			for card in zone.cards:
+				if card == null or card is ActiveGodCard or card.card_type != Card.CardType.CREATURE:
+					continue
+				if card.is_sleeping:
+					fuel.append(card)
+				elif duat_will_land and player == bot.opponent and visible(bot, card) \
+						and not card.is_face_down and not card.is_stealth and not card.is_immune_to_sleep():
+					fuel.append(card)
+	if fuel.is_empty():
+		return result
+	var void_target: Card = null
+	var best_gain := 0
+	for candidate in fuel:
+		if candidate.get_controller() != bot.opponent:
+			continue
+		var void_gain := value(bot, candidate) + ALTAR_VOID_REMOVAL_PREMIUM
+		if void_gain > best_gain:
+			best_gain = void_gain
+			void_target = candidate
+	if void_target == null:
+		# Only friendly sleepers are payment: voiding the cheapest one
+		# replaces the direct sacrifice the summon would otherwise charge.
+		for candidate in fuel:
+			if void_target == null \
+					or bot._score_summon_sacrifice_candidate(candidate) < bot._score_summon_sacrifice_candidate(void_target):
+				void_target = candidate
+	var gain: int = bot._score_projected_card(coster)
+	if void_target.get_controller() == bot.opponent:
+		gain += value(bot, void_target) + ALTAR_VOID_REMOVAL_PREMIUM
+	else:
+		gain += maxi(0, bot._score_summon_sacrifice_candidate(void_target))
+	# A locked Altar still needs its unlock turn before the summon works.
+	var availability := 1.0 if not altar.is_face_down else 0.85
+	result["gain"] = int(float(gain) * availability * pow(0.8, maxi(0, turns_ahead)))
+	result["coster"] = coster
+	result["void_target"] = void_target
+	return result
+
+# Value of the Duat landing on the field: the board-wide sleep netted against
+# the bot's own locked bodies, plus the Altar summon line the sleepers fuel.
+# Creatures already asleep are skipped: their lock is not new (another Duat,
+# Alu, or weather already holds it) while they still count as Altar fuel.
+# `excluded` holds cards that leave the board as part of the decision being
+# priced, such as the Sixth Sage voiding itself for Conjure Home.
+static func duat_chain_value(bot, excluded: Array = []) -> int:
+	if bot == null or bot.bot_player == null or bot.opponent == null:
+		return BAD
+	if divine_manifestation_on_field(bot):
+		return BAD
+	var gain := 0
+	for enemy in bot._get_board_creatures(bot.opponent):
+		if enemy.is_sleeping or enemy in excluded:
+			continue
+		gain += duat_sleep_lock_value(bot, enemy)
+	for ally in bot._get_board_creatures(bot.bot_player):
+		if ally.is_sleeping or ally in excluded:
+			continue
+		gain -= duat_sleep_lock_value(bot, ally)
+	var payoff := altar_demon_payoff(bot, 1, true)
+	if int(payoff["gain"]) > 0:
+		gain += int(payoff["gain"])
+	return gain
+
+# Per-card continuation value added to deck picks along these lines. Each
+# pick prices the step it is deciding with the chain's projected value, so
+# the lines compete with ordinary card quality instead of being invisible.
+static func deck_pick_line_gain(bot, card: Card, excluded: Array = []) -> int:
+	if card == null or bot == null or bot.bot_player == null or bot.game_manager == null:
+		return 0
+	if card is SleepOfTheDuat:
+		if divine_manifestation_on_field(bot):
+			return 0
+		var chain := duat_chain_value(bot, excluded)
+		if chain <= BAD:
+			return 0
+		# The pick swaps a generic unknown card for this structure, so the
+		# chain value replaces the generic card price.
+		return maxi(0, chain - CARD_VALUE)
+	if card is SixthSageAnEnlilda:
+		# Conjure Home is the only tutor for the structure while it is in the
+		# deck, and the Sixth Sage voids itself to cast it.
+		var duat_in_deck := false
+		for deck_card in bot.bot_player.deck_zone.get_unordered_deck_cards():
+			if deck_card is SleepOfTheDuat:
+				duat_in_deck = true
+				break
+		if not duat_in_deck or divine_manifestation_on_field(bot):
+			return 0
+		var chain := duat_chain_value(bot, excluded)
+		if chain <= BAD:
+			return 0
+		return int(float(chain) * LINE_CONTINUATION_SHARE)
+	if card is EnkiLordOfEridu:
+		# A Divine Manifestation wakes every sleeper the Duat put down and
+		# suppresses the sleep while it lives: the pick prices whether that
+		# trade is actually good before the bot walks into it. With Isimud
+		# standing by and the Walk + E2-abzu tutor live, the pick also
+		# carries the Revelation continuation.
+		return divine_manifestation_wake_adjustment(bot, card) \
+			+ isimud_revelation_continuation(bot, card)
+	if _is_demon_or_spirit_coster(card):
+		# Demon and Spirit sacrifice-costers are the Altar's payoff bodies.
+		var payoff := altar_demon_payoff(bot, 1, duat_reachable(bot))
+		if int(payoff["gain"]) <= 0:
+			return 0
+		return int(float(payoff["gain"]) * 0.5)
+	return 0
+
+# Summoning a Divine Manifestation (Enki) while a Duat is live wakes every
+# creature the structure put to sleep on both sides and keeps it from
+# sleeping anyone new while the manifestation lives. Critically, that frees
+# the opponent's locked board as well as the bot's own.
+static func divine_manifestation_wake_adjustment(bot, card: Card) -> int:
+	if card == null or bot == null or bot.game_manager == null:
+		return 0
+	var duat := active_sleep_of_the_duat(bot)
+	if duat == null:
+		return 0
+	var adjustment := 0
+	for player in bot.game_manager.players:
+		if player == null:
+			continue
+		var own: bool = player == bot.bot_player
+		for creature in bot._get_board_creatures(player):
+			if creature == card or not creature.is_sleeping or creature.sleeping_from != duat:
+				continue
+			# Only the Duat's own sleep lifts; other sleep sources persist.
+			var lock_value := duat_sleep_lock_value(bot, creature)
+			adjustment += lock_value if own else -lock_value
+	# While this manifestation lives, the structure can no longer put the
+	# opponent's future bodies to sleep.
+	if bot.opponent != null:
+		for enemy in bot._get_board_creatures(bot.opponent):
+			if enemy == card or enemy.is_sleeping or enemy.is_immune_to_sleep():
+				continue
+			adjustment -= duat_sleep_lock_value(bot, enemy) / 2
+	return adjustment
+
+# Any creature asleep on the field right now, from any sleep source: the
+# Altar can Void it as summon payment this very turn, so a payoff found this
+# way needs no horizon discount.
+static func any_sleeping_fuel(bot) -> bool:
+	if bot == null or bot.game_manager == null:
+		return false
+	for player in bot.game_manager.players:
+		if player == null:
+			continue
+		for zone in player.frontline_zones + player.reserve_zones:
+			for card in zone.cards:
+				if card != null and card.card_type == Card.CardType.CREATURE and card.is_sleeping:
+					return true
+	return false
+
+# The Matriarch take that starts the Altar line: the brood Demon or Spirit is
+# one upkeep and one Void-fuelled summon from the payoff, so the take carries
+# the chain's continuation when the line is live. Sleepers already on the
+# field let the payoff summon fire the same turn the take happens.
+static func brood_take_line_gain(bot, card: Card) -> int:
+	if not _is_demon_or_spirit_coster(card) or not duat_reachable(bot):
+		return 0
+	var turns := 0 if any_sleeping_fuel(bot) else 2
+	var payoff := altar_demon_payoff(bot, turns, true)
+	return int(float(payoff["gain"]) * LINE_CONTINUATION_SHARE)
+
+# Total Demon or Spirit sacrifice-costers the Altar could still pay for
+# across brood slots, hand, and the remaining deck.
+static func count_altar_costers(bot) -> int:
+	if bot == null or bot.bot_player == null:
+		return 0
+	var count := 0
+	for zone in bot.bot_player.power_zones:
+		for card in zone.cards:
+			if _is_demon_or_spirit_coster(card):
+				count += 1
+	for card in bot.bot_player.hand_zone.cards:
+		if _is_demon_or_spirit_coster(card):
+			count += 1
+	if bot.bot_player.deck_zone != null:
+		for card in bot.bot_player.deck_zone.get_unordered_deck_cards():
+			if _is_demon_or_spirit_coster(card):
+				count += 1
+	return count
+
+# Unlocking the Altar is worth the Void-fuelled summons it enables. The
+# unlock's own mana is priced by unlock_score's return, so this is the gross
+# line value: current sleepers (any source) plus the projected sleepers a
+# reachable Duat still creates. The power stays unlocked for the rest of the
+# game, so there is future value in more potential summons and more
+# potential sleep: every further coster still to come is another
+# Void-fuelled summon, and while the sleep engine runs the opponent's later
+# arrivals turn into fresh Void targets for the uses after those.
+static func altar_unlock_line_gain(bot) -> int:
+	var turns := 0 if any_sleeping_fuel(bot) else 1
+	var payoff := altar_demon_payoff(bot, turns, duat_reachable(bot))
+	var base_gain := int(payoff["gain"])
+	if base_gain <= 0:
+		return 0
+	var gain := base_gain
+	# Repeat fuel: sleepers standing now (any source) plus the enemy board
+	# a reachable Duat still puts to sleep.
+	var fuel_count := 0
+	for player in bot.game_manager.players:
+		if player == null:
+			continue
+		for zone in player.frontline_zones + player.reserve_zones:
+			for card in zone.cards:
+				if card != null and card.card_type == Card.CardType.CREATURE \
+						and not (card is ActiveGodCard) and card.is_sleeping:
+					fuel_count += 1
+	if duat_reachable(bot):
+		for enemy in bot._get_board_creatures(bot.opponent):
+			if not enemy.is_sleeping and not enemy.is_immune_to_sleep() and visible(bot, enemy):
+				fuel_count += 1
+	# The payoff above consumed one sleeper; the uses beyond it need both
+	# the bodies still to come and the fuel to pay for them. The opponent
+	# gets a turn to answer between each use — removing the coster, waking
+	# the board, or breaking the structure — so each further use is worth
+	# well less than the last.
+	var repeat_uses := clampi(mini(count_altar_costers(bot) - 1, fuel_count - 1), 0, 3)
+	var repeat_share := 0.4
+	for _use in range(repeat_uses):
+		gain += int(float(base_gain) * repeat_share)
+		repeat_share *= 0.5
+	# Renewal: only while the sleep engine is actually running — not merely
+	# planned — does everything the opponent still plays arrive asleep as
+	# fuel for later uses. Attackers that can break the structure in one
+	# combat are their standing answer to the engine, and are priced in.
+	var duat := active_sleep_of_the_duat(bot)
+	if duat != null and bot.opponent != null:
+		var renewal := mini(bot.opponent.hand_zone.cards.size(), 4) * 250
+		for enemy in bot._get_board_creatures(bot.opponent):
+			if not enemy.is_sleeping and visible(bot, enemy) \
+					and enemy.get_effective_strength() >= duat.get_effective_resilience():
+				renewal = renewal / 2
+		gain += renewal
+	return gain
+
+# ============================================================================
+# Walk of the Sage + E2-abzu: an on-demand tutor for the deck's Mer Mages
+#
+# Walk of the Sage voids a Mage from the deck; E2-abzu later returns a Mer
+# Mage from the Void to hand, but only while the target's level fits under
+# the mana left after the retrieval payment (level < mana - 3). With both
+# halves available, every Mer Mage still in the deck is gettable whenever
+# the bot wants it, so the power's activation and the deck picks price those
+# cards with their real line value — fetching Enki for Isimud's Revelation
+# being the flagship.
+# ============================================================================
+
+static func find_walk_of_the_sage(bot) -> WalkOfTheSage:
+	if bot == null or bot.bot_player == null:
+		return null
+	for zone in bot.bot_player.power_zones:
+		for power in zone.cards:
+			var walk := power as WalkOfTheSage
+			if walk != null:
+				return walk
+	return null
+
+# True while E2-abzu is standing ready on the field or playable from hand.
+static func e2_abzu_available(bot) -> bool:
+	if bot == null or bot.bot_player == null or bot.game_manager == null:
+		return false
+	for field_card in bot.game_manager.get_field_cards(bot.bot_player):
+		var abzu := field_card as E2Abzu
+		if abzu != null and not abzu.is_face_down and not abzu.is_muted:
+			return true
+	for card in bot.bot_player.hand_zone.cards:
+		if card is E2Abzu and bot._get_first_open_reserve_zone(bot.bot_player) != null:
+			return true
+	return false
+
+# Projected mana the bot can still spend when E2-abzu retrieves, after the
+# Walk of the Sage's own unlock and activation, or -1 when the tutor line is
+# not live. The retrieval can wait a turn, so two upkeeps of income count.
+static func walk_tutor_budget(bot) -> int:
+	var walk := find_walk_of_the_sage(bot)
+	if walk == null or not e2_abzu_available(bot):
+		return -1
+	var walk_cost: int = WalkOfTheSage.ACTIVATION_COST
+	if walk.is_face_down:
+		walk_cost += WalkOfTheSage.UNLOCK_COST
+	var budget := projected_upkeep_mana(bot, 2) - walk_cost
+	return budget if budget >= E2Abzu.RETURN_TO_HAND_COST else -1
+
+# Whether the tutor can currently reach this card: Walk of the Sage only
+# voids Mages, E2-abzu only returns Mer Mages, and the structure only lifts
+# one whose level fits under the retrieval budget.
+static func walk_tutor_can_reach(bot, target: Card) -> bool:
+	if target == null or target.card_type != Card.CardType.CREATURE or target.is_god \
+			or not target.has_type("Mer") or not target.has_type("Mage"):
+		return false
+	var budget := walk_tutor_budget(bot)
+	if budget < 0:
+		return false
+	return target.get_effective_level() + E2Abzu.RETURN_TO_HAND_COST + 1 <= budget
+
+# Isimud is standing by to deploy a Divine Manifestation: in hand (one free
+# summon away) or face-up on the field with its abilities live.
+static func isimud_available(bot) -> bool:
+	if bot == null or bot.bot_player == null:
+		return false
+	for card in bot.bot_player.hand_zone.cards:
+		if card is Isimud:
+			return true
+	for creature in bot._get_board_creatures(bot.bot_player):
+		if creature is Isimud and not creature.is_face_down and not creature.is_stealth \
+				and not creature.abilities_suppressed():
+			return true
+	return false
+
+# The Revelation continuation: a Mer Mage Divine Manifestation (Enki is the
+# flagship) is one tutor away from hand, and Isimud then deploys it at
+# Forerunner's discount without spending the turn's normal summon.
+static func isimud_revelation_continuation(bot, manifestation: Card) -> int:
+	if manifestation == null or not manifestation.has_type("Divine Manifestation"):
+		return 0
+	if not isimud_available(bot) or not walk_tutor_can_reach(bot, manifestation):
+		return 0
+	return int(Isimud.DIVINE_MANIFESTATION_DISCOUNT * MANA_VALUE * 0.3 * LINE_CONTINUATION_SHARE)
+
+# The Seventh Sage's Channel Ally (on summon, from the field or the Void)
+# and Imbue Ally (activate, from the field) replay another allied Ancient
+# Sage's impact, so the right channel is the one whose replayed impact is
+# actually worth something now: the Fourth Sage's Search re-tutors a Mer Sage
+# from the deck and works from the Void as well (Search does not need its
+# body), the Sixth Sage's Conjure Home fetches an Ancient Dwelling but only
+# while it stands on the field to void itself, and the other Sages keep
+# their flat impact values.
+static func seventh_sage_channel_gain(bot, target_sage: Card) -> int:
+	if target_sage == null or not visible(bot, target_sage):
+		return 0
+	if not target_sage.has_type("Sage") or str(target_sage.culture).strip_edges() != "Ancient":
+		return 0
+	var on_field: bool = target_sage.current_zone != null and target_sage.current_zone.is_board_zone()
+	match key(target_sage):
+		"FourthSageEnmegalamma":
+			if not bot.game_manager.can_player_add_to_hand_now(bot.bot_player):
+				return 0
+			var best := 0
+			var danger: int = bot._forecast_incoming_follower_loss()
+			for deck_card in target_sage.get_valid_targets(bot.game_manager):
+				var acquisition: int = target_sage.get_acquisition_cost(deck_card) \
+					if target_sage.has_method("get_acquisition_cost") else 0
+				var pick: int = bot._deck_pick_value(deck_card, bot.bot_player.mana - acquisition, danger)
+				best = maxi(best, pick - mana_penalty(bot, acquisition))
+			return best
+		"SixthSageAnEnlilda":
+			# Conjure Home needs the Sixth Sage on the field to void itself;
+			# channeled from the Void it fizzles without moving anything.
+			if not on_field:
+				return 0
+			var best_dwelling := 0
+			var dwelling_danger: int = bot._forecast_incoming_follower_loss()
+			for dwelling in target_sage.get_valid_targets(bot.game_manager):
+				best_dwelling = maxi(best_dwelling, bot._deck_pick_value(dwelling, bot.bot_player.mana, dwelling_danger, [target_sage]))
+			var body_loss: int = bot._get_card_economic_value(target_sage)
+			return maxi(0, best_dwelling - body_loss)
+		"FirstSageAdapa":
+			return 2600
+		"ThirdSageEnmedugga":
+			return 1400
+		_:
+			return 1200
