@@ -189,16 +189,7 @@ func _on_ui_refresh_requested() -> void:
 			network_manager.game_event_received.emit("full_state", event_data)
 		else:
 			network_manager.broadcast_event_to_peer(peer_id, "full_state", event_data)
-	for peer_id in network_manager.spectator_peer_ids:
-		network_manager.broadcast_event_to_peer(
-			int(peer_id),
-			"full_state",
-			_build_full_state_event_data(
-				GameState.SPECTATOR_VIEWER_INDEX,
-				"",
-				network_manager.get_spectator_visible_player_indices(int(peer_id))
-			)
-		)
+	_send_full_state_to_spectators("")
 	_rebroadcast_pending_state_refresh_interactions()
 
 func _rebroadcast_pending_state_refresh_interactions() -> void:
@@ -328,14 +319,7 @@ func _on_ui_interaction_requested(player_index: int, type: String, data: Diction
 				network_manager.game_event_received.emit("full_state", event_data)
 			elif peer_id > 1:
 				network_manager.broadcast_event_to_peer(peer_id, "full_state", event_data)
-		for peer_id in network_manager.spectator_peer_ids:
-			network_manager.broadcast_event_to_peer(
-				int(peer_id), "full_state",
-				_build_full_state_event_data(
-					GameState.SPECTATOR_VIEWER_INDEX, "",
-					network_manager.get_spectator_visible_player_indices(int(peer_id))
-				)
-			)
+		_send_full_state_to_spectators("")
 	_broadcast_ui_interaction(player_index, type, data)
 
 func _broadcast_ui_interaction(player_index: int, type: String, data: Dictionary) -> void:
@@ -381,17 +365,7 @@ func _broadcast_full_state(action_message: String) -> void:
 			network_manager.game_event_received.emit("full_state", event_data)
 		else:
 			network_manager.broadcast_event_to_peer(peer_id, "full_state", event_data)
-	for peer_id in network_manager.spectator_peer_ids:
-		network_manager.broadcast_event_to_peer(
-			int(peer_id),
-			"full_state",
-			_build_full_state_event_data(
-				GameState.SPECTATOR_VIEWER_INDEX,
-				action_message,
-				network_manager.get_spectator_visible_player_indices(int(peer_id)),
-				ui_sound_cues
-			)
-		)
+	_send_full_state_to_spectators(action_message, ui_sound_cues)
 
 func _broadcast_full_state_for_move(move: Dictionary) -> void:
 	if network_manager == null:
@@ -413,17 +387,10 @@ func _broadcast_full_state_for_move(move: Dictionary) -> void:
 			network_manager.game_event_received.emit("full_state", event_data)
 		else:
 			network_manager.broadcast_event_to_peer(peer_id, "full_state", event_data)
-	for peer_id in network_manager.spectator_peer_ids:
-		network_manager.broadcast_event_to_peer(
-			int(peer_id),
-			"full_state",
-			_build_full_state_event_data(
-				GameState.SPECTATOR_VIEWER_INDEX,
-				_label_for_move(move, _viewer_for_player_index(GameState.SPECTATOR_VIEWER_INDEX)),
-				network_manager.get_spectator_visible_player_indices(int(peer_id)),
-				ui_sound_cues
-			)
-		)
+	_send_full_state_to_spectators(
+		_label_for_move(move, _viewer_for_player_index(GameState.SPECTATOR_VIEWER_INDEX)),
+		ui_sound_cues
+	)
 
 func _broadcast_full_state_for_action(action: CardAction) -> void:
 	if network_manager == null:
@@ -443,17 +410,34 @@ func _broadcast_full_state_for_action(action: CardAction) -> void:
 			network_manager.game_event_received.emit("full_state", event_data)
 		else:
 			network_manager.broadcast_event_to_peer(peer_id, "full_state", event_data)
+	_send_full_state_to_spectators(
+		_label_for_resolved_action(action, _viewer_for_player_index(GameState.SPECTATOR_VIEWER_INDEX)),
+		ui_sound_cues
+	)
+
+## Spectators with identical visible-player sets receive identical payloads:
+## the spectator viewer masks the same zones, per-player prompt and attack
+## preview fields are omitted for non-player viewers, and the action clock
+## context is masked the same way for every spectator. Serialize the state
+## once per visibility class and reuse it for each spectator peer in that
+## class, so spectator count no longer multiplies the host's serialization
+## work per broadcast.
+func _send_full_state_to_spectators(action_message: String, ui_sound_cues: Array[String] = []) -> void:
+	if network_manager == null or network_manager.spectator_peer_ids.is_empty():
+		return
+	var event_data_by_visibility: Dictionary = {}
 	for peer_id in network_manager.spectator_peer_ids:
-		network_manager.broadcast_event_to_peer(
-			int(peer_id),
-			"full_state",
-			_build_full_state_event_data(
+		var visible_player_indices: Array[int] = network_manager.get_spectator_visible_player_indices(int(peer_id))
+		var visibility_key := str(visible_player_indices)
+		if not event_data_by_visibility.has(visibility_key):
+			event_data_by_visibility[visibility_key] = _build_full_state_event_data(
 				GameState.SPECTATOR_VIEWER_INDEX,
-				_label_for_resolved_action(action, _viewer_for_player_index(GameState.SPECTATOR_VIEWER_INDEX)),
-				network_manager.get_spectator_visible_player_indices(int(peer_id)),
+				action_message,
+				visible_player_indices,
 				ui_sound_cues
 			)
-		)
+		var event_data: Dictionary = event_data_by_visibility[visibility_key]
+		network_manager.broadcast_event_to_peer(int(peer_id), "full_state", event_data)
 
 # ---------------------------------------------------------------------------
 # Helpers

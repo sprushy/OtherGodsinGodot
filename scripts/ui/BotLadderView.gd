@@ -118,7 +118,6 @@ func _ready() -> void:
 	_view_deck_button.hide()
 	_delete_button = _add_button(header, "Delete bot", _confirm_delete_selected)
 	_delete_button.hide()
-	_add_deck_button.hide()
 	_add_deck_button = _add_button(header, "Add to my decks", _request_add_loaded_deck)
 	_add_deck_button.hide()
 	_delete_confirm = ConfirmationDialog.new()
