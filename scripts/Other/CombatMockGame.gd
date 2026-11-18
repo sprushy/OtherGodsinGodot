@@ -643,6 +643,9 @@ var _bdrag_card: Card = null
 var _bdrag_from_zone: Zone = null
 var _bdrag_active: bool = false
 var _bdrag_waiting_for_summon_resolution: bool = false
+# True while a drag release is submitting its own move/attack so card moves
+# caused by the drop itself do not cancel the gesture.
+var _bdrag_finishing: bool = false
 var _bdrag_visual: BoardZoneUI = null
 var _bdrag_source_zone_ui: BoardZoneUI = null
 var _bdrag_preview_defensive: bool = false
@@ -16598,9 +16601,27 @@ func _clear_interaction_refs_for_moved_card(card: Card, from_zone: Zone, to_zone
 			interaction_refs_changed = true
 	return interaction_refs_changed
 
+# A resolving action can move or destroy cards while the player is mid-drag on
+# a board creature (for example Sap answering a frontline entry). The held
+# gesture then dangles while grave animations and zone refreshes rebuild the
+# board UI, which has segfaulted the engine mid-resolution. Cancel the gesture
+# before that UI churn instead of leaving drag state alive across it.
+func _cancel_board_drag_for_external_card_move(from_zone: Zone, to_zone: Zone) -> void:
+	if not _bdrag_active or _bdrag_finishing:
+		return
+	var from_board := from_zone != null and from_zone.is_board_zone()
+	var to_board := to_zone != null and to_zone.is_board_zone()
+	var to_destroyed := to_zone != null and (
+		to_zone.zone_type == Zone.ZoneType.GRAVEYARD
+		or to_zone.zone_type == Zone.ZoneType.ABYSS
+	)
+	if from_board or to_board or to_destroyed:
+		_bdrag_cancel()
+
 func _on_local_player_card_moved(card: Card, from_zone: Zone, to_zone: Zone) -> void:
 	if card == null:
 		return
+	_cancel_board_drag_for_external_card_move(from_zone, to_zone)
 	if not _is_networked_client and to_zone != null and from_zone != to_zone \
 			and to_zone.zone_type == Zone.ZoneType.GRAVEYARD:
 		_start_card_grave_animation(card, _get_grave_card_source(card, from_zone))
@@ -22625,11 +22646,13 @@ func _input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
 		if _bdrag_visual != null:
+			_bdrag_finishing = true
 			_bdrag_finish(get_global_mouse_position())
 		else:
 			# Was a click (no movement) ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â treat as board card click
 			if _bdrag_card != null:
 				_on_board_card_pressed(_bdrag_card)
+		_bdrag_finishing = false
 		_bdrag_cleanup()
 		# The GUI must receive this release to clear the source card's mouse focus
 		# and resume hover/drag input for the next creature without an extra click.
@@ -23306,6 +23329,7 @@ func _bdrag_cleanup() -> void:
 	_set_bdrag_followers_target_preview(false)
 	_bdrag_active = false
 	_bdrag_waiting_for_summon_resolution = false
+	_bdrag_finishing = false
 	_bdrag_card = null
 	_bdrag_from_zone = null
 	if _bdrag_source_zone_ui != null and is_instance_valid(_bdrag_source_zone_ui):

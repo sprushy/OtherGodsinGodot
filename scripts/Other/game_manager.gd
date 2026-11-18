@@ -3374,6 +3374,19 @@ func _resolve_temporary_control_effects(ending_player: Player) -> void:
 		creature.reveal_from_stealth(self)
 	_temporary_control_effects = remaining_entries
 
+# True while a temporary control effect (e.g. Siren's Song) still has the card
+# scheduled to leave its current controller's board at a turn end.
+func is_temporarily_controlled(card: Card) -> bool:
+	if card == null or card.current_zone == null or not card.current_zone.is_board_zone():
+		return false
+	for entry in _temporary_control_effects:
+		if entry.get("creature") != card:
+			continue
+		if int(entry.get("return_turn_number", -1)) > turn_number:
+			continue
+		return true
+	return false
+
 func notify_god_power_activated(player: Player, god: Card, target: Card = null) -> void:
 	if player == null or god == null:
 		return

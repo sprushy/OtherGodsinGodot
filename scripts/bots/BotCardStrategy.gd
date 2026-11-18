@@ -268,6 +268,18 @@ static func _mana_saturation_ceiling(bot) -> int:
 		top = maxi(top, bot._get_play_cost(card, true))
 	for card in player.deck_zone.cards:
 		top = maxi(top, maxi(0, card.mana_cost))
+	# A Mer Mage stranded in the Void is still spend potential while E2-abzu
+	# can retrieve it: the structure's level-under-mana rule needs the whole
+	# retrieval price plus the mage's level on hand, so banking toward that
+	# line keeps mana at full rate instead of decaying as surplus the bot
+	# happily spends down every turn.
+	if e2_abzu_available(bot):
+		for void_card in player.abyss_zone.cards:
+			if void_card == null or void_card.is_god \
+					or void_card.card_type != Card.CardType.CREATURE \
+					or not void_card.has_type("Mer") or not void_card.has_type("Mage"):
+				continue
+			top = maxi(top, E2Abzu.RETURN_TO_HAND_COST + 1 + void_card.get_effective_level())
 	for zone in player.power_zones:
 		for card in zone.cards:
 			if card is PowerCard:
@@ -953,7 +965,14 @@ static func target_score(bot, card: Card, target: Card, action: CardAction = nul
 			score += bot._score_effect_summon_sacrifice_followup([target], activation_cost(bot, card))
 			return score
 		"SirensSong":
-			return combat_gain_for_stolen_creature(bot, target) if enemy else BAD
+			var steal: int = combat_gain_for_stolen_creature(bot, target) if enemy else BAD
+			if steal > BAD:
+				# A steal is normally a one-turn borrow of the body. With
+				# Mummu leading, Entropic Force can end the control early by
+				# shelving the borrowed card into its owner's deck, so the
+				# denial outlasts the borrow: see _mummu_temporary_control_bonus.
+				steal += bot._mummu_temporary_control_bonus(target)
+			return steal
 		"Absence":
 			if not enemy or not visible(bot, target):
 				return BAD

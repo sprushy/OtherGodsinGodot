@@ -120,12 +120,14 @@ func _try_attack() -> bool:
 		return false
 	return super._try_attack()
 
-func _on_match_move_failed(_reason: String) -> void:
+func _on_match_move_failed(reason: String) -> void:
+	_crumb("move_failed:" + reason)
 	_awaiting_network_state_after_submit = false
 	_forget_rejected_prompt()
 	_queue_retry_poll()
 
-func _on_submission_rejected(_reason: String) -> void:
+func _on_submission_rejected(reason: String) -> void:
+	_crumb("move_rejected:" + reason)
 	_awaiting_network_state_after_submit = false
 	_forget_rejected_prompt()
 	_queue_retry_poll()

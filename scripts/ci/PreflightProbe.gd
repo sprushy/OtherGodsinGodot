@@ -88,6 +88,8 @@ func run() -> bool:
 	_check_bot_immortal_techniques_refund(failures)
 	_check_bot_pazuzu_drain_forecast(failures)
 	_check_bot_next_turn_lethal(failures)
+	_check_bot_mummu_entropic_force_economy(failures)
+	_check_bot_e2_abzu_sage_retrieval(failures)
 	_check_bot_entomb_save_ceiling(failures)
 	_check_standing_bot_seeks(failures)
 	_check_ladder_pages(failures)
@@ -2910,6 +2912,189 @@ func _check_bot_pazuzu_drain_forecast(failures: PackedStringArray) -> void:
 	pazuzu.is_stealth = true
 	if bot._incoming_mana_drain() != 0:
 		failures.append("Bot forecast Pazuzu's drain through a hidden body it cannot see")
+	bot.detach()
+
+# Mummu's Entropic Force is a ramp engine, not only a survival removal: the
+# bot must shelve devalued fuel (expired Warding Stones, doomed Tablet of Life
+# summons, borrowed bodies about to return) for its level-minus-one mana, value
+# shelving that completes this turn's unaffordable summon, and price a Siren's
+# Song steal higher because Entropic Force can end the temporary control by
+# burying the borrowed card in its owner's deck.
+func _check_bot_mummu_entropic_force_economy(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	player.followers = 40
+	opponent.followers = 40
+	player.mana = 2
+	# A stocked deck keeps marginal mana at its full rate, as in a real match.
+	for index in range(4):
+		var deck_card := CreatureCard.new()
+		deck_card.card_owner = player
+		deck_card.mana_cost = 5 + (index % 2)
+		player.deck_zone.add_card(deck_card)
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var mummu := Mummu.new()
+	mummu.card_owner = player
+	player.god_zone.add_card(mummu)
+	var stones: Array[Card] = []
+	for index in range(3):
+		var stone := WardingStone.new()
+		stone.card_owner = player
+		player.reserve_zones[index].add_card(stone)
+		stones.append(stone)
+	var ramp: Dictionary = bot._plan_removal_god_ability(bot._forecast_incoming_follower_loss()).get("command", {})
+	if not stones.any(func(stone: Card) -> bool: return ramp.get("target_uid") == stone.uid):
+		failures.append("Mummu did not plan Entropic Force on an expired Warding Stone")
+	else:
+		var shelved := false
+		for _step in range(4):
+			if not bot._take_main_phase_action():
+				break
+			for _advance in range(8):
+				manager.advance_priority()
+			if stones.any(func(stone: Card) -> bool: return stone.current_zone == player.deck_zone):
+				shelved = true
+				break
+		if not shelved or player.mana != 3:
+			failures.append("Mummu did not ramp an expired Warding Stone through the main phase")
+	# A doomed Tablet of Life resurrection is preferred over a healthy body:
+	# shelving banks its level in mana and saves the card from the turn-end
+	# graveyard instead of paying a healthy card's board value.
+	var healthy := CreatureCard.new()
+	healthy.card_owner = player
+	healthy.creature_mode = Card.CreatureMode.DEFENSIVE
+	healthy.strength = 8
+	healthy.resilience = 12
+	player.frontline_zones[0].add_card(healthy)
+	var doomed := CreatureCard.new()
+	doomed.card_owner = player
+	doomed.creature_mode = Card.CreatureMode.AGGRESSIVE
+	doomed.strength = 5
+	doomed.resilience = 6
+	doomed.level = 4
+	doomed.creature_major_action_used = true
+	doomed.add_status_effect(
+		TabletOfLife.DESTROY_AT_TURN_END_STATUS,
+		"Preflight",
+		null,
+		player,
+		{"expires_turn": game.turn_number, "remove_when_leaves_board": true}
+	)
+	player.frontline_zones[1].add_card(doomed)
+	if bot._plan_removal_god_ability(bot._forecast_incoming_follower_loss()).get("command", {}).get("target_uid") != doomed.uid:
+		failures.append("Mummu preferred a healthy body over a doomed Tablet summon for Entropic Force")
+	player.frontline_zones[0].remove_card(healthy)
+	player.frontline_zones[1].remove_card(doomed)
+	# A borrowed body scheduled to return to the opponent is premium fuel:
+	# Entropic Force ends the temporary control, burying the card in its
+	# owner's deck bottom and pocketing the mana.
+	var borrowed := CreatureCard.new()
+	borrowed.card_name = "Fixture Borrowed Body"
+	borrowed.card_owner = opponent
+	borrowed.creature_mode = Card.CreatureMode.AGGRESSIVE
+	borrowed.strength = 15
+	borrowed.resilience = 20
+	borrowed.level = 3
+	borrowed.creature_major_action_used = true
+	opponent.frontline_zones[0].add_card(borrowed)
+	var song := SirensSong.new()
+	song.card_owner = player
+	if not game.grant_temporary_control_of_creature(borrowed, player, song):
+		failures.append("Fixture failed to grant temporary control of the borrowed body")
+	elif bot._plan_removal_god_ability(bot._forecast_incoming_follower_loss()).get("command", {}).get("target_uid") != borrowed.uid:
+		failures.append("Mummu did not prefer ending a temporary control with Entropic Force")
+	borrowed.current_zone.remove_card(borrowed)
+	opponent.frontline_zones[0].add_card(borrowed)
+	# Shelving that completes this turn's unaffordable summon is worth more
+	# than the same shelve with the summon still out of reach.
+	var hand_creature := CreatureCard.new()
+	hand_creature.card_owner = player
+	hand_creature.strength = 8
+	hand_creature.resilience = 12
+	hand_creature.mana_cost = player.mana + 1
+	player.hand_zone.add_card(hand_creature)
+	var funded := int(bot._plan_removal_god_ability(bot._forecast_incoming_follower_loss()).get("score", 0))
+	player.hand_zone.remove_card(hand_creature)
+	var unfunded := int(bot._plan_removal_god_ability(bot._forecast_incoming_follower_loss()).get("score", 0))
+	if funded < unfunded + 2000:
+		failures.append("Entropic Force did not value shelving to fund this turn's unaffordable summon")
+	# A Siren's Song steal is worth more with Mummu leading because the
+	# borrow can be ended permanently with Entropic Force.
+	var steal_score := BotCardStrategyScript.target_score(bot, song, borrowed)
+	mummu.is_muted = true
+	var muted_score := BotCardStrategyScript.target_score(bot, song, borrowed)
+	if steal_score <= muted_score:
+		failures.append("Siren's Song steal did not gain value from Mummu's Entropic Force follow-up")
+	bot.detach()
+
+func _check_bot_e2_abzu_sage_retrieval(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	player.followers = 40
+	opponent.followers = 40
+	# Retrieving the level-6 Enki needs 10 mana on hand, so the stock must
+	# stay worth banking up to that line instead of decaying as surplus the
+	# bot spends down every turn.
+	player.mana = 10
+	for index in range(4):
+		var deck_card := CreatureCard.new()
+		deck_card.card_owner = player
+		deck_card.mana_cost = 1
+		player.deck_zone.add_card(deck_card)
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var abzu := E2Abzu.new()
+	abzu.card_owner = player
+	player.reserve_zones[0].add_card(abzu)
+	var enki := EnkiLordOfEridu.new()
+	enki.card_owner = player
+	player.abyss_zone.add_card(enki)
+	var retrieval_floor := E2Abzu.RETURN_TO_HAND_COST + 1 + enki.get_effective_level()
+	if BotCardStrategyScript._mana_saturation_ceiling(bot) < retrieval_floor:
+		failures.append("Mana ceiling ignored a Void Mer Mage the standing E2-abzu can retrieve")
+	var plan := bot._plan_e2_abzu_return(abzu)
+	if plan.get("command", {}).get("target_uid") != enki.uid or int(plan.get("score", 0)) <= 0:
+		failures.append("E2-abzu did not plan the Enki retrieval from the Void")
+	var retrieved := false
+	for _step in range(4):
+		if not bot._take_main_phase_action():
+			break
+		for _advance in range(8):
+			manager.advance_priority()
+		if enki.current_zone == player.hand_zone:
+			retrieved = true
+			break
+	if not retrieved:
+		failures.append("Bot left a retrievable Enki stranded in the Void through the main phase")
+	enki.current_zone.remove_card(enki)
+	# A retrieved Adapa is bought for its Silence, priced through the same
+	# impact table the Seventh Sage's channel uses; a passive-only Sage
+	# never reads as carrying an impact at all.
+	var adapa := FirstSageAdapa.new()
+	adapa.card_owner = player
+	player.abyss_zone.add_card(adapa)
+	var opposing_power := WalkOfTheSage.new()
+	opposing_power.card_owner = opponent
+	opponent.power_zones[0].add_card(opposing_power)
+	if bot._sage_retrieval_impact_gain(adapa, false) <= 0:
+		failures.append("Sage retrieval ignored Adapa's Silence impact")
+	if bot._sage_retrieval_impact_gain(enki, false) != 0:
+		failures.append("Sage retrieval priced a phantom impact on the passive-only Enki")
 	bot.detach()
 
 func _check_bot_entomb_save_ceiling(failures: PackedStringArray) -> void:

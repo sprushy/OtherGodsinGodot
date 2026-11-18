@@ -2678,8 +2678,11 @@ func _plan_e2_abzu_return(abzu: E2Abzu) -> Dictionary:
 	var summon_zone := _get_first_open_summon_zone(bot_player)
 	for mage: Card in abzu.get_valid_void_targets(game_manager):
 		var score := _get_hand_value(mage) * 100 - E2Abzu.RETURN_TO_HAND_COST * _mana_rate()
-		if summon_zone != null and _score_creature_play_in_zone(mage, summon_zone, mana_after_return) > 0:
+		var summon_live := summon_zone != null \
+				and _score_creature_play_in_zone(mage, summon_zone, mana_after_return) > 0
+		if summon_live:
 			score += 2500
+		score += _sage_retrieval_impact_gain(mage, summon_live)
 		if score <= best_score:
 			continue
 		best_score = score
@@ -2692,6 +2695,34 @@ func _plan_e2_abzu_return(abzu: E2Abzu) -> Dictionary:
 			},
 		}
 	return best_plan
+
+# A retrieved Sage is bought for its impact, not its body: the summon fires
+# Silence, Good Fortune, Search, or a channeled replay, so the E2-abzu return
+# line is priced through the same impact table the Seventh Sage's Channel Ally
+# uses. Conjure Home stays out on purpose — the Sixth Sage only pays while it
+# stands on the field, and the live summon score already carries that trade
+# through its own trigger bonus.
+func _sage_retrieval_impact_gain(mage: Card, summon_live: bool) -> int:
+	if mage == null or not mage.has_type("Sage") or str(mage.culture).strip_edges() != "Ancient" \
+			or not mage.declares_impact_trigger() or mage.abilities_suppressed_by_effects():
+		return 0
+	if mage is FirstSageAdapa or mage is ThirdSageEnmedugga:
+		# Silence and Good Fortune both fizzle without a legal target, so a
+		# retrieval planned around them needs the target pool right now.
+		if mage.get_valid_targets(game_manager).is_empty():
+			return 0
+	if mage is SeventhSageUtuabzu and mage.get_channel_ally_targets(game_manager).is_empty():
+		# The channel replay needs another allied Sage to exist at all.
+		return 0
+	var gain := CardStrategy.seventh_sage_channel_gain(self, mage)
+	if gain <= 0:
+		return 0
+	if summon_live:
+		return gain
+	# The summon cannot go this turn (the summon is spent, no lane is open, or
+	# the retrieval leaves the stock short), so the impact waits a turn and the
+	# continuation line is priced at the standard discounted share.
+	return int(float(gain) * CardStrategy.LINE_CONTINUATION_SHARE)
 
 func _effect_follower_safety_gain(card: Card, target: Card, danger: int) -> int:
 	if danger < 0:
@@ -4156,6 +4187,19 @@ func _plan_removal_god_ability(danger: int, attacks: Array[Dictionary] = [], com
 			continue
 		var gain := _effect_follower_safety_gain(god, target, danger)
 		var own := target.get_controller() == bot_player
+		var mummu := god as Mummu
+		if own and mummu != null:
+			# Entropic Force returns the card to the deck instead of
+			# destroying it, so it is scored as a ramp play as well as a
+			# survival removal: see _plan_mummu_entropic_force.
+			if _is_destroyed_at_this_turns_end(target) or game_manager.is_temporarily_controlled(target):
+				# Doomed and borrowed bodies leave at this turn's end either
+				# way, so shelving them is follower-safety neutral.
+				gain = 0
+			var entropic := _plan_mummu_entropic_force(mummu, target, gain)
+			if _is_better_strategy_plan(entropic, best):
+				best = entropic
+			continue
 		if own and gain <= 0:
 			continue
 		var score := gain + (CardStrategy.value(self, target) if not own else -_get_card_economic_value(target))
@@ -4176,6 +4220,78 @@ func _plan_removal_god_ability(danger: int, attacks: Array[Dictionary] = [], com
 		if _is_better_strategy_plan(plan, best):
 			best = plan
 	return best
+
+# Entropic Force shelves a face-up card you control into your deck and pays
+# its level minus one in mana. The card is not destroyed — it returns through
+# the draw cycle — so the price is only the target's residual board value,
+# never its pristine card value. That makes Mummu's devalued fuel read as the
+# ramp play it is: expired Warding Stones, debuffed bodies, summons that are
+# destroyed at this turn's end (Tablet of Life's resurrection), and borrowed
+# bodies about to return to the opponent. Healthy cards only shelve when the
+# mana still matters, which marginal mana pricing plus the summon-funding
+# bonus below cover.
+func _plan_mummu_entropic_force(god: Mummu, target: Card, safety_gain: int) -> Dictionary:
+	if match_manager.can_attack(target) and _can_attack_followers_safely(target) \
+			and game_manager.get_creature_action_mana_cost(target, "attack") <= bot_player.mana:
+		# The target still holds a safe direct attack, and recoil cannot
+		# take the banked card away faster than its own turn-end expiry:
+		# spend that attack first and shelve on the next planning pass.
+		return {}
+	var mana := maxi(0, target.get_effective_level() - 1)
+	var score := safety_gain
+	if game_manager.can_player_gain_mana_now(bot_player):
+		score += CardStrategy.mana_gain_value(self, mana)
+		if _mummu_shelve_funds_summon(mana):
+			# The shelved card's mana completes this turn's summon.
+			score += ECON_CARD_VALUE / 2
+	if _is_destroyed_at_this_turns_end(target):
+		# The body leaves for the graveyard at this turn's end regardless;
+		# shelving banks it back into the deck instead of losing it.
+		score += ECON_CARD_VALUE / 2
+	elif game_manager.is_temporarily_controlled(target):
+		# The borrowed body returns to the opponent at this turn's end;
+		# Entropic Force ends the control early, burying the card in their
+		# deck bottom while pocketing the mana.
+		score += _get_card_economic_value(target) * 3 / 4
+	else:
+		# The card shelves instead of dying, so only the share of its value
+		# spent before the draw cycle brings it back is a real cost.
+		score -= _get_card_economic_value(target) / 2
+	if score <= 0:
+		return {}
+	return {"score": score, "command": {"type": "god_ability", "god_uid": god.uid, "target_uid": target.uid}}
+
+# True when Entropic Force's mana converts a currently unaffordable hand
+# creature into this turn's summon.
+func _mummu_shelve_funds_summon(mana: int) -> bool:
+	if mana <= 0 or bot_player.hand_zone.cards.is_empty():
+		return false
+	if _get_best_affordable_hand_creature(0) != null:
+		return false
+	return _get_best_affordable_hand_creature(mana) != null
+
+# With Mummu leading, a temporary control effect is more than a one-turn
+# borrow: Entropic Force can end the control early by shelving the borrowed
+# card into its owner's deck, banking the level mana and denying the redeploy.
+func _mummu_temporary_control_bonus(target: Card) -> int:
+	if target == null or game_manager == null or bot_player == null:
+		return 0
+	var god := _find_player_god()
+	if god == null or not (god is Mummu) or not god.can_use_god_power(game_manager):
+		return 0
+	if game_manager.is_immune_to_source(target, god) or not game_manager.can_player_gain_mana_now(bot_player):
+		return 0
+	# The stolen body itself becomes face-up board presence the bot controls,
+	# so Entropic Force's precondition holds once the steal resolves.
+	return _get_card_economic_value(target) * 3 / 4 \
+		+ CardStrategy.mana_gain_value(self, maxi(0, target.get_effective_level() - 1))
+
+# True when the card is destroyed at this turn's end (Tablet of Life's
+# resurrection is the known source).
+func _is_destroyed_at_this_turns_end(card: Card) -> bool:
+	if card == null or not card.has_status_effect(TabletOfLife.DESTROY_AT_TURN_END_STATUS):
+		return false
+	return int(card.get_status_effect(TabletOfLife.DESTROY_AT_TURN_END_STATUS).get("expires_turn", -1)) <= game_manager.turn_number
 
 func _plan_defensive_attack(attacks: Array[Dictionary], danger: int) -> Dictionary:
 	var best := {}
