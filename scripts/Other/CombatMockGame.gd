@@ -7486,6 +7486,7 @@ func _do_update_ui(expected_generation: int = -1) -> void:
 	_refresh_all_card_priority_toggle_ui()
 	_refresh_observer_perspective_button()
 	_restore_active_raven_prime_prompt_overlay()
+	_resync_raven_prime_prompts_from_match_state()
 	_sync_heavy_snow_weather_visuals()
 	_sync_drought_weather_visuals()
 	# Hand redraws append new controls; the shelving dialog must keep input priority.
@@ -14742,6 +14743,54 @@ func _restore_active_raven_prime_prompt_overlay() -> void:
 	call_deferred("_show_next_huginn_perish_prime_prompt")
 	call_deferred("_show_next_muninn_perish_prime_prompt")
 
+# A pending raven prime choice blocks every other command, and the broadcaster
+# only re-sends prompts alongside new moves or action resolutions. Once the
+# match freezes waiting on the choice, no further events can re-offer it, so
+# if the UI ever loses the prompt the match dead-locks. Rebuild it from the
+# authoritative pending list on every UI refresh instead: any click (even a
+# rejected one) refreshes the UI and brings the choice back.
+func _resync_raven_prime_prompts_from_match_state() -> void:
+	if _is_observer_mode or game_manager == null or match_manager == null:
+		return
+	if _game_finished or _match_reconnect_waiting:
+		return
+	if _is_networked_client:
+		# Networked clients do not own the authoritative pending list; the
+		# server re-sends prompts together with its state broadcasts.
+		return
+	if _has_raven_prime_prompt_state():
+		return
+	var local_seat := -1
+	if network_manager != null:
+		local_seat = int(network_manager.local_player_index)
+	if local_seat < 0 or local_seat >= game_manager.players.size():
+		return
+	var local_player := game_manager.players[local_seat]
+	for entry in match_manager.get_pending_ui_interaction_entries():
+		if entry.get("player", null) != local_player:
+			continue
+		var interaction_type := str(entry.get("type", ""))
+		if interaction_type != "huginn_perish_prime" and interaction_type != "muninn_perish_prime":
+			continue
+		var data: Dictionary = entry.get("data", {})
+		var source_uid := str(data.get("source_uid", ""))
+		if interaction_type == "huginn_perish_prime":
+			var huginn := game_manager.get_card_by_uid(source_uid) as Huginn
+			if huginn != null:
+				_queue_huginn_perish_prime_prompt(
+					huginn,
+					_resolve_prompt_payload_targets(data),
+					int(entry.get("prompt_id", -1))
+				)
+		else:
+			var muninn := game_manager.get_card_by_uid(source_uid) as Muninn
+			if muninn != null:
+				_queue_muninn_perish_prime_prompt(
+					muninn,
+					_resolve_prompt_payload_targets(data),
+					int(entry.get("prompt_id", -1))
+				)
+
 func _get_card_zone_label(card: Card) -> String:
 	if card == null or card.current_zone == null:
 		return ""
@@ -19867,8 +19916,18 @@ func _show_next_huginn_perish_prime_prompt() -> void:
 			current_targets = card.get_valid_hex_targets()
 		if current_targets.is_empty():
 			_queued_huginn_prime_prompt_targets.erase(card.uid)
+			var empty_prompt_key := str(_queued_huginn_prime_prompt_keys.get(card.uid, ""))
 			_queued_huginn_prime_prompt_keys.erase(card.uid)
-			_set_action_label_text("%s perished, but found no hex to prime." % card.card_name)
+			# Hex Search is mandatory, so resolve the prompt instead of dropping
+			# it. A dropped prompt leaves the match blocked on a pending choice.
+			if _submit_prompt_choice_command({
+				"type": "huginn_perish_prime_choice",
+				"source_uid": card.uid,
+				"target_uid": "",
+			}):
+				_mark_raven_prime_prompt_handled(empty_prompt_key)
+			else:
+				_set_action_label_text("%s perished, but found no hex to prime." % card.card_name)
 			update_ui()
 			continue
 		if not _is_player_local(card.card_owner):
@@ -19891,10 +19950,17 @@ func _show_next_huginn_perish_prime_prompt() -> void:
 				"target_uid": chosen_hex.uid if chosen_hex != null else "",
 			}):
 				_mark_raven_prime_prompt_handled(resolved_prompt_key)
-				update_ui()
+			elif match_manager != null and match_manager.has_pending_ui_interaction(
+					resolved_card.card_owner, "huginn_perish_prime", resolved_card.uid
+			):
+				# The authority still waits on this choice: re-offer it instead of
+				# stranding the player on a closed overlay.
+				_queued_huginn_prime_prompt_keys[resolved_card.uid] = resolved_prompt_key
+				if resolved_card not in _pending_huginn_prime_prompts:
+					_pending_huginn_prime_prompts.push_front(resolved_card)
 			else:
-				_set_action_label_text("Could not submit the prime decision. Please try again.")
-				update_ui()
+				# Nothing is waiting on the choice anymore; never resurrect it.
+				_mark_raven_prime_prompt_handled(resolved_prompt_key)
 			update_ui()
 			call_deferred("_show_next_huginn_perish_prime_prompt")
 		_show_card_selection_overlay(
@@ -19945,8 +20011,19 @@ func _show_next_muninn_perish_prime_prompt() -> void:
 			current_targets = card.get_valid_charm_targets()
 		if current_targets.is_empty():
 			_queued_muninn_prime_prompt_targets.erase(card.uid)
+			var empty_prompt_key := str(_queued_muninn_prime_prompt_keys.get(card.uid, ""))
 			_queued_muninn_prime_prompt_keys.erase(card.uid)
-			_set_action_label_text("%s perished, but found no charm to prime." % card.card_name)
+			# Charm Search is mandatory, so resolve the prompt instead of
+			# dropping it. A dropped prompt leaves the match blocked on a
+			# pending choice.
+			if _submit_prompt_choice_command({
+				"type": "muninn_perish_prime_choice",
+				"source_uid": card.uid,
+				"target_uid": "",
+			}):
+				_mark_raven_prime_prompt_handled(empty_prompt_key)
+			else:
+				_set_action_label_text("%s perished, but found no charm to prime." % card.card_name)
 			update_ui()
 			continue
 		if not _is_player_local(card.card_owner):
@@ -19969,10 +20046,17 @@ func _show_next_muninn_perish_prime_prompt() -> void:
 				"target_uid": chosen_charm.uid if chosen_charm != null else "",
 			}):
 				_mark_raven_prime_prompt_handled(resolved_prompt_key)
-				update_ui()
+			elif match_manager != null and match_manager.has_pending_ui_interaction(
+					resolved_card.card_owner, "muninn_perish_prime", resolved_card.uid
+			):
+				# The authority still waits on this choice: re-offer it instead of
+				# stranding the player on a closed overlay.
+				_queued_muninn_prime_prompt_keys[resolved_card.uid] = resolved_prompt_key
+				if resolved_card not in _pending_muninn_prime_prompts:
+					_pending_muninn_prime_prompts.push_front(resolved_card)
 			else:
-				_set_action_label_text("Could not submit the prime decision. Please try again.")
-				update_ui()
+				# Nothing is waiting on the choice anymore; never resurrect it.
+				_mark_raven_prime_prompt_handled(resolved_prompt_key)
 			update_ui()
 			call_deferred("_show_next_muninn_perish_prime_prompt")
 		_show_card_selection_overlay(

@@ -173,11 +173,22 @@ func _on_match_action_resolved(_action: CardAction) -> void:
 func _on_match_ui_refresh_requested() -> void:
 	_queue_step()
 
+# Temporary [CRUMB] breadcrumbs for localizing mid-match freezes: every line
+# lands in user://logs/godot.log, so the last crumb before a silence names the
+# phase that hung. Grep for "[CRUMB]" and remove these once the hang is found.
+func _crumb(label: String) -> void:
+	var turn := -1
+	if game_manager != null:
+		turn = game_manager.turn_number
+	print("[CRUMB] pid=", OS.get_process_id(), " p", player_index,
+			" turn=", turn, " ms=", Time.get_ticks_msec(), " ", label)
+
 func _on_match_ui_interaction(prompt_player_index: int, type: String, data: Dictionary) -> void:
 	if prompt_player_index != player_index:
 		return
 	if not prompt_types_only.is_empty() and type not in prompt_types_only:
 		return
+	_crumb("prompt:" + type)
 	_mana_econ_cache = {}
 	_tonal_setup_cache = {}
 	_altar_line_cache = {}
@@ -327,19 +338,28 @@ func _run_step() -> void:
 	if not _should_queue_step():
 		return
 	if _owns_pending_click_selection():
+		_crumb("click_selection:start")
 		_resolve_own_click_selection()
+		_crumb("click_selection:end")
 		return
 	if not game_manager.action_stack.is_empty():
+		_crumb("priority:start")
 		_handle_priority()
+		_crumb("priority:end")
 		return
 	if game_manager.current_player != bot_player:
 		return
 	if not game_manager.has_resolved_turn_upkeep():
+		_crumb("upkeep:start")
 		_handle_upkeep()
+		_crumb("upkeep:end")
 		return
+	_crumb("main:start")
 	if _take_main_phase_action():
+		_crumb("main:acted")
 		_queue_retry_poll()
 		return
+	_crumb("finish_turn")
 	_finish_turn()
 
 func _handle_upkeep() -> void:
@@ -549,6 +569,7 @@ func _upkeep_mana_enables_manifestation(mana_gain: int) -> bool:
 func _handle_priority() -> void:
 	if game_manager.priority_player != bot_player:
 		return
+	_crumb("priority:choose")
 	var chosen_response := _choose_priority_response()
 	if chosen_response != null and _submit_priority_response(chosen_response):
 		return
@@ -757,12 +778,14 @@ func _take_main_phase_action() -> bool:
 	# A ready Mead brew is on this turn's table, so combat lines price
 	# against the brewable stock; the lethal submit below brews first when
 	# the line's action taxes run past the current stock.
+	_crumb("plan:combat")
 	var mana_budget := bot_player.mana + _ready_brew_mana_gain()
 	var attacks := _get_combat_candidates(mana_budget)
 	var combat := _plan_combat(attacks, [], null, 0, null, mana_budget)
 	var attack := combat
 	if bool(combat.get("lethal", false)):
 		return _submit_attack_line(combat, true, mana_budget)
+	_crumb("plan:hermes")
 	var hermes_plan := _plan_hermes_speed(attacks, combat, mana_budget)
 	if bool(hermes_plan.get("lethal", false)):
 		# The speed line's activation plus attack taxes may need the brew.
@@ -770,6 +793,7 @@ func _take_main_phase_action() -> bool:
 			hermes_plan["brew_setup"] = true
 		if _submit_strategy_plan(hermes_plan):
 			return true
+	_crumb("plan:shift")
 	var danger := _forecast_incoming_follower_loss()
 	var shift := _plan_shift(attacks, combat, danger)
 	if bool(shift.get("lethal", false)) and _submit_strategy_plan(shift):
@@ -780,13 +804,19 @@ func _take_main_phase_action() -> bool:
 			attack = supported
 	if _try_activate_mead_for_enki():
 		return true
+	_crumb("plan:summon")
 	var summon := _plan_creature_summon(danger, attacks, combat)
 	var attack_setup: Dictionary = summon.get("attack_setup", {})
 	var removals: Array[Dictionary] = []
+	_crumb("plan:play")
 	var play := _get_best_strategy_action(attacks, combat, danger, removals)
+	_crumb("plan:recruit_removal")
 	var recruit_removal := _plan_summoned_removal_ability(attacks, combat, danger)
+	_crumb("plan:god_removal")
 	var god_removal := _plan_removal_god_ability(danger, attacks, combat, removals)
+	_crumb("plan:power_activation")
 	var power_activation := _plan_power_activation(null, danger, combat, attacks, removals)
+	_crumb("plan:paired_removals")
 	var paired_removal := _plan_paired_removals(removals, attacks, combat, danger)
 	var combat_score := int(combat.get("score", 0))
 	var setups := [play, god_removal, power_activation, attack_setup, recruit_removal, paired_removal]
@@ -798,9 +828,13 @@ func _take_main_phase_action() -> bool:
 		if (setup.get("lethal", false) or (improves_combat and improves_economy and danger < bot_player.followers)) \
 				and _submit_strategy_plan(setup):
 			return true
+	_crumb("plan:manifestation")
 	var manifestation := _plan_god_manifestation(attack, danger)
+	_crumb("plan:unlock")
 	var unlock := _plan_power_unlock(danger, attacks, combat)
+	_crumb("plan:deck_god")
 	var deck_ability := _plan_deck_god_ability(danger)
+	_crumb("plan:support")
 	var support := _plan_strategy_support(danger)
 	var defenses := [
 		play, manifestation, unlock, _plan_defensive_stance(danger), god_removal,
@@ -826,6 +860,7 @@ func _take_main_phase_action() -> bool:
 		return true
 	if _try_summon_askelladen_answer():
 		return true
+	_crumb("plan:united_front")
 	var united_front := _plan_united_front(attacks, attack)
 	var plans := [united_front]
 	plans.append_array(defenses)
@@ -846,6 +881,7 @@ func _take_main_phase_action() -> bool:
 	for plan in delayed:
 		if _submit_strategy_plan(plan):
 			return true
+	_crumb("plan:try_chain")
 	if _try_prepare_wheel_of_fire():
 		return true
 	if _try_prepare_vision_of_odin():
@@ -860,6 +896,7 @@ func _take_main_phase_action() -> bool:
 		return true
 	if _try_improve_creature_position():
 		return true
+	_crumb("plan:attack_line")
 	if _submit_attack_line(attack, attack == combat, mana_budget):
 		return true
 	if _try_attack():
@@ -5113,6 +5150,7 @@ func _known_entry_response_penalty(entrant: Card, zone: Zone, stealth: bool) -> 
 	return worst
 
 func _try_attack() -> bool:
+	_crumb("try_attack")
 	var attackers := _get_attack_ready_creatures()
 	if attackers.is_empty():
 		return false
@@ -5436,6 +5474,7 @@ func _submit_action(command: Dictionary) -> bool:
 		command["_prompt_id"] = _current_card_prompt_id
 		_last_submitted_prompt_id = _current_card_prompt_id
 	var submitted := game_input.submit_action(command)
+	_crumb("submit:" + str(command.get("type", "?")) + " ok=" + str(submitted))
 	if not submitted:
 		_forget_rejected_prompt()
 	return submitted

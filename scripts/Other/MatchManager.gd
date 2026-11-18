@@ -1779,6 +1779,25 @@ func get_pending_retreat_prompt_data(player: Player) -> Dictionary:
 			return {"askelladen_uid": ask_uid, "_prompt_id": prompt_id}
 	return {}
 
+func has_pending_ui_interaction(player: Player, interaction_type: String, source_uid: String = "") -> bool:
+	if player == null or interaction_type.strip_edges() == "":
+		return false
+	for entry in _pending_ui_interactions:
+		if entry.get("player", null) != player or str(entry.get("type", "")) != interaction_type:
+			continue
+		if source_uid == "":
+			return true
+		var entry_data: Dictionary = entry.get("data", {})
+		if str(entry_data.get("source_uid", "")) == source_uid:
+			return true
+	return false
+
+func get_pending_ui_interaction_entries() -> Array[Dictionary]:
+	var entries: Array[Dictionary] = []
+	for entry in _pending_ui_interactions:
+		entries.append(entry)
+	return entries
+
 func _is_reveal_interaction_type(interaction_type: String) -> bool:
 	return interaction_type.strip_edges().to_lower().contains("reveal")
 
@@ -6057,14 +6076,23 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var source_uid: String = command.get("source_uid", "")
 			var huginn := game_manager.get_card_by_uid(source_uid) as Huginn
 			if huginn == null:
-				move_failed.emit("huginn_perish_prime_choice: card not found")
-				return false
+				# The raven has left play entirely, so no later answer can resolve
+				# this prompt. Consume it instead of blocking every other command.
+				game_manager.note_player_feedback("Huginn perished before its Hex Search could resolve.")
+				move_validated.emit(command)
+				return true
 			var valid_targets := huginn.get_valid_hex_targets()
 			var target_uid: String = command.get("target_uid", "")
 			var target := game_manager.get_card_by_uid(target_uid) if target_uid != "" else null
 			if target == null or target not in valid_targets:
-				move_failed.emit("huginn_perish_prime_choice: invalid Hex target")
-				return false
+				# Hex Search is mandatory. A missing or stale choice resolves with
+				# the first remaining valid Hex (or fizzles when none are left)
+				# rather than rejecting and leaving the prompt pending forever.
+				if valid_targets.is_empty():
+					game_manager.note_player_feedback(huginn.resolve_perish_prime_choice(game_manager, null))
+					move_validated.emit(command)
+					return true
+				target = valid_targets[0]
 			game_manager.note_player_feedback(huginn.resolve_perish_prime_choice(game_manager, target))
 			move_validated.emit(command)
 			return true
@@ -6072,14 +6100,19 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var source_uid: String = command.get("source_uid", "")
 			var muninn := game_manager.get_card_by_uid(source_uid) as Muninn
 			if muninn == null:
-				move_failed.emit("muninn_perish_prime_choice: card not found")
-				return false
+				game_manager.note_player_feedback("Muninn perished before its Charm Search could resolve.")
+				move_validated.emit(command)
+				return true
 			var valid_targets := muninn.get_valid_charm_targets()
 			var target_uid: String = command.get("target_uid", "")
 			var target := game_manager.get_card_by_uid(target_uid) if target_uid != "" else null
 			if target == null or target not in valid_targets:
-				move_failed.emit("muninn_perish_prime_choice: invalid Charm target")
-				return false
+				# Charm Search is mandatory; mirror the Huginn fallback above.
+				if valid_targets.is_empty():
+					game_manager.note_player_feedback(muninn.resolve_perish_prime_choice(game_manager, null))
+					move_validated.emit(command)
+					return true
+				target = valid_targets[0]
 			game_manager.note_player_feedback(muninn.resolve_perish_prime_choice(game_manager, target))
 			move_validated.emit(command)
 			return true
