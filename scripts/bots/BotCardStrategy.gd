@@ -915,10 +915,19 @@ static func target_score(bot, card: Card, target: Card, action: CardAction = nul
 			if bot._get_first_open_summon_zone(bot.bot_player) == null:
 				return BAD
 			var score := value(bot, target)
+			var doomed_bodies: Array = []
 			if key(card) == "TabletOfLife" and target.get_effective_level() >= 3:
 				score = int(score * 0.45)
-			score += bot._score_effect_summon_sacrifice_followup([target], activation_cost(bot, card))
-			return score
+				# The resurrection is destroyed at this turn's end, so its only
+				# window as sacrifice payment for a hand Demon is the same turn
+				# the spell resolves.
+				doomed_bodies = [target]
+			var followup: int = bot._score_effect_summon_sacrifice_followup([target], activation_cost(bot, card), [], doomed_bodies)
+			if followup <= BAD:
+				# The cast would burn the sacrifice line that docks a hand
+				# Demon here; hold the spell for a turn with its window open.
+				return BAD
+			return score + followup
 		"BookOfLife":
 			if bot._get_first_open_summon_zone(bot.bot_player) == null:
 				return BAD

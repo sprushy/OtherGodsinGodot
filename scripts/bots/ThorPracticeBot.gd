@@ -741,14 +741,22 @@ func _submit_priority_response(card: Card) -> bool:
 	return false
 
 func _take_main_phase_action() -> bool:
-	var attacks := _get_combat_candidates()
-	var combat := _plan_combat(attacks)
+	# A ready Mead brew is on this turn's table, so combat lines price
+	# against the brewable stock; the lethal submit below brews first when
+	# the line's action taxes run past the current stock.
+	var mana_budget := bot_player.mana + _ready_brew_mana_gain()
+	var attacks := _get_combat_candidates(mana_budget)
+	var combat := _plan_combat(attacks, [], null, 0, null, mana_budget)
 	var attack := combat
 	if bool(combat.get("lethal", false)):
-		return _submit_attack(attack["attacker"], attack["target"])
-	var hermes_plan := _plan_hermes_speed(attacks, combat)
-	if bool(hermes_plan.get("lethal", false)) and _submit_strategy_plan(hermes_plan):
-		return true
+		return _submit_attack_line(combat, true, mana_budget)
+	var hermes_plan := _plan_hermes_speed(attacks, combat, mana_budget)
+	if bool(hermes_plan.get("lethal", false)):
+		# The speed line's activation plus attack taxes may need the brew.
+		if _brew_enables_spend(mana_budget - int(hermes_plan.get("mana", mana_budget))):
+			hermes_plan["brew_setup"] = true
+		if _submit_strategy_plan(hermes_plan):
+			return true
 	var danger := _forecast_incoming_follower_loss()
 	var shift := _plan_shift(attacks, combat, danger)
 	if bool(shift.get("lethal", false)) and _submit_strategy_plan(shift):
@@ -820,7 +828,7 @@ func _take_main_phase_action() -> bool:
 			delayed.append(plan)
 		elif _submit_strategy_plan(plan):
 			return true
-	if not delayed.is_empty() and not attack.is_empty() and _submit_attack(attack["attacker"], attack["target"]):
+	if not delayed.is_empty() and _submit_attack_line(attack, attack == combat, mana_budget):
 		return true
 	for plan in delayed:
 		if _submit_strategy_plan(plan):
@@ -839,7 +847,7 @@ func _take_main_phase_action() -> bool:
 		return true
 	if _try_improve_creature_position():
 		return true
-	if not attack.is_empty() and _submit_attack(attack["attacker"], attack["target"]):
+	if _submit_attack_line(attack, attack == combat, mana_budget):
 		return true
 	if _try_attack():
 		return true
@@ -858,6 +866,14 @@ func _is_better_strategy_plan(candidate: Dictionary, current: Dictionary) -> boo
 func _submit_strategy_plan(plan: Dictionary) -> bool:
 	if plan.is_empty():
 		return false
+	if bool(plan.get("brew_setup", false)):
+		# The plan's mana only exists after the Mead brew, so submit the brew
+		# in its place: the next planning pass replays the same line on the
+		# grown stock, and an opponent response that invalidates it cancels
+		# the line naturally. Once-per-turn and unlock follow-throughs must
+		# not fire on the brew step itself.
+		var brew := _brew_setup_plan(plan)
+		return not brew.is_empty() and _submit_action(brew["command"])
 	var command: Dictionary = plan["command"]
 	var submitted := _submit_action(command)
 	if submitted and plan.has("once_per_turn_uid"):
@@ -874,27 +890,24 @@ func _try_activate_mead_for_enki() -> bool:
 
 func _try_activate_best_god_ability() -> bool:
 	var god := _find_player_god()
-	if god == null or not god.has_method("can_activate") or not god.can_activate(game_manager):
+	if god == null or not god.has_method("can_activate"):
+		return false
+	# A ready Mead can fund the god's price past the current stock, so the
+	# lend check below only relaxes the mana gate inside can_activate.
+	var god_check := func() -> bool: return god.can_activate(game_manager)
+	if not god_check.call() and not _passes_after_brew(god_check):
 		return false
 
 	if god is Freyja:
 		var freyja := god as Freyja
 		var revived_target := _choose_freyja_resurrection(freyja)
 		if revived_target != null:
-			return _submit_action({
-				"type": "god_ability",
-				"god_uid": freyja.uid,
-				"target_uid": revived_target.uid,
-			})
+			return _submit_god_ability_with_brew(freyja, revived_target.uid)
 	if god is DellingrTheDayspring:
 		var dellingr := god as DellingrTheDayspring
 		var reveal_target := _choose_dellingr_reveal_target(dellingr, dellingr.get_valid_targets(game_manager))
 		if reveal_target != null:
-			var submitted := _submit_action({
-				"type": "god_ability",
-				"god_uid": dellingr.uid,
-				"target_uid": reveal_target.uid,
-			})
+			var submitted := _submit_god_ability_with_brew(dellingr, reveal_target.uid)
 			if submitted:
 				_dellingr_revealed_target_uids[reveal_target.uid] = true
 			return submitted
@@ -914,7 +927,7 @@ func _try_activate_best_god_ability() -> bool:
 				hidden_enemy_answers += 1
 		mist_value += mini(hidden_enemy_answers, 4) * 300
 		if mist_value - ManannanMacLir.ACTIVATION_COST * _mana_rate() > 800:
-			return _submit_action({"type": "god_ability", "god_uid": manannan.uid})
+			return _submit_god_ability_with_brew(manannan)
 	return false
 
 func _choose_freyja_resurrection(freyja: Freyja) -> Card:
@@ -1063,9 +1076,11 @@ func _plan_hermes_speed(attacks: Array[Dictionary], baseline: Dictionary, projec
 		var lethal := bool(line.get("lethal", false))
 		var best_is_lethal := bool(best.get("lethal", false))
 		if (lethal and not best_is_lethal) or (lethal == best_is_lethal and score > int(best.get("score", 0))):
+			# "mana" is the stock left after the speed line's activation and
+			# attack taxes, so callers can price the line's full spend.
 			best = {"score": score, "combat_score": combat_score, "lethal": lethal, "command": {
 				"type": "god_ability", "god_uid": hermes.uid, "target_uid": target.uid,
-			}}
+			}, "mana": int(line.get("mana", projected_mana if projected_mana >= 0 else bot_player.mana))}
 	return best
 
 func _plan_shift(attacks: Array[Dictionary], baseline: Dictionary, danger: int) -> Dictionary:
@@ -1543,7 +1558,12 @@ func _plan_creature_summon(danger: int = -1, attacks: Array[Dictionary] = [], ba
 	var best := {}
 	var best_score := 0
 	var best_attack_setup := {}
-	var available_mana := bot_player.mana - setup_cost
+	# The Mead brew is on this turn's line, so summon planning prices against
+	# the brewable stock. A summon the current stock cannot pay is tagged, and
+	# the brew is submitted first (_submit_strategy_plan); the next pass
+	# replays the same summon on the grown stock.
+	var brew := _ready_brew_mana_gain()
+	var available_mana := bot_player.mana + brew - setup_cost
 	var baseline_score := int(baseline.get("score", 0))
 	var summon_first := bool(setup.get("summon_first", false))
 	var removed_before_summon := [] if summon_first else removed_by_setup
@@ -1609,7 +1629,7 @@ func _plan_creature_summon(danger: int = -1, attacks: Array[Dictionary] = [], ba
 			for summon_mode in modes:
 				var defensive: bool = summon_mode == Card.CreatureMode.DEFENSIVE
 				var projected_defensive := defensive or game_manager._any_active_structure_forces_defensive_summon(removed_before_summon)
-				var command := _build_creature_play_command(creature, summon_zone, summon_mode, payment_forecast, projected_defensive)
+				var command := _build_creature_play_command(creature, summon_zone, summon_mode, payment_forecast, projected_defensive, available_mana)
 				if command.is_empty():
 					continue
 				var default_stealth := bool(command["stealth"]) and face_up_block_value <= 0 and danger <= 0
@@ -1644,7 +1664,7 @@ func _plan_creature_summon(danger: int = -1, attacks: Array[Dictionary] = [], ba
 						block_after_impact = _estimate_defensive_summon_value(creature, summon_zone, false, stats, removed) / 2
 					else:
 						projected = attacks + _get_summon_attack_candidates(creature, summon_zone, available_mana, stats, removed_before_summon, removed_by_setup)
-				var line := _plan_combat(projected, removed, committed, mana_spent, summon_zone)
+				var line := _plan_combat(projected, removed, committed, mana_spent, summon_zone, bot_player.mana + brew)
 				var combat_score := int(line.get("score", 0))
 				var attack_value := combat_score - baseline_score
 				if prefer_stealth and not projected_defensive and not summon_attacks.is_empty():
@@ -1666,7 +1686,7 @@ func _plan_creature_summon(danger: int = -1, attacks: Array[Dictionary] = [], ba
 					if not stealth:
 						candidate += search_value
 						if prefer_stealth:
-							candidate += _estimate_face_up_summon_value(creature, summon_zone, projected_defensive, bot_player.mana - mana_spent, removed)
+							candidate += _estimate_face_up_summon_value(creature, summon_zone, projected_defensive, bot_player.mana + brew - mana_spent, removed)
 					candidate += prior_payment_penalty - int(command.get("payment_penalty", 0))
 					change["stealth"] = stealth
 					# The combat score already credits ordinary damage prevention. Only
@@ -1728,6 +1748,11 @@ func _plan_creature_summon(danger: int = -1, attacks: Array[Dictionary] = [], ba
 						var plan := {"command": command.duplicate(), "score": candidate, "combat_score": combat_score, "lethal": lethal}
 						plan["command"]["stealth"] = stealth
 						plan["command"].erase("payment_penalty")
+						if _get_play_cost(creature, false) > bot_player.mana:
+							# Only the brew can pay this summon: tag it so
+							# the Mead is submitted first and the next pass
+							# replays the summon on the grown stock.
+							plan["brew_setup"] = true
 						if preferred_setup:
 							best_attack_setup = plan
 						if candidate <= best_score and not prefers_hidden_tie:
@@ -1838,14 +1863,16 @@ func _estimate_face_up_summon_forced_combat(creature: Card, zone: Zone, defensiv
 
 func _plan_hermes_summon_attack(creature: Card, zone: Zone, attacks: Array[Dictionary], removed: Array, mana_spent: int, available_mana: int, committed: Card = null, removed_before_summon: Array = []) -> Dictionary:
 	var hermes := _find_player_god() as Hermes
-	if hermes == null or not hermes.can_plan_activation_after_upkeep(game_manager, bot_player.mana - mana_spent) \
+	# The brew may fund the speed activation plus the summon line's taxes.
+	var brew := _ready_brew_mana_gain()
+	if hermes == null or not hermes.can_plan_activation_after_upkeep(game_manager, bot_player.mana + brew - mana_spent) \
 			or creature.negates_external_effects() or game_manager.is_immune_to_source(creature, hermes):
 		return {}
 	var stats := {creature: Vector3i(0, 0, Hermes.SPEED_BONUS)}
 	var boosted := _get_summon_attack_candidates(creature, zone, available_mana - Hermes.ACTIVATION_COST, stats, removed_before_summon, removed)
 	if boosted.is_empty():
 		return {}
-	return _plan_combat(attacks + boosted, removed, committed, mana_spent + Hermes.ACTIVATION_COST, zone)
+	return _plan_combat(attacks + boosted, removed, committed, mana_spent + Hermes.ACTIVATION_COST, zone, bot_player.mana + brew)
 
 func _estimate_projected_summon_casualty_cost(
 	creature: Card,
@@ -2175,11 +2202,10 @@ func _get_best_strategy_action(attacks: Array[Dictionary], attack: Dictionary, d
 					command["display_zone"] = {"player_index": player_index, "zone_type": reserve.zone_type, "zone_index": reserve.zone_index}
 				var plan := {"command": command, "score": score}
 				if brew_short:
-					# The stock cannot pay this cast yet: submit the brew, and
-					# the next pass finds the same cast on the grown stock.
-					plan = _brew_setup_plan(plan)
-					if plan.is_empty():
-						continue
+					# The stock cannot pay this cast yet: tag it so the
+					# brew is submitted first and the next pass replays the
+					# cast on the grown stock.
+					plan["brew_setup"] = true
 				if removed.is_empty():
 					if _is_enemy_creature_answer(card, target, score):
 						plan["score"] += 6500 + _score_follower_loss(opponent, target.get_effective_strength()) / 4
@@ -2269,9 +2295,9 @@ func _get_best_strategy_action(attacks: Array[Dictionary], attack: Dictionary, d
 					"score": score,
 				}
 				if bot_player.mana < cost + action_tax:
-					plan = _brew_setup_plan(plan)
-					if plan.is_empty():
-						continue
+					# The brew funds this activation: tag it so the Mead is
+					# submitted first and the next pass takes the paid action.
+					plan["brew_setup"] = true
 				if not removed.is_empty():
 					var committed := card as Card if card is Lindwyrm or card is Nimue else null
 					if card is Lindwyrm:
@@ -2305,10 +2331,11 @@ func _get_best_strategy_action(attacks: Array[Dictionary], attack: Dictionary, d
 					# plan instead of losing the close score race.
 					conversion["lethal"] = true
 				if bot_player.mana < AncientPyre.ACTIVATION_COST + action_tax:
-					# Short stock: the brew funds the clock, and the next
-					# pass takes the real conversion on the grown stock.
-					conversion = _brew_setup_plan(conversion)
-				if not conversion.is_empty() and _is_better_strategy_plan(conversion, best_plan):
+					# Short stock: the brew funds the clock. Tag it so the
+					# Mead is submitted first and the next pass converts on
+					# the grown stock.
+					conversion["brew_setup"] = true
+				if _is_better_strategy_plan(conversion, best_plan):
 					best_plan = conversion
 	return best_plan
 
@@ -3361,7 +3388,13 @@ func _plan_power_unlock(danger: int = -1, attacks: Array[Dictionary] = [], basel
 	var best_score := -1000000
 	var extraction := {}
 	for power in _get_player_powers():
-		if power == null or not power.is_face_down or not power.can_unlock(game_manager):
+		if power == null or not power.is_face_down:
+			continue
+		# A ready Mead can fund an unlock the stock cannot pay yet, so the
+		# lend check below only relaxes the mana gate; every other unlock
+		# condition still gates verbatim inside can_unlock.
+		var unlock_check := func() -> bool: return power.can_unlock(game_manager)
+		if not unlock_check.call() and not _passes_after_brew(unlock_check):
 			continue
 		# Unlock commands currently cannot carry a selected discard payment.
 		# Do not surrender an arbitrary hand card for a generic unlock.
@@ -3402,6 +3435,10 @@ func _plan_power_unlock(danger: int = -1, attacks: Array[Dictionary] = [], basel
 		"type": "unlock_power",
 		"power_uid": best_power.uid,
 	}}
+	if best_power.get_unlock_mana_cost(game_manager) > bot_player.mana:
+		# Only the brew can pay this unlock: tag it so the Mead is submitted
+		# first and the unlock replays on the next pass.
+		plan["brew_setup"] = true
 	if _can_use_generic_power_command(best_power) and not best_power is AllfathersSacrifice \
 			and not ((best_power is OraclesSight or best_power is CallOfTheValkyrie) and _can_odin_draw_primed_card()):
 		plan["activate_after_unlock_uid"] = best_power.uid
@@ -3462,7 +3499,12 @@ func _plan_power_activation(required_power: PowerCard = null, danger: int = -1, 
 	if required_power != null:
 		powers.assign([required_power])
 	for power in powers:
-		if power == null or power.is_face_down or not power.can_activate(game_manager):
+		if power == null or power.is_face_down:
+			continue
+		# A ready Mead can fund an activation the stock cannot pay yet, so
+		# the lend check below only relaxes the mana gate inside can_activate.
+		var activate_check := func() -> bool: return power.can_activate(game_manager)
+		if not activate_check.call() and not _passes_after_brew(activate_check):
 			continue
 		if not game_manager.can_player_use_powers(bot_player):
 			continue
@@ -3517,6 +3559,12 @@ func _plan_power_activation(required_power: PowerCard = null, danger: int = -1, 
 	if CardStrategy.key(best_power) == "ManaGuard":
 		command["mana_amount"] = best_guard_mana
 	var plan := {"command": command, "score": best_score}
+	var activation_price: int = best_guard_mana if CardStrategy.key(best_power) == "ManaGuard" \
+		else CardStrategy.activation_cost(self, best_power)
+	if activation_price > bot_player.mana:
+		# The activation's price only fits after the brew: tag it so the Mead
+		# is submitted first and this activation replays on the next pass.
+		plan["brew_setup"] = true
 	if CardStrategy.key(best_power) in ["OraclesSight", "ManaGuard", "CallOfTheValkyrie"]:
 		plan["once_per_turn_uid"] = best_power.uid
 	return plan
@@ -3525,10 +3573,16 @@ func _plan_special_power(power: PowerCard, danger: int, combat: Dictionary, unlo
 	var cost := CardStrategy.activation_cost(self, power) + unlock_cost
 	if power is Breidablik:
 		cost = power.get_activation_mana_cost(Breidablik.HARBOR_MANA_COST, game_manager) + unlock_cost
-	if cost > bot_player.mana:
+	# A ready Mead can fund the line the stock cannot pay yet; a brew-funded
+	# line is tagged so the Mead is submitted first.
+	var brew := _ready_brew_mana_gain()
+	if cost > bot_player.mana + brew:
 		return {}
 	if power is DivineCaprice:
-		return _plan_caprice(power, cost, combat)
+		var caprice := _plan_caprice(power, cost, combat)
+		if not caprice.is_empty() and cost > bot_player.mana:
+			caprice["brew_setup"] = true
+		return caprice
 	var targets: Array[Card] = []
 	var discard: Card = null
 	if power is AnankesBinding:
@@ -3571,6 +3625,10 @@ func _plan_special_power(power: PowerCard, danger: int, combat: Dictionary, unlo
 		if discard != null:
 			command["discard_uids"] = [discard.uid]
 		var plan := {"score": score, "command": command, "once_per_turn_uid": power.uid}
+		if cost > bot_player.mana:
+			# The line's price only fits after the brew: tag it so the Mead
+			# is submitted first and the activation replays on the next pass.
+			plan["brew_setup"] = true
 		if power is FireAndGold:
 			if unlock_cost == 0:
 				_record_targeted_removal(removals, plan, power, target, [target], cost, null, [discard])
@@ -3614,7 +3672,8 @@ func _plan_caprice(power: DivineCaprice, cost: int, combat: Dictionary) -> Dicti
 				or game_manager.is_first_turn_attack_blocked_by_weather(attacker):
 			continue
 		var attack_cost := game_manager.get_creature_action_mana_cost(attacker, "attack")
-		if attack_cost + cost > bot_player.mana:
+		# The brew may fund the reposition plus attack taxes past the stock.
+		if attack_cost + cost > bot_player.mana + _ready_brew_mana_gain():
 			continue
 		var lines := _get_attack_candidates(attacker, null, true)
 		for destination in bot_player.frontline_zones:
@@ -3748,13 +3807,16 @@ func _plan_deck_god_ability(danger: int) -> Dictionary:
 	var god := _find_player_god()
 	if god is Odin:
 		return _plan_odin_draw(danger)
-	if not god is NuskuFirebearer or not god.can_activate(game_manager) \
-			or not game_manager.can_player_add_to_hand_now(bot_player):
+	if not god is NuskuFirebearer or not game_manager.can_player_add_to_hand_now(bot_player):
+		return {}
+	# A ready Mead can fund the Well of Fire price past the stock.
+	var god_check := func() -> bool: return god.can_activate(game_manager)
+	if not god_check.call() and not _passes_after_brew(god_check):
 		return {}
 	var deck := bot_player.deck_zone
 	var population := deck.get_unordered_deck_cards()
 	var draw_count := mini(NuskuFirebearer.MILL_COUNT, population.size())
-	var mana := bot_player.mana - NuskuFirebearer.ACTIVATION_COST
+	var mana := bot_player.mana + _ready_brew_mana_gain() - NuskuFirebearer.ACTIVATION_COST
 	var worst_known := 0
 	var known_milled: Array[Card] = []
 	for index in draw_count:
@@ -3791,7 +3853,14 @@ func _plan_deck_god_ability(danger: int) -> Dictionary:
 	var score := int(expected) - CardStrategy.mana_penalty(self, NuskuFirebearer.ACTIVATION_COST)
 	# Milling uses up future draws, particularly when the deck is already short.
 	score -= NuskuFirebearer.MILL_COUNT * (250 if population.size() <= 14 else 75)
-	return {"score": score, "command": {"type": "god_ability", "god_uid": god.uid}} if score > 0 else {}
+	if score <= 0:
+		return {}
+	var plan := {"score": score, "command": {"type": "god_ability", "god_uid": god.uid}}
+	if NuskuFirebearer.ACTIVATION_COST > bot_player.mana:
+		# The brew funds the mill's price: tag it so the Mead is submitted
+		# first and the ability replays on the next pass.
+		plan["brew_setup"] = true
+	return plan
 
 func _sample_avoids(population: int, excluded: int, count: int) -> float:
 	if population - excluded < count:
@@ -3803,7 +3872,11 @@ func _sample_avoids(population: int, excluded: int, count: int) -> float:
 
 func _plan_odin_draw(danger: int, desperation: bool = false) -> Dictionary:
 	var god := _find_player_god() as Odin
-	if god == null or not god.can_activate(game_manager):
+	if god == null:
+		return {}
+	# A ready Mead can fund the Runic Knowledge price past the stock.
+	var god_check := func() -> bool: return god.can_activate(game_manager)
+	if not god_check.call() and not _passes_after_brew(god_check):
 		return {}
 	var deck := bot_player.deck_zone
 	var known := deck.known_top_card
@@ -3858,6 +3931,10 @@ func _plan_odin_draw(danger: int, desperation: bool = false) -> Dictionary:
 			if score > int(best.get("score", 0)):
 				best = {"score": score, "command": {"type": "activate_card_ability", "source_uid": god.uid,
 					"option": {"offering_uid": offering.uid, "named_card_name": card.card_name}}}
+				if god.get_activation_mana_cost(game_manager) > bot_player.mana:
+					# The brew funds the draw's price: tag it so the Mead is
+					# submitted first and the draw replays on the next pass.
+					best["brew_setup"] = true
 	return best
 
 func _odin_offering_cost(card: Card) -> int:
@@ -5146,13 +5223,15 @@ func _submit_play_creature(card: Card, zone: Zone, mode: Card.CreatureMode) -> b
 	var command := _build_creature_play_command(card, zone, mode)
 	return not command.is_empty() and _submit_action(command)
 
-func _build_creature_play_command(card: Card, zone: Zone, mode: Card.CreatureMode, danger: int = -1, projected_defensive: bool = false) -> Dictionary:
+func _build_creature_play_command(card: Card, zone: Zone, mode: Card.CreatureMode, danger: int = -1, projected_defensive: bool = false, available_mana: int = -1) -> Dictionary:
 	if card == null or zone == null or card.current_zone != bot_player.hand_zone:
 		return {}
 	var forecast := {}
 	if danger >= 0:
 		forecast = {"danger": danger, "summon": card, "zone": zone, "stance": card, "defensive": projected_defensive}
-	var payment_plan := _build_creature_summon_payment_plan(card, bot_player.mana, forecast)
+	# Planning may price a summon against a projected stock (the Mead brew or
+	# upkeep income); direct submissions keep validating at the real stock.
+	var payment_plan := _build_creature_summon_payment_plan(card, bot_player.mana if available_mana < 0 else available_mana, forecast)
 	if not bool(payment_plan.get("ok", false)):
 		return {}
 	var command := {
@@ -6203,10 +6282,9 @@ func _passes_after_brew(check: Callable) -> bool:
 	return passed
 
 func _brew_setup_plan(plan: Dictionary) -> Dictionary:
-	# The paid follow-up cannot be submitted while the stock is short, so
-	# submit the brew instead. The next pass re-prices the line on the real
-	# grown stock, so the intended action happens on its own — and an
-	# opponent response that invalidates it cancels the line naturally.
+	# The brew command that stands in for a brew-tagged plan, carrying the
+	# line's score and lethal flag so it competes as the full line it funds.
+	# (The brew plan itself is never tagged: it is submitted directly.)
 	var mead := _find_ready_prepared_mead()
 	if mead == null:
 		return {}
@@ -6218,11 +6296,39 @@ func _brew_setup_plan(plan: Dictionary) -> Dictionary:
 			"prepared": true,
 		},
 		"score": int(plan.get("score", 0)),
-		"brew_setup": true,
 	}
 	if bool(plan.get("lethal", false)):
 		brew["lethal"] = true
 	return brew
+
+# True when a line that spends `spend` mana is payable only after the brew.
+func _brew_enables_spend(spend: int) -> bool:
+	var brew := _ready_brew_mana_gain()
+	return brew > 0 and spend > bot_player.mana and spend <= bot_player.mana + brew
+
+# Submit a planned attack line, brewing the Mead first when its action taxes
+# run past the current stock (usually the lethal line).
+func _submit_attack_line(line: Dictionary, budgeted: bool, mana_budget: int) -> bool:
+	if line.is_empty():
+		return false
+	if budgeted and _brew_enables_spend(mana_budget - int(line.get("mana", mana_budget))):
+		var brew := _brew_setup_plan(line)
+		return not brew.is_empty() and _submit_action(brew["command"])
+	return _submit_attack(line["attacker"], line["target"])
+
+# Submit a god ability, brewing the Mead first when its price runs past the
+# current stock; the next pass replays the same ability on the grown stock.
+func _submit_god_ability_with_brew(god: GodCard, target_uid: String = "") -> bool:
+	if god == null:
+		return false
+	var price: int = god.get_activation_mana_cost(game_manager) if god.has_method("get_activation_mana_cost") else 0
+	if _brew_enables_spend(price):
+		var brew := _brew_setup_plan({})
+		return not brew.is_empty() and _submit_action(brew["command"])
+	var command := {"type": "god_ability", "god_uid": god.uid}
+	if not target_uid.is_empty():
+		command["target_uid"] = target_uid
+	return _submit_action(command)
 
 func _find_call_of_the_valkyrie() -> CallOfTheValkyrie:
 	if bot_player == null:
@@ -8521,9 +8627,23 @@ func _get_valid_summon_sacrifice_candidates() -> Array[Card]:
 				candidates.append(card)
 	return candidates
 
-func _score_effect_summon_sacrifice_followup(summoned: Array, setup_mana: int, removed: Array = []) -> int:
+# A projected body the effect itself destroys at this turn's end (Tablet of
+# Life's level 3+ resurrection) has no future to forfeit: converting it into a
+# summon's sacrifice payment costs only its residual per-turn use, the same
+# share the debilitation model leaves a doomed body standing on the board.
+const DOOMED_EFFECT_BODY_PAYMENT_SHARE := 0.15
+# A stranded followup line worth at least this much blocks the cast that would
+# burn it: the plan tail will happily submit a merely downscored play, so a
+# meaningful line has to remove the cast from consideration entirely.
+const BURNED_EFFECT_LINE_GATE := 1000
+
+func _score_effect_summon_sacrifice_followup(summoned: Array, setup_mana: int, removed: Array = [], doomed_bodies: Array = []) -> int:
 	# Value the extra normal summon made possible by creatures an effect puts on
 	# the board. The actual action is chosen again after the effect resolves.
+	# `doomed_bodies` marks projected bodies the effect destroys at this turn's
+	# end: they can only pay for a summon in the turn the effect resolves, so a
+	# cast after that turn's summon is already spent strands the hand creature
+	# the body would have fed, and the cast is charged the burned line.
 	if summoned.is_empty() or bot_player == null or game_manager == null \
 			or game_manager.current_player != bot_player:
 		return 0
@@ -8542,6 +8662,7 @@ func _score_effect_summon_sacrifice_followup(summoned: Array, setup_mana: int, r
 	var projected := existing + produced
 	var mana_left := bot_player.mana - setup_mana
 	var best_gain := 0
+	var burned_line_gain := 0
 	for creature in bot_player.hand_zone.cards:
 		if creature in produced or creature.card_type != Card.CardType.CREATURE or creature.sacrifice_cost <= 0 \
 				or creature.discard_cost > 0 or creature.banish_cost > 0 or creature.shelve_cost > 0 \
@@ -8555,11 +8676,9 @@ func _score_effect_summon_sacrifice_followup(summoned: Array, setup_mana: int, r
 		var zone := _get_first_open_summon_zone(bot_player)
 		if zone == null:
 			continue
-		if bot_player.has_summoned_this_turn and not game_manager._can_use_extra_normal_summon(bot_player, creature, zone):
-			continue
 		var payment_penalty := 0
 		for body in payment:
-			payment_penalty += _score_summon_sacrifice_candidate(body)
+			payment_penalty += _effect_body_sacrifice_penalty(body, doomed_bodies)
 		var followup_value := _score_projected_card(creature) - payment_penalty \
 			- _get_play_cost(creature, false) * 120 * _mana_rate() / 1000
 		var standalone_value := 0
@@ -8573,9 +8692,29 @@ func _score_effect_summon_sacrifice_followup(summoned: Array, setup_mana: int, r
 		var produced_value := 0
 		for body in payment:
 			if body in produced:
-				produced_value += _score_summon_sacrifice_candidate(body)
-		best_gain = maxi(best_gain, followup_value - maxi(standalone_value, produced_value))
+				produced_value += _effect_body_sacrifice_penalty(body, doomed_bodies)
+		var line_gain := followup_value - maxi(standalone_value, produced_value)
+		if bot_player.has_summoned_this_turn and not game_manager._can_use_extra_normal_summon(bot_player, creature, zone):
+			# The turn's normal summon is spent, so the projected body cannot
+			# pay for this creature this turn. A body that survives the turn
+			# only delays the line, but a doomed body makes this cast burn the
+			# effect that was the creature's only fresh payment generator:
+			# hold the spell for a turn whose summon window is still open.
+			if payment.any(func(body: Card) -> bool: return body in doomed_bodies):
+				burned_line_gain = maxi(burned_line_gain, line_gain)
+			continue
+		best_gain = maxi(best_gain, line_gain)
+	if burned_line_gain > 0:
+		if burned_line_gain >= BURNED_EFFECT_LINE_GATE:
+			return CardStrategy.BAD
+		return maxi(0, best_gain) - burned_line_gain
 	return maxi(0, best_gain)
+
+func _effect_body_sacrifice_penalty(body: Card, doomed_bodies: Array) -> int:
+	var penalty := _score_summon_sacrifice_candidate(body)
+	if body in doomed_bodies:
+		penalty = int(float(penalty) * DOOMED_EFFECT_BODY_PAYMENT_SHARE)
+	return penalty
 
 func _get_active_altar_of_dreams_for_bot() -> AltarOfDreams:
 	for power in _get_player_powers():

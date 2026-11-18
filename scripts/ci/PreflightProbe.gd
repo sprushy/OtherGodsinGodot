@@ -83,6 +83,8 @@ func run() -> bool:
 	_check_bot_jiang_counterstroke(failures)
 	_check_bot_reveal_defense(failures)
 	_check_bot_brew_funds_pyre_lethal(failures)
+	_check_bot_brew_funds_summon(failures)
+	_check_bot_brew_funds_unlock(failures)
 	_check_bot_immortal_techniques_refund(failures)
 	_check_bot_pazuzu_drain_forecast(failures)
 	_check_bot_next_turn_lethal(failures)
@@ -2692,8 +2694,8 @@ func _check_bot_brew_funds_pyre_lethal(failures: PackedStringArray) -> void:
 	var plan := bot._get_best_strategy_action(attacks, baseline)
 	if not bool(plan.get("lethal", false)):
 		failures.append("Bot missed the Mead-funded Ancient Pyre conversion lethal")
-	elif str(plan.get("command", {}).get("type", "")) != "cast_charm":
-		failures.append("Bot tried to submit the unpaid Pyre conversion instead of brewing first")
+	elif not bool(plan.get("brew_setup", false)):
+		failures.append("Bot did not tag the unpaid Pyre conversion for the Mead brew")
 	elif not bot._take_main_phase_action():
 		failures.append("Bot failed to submit the Mead brew for the Pyre lethal")
 	else:
@@ -2708,6 +2710,124 @@ func _check_bot_brew_funds_pyre_lethal(failures: PackedStringArray) -> void:
 				manager.advance_priority()
 			if opponent.followers > 0:
 				failures.append("Bot brewed but never converted the remaining followers")
+	bot.detach()
+
+# The Mead brew generalizes beyond abilities: a summon only the brew can pay
+# is tagged, the Mead is submitted first, and the next pass replays the same
+# summon on the grown stock.
+func _check_bot_brew_funds_summon(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	player.mana = 1
+	player.followers = 50
+	opponent.followers = 100
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var creature := CreatureCard.new()
+	creature.card_name = "Fixture Summon"
+	creature.mana_cost = 5
+	creature.strength = 20
+	creature.resilience = 20
+	creature.speed = 2
+	creature.card_owner = player
+	player.hand_zone.add_card(creature)
+	var danger := bot._forecast_incoming_follower_loss()
+	var attacks := bot._get_combat_candidates()
+	var baseline := bot._plan_combat(attacks)
+	var unfunded := bot._plan_creature_summon(danger, attacks, baseline)
+	if not unfunded.is_empty() and str(unfunded.get("command", {}).get("card_uid", "")) == creature.uid:
+		failures.append("Bot planned a summon it could not pay without brewing")
+	var mead := MeadOfPoetry.new()
+	mead.card_owner = player
+	mead.is_prepared = true
+	mead.is_face_down = true
+	player.reserve_zones[1].add_card(mead)
+	game.prepared_charms[mead] = game.turn_number - 1
+	var plan := bot._plan_creature_summon(danger, attacks, baseline)
+	if not bool(plan.get("brew_setup", false)) or str(plan.get("command", {}).get("card_uid", "")) != creature.uid:
+		failures.append("Bot did not tag the brew-funded summon")
+	elif not bot._take_main_phase_action():
+		failures.append("Bot failed to submit the Mead brew for the summon")
+	else:
+		for _step in range(8):
+			manager.advance_priority()
+		if player.mana < 1 + MeadOfPoetry.MANA_GAIN:
+			failures.append("Mead brew did not bank its mana before the summon")
+		elif not bot._take_main_phase_action():
+			failures.append("Bot failed to submit the funded summon after brewing")
+		else:
+			for _step in range(8):
+				manager.advance_priority()
+			if creature.current_zone == null or not creature.current_zone.is_board_zone():
+				failures.append("Bot brewed but the summon never landed")
+	bot.detach()
+
+# Power unlocks follow the same brew rule: a face-down power priced past the
+# current stock is tagged, the Mead is submitted first, and the unlock replays
+# on the grown stock.
+func _check_bot_brew_funds_unlock(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	player.mana = 1
+	player.followers = 30
+	opponent.followers = 100
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var attacker := CreatureCard.new()
+	attacker.card_owner = opponent
+	attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
+	attacker.strength = 20
+	attacker.speed = 2
+	opponent.frontline_zones[0].add_card(attacker)
+	var power := Ragnarok.new()
+	power.card_owner = player
+	power.mana_cost = 4
+	player.power_zones[0].add_card(power)
+	var danger := bot._forecast_incoming_follower_loss()
+	var attacks := bot._get_combat_candidates()
+	var baseline := bot._plan_combat(attacks)
+	if danger <= 0:
+		failures.append("Unlock brew fixture lost its incoming threat")
+	var unfunded := bot._plan_power_unlock(danger, attacks, baseline)
+	if not unfunded.is_empty() and str(unfunded.get("command", {}).get("power_uid", "")) == power.uid:
+		failures.append("Bot planned an unlock it could not pay without brewing")
+	var mead := MeadOfPoetry.new()
+	mead.card_owner = player
+	mead.is_prepared = true
+	mead.is_face_down = true
+	player.reserve_zones[1].add_card(mead)
+	game.prepared_charms[mead] = game.turn_number - 1
+	var plan := bot._plan_power_unlock(danger, attacks, baseline)
+	if not bool(plan.get("brew_setup", false)) or str(plan.get("command", {}).get("power_uid", "")) != power.uid:
+		failures.append("Bot did not tag the brew-funded unlock")
+	elif not bot._take_main_phase_action():
+		failures.append("Bot failed to submit the Mead brew for the unlock")
+	else:
+		for _step in range(8):
+			manager.advance_priority()
+		if player.mana < 1 + MeadOfPoetry.MANA_GAIN:
+			failures.append("Mead brew did not bank its mana before the unlock")
+		elif not bot._take_main_phase_action():
+			failures.append("Bot failed to submit the funded unlock after brewing")
+		else:
+			for _step in range(8):
+				manager.advance_priority()
+			if power.is_face_down:
+				failures.append("Bot brewed but the power never unlocked")
 	bot.detach()
 
 # Immortal Techniques refunds each spell or Ancient hex while a friendly Mage
