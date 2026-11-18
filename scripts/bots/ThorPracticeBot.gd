@@ -51,6 +51,15 @@ const KUR_JARA_PRESENCE_TURNS := 4.0
 # Flat bonus while the grave still holds another Divine/Priest after the
 # current Tree of Life cycle, because the ability re-arms once it resolves.
 const KUR_JARA_ENGINE_CONTINUATION := 800
+# Opponent board creatures whose ACTIVATED abilities destroy a target on the
+# controller's own turn, so a fresh summon they can legally reach is a free
+# meal: a face-up Lindwyrm devours anything two levels weaker (Devour's
+# target check has no hidden-state filter, so stealth does not dodge it) and
+# grows on the kill, and Clay-Eaters' Geophagia eats structures and Stone
+# bodies at end of turn. Impact/Reveal devourers (Fenrir, Grindylow, Masmassu
+# Priest, Gugalanna) fire only when they enter the field themselves, so they
+# are not standing next-turn threats here.
+const OPPONENT_ACTIVATED_REMOVAL_KEYS := ["Lindwyrm", "ClayEaters"]
 
 var _active: bool = false
 var _step_queued: bool = false
@@ -171,6 +180,7 @@ func _on_match_ui_interaction(prompt_player_index: int, type: String, data: Dict
 		return
 	_mana_econ_cache = {}
 	_tonal_setup_cache = {}
+	_altar_line_cache = {}
 	if type == "priority":
 		_queue_step()
 		return
@@ -313,6 +323,7 @@ func _run_step() -> void:
 	_step_queued = false
 	_mana_econ_cache = {}
 	_tonal_setup_cache = {}
+	_altar_line_cache = {}
 	if not _should_queue_step():
 		return
 	if _owns_pending_click_selection():
@@ -473,6 +484,8 @@ func _choose_upkeep_option(zone: Zone) -> Dictionary:
 	if _upkeep_mana_enables_manifestation(mana_gain):
 		return {"choice": "mana"}
 	if _upkeep_mana_enables_tonal_extraction(mana_gain):
+		return {"choice": "mana"}
+	if _upkeep_mana_enables_altar_line(mana_gain):
 		return {"choice": "mana"}
 	if bot_player.hand_zone.cards.size() >= 3:
 		for card in bot_player.hand_zone.cards:
@@ -1384,6 +1397,27 @@ func _upkeep_mana_enables_tonal_extraction(mana_gain: int) -> bool:
 			return true
 	return false
 
+# The held Altar of Dreams line keeps a funding level the bot wants on hand
+# (its remaining unlock plus the coster's summon price plus the sleep
+# activation tax) so its sleep source's next opportunity can be taken the
+# turn it appears; the mana option wins when its income is what still closes
+# that gap.
+func _upkeep_mana_enables_altar_line(mana_gain: int) -> bool:
+	if mana_gain <= 0 or game_manager == null:
+		return false
+	var line := CardStrategy.held_altar_line(self)
+	if not bool(line.get("live", false)):
+		return false
+	var gross := int(line.get("gross", 0))
+	if gross <= 0:
+		return false
+	# The brew is available under either upkeep choice, so the income only
+	# counts when the line needs more than the brew already funds.
+	var brew := _ready_brew_mana_gain()
+	if bot_player.mana + brew >= gross:
+		return false
+	return bot_player.mana + brew + mana_gain >= gross
+
 func _plan_god_manifestation(attack: Dictionary = {}, danger: int = -1) -> Dictionary:
 	var god := _find_player_god()
 	if god is TezcatlipocaTheSmokingMirror:
@@ -1904,7 +1938,67 @@ func _estimate_projected_summon_casualty_cost(
 			action.interceptor = interceptor
 			loss = mini(loss, _score_projected_summon_attack_loss(_estimate_raw_attack_economy(action, stats)))
 		greatest_loss = maxi(greatest_loss, loss)
+	# Devour-class activated removal ignores stance and stealth alike (its
+	# target check has no hidden-state filter), so the same worst-case max
+	# covers every projected form the caller asks about.
+	greatest_loss = maxi(greatest_loss, _projected_opponent_removal_loss(target, removed))
 	return greatest_loss
+
+# What a projected body stands to lose to an opponent's activated board ability
+# on the controller's next turn: a visible Lindwyrm (or Clay-Eaters) that can
+# legally reach the preview and afford its activation spends one major action
+# deleting the body outright, so summoning it is feeding, not presence.
+# Destruction safety (immunity, Guardian, wards, replacement) comes from the
+# curated model via CardStrategy.removal_targets; sources this plan already
+# removes this turn are safe.
+func _projected_opponent_removal_loss(target: Card, removed: Array = []) -> int:
+	if target == null or opponent == null or game_manager == null:
+		return 0
+	var budget := opponent.mana + game_manager.get_automatic_upkeep_mana_gain(opponent, game_manager.turn_number + 1) \
+			+ game_manager.get_effective_upkeep_mana_gain(game_manager.get_base_upkeep_mana_gain(), opponent)
+	var worst := 0
+	for source in _get_board_creatures(opponent):
+		if source == null or source == target or source in removed:
+			continue
+		if not CardStrategy.visible(self, source) \
+				or CardStrategy.key(source) not in OPPONENT_ACTIVATED_REMOVAL_KEYS:
+			continue
+		if source.is_petrified() or source.is_face_down or source.is_stealth or source.is_prepared \
+				or source.abilities_suppressed() or source.is_activation_locked(game_manager) \
+				or _status_persists_to_next_turn(source, "sleep", removed):
+			continue
+		var activation_cost := game_manager.get_creature_action_mana_cost(source, "activate")
+		if source is ClayEaters:
+			activation_cost = maxi(activation_cost, ClayEaters.GEOPHAGIA_COST)
+		if activation_cost > budget:
+			continue
+		if not _activated_removal_reaches(source, target) \
+				or target not in CardStrategy.removal_targets(self, source, target):
+			continue
+		var loss := _get_card_economic_value(target)
+		if source is Lindwyrm:
+			# Devour is free growth: feeding it costs the body AND upgrades the threat.
+			loss += _lindwyrm_devour_growth_value()
+		worst = maxi(worst, loss)
+	return worst
+
+# Legal reach for the standing removal keys. The engine's own zone-scoped
+# get_valid_targets cannot see a projected body (a preview is not a member
+# of any zone's card list yet), so each key's target rule is restated here
+# and must stay in sync with the card script.
+func _activated_removal_reaches(source: Card, target: Card) -> bool:
+	if source == null or target == null or target == source:
+		return false
+	if target.current_zone == null or not target.current_zone.is_board_zone():
+		return false
+	match CardStrategy.key(source):
+		"Lindwyrm":
+			return target.card_type == Card.CardType.CREATURE \
+					and target.get_effective_level() <= source.get_effective_level() - 2
+		"ClayEaters":
+			return target.card_type == Card.CardType.STRUCTURE \
+					or (target.card_type == Card.CardType.CREATURE and target.has_type("Stone"))
+	return false
 
 func _score_projected_summon_attack_loss(result: Dictionary) -> int:
 	var loss := _score_follower_loss(bot_player, int(result["bot_followers_lost"])) \
@@ -2680,7 +2774,10 @@ func _plan_special_card(card: Card, attacks: Array[Dictionary], attack: Dictiona
 					var result := _estimate_attack_economy(projected, null, 0, 0, 0, true, Card.CreatureMode.AGGRESSIVE)
 					combat_score = maxi(combat_score, _score_attack_economy(result))
 				score = combat_score - int(attack.get("score", 0))
-			score -= CardStrategy.mana_penalty(self, Gambanteinn.ACTIVATION_COST)
+			# The sleep mode opens the held Altar line's Void window, so its
+			# activation is the line's own step and carries no hold charge;
+			# the aggressive flip stays a normally priced spend.
+			score -= CardStrategy.mana_penalty(self, Gambanteinn.ACTIVATION_COST, -1, mode == Gambanteinn.MODE_SLEEP)
 		if score > int(best.get("score", 0)):
 			best = {"score": score, "combat_score": combat_score, "command": {
 				"type": "activate_card_ability", "source_uid": card.uid, "target_uid": target.uid}}
@@ -7765,6 +7862,10 @@ func _posture_safety_multiplier() -> float:
 # should be pumped into it instead of idling (convert bypasses Guard).
 var _locked_board_cache := {"turn": -1, "value": false}
 var _mana_econ_cache := {}
+# Held Altar of Dreams line snapshot, recomputed per decision step: its
+# inputs (powers, hand, board, stock) only move between steps. Mirrors the
+# mana econ cache's clear points.
+var _altar_line_cache := {}
 
 func _locked_board_state() -> bool:
 	if game_manager == null:
@@ -8238,6 +8339,15 @@ func _score_creature_play_in_zone(card: Card, zone: Zone, available_mana: int, i
 		score += int(devour["value"])
 	score -= mana_cost * 120 * _mana_rate() / 1000
 	score -= int(payment_plan.get("penalty", 0))
+	# A summon that dips the stock below the held Altar line's funding strands
+	# its removal window until later upkeep income rebuilds the dip, so the
+	# strand share prices the optionality the body spends away. The line's own
+	# summon — a Demon or Spirit coster the Altar pays for, or one held for
+	# exactly that Void window whose direct payment already carries the burn
+	# charge — never pays for holding itself open.
+	if payment_plan.get("altar_void_uids", []).is_empty() \
+			and not (CardStrategy._is_demon_or_spirit_coster(card) and CardStrategy.find_altar_of_dreams(self) != null):
+		score += CardStrategy.altar_line_hold_charge(self, available_mana, mana_cost)
 	score += _estimate_tonal_extraction_setup_bonus(card)
 	score += _summon_trigger_setup_bonus(card, zone)
 	if zone in bot_player.frontline_zones and _opponent_has_known_board_wipe(card, zone):
@@ -8541,6 +8651,13 @@ func _build_creature_summon_payment_plan(card: Card, available_mana: int = -1, f
 	result["sacrifice_cards"] = sacrifice_cards
 	result["altar_void_cards"] = altar_void_cards
 	result["penalty"] = int(chosen_plan.get("penalty", 0))
+	# A Demon or Spirit coster paid with the bot's own bodies burns the Void
+	# window this summon could have used: while the bot's sleep source can
+	# still turn an enemy creature into the same payment, the direct plan
+	# carries the line's continuation so waiting for that removal can win.
+	# An altar plan that already lost the selection has priced its own Void.
+	if not sacrifice_cards.is_empty() and altar_plan.is_empty():
+		result["penalty"] += CardStrategy.held_altar_void_burn_charge(self, card)
 	var sacrifice_uids: Array[String] = []
 	for sacrifice in sacrifice_cards:
 		if sacrifice != null:

@@ -202,7 +202,7 @@ static func combat_visible(bot, action: CardAction) -> bool:
 	var defender: Card = bot._get_attack_defender_card(action)
 	return defender == null or visible(bot, defender)
 
-static func mana_penalty(bot, amount: int, available_mana: int = -1) -> int:
+static func mana_penalty(bot, amount: int, available_mana: int = -1, ignore_altar_hold := false) -> int:
 	# Spending prices each paid point of mana at its own marginal rate: the
 	# last points of a large stock are nearly free once nothing in the deck
 	# can still use them, while early points of a tight stock are expensive.
@@ -215,6 +215,14 @@ static func mana_penalty(bot, amount: int, available_mana: int = -1) -> int:
 		var creature: Card = bot._get_best_affordable_hand_creature(0)
 		if creature != null and bot._get_play_cost(creature, false) > bot.bot_player.mana - spend:
 			score += CARD_VALUE / 2
+	# A spend that dips the stock below the held Altar of Dreams line's
+	# funding strands its removal window until later upkeep income rebuilds
+	# the dip, so competing plays carry a share of the payoff they spend
+	# away. The line's own steps pass `ignore_altar_hold` so the unlock, the
+	# sleep activation, and the Void-fuelled summon never pay for holding
+	# themselves open.
+	if spend > 0 and not ignore_altar_hold:
+		score += altar_line_hold_charge(bot, stock, spend)
 	return score
 
 static func mana_gain_value(bot, amount: int, at_level: int = -1) -> int:
@@ -1766,6 +1774,9 @@ static func unlock_score(bot, power: PowerCard, unlock_cost: int = -1) -> int:
 		# the Demons standing around: sleepers on either side of the field
 		# become premium sacrifice payment once the power is live.
 		gain = altar_unlock_line_gain(bot)
+		# The unlock is the held line's own step: it must not pay the hold
+		# charge that keeps the stock for exactly this spend.
+		return gain - mana_penalty(bot, unlock_cost, -1, true)
 	elif PASSIVE_TYPES.has(id):
 		for card in bot._get_board_creatures(bot.bot_player) + bot.bot_player.hand_zone.cards:
 			for type in PASSIVE_TYPES[id]:
@@ -1860,25 +1871,32 @@ const ALTAR_VOID_REMOVAL_PREMIUM := 1500
 # (a summon or a brood take) stands between it and the payoff.
 const LINE_CONTINUATION_SHARE := 0.75
 
-# Mana the bot can plan on across the line's turns: current stock plus each
-# upcoming upkeep's automatic gain and mana-option gain. The Matriarch brood
-# take grants no income on its own turn, which the upkeep choice itself
+# Per-turn mana income the bot can plan on at its own upkeeps: the automatic
+# gain plus the mana-option gain, net of an enemy Pazuzu's tax. The Matriarch
+# brood take grants no income on its own turn, which the upkeep choice itself
 # already prices, so projections cover the upkeeps after it.
-static func projected_upkeep_mana(bot, own_turns: int) -> int:
+static func projected_upkeep_income(bot, own_turns: int) -> int:
 	if bot == null or bot.bot_player == null or bot.game_manager == null:
 		return 0
-	var total: int = bot.bot_player.mana
 	var drain_per_turn := 0
 	if bot.has_method("_incoming_mana_drain"):
 		drain_per_turn = int(bot._incoming_mana_drain())
+	var income := 0
 	for _index in range(maxi(0, own_turns)):
-		total += bot.game_manager.get_automatic_upkeep_mana_gain(bot.bot_player, -1)
-		total += bot.game_manager.get_effective_upkeep_mana_gain(
+		income += bot.game_manager.get_automatic_upkeep_mana_gain(bot.bot_player, -1)
+		income += bot.game_manager.get_effective_upkeep_mana_gain(
 			bot.game_manager.get_base_upkeep_mana_gain(), bot.bot_player)
 		# Each projected turn passes an enemy Pazuzu turn start, taxing the
 		# stock this line plans to spend across those turns.
-		total -= drain_per_turn
-	return total
+		income -= drain_per_turn
+	return income
+
+# Mana the bot can plan on across the line's turns: current stock plus each
+# upcoming upkeep's income.
+static func projected_upkeep_mana(bot, own_turns: int) -> int:
+	if bot == null or bot.bot_player == null or bot.game_manager == null:
+		return 0
+	return bot.bot_player.mana + projected_upkeep_income(bot, own_turns)
 
 # Fresh value of one creature being asleep under the Duat: sleep locks attack
 # and intercept for as long as the structure lives, priced with the same
@@ -2155,8 +2173,10 @@ static func deck_pick_line_gain(bot, card: Card, excluded: Array = []) -> int:
 		return divine_manifestation_wake_adjustment(bot, card) \
 			+ isimud_revelation_continuation(bot, card)
 	if _is_demon_or_spirit_coster(card):
-		# Demon and Spirit sacrifice-costers are the Altar's payoff bodies.
-		var payoff := altar_demon_payoff(bot, 1, duat_reachable(bot))
+		# Demon and Spirit sacrifice-costers are the Altar's payoff bodies;
+		# any sleep source the bot controls — not only the Duat chain —
+		# turns the enemy board into their payment.
+		var payoff := altar_demon_payoff(bot, 1, enemy_sleep_reachable(bot))
 		if int(payoff["gain"]) <= 0:
 			return 0
 		return int(float(payoff["gain"]) * 0.5)
@@ -2227,11 +2247,15 @@ static func any_sleeping_fuel(bot) -> bool:
 # The Matriarch take that starts the Altar line: the brood Demon or Spirit is
 # one upkeep and one Void-fuelled summon from the payoff, so the take carries
 # the chain's continuation when the line is live. Sleepers already on the
-# field let the payoff summon fire the same turn the take happens.
+# field let the payoff summon fire the same turn the take happens, and any
+# sleep source the bot controls — not only the Duat chain — counts.
 static func brood_take_line_gain(bot, card: Card) -> int:
-	if not _is_demon_or_spirit_coster(card) or not duat_reachable(bot):
+	if not _is_demon_or_spirit_coster(card):
 		return 0
-	var turns := 0 if any_sleeping_fuel(bot) else 2
+	var source := controllable_sleep_source(bot)
+	if not bool(source.get("available", false)):
+		return 0
+	var turns := 0 if any_sleeping_fuel(bot) else mini(1, maxi(0, int(source.get("turns_ahead", 2))))
 	var payoff := altar_demon_payoff(bot, turns, true)
 	return int(float(payoff["gain"]) * LINE_CONTINUATION_SHARE)
 
@@ -2257,20 +2281,25 @@ static func count_altar_costers(bot) -> int:
 # Unlocking the Altar is worth the Void-fuelled summons it enables. The
 # unlock's own mana is priced by unlock_score's return, so this is the gross
 # line value: current sleepers (any source) plus the projected sleepers a
-# reachable Duat still creates. The power stays unlocked for the rest of the
-# game, so there is future value in more potential summons and more
+# reachable sleep engine still creates. The power stays unlocked for the rest
+# of the game, so there is future value in more potential summons and more
 # potential sleep: every further coster still to come is another
 # Void-fuelled summon, and while the sleep engine runs the opponent's later
 # arrivals turn into fresh Void targets for the uses after those.
 static func altar_unlock_line_gain(bot) -> int:
-	var turns := 0 if any_sleeping_fuel(bot) else 1
-	var payoff := altar_demon_payoff(bot, turns, duat_reachable(bot))
+	var source := controllable_sleep_source(bot)
+	var reachable := bool(source.get("available", false))
+	# A ready Alu or Gambanteinn sleeps its target the same turn it fires, so
+	# the payoff it fuels is this turn's; a sleep engine still walking in
+	# (the Duat chain) stays one turn out.
+	var turns := 0 if any_sleeping_fuel(bot) else mini(1, maxi(0, int(source.get("turns_ahead", 1))))
+	var payoff := altar_demon_payoff(bot, turns, reachable)
 	var base_gain := int(payoff["gain"])
 	if base_gain <= 0:
 		return 0
 	var gain := base_gain
 	# Repeat fuel: sleepers standing now (any source) plus the enemy board
-	# a reachable Duat still puts to sleep.
+	# a reachable sleep engine still puts to sleep.
 	var fuel_count := 0
 	for player in bot.game_manager.players:
 		if player == null:
@@ -2280,7 +2309,7 @@ static func altar_unlock_line_gain(bot) -> int:
 				if card != null and card.card_type == Card.CardType.CREATURE \
 						and not (card is ActiveGodCard) and card.is_sleeping:
 					fuel_count += 1
-	if duat_reachable(bot):
+	if reachable:
 		for enemy in bot._get_board_creatures(bot.opponent):
 			if not enemy.is_sleeping and not enemy.is_immune_to_sleep() and visible(bot, enemy):
 				fuel_count += 1
@@ -2307,6 +2336,247 @@ static func altar_unlock_line_gain(bot) -> int:
 				renewal = renewal / 2
 		gain += renewal
 	return gain
+
+# ============================================================================
+# The held Altar line: sleep source + coster = on-demand enemy Void removal
+#
+# The Duat chain is one way sleepers arrive; a standing Alu (Stupefy) or a
+# Gambanteinn on a Mage bearer is a sleep source the bot fires on demand,
+# and a creature asleep right now — from any source — is fuel the moment the
+# Altar is live. While the bot owns the Altar, controls such a source, and
+# holds an executable Demon or Spirit coster, the enemy board is future Void
+# payment. That line is worth holding mana for — the Altar's remaining unlock
+# plus the coster's summon price plus the sleep activation tax, net of the
+# upkeep income the line can wait for — so a good opportunity can be taken
+# the turn it appears. Paying the same summon with the bot's own bodies
+# forecloses its Void window, so a direct sacrifice is charged the line's
+# continuation while the source is reachable.
+# ============================================================================
+
+# Share of the held line's Void value charged for spending the stock below
+# its funding level: the window is delayed rather than dead while the source
+# keeps offering fuel, so the strand costs a fraction of the payoff.
+const ALTAR_HOLD_STRAND_SHARE := 0.3
+# Discount on a burned Void window when another executable coster keeps the
+# line's next summon open anyway.
+const ALTAR_BURN_ALT_COSTER_SHARE := 0.5
+
+# The bot's own ways to turn an enemy creature into Altar Void fuel, best
+# first: a creature asleep right now needs no activation, a standing Alu or
+# a Gambanteinn-equipped Mage sleeps any one target the turn it is fired, and
+# the Sleep of the Duat blankets the enemy board from the end of its landing
+# turn. Returns {"available": bool, "activation_cost": int, "turns_ahead":
+# int, "sleeps_any_visible_enemy": bool}.
+static func controllable_sleep_source(bot) -> Dictionary:
+	var result := {"available": false, "activation_cost": 0, "turns_ahead": 0,
+			"sleeps_any_visible_enemy": false}
+	if bot == null or bot.bot_player == null or bot.game_manager == null or bot.opponent == null:
+		return result
+	var sleepable_enemies := 0
+	var enemy_fuel_now := false
+	for enemy in bot._get_board_creatures(bot.opponent):
+		if enemy == null or enemy is ActiveGodCard or not visible(bot, enemy):
+			continue
+		sleepable_enemies += 1
+		if enemy.is_sleeping:
+			enemy_fuel_now = true
+	var candidate := {"turns": 1000, "cost": 0, "sleeps_any": false}
+	# 1) A creature asleep right now, from any source, is already fuel.
+	if enemy_fuel_now:
+		candidate = {"turns": 0, "cost": 0, "sleeps_any": false}
+	# 2) A standing Alu stupefies any one visible enemy the turn it fires.
+	if sleepable_enemies > 0:
+		for creature in bot._get_board_creatures(bot.bot_player):
+			var alu := creature as Alu
+			if alu == null or alu.is_face_down or alu.is_stealth or alu.is_sleeping \
+					or alu.abilities_suppressed() or alu.is_activation_locked(bot.game_manager) \
+					or not alu.can_take_major_creature_action():
+				continue
+			var tax: int = bot.game_manager.get_creature_action_mana_cost(alu, "activate")
+			if int(candidate["turns"]) > 0 or (int(candidate["turns"]) == 0 and int(candidate["cost"]) > tax):
+				candidate = {"turns": 0, "cost": tax, "sleeps_any": true}
+	# 3) A Gambanteinn on an awake Mage bearer sleeps any one target this turn.
+	if sleepable_enemies > 0:
+		for field_card in bot.game_manager.get_field_cards(bot.bot_player):
+			var wand := field_card as Gambanteinn
+			if wand == null or not wand.can_activate(bot.game_manager) or wand.equipped_on == null:
+				continue
+			if not wand.equipped_on.has_type("Mage"):
+				continue
+			if int(candidate["turns"]) > 0 \
+					or (int(candidate["turns"]) == 0 and int(candidate["cost"]) > Gambanteinn.ACTIVATION_COST):
+				candidate = {"turns": 0, "cost": Gambanteinn.ACTIVATION_COST, "sleeps_any": true}
+	# 4) The Sleep of the Duat blankets the enemy board from the end of its
+	#    landing turn: live now, or still walking in via the sage chain.
+	var duat := active_sleep_of_the_duat(bot)
+	if duat != null:
+		if int(candidate["turns"]) > 1:
+			candidate = {"turns": 1, "cost": 0, "sleeps_any": true}
+	elif duat_reachable(bot) and int(candidate["turns"]) > 2:
+		candidate = {"turns": 2, "cost": 0, "sleeps_any": true}
+	if int(candidate["turns"]) >= 1000:
+		return result
+	result["available"] = true
+	result["activation_cost"] = int(candidate["cost"])
+	result["turns_ahead"] = int(candidate["turns"])
+	result["sleeps_any_visible_enemy"] = bool(candidate["sleeps_any"])
+	return result
+
+# Whether the bot's own sleep engine can still turn enemy creatures into
+# Altar Void fuel: the Duat chain, a creature asleep right now (any source),
+# or a ready Alu / Gambanteinn sleep activation.
+static func enemy_sleep_reachable(bot) -> bool:
+	if bot == null or bot.bot_player == null or bot.game_manager == null:
+		return false
+	return bool(controllable_sleep_source(bot).get("available", false))
+
+# The Demon or Spirit coster the held line can actually summon: hand or
+# brood (one upkeep take away), best body first. Deck costers are speculation
+# the line prices at half, not something to hold mana for.
+static func executable_altar_coster(bot) -> Card:
+	var best: Card = null
+	var best_score := 0
+	if bot == null or bot.bot_player == null:
+		return best
+	for zone in bot.bot_player.power_zones:
+		for card in zone.cards:
+			if not _is_demon_or_spirit_coster(card):
+				continue
+			var score: int = bot._score_projected_card(card) + 500
+			if score > best_score:
+				best_score = score
+				best = card
+	for card in bot.bot_player.hand_zone.cards:
+		if not _is_demon_or_spirit_coster(card):
+			continue
+		var score: int = bot._score_projected_card(card)
+		if score > best_score:
+			best_score = score
+			best = card
+	return best
+
+# Executable costers the held line can still name after the current one:
+# while another is held, a direct-sacrifice summon only delays the line's
+# next window instead of burning it.
+static func count_executable_altar_costers(bot) -> int:
+	if bot == null or bot.bot_player == null:
+		return 0
+	var count := 0
+	for zone in bot.bot_player.power_zones:
+		for card in zone.cards:
+			if _is_demon_or_spirit_coster(card):
+				count += 1
+	for card in bot.bot_player.hand_zone.cards:
+		if _is_demon_or_spirit_coster(card):
+			count += 1
+	return count
+
+# The enemy creature the held line would Void: the most valuable one that is
+# asleep already, or — when the source can sleep any visible enemy — the most
+# valuable one it could still put to sleep.
+static func best_future_void_target(bot, source: Dictionary) -> Card:
+	if bot == null or bot.opponent == null:
+		return null
+	var sleeps_any := bool(source.get("sleeps_any_visible_enemy", false))
+	var best: Card = null
+	var best_gain := 0
+	for enemy in bot._get_board_creatures(bot.opponent):
+		if enemy == null or enemy is ActiveGodCard or not visible(bot, enemy) \
+				or enemy.is_immune_to_sleep():
+			continue
+		if not enemy.is_sleeping and not sleeps_any:
+			continue
+		var gain := value(bot, enemy) + ALTAR_VOID_REMOVAL_PREMIUM
+		if gain > best_gain:
+			best_gain = gain
+			best = enemy
+	return best
+
+# The held line in one decision-ready package, cached per decision step:
+# `live` (altar + sleep source + executable coster + worthwhile enemy fuel),
+# `gross` (the line's full funding: remaining unlock + coster summon +
+# activation tax), `need` (gross net of the upkeep income over the source's
+# window — the stock to keep on hand now), `gain` (the Void removal the
+# window buys), and the source and coster it was computed from.
+static func held_altar_line(bot) -> Dictionary:
+	if bot == null:
+		return {"live": false, "need": 0, "gross": 0, "gain": 0,
+				"coster": null, "source_cost": 0, "turns_ahead": 0}
+	var cache = bot.get("_altar_line_cache")
+	if cache is Dictionary and cache.has("live"):
+		return cache
+	var fresh := _compute_held_altar_line(bot)
+	bot.set("_altar_line_cache", fresh)
+	return fresh
+
+static func _compute_held_altar_line(bot) -> Dictionary:
+	var result := {"live": false, "need": 0, "gross": 0, "gain": 0,
+			"coster": null, "source_cost": 0, "turns_ahead": 0}
+	if bot == null or bot.bot_player == null or bot.game_manager == null or bot.opponent == null:
+		return result
+	var altar := find_altar_of_dreams(bot)
+	if altar == null:
+		return result
+	var source := controllable_sleep_source(bot)
+	if not bool(source.get("available", false)):
+		return result
+	var coster := executable_altar_coster(bot)
+	if coster == null or bot._get_first_open_summon_zone(bot.bot_player) == null:
+		return result
+	var turns_ahead := maxi(0, int(source.get("turns_ahead", 0)))
+	var unlock_left: int = altar.get_unlock_mana_cost(bot.game_manager) if altar.is_face_down else 0
+	var gross: int = unlock_left + bot._get_play_cost(coster, false) + int(source.get("activation_cost", 0))
+	# The hold only exists while the line is actually reachable: within a few
+	# of the bot's upkeeps the projected stock must cover the whole funding,
+	# mirroring the face-down Altar's own unlock reachability check.
+	if projected_upkeep_mana(bot, 3) < gross:
+		return result
+	var target := best_future_void_target(bot, source)
+	if target == null:
+		return result
+	result["live"] = true
+	result["coster"] = coster
+	result["source_cost"] = int(source.get("activation_cost", 0))
+	result["turns_ahead"] = turns_ahead
+	result["gross"] = gross
+	# The need is the funding net of the income over the source's window: an
+	# opportunity that is live now wants the stock on hand, while a source
+	# still a turn or two out can wait for its own upkeeps.
+	result["need"] = maxi(0, gross - projected_upkeep_income(bot, turns_ahead))
+	result["gain"] = value(bot, target) + ALTAR_VOID_REMOVAL_PREMIUM
+	return result
+
+# The charge for a spend that would dip the stock below the held line's
+# funding: the removal window stays closed until later upkeep income rebuilds
+# the dip. Zero while the line is not live, already funded, or the spend
+# stays above its need.
+static func altar_line_hold_charge(bot, stock: int, spend: int) -> int:
+	if spend <= 0:
+		return 0
+	var line := held_altar_line(bot)
+	if not bool(line.get("live", false)):
+		return 0
+	var need := int(line.get("need", 0))
+	if need <= 0 or stock - spend >= need:
+		return 0
+	return int(float(line.get("gain", 0)) * ALTAR_HOLD_STRAND_SHARE)
+
+# What a direct-sacrifice payment burns: the same Demon or Spirit could have
+# paid by Voiding an enemy sleeper the bot's sleep source still creates, so
+# spending the bot's own bodies instead is charged that removal — full weight
+# while this is the line's own coster, halved while another executable one
+# keeps the next window open, and discounted by the source's distance while
+# the opponent still gets turns to answer it.
+static func held_altar_void_burn_charge(bot, coster: Card) -> int:
+	if bot == null or coster == null:
+		return 0
+	var line := held_altar_line(bot)
+	if not bool(line.get("live", false)) or line.get("coster") != coster:
+		return 0
+	var charge := int(line.get("gain", 0))
+	if count_executable_altar_costers(bot) > 1:
+		charge = int(float(charge) * ALTAR_BURN_ALT_COSTER_SHARE)
+	return int(float(charge) * pow(0.8, maxi(0, int(line.get("turns_ahead", 0)))))
 
 # ============================================================================
 # Walk of the Sage + E2-abzu: an on-demand tutor for the deck's Mer Mages
