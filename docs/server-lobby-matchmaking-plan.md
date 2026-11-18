@@ -595,6 +595,16 @@ short fallback scan, started/stopped with the lobby). It records the public
 ip:port each marker packet arrives from and hands that record to lobby
 signaling; it never relays match traffic.
 
+**Deployment requirement:** the public server must allow inbound UDP 22346
+(bind-conflict fallback scans through 22355) in both the Lightsail Networking
+tab and Windows Firewall. The lobby starts and reports healthy without it, but
+punch bounces then never arrive, every `via_punch` spectate submission is
+silently ignored, and all remote-hosted bot challenges stay "Not watchable" —
+a failure the lobby cannot detect locally, since the reflector binds fine
+behind a closed cloud firewall. `start_server.ps1` logs the reflector listener
+during startup to surface this; verify from an external network after opening
+the port.
+
 - **Discovery** is done from the sockets that actually carry the match, using
   `ENetConnection.socket_send`:
   - The host sends marker packets (kind `host`, tagged with the match id) from

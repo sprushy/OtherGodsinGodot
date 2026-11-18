@@ -289,7 +289,17 @@ func switch_to_exhausted_art() -> void:
 		art_path = exhausted_art_path
 		art_updated.emit(art_path)
 
+# Set while a legality probe mutates visual state transiently (restored before
+# returning): the probe must not schedule zone UI refreshes through
+# visual_state_changed, so its emissions are suppressed.
+var _visual_state_notifications_suppressed := false
+
+func set_visual_state_notifications_suppressed(suppressed: bool) -> void:
+	_visual_state_notifications_suppressed = suppressed
+
 func _emit_visual_state_changed() -> void:
+	if _visual_state_notifications_suppressed:
+		return
 	visual_state_changed.emit()
 
 # Costs

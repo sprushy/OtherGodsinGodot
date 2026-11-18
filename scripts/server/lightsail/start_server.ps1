@@ -21,6 +21,10 @@ $LobbyHost = "63.33.96.156"
 $LobbyPort = 22345
 $MatchPort = 12345
 $WebSocketPort = 24443
+# Stateless UDP endpoint clients bounce NAT-punch markers off (PunchReflector.gd).
+# The reflector falls back through +10 attempts when a port is taken.
+$PunchReflectorBasePort = 22346
+$PunchReflectorPortAttempts = 10
 $NetworkConfigPath = Join-Path $Root "network.json"
 
 function Load-NetworkConfig {
@@ -75,6 +79,30 @@ function Write-ListenerStatus {
     $webSocketListeners = @(Get-NetTCPConnection -LocalPort $WebSocketPort -State Listen -ErrorAction SilentlyContinue)
     $webSocketAddresses = ($webSocketListeners | ForEach-Object { $_.LocalAddress }) -join ', '
     Write-Log "Startup: listener status: UDP ${LobbyPort}=$($udpListeners.Count); WebSocket TCP ${WebSocketPort}=$($webSocketListeners.Count) addresses=[$webSocketAddresses] (requires IPv4 loopback access)."
+    Write-Log "Startup: listener status: punch reflector UDP $PunchReflectorBasePort-$($PunchReflectorBasePort + $PunchReflectorPortAttempts - 1)=$(Get-PunchReflectorPort)"
+}
+
+## First UDP port in the reflector range the server has bound, or 0 when the
+## reflector is not listening (old build or every fallback port was taken).
+function Get-PunchReflectorPort {
+    foreach ($port in ($PunchReflectorBasePort..($PunchReflectorBasePort + $PunchReflectorPortAttempts - 1))) {
+        if (@(Get-NetUDPEndpoint -LocalPort $port -ErrorAction SilentlyContinue).Count -gt 0) {
+            return $port
+        }
+    }
+    return 0
+}
+
+## Log-only: a missing reflector never blocks the lobby, but without it
+## client-hosted bot challenges stay "Not watchable" and spectators cannot
+## connect. The Lightsail/Windows Firewall rules are external to this script.
+function Write-PunchReflectorStatus {
+    $reflectorPort = Get-PunchReflectorPort
+    if ($reflectorPort -gt 0) {
+        Write-Log "Startup: punch reflector listening on UDP $reflectorPort."
+        return
+    }
+    Write-Log "Startup: WARNING: punch reflector is not listening on UDP $PunchReflectorBasePort-$($PunchReflectorBasePort + $PunchReflectorPortAttempts - 1); client-hosted bot challenges will show 'Not watchable'. Allow inbound UDP $PunchReflectorBasePort-$($PunchReflectorBasePort + $PunchReflectorPortAttempts - 1) in the Lightsail Networking tab and Windows Firewall, and confirm the deployed build includes the reflector."
 }
 
 function Remove-OldLogs {
@@ -152,6 +180,7 @@ try {
 
     if (Test-LobbyListener) {
         Write-Log "Startup: lobby listeners already healthy on UDP $LobbyPort and WebSocket TCP $WebSocketPort."
+        Write-PunchReflectorStatus
         return
     }
 
@@ -223,6 +252,7 @@ try {
 
     if ($listenerReady) {
         Write-Log "Startup: lobby listeners recovered on UDP $LobbyPort and WebSocket TCP $WebSocketPort."
+        Write-PunchReflectorStatus
         return
     }
 

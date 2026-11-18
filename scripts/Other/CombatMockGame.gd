@@ -836,6 +836,8 @@ var _entropy_cursor_layer: CanvasLayer = null
 var _entropy_cursor_sprite: TextureRect = null
 var _active_selection_cursor_mode: String = ""
 var _active_selection_cursor_target_height: int = 0
+var _windows_cursor_repaint_deferred := false
+var _has_observed_mouse_input := false
 var _overlay_selection_cursor_mode: String = ""
 var _sacrifice_cursor_target_height: int = 0
 var _devour_cursor_target_height: int = 0
@@ -3927,6 +3929,39 @@ func _restore_default_selection_cursor() -> void:
 	_hide_entropy_cursor_overlay()
 	_set_embedded_custom_cursor_active(false)
 
+func _schedule_windows_cursor_repaint() -> void:
+	# Windows keeps drawing the previously registered custom cursor after a
+	# cursor image swap until the next mouse input event. A mode change made
+	# by the click that confirms or restores a targeting cursor therefore
+	# leaves the stale targeting art on screen while the mouse is stationary,
+	# and the player has to click again just to make the OS redraw it. The
+	# transition below registers the new textures immediately, so schedule one
+	# deferred zero-delta warp that makes the OS repaint the cursor right away.
+	if _windows_cursor_repaint_deferred:
+		return
+	_windows_cursor_repaint_deferred = true
+	_run_windows_cursor_repaint.call_deferred()
+
+func _run_windows_cursor_repaint() -> void:
+	_windows_cursor_repaint_deferred = false
+	if OS.get_name() != "Windows" or not _has_observed_mouse_input:
+		return
+	if Input.mouse_mode != Input.MOUSE_MODE_VISIBLE:
+		return
+	# Never inject synthetic motion while a button is held: the hand-card drag
+	# system treats any motion with the left button pressed as a drag start.
+	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) or Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
+		return
+	if not is_inside_tree():
+		return
+	var viewport := get_viewport()
+	if viewport == null:
+		return
+	# Warping to the current position round-trips through the same viewport
+	# transform that produced it, so the hardware cursor stays on the same
+	# screen pixel while Windows redraws it with the newly registered image.
+	viewport.warp_mouse(viewport.get_mouse_position())
+
 func _uses_software_selection_cursor(cursor_mode: String) -> bool:
 	return cursor_mode == "entropy"
 
@@ -3951,6 +3986,7 @@ func _sync_sacrifice_cursor() -> void:
 	_set_embedded_custom_cursor_active(not cursor_mode.is_empty(), _uses_software_selection_cursor(cursor_mode))
 	if cursor_mode == _active_selection_cursor_mode and target_height == _active_selection_cursor_target_height:
 		return
+	_schedule_windows_cursor_repaint()
 
 	if cursor_mode.begins_with(ABILITY_BADGE_CURSOR_MODE_PREFIX):
 		if _apply_ability_badge_cursor(cursor_mode):
@@ -22539,6 +22575,10 @@ func _handle_priority_full_control_shortcut(event: InputEvent) -> bool:
 func _input(event: InputEvent) -> void:
 	if not is_visible_in_tree():
 		return
+	if not _has_observed_mouse_input and (event is InputEventMouseMotion or event is InputEventMouseButton):
+		# Cursor repaint warps are only safe once the viewport has tracked a
+		# real mouse position; before that, get_mouse_position() is unset.
+		_has_observed_mouse_input = true
 	if _is_match_replay_open():
 		if _try_handle_match_replay_input(event):
 			get_viewport().set_input_as_handled()
@@ -23281,9 +23321,14 @@ func _can_auto_switch_defensive_drag_attacker(card: Card) -> bool:
 			and not game_manager.can_pay_creature_action_mana_cost(card, "change stance"):
 		return false
 	var original_mode: Card.CreatureMode = card.creature_mode
+	# The stance flip below is a legality probe restored before returning.
+	# Suppress its visual-state notifications so drag-move evaluations do not
+	# schedule zone UI rebuilds against the drag system's own node churn.
+	card.set_visual_state_notifications_suppressed(true)
 	card.creature_mode = Card.CreatureMode.AGGRESSIVE
 	var can_attack_after_switch := match_manager.can_attack(card)
 	card.creature_mode = original_mode
+	card.set_visual_state_notifications_suppressed(false)
 	return can_attack_after_switch
 
 func _try_auto_switch_defensive_drag_attack(card: Card, attack_target) -> bool:

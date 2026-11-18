@@ -29,8 +29,12 @@ prevent the UDP lobby from starting.
 The scheduled updater/watchdog runs as SYSTEM with administrator privileges.
 For a manual startup, use Administrator PowerShell. The updater cannot change
 the AWS-side firewall: allow inbound TCP 80 and 443 in the Lightsail instance's
-Networking tab. DNS must point to the server's public IP for certificates to
-be provisioned. No manual transfer of the configuration files is required.
+Networking tab, plus inbound UDP 22346 (the spectator punch reflector; the
+server falls back through 22355) so client-hosted bot challenges stay
+watchable — without it every remote-hosted bot challenge shows "Not watchable"
+and spectators cannot connect. DNS must point to the server's public IP for
+certificates to be provisioned. No manual transfer of the configuration files
+is required.
 
 Changes on a GitHub branch alone do not reach the server: the release workflow
 must publish a new tagged `OtherGodsServer-windows.zip` asset for the existing
@@ -65,7 +69,11 @@ firewall/service commands.
 4. Allow inbound TCP 80 and 443 in Lightsail and Windows Firewall. Caddy uses
    these for HTTPS and certificate provisioning. The internal TCP 24443 and
    12345-12408 listeners stay loopback-only and need no public firewall rules.
-   Keep existing UDP rules if UDP clients will still be supported.
+   Keep existing UDP rules if UDP clients will still be supported. Also allow
+   inbound UDP 22346 in both firewalls: the lobby's punch reflector uses it to
+   make client-hosted bot challenges watchable (fallback ports 22347-22355
+   cover bind conflicts). Without it those challenges show "Not watchable"
+   and spectators cannot connect.
 5. Run Caddy as a service, following its
    [service documentation](https://caddyserver.com/docs/running).
 6. Deploy the updated game server and restart it through start_server.ps1.
@@ -99,8 +107,10 @@ It does not require an AWS load balancer.
    record updated if the server IP changes. An attached Lightsail static IP
    has [no separate static-IP fee](https://docs.aws.amazon.com/lightsail/latest/userguide/amazon-lightsail-frequently-asked-questions-faq-billing-and-account-management.html).
 
-2. In the Lightsail instance's Networking tab, allow inbound HTTP TCP 80 and
-   HTTPS TCP 443 from any IPv4 address. These are the public proxy ports.
+2. In the Lightsail instance's Networking tab, allow inbound HTTP TCP 80,
+   HTTPS TCP 443, and UDP 22346 from any IPv4 address. The TCP ports are the
+   public proxy ports; UDP 22346 carries the spectator punch reflector that
+   keeps client-hosted bot challenges watchable.
    See the [Lightsail firewall instructions](https://docs.aws.amazon.com/lightsail/latest/userguide/understanding-firewall-and-port-mappings-in-amazon-lightsail.html).
 
 3. On the Windows server, download the Windows amd64 Caddy binary from its
@@ -112,6 +122,7 @@ It does not require an AWS load balancer.
 
    ```powershell
    New-NetFirewallRule -DisplayName 'Other Gods HTTPS proxy' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 80,443 -Program 'C:\OtherGodsServer\caddy.exe'
+   New-NetFirewallRule -DisplayName 'Other Gods punch reflector' -Direction Inbound -Action Allow -Protocol UDP -LocalPort 22346-22355
    Set-Location C:\OtherGodsServer
    powershell.exe -ExecutionPolicy Bypass -File .\New-WebSocketProxyConfig.ps1 -Domain your-name.duckdns.org
    .\caddy.exe validate --config C:\OtherGodsServer\Caddyfile --adapter caddyfile

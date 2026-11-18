@@ -1199,6 +1199,8 @@ static func effect_score(bot, card: Card, target: Card = null, action: CardActio
 					})
 				elif doomed.get_controller() == bot.opponent:
 					amount -= _debilitation_discount(bot, doomed) + _own_dromi_drain_loss(bot, doomed)
+					if id == "FalloftheMighty" and amount > 0 and _bot_can_safely_contain(bot, doomed):
+						amount = int(round(float(amount) * 0.35))
 				else:
 					amount -= _debilitation_discount(bot, doomed)
 				gain += amount if doomed.get_controller() == bot.opponent else -amount
@@ -1255,6 +1257,35 @@ static func shroud_gain(bot, source: Card, action: CardAction = null) -> int:
 		if not creature.ability_text.is_empty() and not creature.abilities_suppressed():
 			gain += -1800 if own else 1800
 	return gain
+
+# True when the bot already has a body that can contain the enemy creature: it
+# can legally intercept the enemy's attacks (engine intercept gate) and would
+# survive the resulting combat, either through a self-replacement zone (Stone
+# Skin's "Cannot be Slain", "Cannot be destroyed in combat") or by simply
+# out-resilience-ing the enemy's strength. Such a body holds off aggression by
+# itself, so removing the enemy with a card is not an urgent need.
+static func _bot_can_safely_contain(bot, enemy: Card) -> bool:
+	if bot == null or enemy == null or enemy.card_type != Card.CardType.CREATURE:
+		return false
+	var game: GameManager = bot.game_manager
+	if game == null:
+		return false
+	for ally in bot._get_board_creatures(bot.bot_player):
+		if ally == null or ally.card_type != Card.CardType.CREATURE:
+			continue
+		if ally.is_face_down or ally.is_stealth:
+			continue
+		if not game._can_intercept_followers(ally, enemy):
+			continue
+		if not enemy.can_destroy_combat_protected_creatures(ally):
+			var replacement: Zone = null
+			if ally is BaseCard:
+				replacement = ally.get_self_graveyard_replacement_zone(game, true, true, false)
+			if replacement != null and ally.current_zone != null and replacement == ally.current_zone:
+				return true
+		if ally.get_effective_resilience() >= enemy.get_effective_strength():
+			return true
+	return false
 
 static func wild_magic_gain(bot, spell: Card) -> int:
 	if not spell.is_prepared and open_spaces(bot.bot_player) == 0:

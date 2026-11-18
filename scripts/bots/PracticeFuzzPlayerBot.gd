@@ -54,7 +54,6 @@ func detach() -> void:
 	super.detach()
 
 func _on_network_game_event(event_type: String, data: Dictionary) -> void:
-	_crumb("net_event:" + event_type)
 	match event_type:
 		"full_state":
 			_awaiting_network_state_after_submit = false

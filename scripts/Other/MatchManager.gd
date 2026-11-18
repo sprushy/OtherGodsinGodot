@@ -8,7 +8,7 @@ class_name MatchManager
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 const MatchCommandRegistryScript = preload("res://scripts/Other/MatchCommandRegistry.gd")
 const AUTHORITATIVE_FLOW_LOG_PREFIX := "[OG server flow]"
-const DEBUG_AUTHORITATIVE_FLOW_LOGS := true
+const DEBUG_AUTHORITATIVE_FLOW_LOGS := false
 const DEBUG_HUNTING_TACTICS_LOGS := false
 const AUTHORITATIVE_FLOW_CHECK_DELAY_SECONDS := 1.0
 const AUTHORITATIVE_SETTLED_REFRESH_DELAY_SECONDS := 0.05
