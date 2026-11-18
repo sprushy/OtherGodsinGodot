@@ -51,7 +51,7 @@ runtime validation or optimal bot strategy.
 | Again Walker | `resurrection` | Resurrect when mana and reserve space permit |
 | Sharur's return replacement | `return_to_hand_choice` | Submit the dying card identifier and pay when eligible |
 | Seventh Sage Utuabzu | `seventh_sage_utuabzu_impact` | Choose an offered target |
-| Sixth Sage An-Enlilda | `sixth_sage_an_enlilda_impact` | Choose an offered target |
+| Sixth Sage An-Enlilda | `sixth_sage_an_enlilda_impact` | Void itself for the Dwelling the fetch deploys; keep the body only when it outprices the structure |
 | Tatzelwurm | `tatzelwurm_dragon_heart` | Choose an offered target |
 | Terror | `terror_impact` | Choose an offered target |
 | Tezcatlipoca, active | `tezcatlipoca_active_titlacauan` | Maximize the combined enemy value within the stored level budget and two-target limit, or skip |

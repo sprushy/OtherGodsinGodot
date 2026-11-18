@@ -64,6 +64,8 @@ static func build_command(bot, type: String, data: Dictionary) -> Dictionary:
 			command["target_uid"] = _best_fourth_sage_target(bot, source, data.get("target_uids", []))
 		elif type == "seventh_sage_utuabzu_impact":
 			command["target_uid"] = _best_seventh_sage_channel_target(bot, data.get("target_uids", []))
+		elif type == "sixth_sage_an_enlilda_impact" and source is SixthSageAnEnlilda:
+			command["target_uid"] = _best_conjure_home_target(bot, source, data.get("target_uids", []))
 		elif type == "tonal_extraction" and source is TonalExtraction:
 			var targets: Array[Card] = []
 			for target in source.get_valid_targets(bot.game_manager):
@@ -78,10 +80,13 @@ static func build_command(bot, type: String, data: Dictionary) -> Dictionary:
 			var target: Card = bot.game_manager.get_card_by_uid(str(command.get("target_uid", "")))
 			if target != null:
 				var danger: int = bot._forecast_incoming_follower_loss()
-				# The Sage voids itself to Conjure Home, so it is not on the
-				# board the Duat would lock: exclude it from the chain's
+				# Voiding the Sage is the only way Conjure Home adds the
+				# Dwelling, so the fetch is the default: decline only when the
+				# hand cannot take it or the body outprices the structure the
+				# void would deploy. The Sage voids itself, so it is not on
+				# the board the Duat would lock: exclude it from the chain's
 				# own-sleeper pricing.
-				var gain: int = bot._deck_pick_value(target, bot.bot_player.mana, danger, [source])
+				var gain: int = Strategy.conjure_home_fetch_value(bot, target, danger, [source])
 				var loss: int = bot._get_card_economic_value(source)
 				if not bot.game_manager.can_player_add_to_hand_now(bot.bot_player) \
 						or gain + bot._follower_safety_gain(danger, {"removed": [source]}) <= loss:
@@ -365,6 +370,27 @@ static func _best_seventh_sage_channel_target(bot, target_uids: Array) -> String
 			best_uid = uid
 	if best_uid.is_empty() and not target_uids.is_empty():
 		return str(target_uids[0])
+	return best_uid
+
+# Conjure Home prices each offered Ancient Dwelling as the structure the
+# void actually deploys (see conjure_home_fetch_value), so an engine
+# Dwelling outbids a generic deck pick and the fetch competes with the
+# Sage's body on fair terms instead of being declined by default.
+static func _best_conjure_home_target(bot, source: Card, target_uids: Array) -> String:
+	var best_uid := ""
+	var best_score := 0
+	var danger := -1
+	for raw_uid in target_uids:
+		var uid := str(raw_uid)
+		var target: Card = bot.game_manager.get_card_by_uid(uid)
+		if target == null:
+			continue
+		if danger < 0:
+			danger = bot._forecast_incoming_follower_loss()
+		var score: int = Strategy.conjure_home_fetch_value(bot, target, danger, [source])
+		if score > best_score or (score == best_score and score > 0 and uid < best_uid):
+			best_score = score
+			best_uid = uid
 	return best_uid
 
 static func _best_uid(bot, data: Dictionary, key: String, harmful: bool) -> String:

@@ -1302,6 +1302,8 @@ func activate_prepared_card(card: Card, player: Player = null) -> bool:
 	prepared_charms.erase(card)
 	card.is_prepared = false
 	card.reveal(self)
+	if card is HexCard:
+		notify_hex_played(paying_player, card)
 	return true
 
 func get_additional_summon_mana_cost(player: Player, creature: Card, summon_source: Card = null) -> int:
@@ -4290,6 +4292,14 @@ func _notify_spell_played(player: Player, spell_card: Card) -> void:
 	for power in _get_active_powers():
 		if power.has_method("on_spell_played"):
 			power.on_spell_played(player, spell_card, self)
+
+func notify_hex_played(player: Player, hex_card: Card) -> void:
+	_notify_hex_played(player, hex_card)
+
+func _notify_hex_played(player: Player, hex_card: Card) -> void:
+	for power in _get_active_powers():
+		if power.has_method("on_hex_played"):
+			power.on_hex_played(player, hex_card, self)
 
 func get_total_cost_adjustment(
 	target_card: Card,

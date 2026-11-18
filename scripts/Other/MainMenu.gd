@@ -110,9 +110,9 @@ const MENU_USERNAME_FONT_SIZE := 32
 const MENU_ACCOUNT_IDENTITY_FONT_SIZE := 20
 const LOCAL_BOT_MATCH_MIN_AVAILABLE_BYTES := 2 * 1024 * 1024 * 1024
 const LOCAL_BOT_MATCH_MEMORY_PER_WORKER := 1024 * 1024 * 1024
-const LOCAL_BOT_MATCH_RESERVED_CORES := 2
+const LOCAL_BOT_MATCH_RESERVED_CORES := 3
 const LOCAL_BOT_MATCH_CORES_PER_WORKER := 2
-const LOCAL_BOT_MATCH_MAX_WORKERS := 8
+const LOCAL_BOT_MATCH_MAX_WORKERS := 6
 const LOCAL_BOT_MATCH_LEASE_REFRESH_SECONDS := 25.0
 const AUTH_TITLE_FONT_SIZE := 28
 const AUTH_BODY_FONT_SIZE := 18
@@ -169,8 +169,6 @@ var _host_bot_gauntlet_opponents: Dictionary = {}
 var _my_bot_entries: Array = []
 var _my_bot_dialog: AcceptDialog
 var _my_bot_option: OptionButton
-var _my_bot_delete_button: Button
-var _my_bot_delete_confirm: ConfirmationDialog
 var _choose_bot_gauntlet := false
 var _bot_match_hosting_enabled := false
 var _pending_local_bot_match_modes: Array[bool] = []
@@ -3015,36 +3013,12 @@ func _on_my_bots_received(bots: Array) -> void:
 		_my_bot_dialog.dialog_text = "Select a submitted bot to host."
 		_my_bot_option = OptionButton.new()
 		_my_bot_dialog.add_child(_my_bot_option)
-		if OS.is_debug_build():
-			_my_bot_delete_button = Button.new()
-			_my_bot_delete_button.text = "Delete Bot (debug)"
-			_my_bot_delete_button.pressed.connect(_confirm_delete_selected_bot)
-			_my_bot_dialog.add_child(_my_bot_delete_button)
-			_my_bot_delete_confirm = ConfirmationDialog.new()
-			_my_bot_delete_confirm.dialog_text = "Delete this bot from the community pool? This cannot be undone."
-			_my_bot_delete_confirm.ok_button_text = "Delete"
-			_my_bot_delete_confirm.confirmed.connect(_delete_selected_bot)
-			add_child(_my_bot_delete_confirm)
 		add_child(_my_bot_dialog)
 		_my_bot_dialog.confirmed.connect(_start_selected_bot_match)
 	_my_bot_option.clear()
 	for bot: Dictionary in _my_bot_entries:
 		_my_bot_option.add_item("%s · %s" % [str(bot.get("deck_name", "Bot")), str(bot.get("god_name", ""))])
 	_my_bot_dialog.popup_centered()
-
-func _confirm_delete_selected_bot() -> void:
-	if _my_bot_delete_confirm != null and _my_bot_option != null and _my_bot_option.selected >= 0:
-		_my_bot_delete_confirm.popup_centered()
-
-func _delete_selected_bot() -> void:
-	if _my_bot_option == null or _my_bot_option.selected < 0 or _my_bot_option.selected >= _my_bot_entries.size():
-		return
-	var bot := _my_bot_entries[_my_bot_option.selected] as Dictionary
-	var bot_id := str(bot.get("bot_id", bot.get("bot_list_id", "")))
-	if bot_id.is_empty() or lobby_client == null or not lobby_client.is_authenticated():
-		return
-	status_label.text = "Deleting bot..."
-	lobby_client.delete_bot(bot_id)
 
 func _on_bot_deleted(success: bool, message: String, bot_id: String) -> void:
 	status_label.text = message
@@ -3130,7 +3104,12 @@ func _get_local_bot_match_capacity() -> int:
 		1,
 		int((available_bytes - LOCAL_BOT_MATCH_MIN_AVAILABLE_BYTES) / LOCAL_BOT_MATCH_MEMORY_PER_WORKER)
 	)
-	return mini(LOCAL_BOT_MATCH_MAX_WORKERS, mini(processor_capacity, memory_capacity))
+	var capacity := mini(LOCAL_BOT_MATCH_MAX_WORKERS, mini(processor_capacity, memory_capacity))
+	# Watching a hosted match runs a full game client on top of the background
+	# workers, so reserve one worker slot while a match is on screen.
+	if _get_active_embedded_game() != null:
+		capacity = maxi(1, capacity - 1)
+	return capacity
 
 func _get_local_bot_match_count() -> int:
 	return _local_bot_match_workers.size()

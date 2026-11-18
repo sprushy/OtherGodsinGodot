@@ -275,6 +275,10 @@ static func _mana_saturation_ceiling(bot) -> int:
 		return 0
 	var income: int = bot.game_manager.get_automatic_upkeep_mana_gain(player, bot.game_manager.turn_number + 1) \
 		+ bot.game_manager.get_effective_upkeep_mana_gain(bot.game_manager.get_base_upkeep_mana_gain(), player)
+	# A visible enemy Pazuzu drains the banked stock before the next turn can
+	# spend it, so mana held for later is worth less while it lives.
+	if bot.has_method("_incoming_mana_drain"):
+		income -= int(bot._incoming_mana_drain())
 	return top + income
 
 # Board abilities priced by their target (Nimue's Entomb charges the target's
@@ -1428,7 +1432,7 @@ static func equipment_pickup_score(bot, equipment: EquipmentCard, bearer: Card) 
 			gain = maxi(gain, combat_gain(bot, bearer, equipment.strength_modifier + 8, 0, action))
 	return 2500 + gain
 
-static func structure_score(bot, structure: Card) -> int:
+static func structure_score(bot, structure: Card, excluded: Array = []) -> int:
 	var gain := 0
 	match key(structure):
 		"AncientPyre":
@@ -1513,7 +1517,7 @@ static func structure_score(bot, structure: Card) -> int:
 			# and adds the Altar of Dreams summon line the sleepers fuel,
 			# including the upkeep mana and spare discard that still arrive
 			# over the line's turns.
-			var duat_chain := duat_chain_value(bot)
+			var duat_chain := duat_chain_value(bot, excluded)
 			if duat_chain <= BAD:
 				return BAD
 			gain = duat_chain
@@ -1557,8 +1561,17 @@ static func guard_mana(bot, available_mana: int = -1) -> int:
 	var needed := maxi(0, danger - bot.bot_player.guard)
 	return mini(budget, int(ceil(float(needed) / ManaGuard.GUARD_PER_MANA)))
 
+# A compelled fight still leaves the opponent a response window, and a prepared
+# combat trick can pump the forced attacker (Fifa's +5 STR is the smallest
+# common swing; Vision of Odin reaches +7). When the opponent has face-down
+# reserve cards — the slot prepared tricks occupy — also score the fight with
+# the compelled attacker pumped, so an exchange the raw stats only narrowly win
+# cannot pay for the cast once the opponent answers.
+const OPPONENT_TRICK_STR_BUMP := 5
+
 static func forced_combat_choice(bot, source: Card, attackers: Array, defenders: Array) -> Dictionary:
 	var best := {"score": BAD, "attacker_uid": "", "defender_uid": ""}
+	var trick_bump := _opponent_trick_str_bump(bot)
 	for attacker in attackers:
 		for defender in defenders:
 			if not source._can_force_attack(bot.game_manager, attacker, defender):
@@ -1571,9 +1584,21 @@ static func forced_combat_choice(bot, source: Card, attackers: Array, defenders:
 			action.attacker = attacker
 			action.target = defender
 			var score: int = bot._score_attack_economy(bot._estimate_attack_economy(action, null, 0, 0))
+			if trick_bump > 0 and not attacker.negates_external_effects():
+				var punished: int = bot._score_attack_economy(bot._estimate_attack_economy(action, attacker, trick_bump, 0))
+				score = mini(score, punished)
 			if score > int(best["score"]):
 				best = {"score": score, "attacker_uid": attacker.uid, "defender_uid": defender.uid}
 	return best
+
+static func _opponent_trick_str_bump(bot) -> int:
+	if bot == null or bot.opponent == null:
+		return 0
+	for zone in bot.opponent.reserve_zones:
+		for card in zone.cards:
+			if card != null and (card.is_face_down or card.is_prepared):
+				return OPPONENT_TRICK_STR_BUMP
+	return 0
 
 static func healing_score(bot, target: Card, status: Dictionary) -> int:
 	var name := str(status.get("name", ""))
@@ -1677,8 +1702,34 @@ static func palisade_gain(bot) -> int:
 			damage += strength
 	if pressure == 0:
 		return BAD
+	# Advanced Building Techniques can reinforce a Palisade out of range of
+	# most attackers, making the wall durable. Credit exactly the ward payment
+	# the bot would make (ABT already unlocked, ward mana left after the
+	# activation), so the combo is priced by its payoff instead of the power's
+	# mere presence.
+	var synergy := 0
+	for power in bot._get_player_powers():
+		if not (power is AdvancedBuildingTechniques) or power.is_face_down or power.abilities_suppressed():
+			continue
+		var palisade: PalisadePower = null
+		for other in bot._get_player_powers():
+			if other is PalisadePower:
+				palisade = other
+				break
+		if palisade == null:
+			break
+		var ward_budget: int = bot.bot_player.mana - activation_cost(bot, palisade)
+		if palisade.is_face_down:
+			ward_budget -= palisade.get_unlock_mana_cost(bot.game_manager)
+		if ward_budget > 0 and bot.has_method("_structure_ward_plan"):
+			var preview := PalisadeBarrier.new()
+			preview.card_owner = bot.bot_player
+			var plan: Dictionary = bot._structure_ward_plan(preview, ward_budget, true, palisade._find_open_summon_zone())
+			if int(plan.get("payment", 0)) > 0:
+				synergy = maxi(synergy, int(plan.get("score", 0)))
+		break
 	# A Palisade can be attacked down, so discount the immediate follower risk.
-	return mini(CARD_VALUE * 2, bot._score_follower_loss(bot.bot_player, maxi(0, damage - bot.bot_player.guard)) / 2) + pressure * 1500
+	return mini(CARD_VALUE * 2, bot._score_follower_loss(bot.bot_player, maxi(0, damage - bot.bot_player.guard)) / 2) + pressure * 1500 + synergy
 
 static func unlock_score(bot, power: PowerCard, unlock_cost: int = -1) -> int:
 	if unlock_cost < 0:
@@ -1717,12 +1768,13 @@ static func unlock_score(bot, power: PowerCard, unlock_cost: int = -1) -> int:
 			if card.creature_mode == Card.CreatureMode.DEFENSIVE:
 				gain += 2000
 	elif id == "AdvancedBuildingTechniques":
-		for card in bot.bot_player.hand_zone.cards:
-			if card.card_type == Card.CardType.STRUCTURE:
-				gain += 2200
-		for card in bot.bot_player.deck_zone.get_unordered_deck_cards():
-			if card.card_type == Card.CardType.STRUCTURE:
-				gain += 450
+		# Price the unlock by the ward payments the bot would actually make on
+		# structures it can build: structures in hand it can play this turn, or
+		# a Palisade its power can summon and then reinforce. Unlocking with no
+		# funded build line is just spent mana, so an empty projection scores
+		# nothing here.
+		if bot.has_method("_project_advanced_building_unlock_gain"):
+			gain += maxi(0, int(bot._project_advanced_building_unlock_gain(unlock_cost)))
 	elif id == "FeastOfAmbrosiaAndNectar":
 		for other in bot._get_player_powers():
 			if other != power and other.culture == "Olympic" \
@@ -1807,10 +1859,16 @@ static func projected_upkeep_mana(bot, own_turns: int) -> int:
 	if bot == null or bot.bot_player == null or bot.game_manager == null:
 		return 0
 	var total: int = bot.bot_player.mana
+	var drain_per_turn := 0
+	if bot.has_method("_incoming_mana_drain"):
+		drain_per_turn = int(bot._incoming_mana_drain())
 	for _index in range(maxi(0, own_turns)):
 		total += bot.game_manager.get_automatic_upkeep_mana_gain(bot.bot_player, -1)
 		total += bot.game_manager.get_effective_upkeep_mana_gain(
 			bot.game_manager.get_base_upkeep_mana_gain(), bot.bot_player)
+		# Each projected turn passes an enemy Pazuzu turn start, taxing the
+		# stock this line plans to spend across those turns.
+		total -= drain_per_turn
 	return total
 
 # Fresh value of one creature being asleep under the Duat: sleep locks attack
@@ -2095,6 +2153,23 @@ static func deck_pick_line_gain(bot, card: Card, excluded: Array = []) -> int:
 		return int(float(payoff["gain"]) * 0.5)
 	return 0
 
+# Value of the Ancient Dwelling the Sixth Sage's Conjure Home would add to
+# hand. Voiding the Sage is the only way Conjure Home fires, and Conjure
+# Home is the only way the deck's Dwelling is reachable, so the fetch prices
+# the structure it actually deploys next rather than a generic deck pick:
+# the better of the generic arrival value and the engine surplus of playing
+# it now. A structure_score BAD means the Dwelling is dead in this board
+# (no Mages for Eridu, a Divine Manifestation suppressing the Duat...), so
+# only the generic pick remains and keeping the body can win.
+static func conjure_home_fetch_value(bot, dwelling: Card, danger: int, excluded: Array = []) -> int:
+	if bot == null or bot.bot_player == null or dwelling == null:
+		return 0
+	var gain: int = bot._deck_pick_value(dwelling, bot.bot_player.mana, danger, excluded)
+	var structure_gain := structure_score(bot, dwelling, excluded)
+	if structure_gain > BAD:
+		gain = maxi(gain, CARD_VALUE + structure_gain)
+	return gain
+
 # Summoning a Divine Manifestation (Enki) while a Duat is live wakes every
 # creature the structure put to sleep on both sides and keeps it from
 # sleeping anyone new while the manifestation lives. Critically, that frees
@@ -2342,7 +2417,7 @@ static func seventh_sage_channel_gain(bot, target_sage: Card) -> int:
 			var best_dwelling := 0
 			var dwelling_danger: int = bot._forecast_incoming_follower_loss()
 			for dwelling in target_sage.get_valid_targets(bot.game_manager):
-				best_dwelling = maxi(best_dwelling, bot._deck_pick_value(dwelling, bot.bot_player.mana, dwelling_danger, [target_sage]))
+				best_dwelling = maxi(best_dwelling, conjure_home_fetch_value(bot, dwelling, dwelling_danger, [target_sage]))
 			var body_loss: int = bot._get_card_economic_value(target_sage)
 			return maxi(0, best_dwelling - body_loss)
 		"FirstSageAdapa":

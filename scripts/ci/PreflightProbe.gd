@@ -82,6 +82,9 @@ func run() -> bool:
 	_check_bot_combat_buff_value(failures)
 	_check_bot_jiang_counterstroke(failures)
 	_check_bot_reveal_defense(failures)
+	_check_bot_brew_funds_pyre_lethal(failures)
+	_check_bot_immortal_techniques_refund(failures)
+	_check_bot_pazuzu_drain_forecast(failures)
 	_check_bot_next_turn_lethal(failures)
 	_check_bot_entomb_save_ceiling(failures)
 	_check_standing_bot_seeks(failures)
@@ -2178,10 +2181,16 @@ func _check_bot_shift_and_extraction(failures: PackedStringArray) -> void:
 	player.power_zones[0].add_card(power)
 	if not bot._take_main_phase_action():
 		failures.append("Tezcatlipoca did not spend the Tonal Mastery mana on a useful extraction")
+	# The meta-fitted body curves (v0.2.372) price The White Serpent's
+	# alternate form (26/26) above Thiazi's animal form (27/15), so the
+	# extraction takes the Serpent here. The assertions still pin the whole
+	# unlock line: the face-down power turns face-up, the mastery mana is
+	# spent to 0, the extracted Shapeshifter locks, and the Spirit carries
+	# its alternate form's stats and classes.
 	var spirit := player.frontline_zones[1].get_creature() as TonalExtractionSpiritToken
-	if power.is_face_down or player.mana != 0 or not thiazi.is_shapeshift_locked() \
-			or spirit == null or spirit.get_effective_strength() != 27 or not spirit.has_type("Aerial"):
-		failures.append("Bot did not extract Thiazi's stronger alternate form through the unlock command")
+	if power.is_face_down or player.mana != 0 or not serpent.is_shapeshift_locked() \
+			or spirit == null or spirit.get_effective_strength() != 26 or not spirit.has_type("Human"):
+		failures.append("Bot did not extract the Serpent's higher-valued alternate form through the unlock command")
 	bot.detach()
 
 func _check_bot_combat_buff_value(failures: PackedStringArray) -> void:
@@ -2646,6 +2655,141 @@ func _check_bot_next_turn_lethal(failures: PackedStringArray) -> void:
 	var wipe: Dictionary = bot._plan_power_unlock(danger).get("command", {})
 	if wipe.get("power_uid") != ragnarok.uid:
 		failures.append("Bot overlooked a legal Ragnarok unlock that prevents lethal")
+	bot.detach()
+
+# A ready Mead of Poetry must fund paid lines the current stock cannot cover —
+# the flagship case being an Ancient Pyre conversion that empties the
+# opponent's follower stock. The brew is submitted first, and the next
+# planning pass takes the funded conversion on the grown stock.
+func _check_bot_brew_funds_pyre_lethal(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	player.mana = 1
+	opponent.followers = 5
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var pyre := AncientPyre.new()
+	pyre.card_owner = player
+	player.reserve_zones[0].add_card(pyre)
+	var attacks := bot._get_combat_candidates()
+	var baseline := bot._plan_combat(attacks)
+	var unfunded := bot._get_best_strategy_action(attacks, baseline)
+	if bool(unfunded.get("lethal", false)):
+		failures.append("Bot planned an unfunded Ancient Pyre conversion lethal")
+	var mead := MeadOfPoetry.new()
+	mead.card_owner = player
+	mead.is_prepared = true
+	mead.is_face_down = true
+	player.reserve_zones[1].add_card(mead)
+	game.prepared_charms[mead] = game.turn_number - 1
+	var plan := bot._get_best_strategy_action(attacks, baseline)
+	if not bool(plan.get("lethal", false)):
+		failures.append("Bot missed the Mead-funded Ancient Pyre conversion lethal")
+	elif str(plan.get("command", {}).get("type", "")) != "cast_charm":
+		failures.append("Bot tried to submit the unpaid Pyre conversion instead of brewing first")
+	elif not bot._take_main_phase_action():
+		failures.append("Bot failed to submit the Mead brew for the Pyre lethal")
+	else:
+		for _step in range(8):
+			manager.advance_priority()
+		if player.mana < 1 + MeadOfPoetry.MANA_GAIN:
+			failures.append("Mead brew did not bank its mana before the conversion")
+		elif not bot._take_main_phase_action():
+			failures.append("Bot failed to submit the funded Pyre conversion after brewing")
+		else:
+			for _step in range(8):
+				manager.advance_priority()
+			if opponent.followers > 0:
+				failures.append("Bot brewed but never converted the remaining followers")
+	bot.detach()
+
+# Immortal Techniques refunds each spell or Ancient hex while a friendly Mage
+# is fielded: the refund must price into the bot's cast economics, and it must
+# know the +1 only flows with the power face-up and the Mage on the field.
+func _check_bot_immortal_techniques_refund(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	player.mana = 3
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var power := ImmortalTechniques.new()
+	power.card_owner = player
+	# PowerCard starts face-down (locked); unlock it so the passive is live.
+	power.is_face_down = false
+	player.power_zones[0].add_card(power)
+	var spell := FallOfTheMighty.new()
+	spell.card_owner = player
+	player.hand_zone.add_card(spell)
+	var ancient_hex := SapStrength.new()
+	ancient_hex.card_owner = player
+	player.hand_zone.add_card(ancient_hex)
+	var neutral_hex := Sap.new()
+	neutral_hex.card_owner = player
+	player.hand_zone.add_card(neutral_hex)
+	if bot._immortal_techniques_refund_gain(spell) != 0 \
+			or bot._immortal_techniques_refund_gain(ancient_hex) != 0:
+		failures.append("Bot forecast an Immortal Techniques refund with no Mage on the field")
+	var mage := CreatureCard.new()
+	mage.card_name = "Fixture Mage"
+	mage.card_types = ["Mage"]
+	mage.card_owner = player
+	player.frontline_zones[0].add_card(mage)
+	if bot._immortal_techniques_refund_gain(spell) != 1 \
+			or bot._immortal_techniques_refund_gain(ancient_hex) != 1:
+		failures.append("Bot missed the Immortal Techniques refund on a live Mage line")
+	if bot._immortal_techniques_refund_gain(neutral_hex) != 0:
+		failures.append("Bot credited the Immortal Techniques refund to a non-Ancient hex")
+	if bot._immortal_techniques_refund_gain(mage) != 0:
+		failures.append("Bot credited the Immortal Techniques refund to a creature")
+	power.is_face_down = true
+	if bot._immortal_techniques_refund_gain(spell) != 0:
+		failures.append("Bot forecast an Immortal Techniques refund from a face-down power")
+	bot.detach()
+
+# Pazuzu's Locust Plague taxes the stock the bot carries past this turn: the
+# forecast must see each visible enemy copy, price it into cross-turn mana
+# projections, and stay blind to hidden bodies it cannot know about.
+func _check_bot_pazuzu_drain_forecast(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	player.mana = 4
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	if bot._incoming_mana_drain() != 0:
+		failures.append("Bot forecast a Pazuzu drain with no Pazuzu on the field")
+	var pazuzu := Pazuzu.new()
+	pazuzu.card_owner = opponent
+	opponent.frontline_zones[0].add_card(pazuzu)
+	if bot._incoming_mana_drain() != Pazuzu.MANA_DRAIN:
+		failures.append("Bot missed Pazuzu's Locust Plague in its mana forecast")
+	var income := game.get_automatic_upkeep_mana_gain(player, -1) \
+		+ game.get_effective_upkeep_mana_gain(game.get_base_upkeep_mana_gain(), player)
+	if BotCardStrategyScript.projected_upkeep_mana(bot, 1) != player.mana + income - Pazuzu.MANA_DRAIN:
+		failures.append("Bot did not subtract Pazuzu's drain from its projected upkeep mana")
+	pazuzu.is_stealth = true
+	if bot._incoming_mana_drain() != 0:
+		failures.append("Bot forecast Pazuzu's drain through a hidden body it cannot see")
 	bot.detach()
 
 func _check_bot_entomb_save_ceiling(failures: PackedStringArray) -> void:

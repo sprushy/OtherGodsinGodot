@@ -7,14 +7,35 @@ func _init() -> void:
 	super._init()
 	card_name = "Immortal Techniques"
 	culture = "Ancient"
-	card_types = ["Power", "Cost Reduction"]
+	card_types = ["Power"]
 	mana_cost = 0
 	discard_cost = 1
-	ability_text = "Reduce the cost of spells and Ancient hexes by 1 mana whenever there is a friendly Mage on the field."
+	ability_text = "Gain 1 mana when you play a spell or Ancient hex while a friendly Mage is on the field."
 	art_path = ART_PATH
 
 func on_unlock(_game_manager: GameManager) -> void:
 	print(card_name + " unlocked.")
+
+func on_spell_played(player: Player, _spell_card: Card, game_manager: GameManager) -> void:
+	_try_grant_mana(player, game_manager)
+
+func on_hex_played(player: Player, hex_card: Card, game_manager: GameManager) -> void:
+	if hex_card == null or hex_card.culture != "Ancient":
+		return
+	_try_grant_mana(player, game_manager)
+
+func _try_grant_mana(player: Player, game_manager: GameManager) -> void:
+	if player == null or player != card_owner:
+		return
+	if not is_effectively_active():
+		return
+	if not _has_friendly_mage_on_field(game_manager):
+		return
+	if card_owner == null:
+		return
+	card_owner.gain_mana(1)
+	if game_manager != null:
+		game_manager.note_player_feedback("%s grants 1 mana." % card_name)
 
 func get_cost_adjustment_entries(
 	target_card: Card,
@@ -23,13 +44,7 @@ func get_cost_adjustment_entries(
 	game_manager: GameManager,
 	_metadata: Dictionary = {}
 ) -> Array[Dictionary]:
-	if not _can_reduce_card(target_card, base_cost, cost_kind, game_manager):
-		return []
-	return [{
-		"source": card_name,
-		"source_card": self,
-		"delta": -1,
-	}]
+	return []
 
 func _can_reduce_card(
 	target_card: Card,
@@ -55,7 +70,7 @@ func get_hover_detail_lines(viewer: Player = null) -> Array[String]:
 	var details := super.get_hover_detail_lines(viewer)
 	if viewer != null and viewer != card_owner:
 		return details
-	details.append("Discount active." if _has_friendly_mage_on_field(_get_game_manager()) else "Needs a friendly Mage on the field.")
+	details.append("Mana gain active." if _has_friendly_mage_on_field(_get_game_manager()) else "Needs a friendly Mage on the field.")
 	return details
 
 func _has_friendly_mage_on_field(game_manager: GameManager = null) -> bool:
