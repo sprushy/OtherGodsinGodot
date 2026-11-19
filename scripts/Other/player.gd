@@ -6,6 +6,7 @@ const MAX_HAND_SIZE := 7
 const BOARD_LANE_COUNT := 5
 const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
 const ManaSoundPlayerScript = preload("res://scripts/audio/ManaSoundPlayer.gd")
+const DrawCardSoundPlayerScript = preload("res://scripts/audio/DrawCardSoundPlayer.gd")
 
 signal mana_changed(new_mana: int)
 signal followers_changed(new_followers: int)
@@ -318,6 +319,10 @@ func draw_card() -> Card:
 		var card = deck_zone.cards[0]
 		move_card(card, hand_zone)
 		if card.current_zone == hand_zone:
+			if game_manager != null:
+				if game_manager.sfx_enabled:
+					DrawCardSoundPlayerScript.play_sound()
+				game_manager.note_ui_sound_cue("draw_card")
 			return card
 	return null
 

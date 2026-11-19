@@ -99,6 +99,13 @@ const ManaSoundPlayerScript = preload("res://scripts/audio/ManaSoundPlayer.gd")
 const AttackSoundPlayerScript = preload("res://scripts/audio/AttackSoundPlayer.gd")
 const CreatureSacrificeSoundPlayerScript = preload("res://scripts/audio/CreatureSacrificeSoundPlayer.gd")
 const CreatureDeathSoundPlayerScript = preload("res://scripts/audio/CreatureDeathSoundPlayer.gd")
+const DrawCardSoundPlayerScript = preload("res://scripts/audio/DrawCardSoundPlayer.gd")
+const PrimeCardSoundPlayerScript = preload("res://scripts/audio/PrimeCardSoundPlayer.gd")
+const ShelveCardSoundPlayerScript = preload("res://scripts/audio/ShelveCardSoundPlayer.gd")
+const ShuffleDeckSoundPlayerScript = preload("res://scripts/audio/ShuffleDeckSoundPlayer.gd")
+const EquipmentBreakSoundPlayerScript = preload("res://scripts/audio/EquipmentBreakSoundPlayer.gd")
+const EquipmentEquipSoundPlayerScript = preload("res://scripts/audio/EquipmentEquipSoundPlayer.gd")
+const TurnStartSoundPlayerScript = preload("res://scripts/audio/TurnStartSoundPlayer.gd")
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 const UIArtScalerScript = preload("res://scripts/ui/UIArtScaler.gd")
 const GameCursorScript = preload("res://scripts/ui/GameCursor.gd")
@@ -31127,6 +31134,20 @@ func _play_network_ui_sound_cues(raw_cues: Variant) -> void:
 				CreatureDeathSoundPlayerScript.play_sound()
 			"creature_death_aerial":
 				CreatureDeathSoundPlayerScript.play_sound(true)
+			"draw_card":
+				DrawCardSoundPlayerScript.play_sound()
+			"prime_card":
+				PrimeCardSoundPlayerScript.play_sound()
+			"shelve_card":
+				ShelveCardSoundPlayerScript.play_sound()
+			"shuffle_deck":
+				ShuffleDeckSoundPlayerScript.play_sound()
+			"equipment_break":
+				EquipmentBreakSoundPlayerScript.play_sound()
+			"equipment_equip":
+				EquipmentEquipSoundPlayerScript.play_sound()
+			"turn_start":
+				TurnStartSoundPlayerScript.play_sound()
 
 func _restore_network_attack_preview_from_state(preview_data: Dictionary) -> void:
 	if not _is_networked_client or match_manager == null or game_manager == null:

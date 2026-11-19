@@ -43,6 +43,13 @@ const StructureBuildSoundPlayerScript = preload("res://scripts/audio/StructureBu
 const AttackSoundPlayerScript = preload("res://scripts/audio/AttackSoundPlayer.gd")
 const CreatureSacrificeSoundPlayerScript = preload("res://scripts/audio/CreatureSacrificeSoundPlayer.gd")
 const CreatureDeathSoundPlayerScript = preload("res://scripts/audio/CreatureDeathSoundPlayer.gd")
+const DrawCardSoundPlayerScript = preload("res://scripts/audio/DrawCardSoundPlayer.gd")
+const PrimeCardSoundPlayerScript = preload("res://scripts/audio/PrimeCardSoundPlayer.gd")
+const ShelveCardSoundPlayerScript = preload("res://scripts/audio/ShelveCardSoundPlayer.gd")
+const ShuffleDeckSoundPlayerScript = preload("res://scripts/audio/ShuffleDeckSoundPlayer.gd")
+const EquipmentBreakSoundPlayerScript = preload("res://scripts/audio/EquipmentBreakSoundPlayer.gd")
+const EquipmentEquipSoundPlayerScript = preload("res://scripts/audio/EquipmentEquipSoundPlayer.gd")
+const TurnStartSoundPlayerScript = preload("res://scripts/audio/TurnStartSoundPlayer.gd")
 const MatchStatisticsScript = preload("res://scripts/Other/MatchStatistics.gd")
 
 static func round_down_divide(amount: int, divisor: int) -> int:
@@ -913,6 +920,9 @@ func get_opponent(player: Player) -> Player:
 func start_turn() -> void:
 	if is_game_over:
 		return
+	if sfx_enabled:
+		TurnStartSoundPlayerScript.play_sound()
+	note_ui_sound_cue("turn_start")
 	_prune_stale_stack_actions()
 	turn_player = current_player
 	turn_number += 1
@@ -2088,6 +2098,9 @@ func creature_destroy_equipment(creature: Card, equipment: Card) -> bool:
 		return false
 	creature.spend_major_creature_action()
 	print(creature.card_name + " destroys " + equipment.card_name)
+	if sfx_enabled:
+		EquipmentBreakSoundPlayerScript.play_sound()
+	note_ui_sound_cue("equipment_break")
 	_send_to_graveyard_with_hook(equipment, false, true)
 	return true
 
@@ -2185,6 +2198,9 @@ func _complete_creature_pick_up_equipment(creature: Card, equipment: Card) -> bo
 	creature.current_zone.add_card(equipment)
 	equipment.equip_to(creature)
 	print(creature.card_name + " picks up " + equipment.card_name)
+	if sfx_enabled:
+		EquipmentEquipSoundPlayerScript.play_sound()
+	note_ui_sound_cue("equipment_equip")
 	return true
 
 func creature_attack(attacker: Card, target) -> void:

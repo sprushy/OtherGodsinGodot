@@ -15,6 +15,10 @@ enum ZoneType {
 
 enum DeckPlacement { UNKNOWN, SHELVED, PRIMED, REVEALED }
 
+const PrimeCardSoundPlayerScript = preload("res://scripts/audio/PrimeCardSoundPlayer.gd")
+const ShelveCardSoundPlayerScript = preload("res://scripts/audio/ShelveCardSoundPlayer.gd")
+const ShuffleDeckSoundPlayerScript = preload("res://scripts/audio/ShuffleDeckSoundPlayer.gd")
+
 @export var zone_type: ZoneType
 @export var zone_index: int = -1
 var cards: Array[Card] = []
@@ -85,6 +89,13 @@ func get_unordered_deck_cards() -> Array[Card]:
 	return unordered
 
 func shuffle_deck() -> void:
+	var gm: GameManager = null
+	if zone_owner != null:
+		gm = zone_owner.game_manager
+	if gm != null:
+		if gm.sfx_enabled:
+			ShuffleDeckSoundPlayerScript.play_sound()
+		gm.note_ui_sound_cue("shuffle_deck")
 	clear_deck_knowledge()
 	cards.shuffle()
 
@@ -97,6 +108,19 @@ func shelve_deck_card(card: Card, identity_public = null) -> void:
 	add_card(card, DeckPlacement.SHELVED, identity_public)
 
 func add_card(card: Card, deck_placement: DeckPlacement = DeckPlacement.UNKNOWN, identity_public = null) -> void:
+	var gm: GameManager = null
+	if zone_owner != null:
+		gm = zone_owner.game_manager
+	if zone_type == ZoneType.DECK and gm != null:
+		match deck_placement:
+			DeckPlacement.PRIMED:
+				if gm.sfx_enabled:
+					PrimeCardSoundPlayerScript.play_sound()
+				gm.note_ui_sound_cue("prime_card")
+			DeckPlacement.SHELVED:
+				if gm.sfx_enabled:
+					ShelveCardSoundPlayerScript.play_sound()
+				gm.note_ui_sound_cue("shelve_card")
 	if zone_type == ZoneType.DECK and deck_placement == DeckPlacement.PRIMED:
 		cards.push_front(card)
 	else:
