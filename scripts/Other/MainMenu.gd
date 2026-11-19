@@ -167,6 +167,8 @@ var _custom_bot_ids_pending: Array[String] = []
 var _seed_bot_league_button: Button
 var _finalize_bot_league_button: Button
 var _status_bot_league_button: Button
+var _run_league_round_robin_button: Button
+var _clear_league_bots_button: Button
 var _host_bot_gauntlet_id := ""
 var _host_bot_gauntlet_remaining := 0
 var _host_bot_gauntlet_opponents: Dictionary = {}
@@ -2816,6 +2818,16 @@ func _build_seek_tabs() -> void:
 		_status_bot_league_button.tooltip_text = "Shows current bot league state: seeded lists, kept/quarantined bots per god."
 		_status_bot_league_button.pressed.connect(_on_status_bot_league_pressed)
 		_seek_action_row.add_child(_status_bot_league_button)
+		_run_league_round_robin_button = Button.new()
+		_run_league_round_robin_button.text = "Run League Round Robin"
+		_run_league_round_robin_button.tooltip_text = "Schedules 50 matches per bot for the league round robin (played by volunteer bot workers)."
+		_run_league_round_robin_button.pressed.connect(_on_run_league_round_robin_pressed)
+		_seek_action_row.add_child(_run_league_round_robin_button)
+		_clear_league_bots_button = Button.new()
+		_clear_league_bots_button.text = "Clear League Bots"
+		_clear_league_bots_button.tooltip_text = "Removes every seeded league bot (list ids starting with league_), including any 0-0-0 leftovers."
+		_clear_league_bots_button.pressed.connect(_on_clear_league_bots_pressed)
+		_seek_action_row.add_child(_clear_league_bots_button)
 	_apply_seek_action_button_sizing()
 
 func _build_recent_activity_panel() -> void:
@@ -3441,6 +3453,41 @@ func _on_bot_league_status_received(status: Dictionary) -> void:
 	dialog.popup_centered()
 	status_label.text = "Bot league status: %d gods, %d ladder bots." % [gods.size(), total_lists]
 	print("[Bot League] status: %s" % JSON.stringify(status))
+
+func _on_run_league_round_robin_pressed() -> void:
+	if lobby_client == null or not lobby_client.is_authenticated():
+		status_label.text = "Sign in to run the league round robin."
+		return
+	_run_league_round_robin_button.disabled = true
+	status_label.text = "Scheduling league round robin..."
+	lobby_client.request_league_round_robin()
+
+func _on_league_round_robin_result_received(result: Dictionary) -> void:
+	var success := bool(result.get("success", false))
+	var message := str(result.get("message", ""))
+	_run_league_round_robin_button.disabled = false
+	if success:
+		var total := int(result.get("total_matches", 0))
+		var per_bot := int(result.get("matches_per_bot", 0))
+		var count := int(result.get("bot_count", 0))
+		status_label.text = "League round robin scheduled: %d matches (%d per bot, %d bots)." % [total, per_bot, count]
+		print("[Bot League] round robin scheduled: %d matches, %d per bot, %d bots" % [total, per_bot, count])
+	else:
+		status_label.text = "Schedule failed: %s" % message
+
+func _on_clear_league_bots_pressed() -> void:
+	if lobby_client == null or not lobby_client.is_authenticated():
+		status_label.text = "Sign in to clear league bots."
+		return
+	_clear_league_bots_button.disabled = true
+	status_label.text = "Clearing league bots..."
+	lobby_client.request_clear_league_bots()
+
+func _on_clear_league_bots_result_received(result: Dictionary) -> void:
+	_clear_league_bots_button.disabled = false
+	var removed := int(result.get("removed", 0))
+	status_label.text = "Cleared %d league bots." % removed
+	print("[Bot League] cleared %d league bots" % removed)
 
 func _stop_local_bot_match_worker() -> void:
 	_bot_match_hosting_enabled = false
@@ -8948,6 +8995,10 @@ func _bind_lobby_client_signals() -> void:
 		lobby_client.bot_league_result_received.connect(_on_bot_league_result_received)
 	if lobby_client.has_signal("bot_league_status_received") and not lobby_client.bot_league_status_received.is_connected(_on_bot_league_status_received):
 		lobby_client.bot_league_status_received.connect(_on_bot_league_status_received)
+	if lobby_client.has_signal("league_round_robin_result_received") and not lobby_client.league_round_robin_result_received.is_connected(_on_league_round_robin_result_received):
+		lobby_client.league_round_robin_result_received.connect(_on_league_round_robin_result_received)
+	if lobby_client.has_signal("clear_league_bots_result_received") and not lobby_client.clear_league_bots_result_received.is_connected(_on_clear_league_bots_result_received):
+		lobby_client.clear_league_bots_result_received.connect(_on_clear_league_bots_result_received)
 	if lobby_client.has_signal("friends_state_received") and not lobby_client.friends_state_received.is_connected(_on_friends_state_received):
 		lobby_client.friends_state_received.connect(_on_friends_state_received)
 	if lobby_client.has_signal("account_settings_updated") and not lobby_client.account_settings_updated.is_connected(_on_account_settings_updated):

@@ -259,6 +259,64 @@ func finalize_league(god_names: Array[String]) -> Dictionary:
 		}
 	return summary
 
+# Removes all seeded league bots (identified by list_id starting with "league_").
+# Used to clear out 0-0-0 bots left over from an accidental or premature finalize.
+func clear_league_bots() -> Dictionary:
+	var removed_by_god: Dictionary = {}
+	var total_removed := 0
+	for god_name in _by_god.keys():
+		var pool: Dictionary = _by_god[god_name]
+		if pool.is_empty():
+			continue
+		var lists: Array = pool.get("lists", []) as Array
+		var surviving: Array = []
+		for list: Dictionary in lists:
+			var list_id := str(list.get("list_id", ""))
+			if list_id.begins_with("league_"):
+				if str(pool.get("quarantined_id", "")) == list_id:
+					pool["quarantined_id"] = ""
+				if list_id in pool.get("quarantined_ids", []):
+					var qids: Array = pool.get("quarantined_ids", []) as Array
+					qids.erase(list_id)
+					pool["quarantined_ids"] = qids
+				var qlists: Array = pool.get("quarantined_lists", []) as Array
+				var q_found := -1
+				for i in range(qlists.size()):
+					if str(qlists[i].get("list_id", "")) == list_id:
+						q_found = i
+						break
+				if q_found >= 0:
+					qlists.remove_at(q_found)
+					pool["quarantined_lists"] = qlists
+				total_removed += 1
+				var removed_list: Array = removed_by_god.get(god_name, [])
+				if not (removed_list is Array):
+					removed_list = []
+				removed_list.append(str(list.get("deck_name", "")))
+				removed_by_god[god_name] = removed_list
+			else:
+				surviving.append(list)
+		pool["lists"] = surviving
+		var challenger: Dictionary = pool.get("challenger", {})
+		if not challenger.is_empty() and str(challenger.get("list_id", "")).begins_with("league_"):
+			pool["challenger"] = {}
+	# Clear any remaining league list ids that pointed to removed bots.
+	var cleaned_ids: Array = []
+	for id in _league_list_ids:
+		var id_str := str(id)
+		var still_exists := false
+		for pool: Dictionary in _by_god.values():
+			for list: Dictionary in pool.get("lists", []):
+				if str(list.get("list_id", "")) == id_str:
+					still_exists = true
+					break
+			if still_exists:
+				break
+		if still_exists:
+			cleaned_ids.append(id)
+	_league_list_ids = cleaned_ids
+	return {"success": true, "removed": total_removed, "removed_by_god": removed_by_god}
+
 func get_league_status() -> Dictionary:
 	var gods: Array = []
 	for god_name in _by_god.keys():

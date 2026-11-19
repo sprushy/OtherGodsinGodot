@@ -64,6 +64,8 @@ signal my_bots_received(bots: Array)
 signal bot_deleted(success: bool, message: String, bot_id: String)
 signal bot_league_result_received(result: Dictionary)
 signal bot_league_status_received(status: Dictionary)
+signal league_round_robin_result_received(result: Dictionary)
+signal clear_league_bots_result_received(result: Dictionary)
 signal connection_failed(message: String)
 signal disconnected_from_lobby()
 signal match_host_viability_requested()
@@ -560,6 +562,14 @@ func request_bot_league_status() -> void:
 	if is_authenticated():
 		_send_request(LobbyProtocolScript.REQUEST_BOT_LEAGUE_STATUS, {})
 
+func request_league_round_robin(matches_per_bot: int = 50) -> void:
+	if is_authenticated():
+		_send_request(LobbyProtocolScript.RUN_LEAGUE_ROUND_ROBIN, {"matches_per_bot": clampi(matches_per_bot, 1, 500)})
+
+func request_clear_league_bots() -> void:
+	if is_authenticated():
+		_send_request(LobbyProtocolScript.CLEAR_LEAGUE_BOTS, {})
+
 func report_bot_work_started(job_id: String, turn_count: int = 0) -> void:
 	if is_authenticated():
 		_send_request(LobbyProtocolScript.REPORT_BOT_WORK_STARTED, {
@@ -843,6 +853,12 @@ func lobby_event(message: Dictionary) -> void:
 		LobbyProtocolScript.BOT_LEAGUE_STATUS:
 			if is_authenticated():
 				bot_league_status_received.emit(payload)
+		LobbyProtocolScript.LEAGUE_ROUND_ROBIN_RESULT:
+			if is_authenticated():
+				league_round_robin_result_received.emit(payload)
+		LobbyProtocolScript.CLEAR_LEAGUE_BOTS_RESULT:
+			if is_authenticated():
+				clear_league_bots_result_received.emit(payload)
 		LobbyProtocolScript.ISSUE_REPORT_RESULT:
 			issue_report_result.emit(bool(payload.get("success", false)), str(payload.get("message", "")))
 		LobbyProtocolScript.BOT_PROPOSAL_RESULT:

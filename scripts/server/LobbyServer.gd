@@ -113,6 +113,7 @@ var _punch_reflector_port: int = 0
 var _punch_ready_last_msec_by_key: Dictionary = {}
 var _next_bot_self_play_block_log_msec := 0
 var _client_bot_jobs: Dictionary = {}
+var _pending_league_pairings: Array = []
 var _local_bot_matches_by_id: Dictionary = {}
 var _spectator_acks_by_key: Dictionary = {}
 var _issue_report_last_submit_by_peer: Dictionary = {}
@@ -435,6 +436,10 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 			_handle_finalize_bot_league(peer_id, payload)
 		LobbyProtocolScript.REQUEST_BOT_LEAGUE_STATUS:
 			_handle_request_bot_league_status(peer_id, payload)
+		LobbyProtocolScript.RUN_LEAGUE_ROUND_ROBIN:
+			_handle_run_league_round_robin(peer_id, payload)
+		LobbyProtocolScript.CLEAR_LEAGUE_BOTS:
+			_handle_clear_league_bots(peer_id, payload)
 		LobbyProtocolScript.SUBMIT_ISSUE_REPORT:
 			_handle_submit_issue_report(peer_id, payload)
 		LobbyProtocolScript.SUBMIT_BOT_PROPOSAL:
@@ -1106,6 +1111,39 @@ func _handle_request_bot_work(peer_id: int, payload: Dictionary = {}) -> void:
 			"message": "This account already has the maximum number of volunteer matches running.",
 		})
 		return
+	# Serve pending league round-robin pairings first so volunteers play the
+	# scheduled tournament matches instead of random self-play pairs.
+	if not _pending_league_pairings.is_empty():
+		var pairing: Dictionary = _pending_league_pairings.pop_front()
+		var candidate_a := _validate_server_bot_deck(pairing["deck_a"])
+		var candidate_b := _validate_server_bot_deck(pairing["deck_b"])
+		if not candidate_a.is_empty() and not candidate_b.is_empty() \
+				and not busy.has(str(candidate_a.get("list_id", ""))) \
+				and not busy.has(str(candidate_b.get("list_id", ""))):
+			var deck_a := candidate_a
+			var deck_b := candidate_b
+			for deck in [deck_a, deck_b]:
+				deck["bot_god_name"] = deck["god_name"]
+				deck["bot_list_id"] = deck["list_id"]
+				deck["bot_stars"] = deck["stars"]
+				deck["bot_win_streak"] = int(deck.get("win_streak", 0))
+			var job_id := _generate_id(32)
+			_client_bot_jobs[job_id] = {
+				"account_id": str(session["account_id"]),
+				"session_id": str(session.get("session_id", "")),
+				"deck_a": deck_a,
+				"deck_b": deck_b,
+				"expires_unix": int(Time.get_unix_time_from_system()) + 600,
+				"status": "assigned",
+				"league_match": true,
+			}
+			_send_to_peer(peer_id, LobbyProtocolScript.BOT_WORK_ASSIGNMENT, {
+				"job_id": job_id,
+				"decks": [deck_a, deck_b],
+			})
+			return
+	# Pairing failed validation (deck changed or retired); try next pairing on
+	# the next work request.
 	_refresh_ranked_bot_deck_pool()
 	var requested_bot_id := str(payload.get("bot_id", "")).strip_edges()
 	var deck_a: Dictionary
@@ -1192,6 +1230,36 @@ func _handle_request_bot_league_status(peer_id: int, payload: Dictionary = {}) -
 		"success": true,
 		"league_mode": bool(status.get("league_mode", false)),
 		"gods": status.get("gods", []),
+	})
+
+func _handle_run_league_round_robin(peer_id: int, payload: Dictionary = {}) -> void:
+	var session := _get_session_for_peer(peer_id)
+	if session.is_empty() or str(session.get("account_id", "")).is_empty():
+		_send_error_to_peer(peer_id, "Sign in before running the league round robin.")
+		return
+	var matches_per_bot := clampi(int(payload.get("matches_per_bot", 50)), 1, 500)
+	var result := run_league_round_robin(matches_per_bot)
+	_send_to_peer(peer_id, LobbyProtocolScript.LEAGUE_ROUND_ROBIN_RESULT, {
+		"success": bool(result.get("success", false)),
+		"message": result.get("message", ""),
+		"total_matches": int(result.get("total_matches", 0)),
+		"matches_per_bot": matches_per_bot,
+		"bot_count": int(result.get("bot_count", 0)),
+	})
+
+func _handle_clear_league_bots(peer_id: int, payload: Dictionary = {}) -> void:
+	var session := _get_session_for_peer(peer_id)
+	if session.is_empty() or str(session.get("account_id", "")).is_empty():
+		_send_error_to_peer(peer_id, "Sign in before clearing league bots.")
+		return
+	_refresh_ranked_bot_deck_pool()
+	var result := _ranked_bot_deck_pool.clear_league_bots()
+	_ranked_bot_deck_pool.set_league_mode(false)
+	_pending_league_pairings.clear()
+	_send_to_peer(peer_id, LobbyProtocolScript.CLEAR_LEAGUE_BOTS_RESULT, {
+		"success": true,
+		"removed": int(result.get("removed", 0)),
+		"removed_by_god": result.get("removed_by_god", {}),
 	})
 
 func _find_community_bot(account_id: String, bot_id: String) -> Dictionary:
@@ -2369,6 +2437,50 @@ func finalize_bot_league() -> Dictionary:
 func get_bot_league_status() -> Dictionary:
 	_refresh_ranked_bot_deck_pool()
 	return _ranked_bot_deck_pool.get_league_status()
+
+# Schedules a round robin where every league bot plays `matches_per_bot` matches
+# against randomly chosen opponents. Pairings are stored and served to volunteer
+# bot workers through the existing request_bot_work flow, so matches are played
+# and recorded through the normal match-history pipeline.
+func run_league_round_robin(matches_per_bot: int = 50) -> Dictionary:
+	_ensure_match_history_store()
+	_ensure_server_bot_deck_factory()
+	_refresh_ranked_bot_deck_pool()
+	if server_bot_deck_factory == null:
+		return {"success": false, "message": "Bot deck factory is unavailable."}
+	var god_names: Array[String] = server_bot_deck_factory.get_ranked_god_names()
+	var all_bots: Array = []
+	for god_name in god_names:
+		var pool: Dictionary = _ranked_bot_deck_pool._by_god.get(str(god_name), {})
+		if pool.is_empty():
+			continue
+		for list in pool.get("lists", []):
+			if bool(list.get("league_list", false)):
+				all_bots.append(list.duplicate(true))
+	if all_bots.is_empty():
+		return {"success": false, "message": "No league bots found. Seed the bot league first."}
+	var pairings: Array = []
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+	var match_counts: Dictionary = {}
+	for bot in all_bots:
+		match_counts[str(bot.get("list_id", ""))] = 0
+	for bot in all_bots:
+		var bot_id := str(bot.get("list_id", ""))
+		var attempts := 0
+		while int(match_counts.get(bot_id, 0)) < matches_per_bot and attempts < matches_per_bot * 10:
+			attempts += 1
+			var opponent: Dictionary = all_bots[rng.randi_range(0, all_bots.size() - 1)]
+			var opponent_id := str(opponent.get("list_id", ""))
+			if opponent_id == bot_id:
+				continue
+			if int(match_counts.get(opponent_id, 0)) >= matches_per_bot:
+				continue
+			pairings.append({"deck_a": bot.duplicate(true), "deck_b": opponent.duplicate(true)})
+			match_counts[bot_id] = int(match_counts.get(bot_id, 0)) + 1
+			match_counts[opponent_id] = int(match_counts.get(opponent_id, 0)) + 1
+	_pending_league_pairings = pairings
+	return {"success": true, "total_matches": pairings.size(), "matches_per_bot": matches_per_bot, "bot_count": all_bots.size()}
 
 func _busy_bot_list_ids() -> Dictionary:
 	var busy := {}

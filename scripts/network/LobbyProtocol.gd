@@ -58,6 +58,10 @@ const SEED_BOT_LEAGUE := "seed_bot_league"
 const FINALIZE_BOT_LEAGUE := "finalize_bot_league"
 const REQUEST_BOT_LEAGUE_STATUS := "request_bot_league_status"
 const BOT_LEAGUE_STATUS := "bot_league_status"
+const RUN_LEAGUE_ROUND_ROBIN := "run_league_round_robin"
+const LEAGUE_ROUND_ROBIN_RESULT := "league_round_robin_result"
+const CLEAR_LEAGUE_BOTS := "clear_league_bots"
+const CLEAR_LEAGUE_BOTS_RESULT := "clear_league_bots_result"
 const BOT_LEAGUE_RESULT := "bot_league_result"
 
 const HELLO_OK := "hello_ok"
@@ -279,6 +283,13 @@ static func validate_request(message: Dictionary) -> String:
 				if count < 1 or count > 64:
 					return "Invalid bot league count per god."
 		REQUEST_BOT_LEAGUE_STATUS:
+			pass
+		RUN_LEAGUE_ROUND_ROBIN:
+			if payload.has("matches_per_bot"):
+				var count := int(payload.get("matches_per_bot", 50))
+				if count < 1 or count > 500:
+					return "Invalid matches per bot."
+		CLEAR_LEAGUE_BOTS:
 			pass
 		REQUEST_MY_BOTS:
 			pass
