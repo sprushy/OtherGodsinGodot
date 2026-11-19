@@ -341,22 +341,35 @@ func dump_bot_deck_results(results: Array[Dictionary]) -> Dictionary:
 # bots that were culled (e.g. by a premature destructive finalize) but still
 # have results in match history. Returns how many were re-registered and how
 # many results were replayed.
+#
+# Clears _by_god and rebuilds from scratch (like refresh()), but re-registers
+# league bots with their original league_ list_ids before replaying results.
+# _apply_result then finds them by list_id and updates their records. This is
+# idempotent: calling it multiple times produces the same ladder state.
+# _apply_result finds existing bots by list_id or fingerprint and updates them,
+# or creates new entries as needed. This preserves league_ list_ids.
 func rebuild_league_records(results: Array[Dictionary]) -> Dictionary:
-	var re_registered := 0
-	var replayed := results.size()
-	var league_result_count := 0
-	for result in results:
-		if _is_league_bot_list_id(str(result.get("list_id", ""))):
-			league_result_count += 1
-	print("[Bot League Debug] rebuild_league_records: %d total results, %d with league list_ids" % [results.size(), league_result_count])
-	# First pass: re-register any league bots that have results but are missing from the pool.
-	var league_ids_in_history: Dictionary = {}
+	_by_god.clear()
+	_eliminated_bot_match_ids.clear()
+	# Group results by list_id for the re-registration pass.
+	var results_by_list: Dictionary = {}
 	for result in results:
 		var list_id := str(result.get("list_id", ""))
+		if not list_id.is_empty():
+			var bucket: Array = results_by_list.get(list_id, [])
+			bucket.append(result)
+			results_by_list[list_id] = bucket
+	# Count league results.
+	var league_result_count := 0
+	for list_id in results_by_list.keys():
 		if _is_league_bot_list_id(list_id):
-			league_ids_in_history[list_id] = result
-	for list_id in league_ids_in_history.keys():
-		var result = league_ids_in_history[list_id]
+			league_result_count += results_by_list[list_id].size()
+	print("[Bot League Debug] rebuild_league_records: %d total results, %d with league list_ids" % [results.size(), league_result_count])
+	# First pass: re-register any league bots that have results but are missing from the pool.
+	var re_registered := 0
+	for list_id in results_by_list.keys():
+		if not _is_league_bot_list_id(list_id):
+			continue
 		var found := false
 		for pool: Dictionary in _by_god.values():
 			for list: Dictionary in pool.get("lists", []):
@@ -369,6 +382,7 @@ func rebuild_league_records(results: Array[Dictionary]) -> Dictionary:
 				found = true
 				break
 		if not found:
+			var result: Dictionary = results_by_list[list_id][0]
 			var god_name := str(result.get("god_name", ""))
 			var deck: Dictionary = {
 				"deck_name": str(result.get("bot_name", "")),
@@ -381,19 +395,23 @@ func rebuild_league_records(results: Array[Dictionary]) -> Dictionary:
 			if not new_list_id.is_empty():
 				re_registered += 1
 				print("[Bot League Debug] re-registered %s as %s (%s)" % [str(result.get("bot_name", "")), list_id, god_name])
-	# Second pass: force a full replay so all results attach to existing/re-registered bots.
-	invalidate_replay()
-	refresh(results)
-	# Diagnostic: show what each league bot looks like after replay
+	# Second pass: apply all results via _apply_result, which finds existing
+	# bots by list_id/fingerprint and updates them (or creates new entries).
+	# Does NOT clear _by_god, so league_ list_ids are preserved.
+	var applied := 0
+	for result: Dictionary in results:
+		_apply_result(result)
+		applied += 1
+	# Diagnostic: show what each league bot looks like after applying results.
 	for pool: Dictionary in _by_god.values():
 		for list: Dictionary in pool.get("lists", []):
-			var list_id := str(list.get("list_id", ""))
-			if _is_league_bot_list_id(list_id):
-				print("[Bot League Debug] after replay: %s (%s) - %d-%d-%d, %d ★" % [
-					str(list.get("deck_name", "")), list_id,
+			var lid := str(list.get("list_id", ""))
+			if _is_league_bot_list_id(lid):
+				print("[Bot League Debug] after rebuild: %s (%s) - %d-%d-%d, %d ★" % [
+					str(list.get("deck_name", "")), lid,
 					int(list.get("wins", 0)), int(list.get("losses", 0)), int(list.get("draws", 0)),
 					int(list.get("stars", 0))])
-	return {"success": true, "re_registered": re_registered, "replayed": replayed, "league_result_count": league_result_count}
+	return {"success": true, "re_registered": re_registered, "replayed": applied, "league_result_count": league_result_count}
 
 func _is_league_bot_list_id(list_id: String) -> bool:
 	return str(list_id).begins_with("league_")

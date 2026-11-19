@@ -2743,7 +2743,10 @@ func _refresh_ranked_bot_deck_pool() -> void:
 			results.append(result)
 		else:
 			results.append(result)
-	_ranked_bot_deck_pool.refresh(results)
+	# Use rebuild_league_records() instead of refresh() so league bots keep
+	# their league_ list_ids and records. refresh() clears _by_god and replays
+	# from scratch, which would replace league_ ids with match_id-based ids.
+	_ranked_bot_deck_pool.rebuild_league_records(results)
 
 func _get_community_bot_ids() -> Dictionary:
 	var ids := {}
