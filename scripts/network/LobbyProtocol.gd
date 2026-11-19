@@ -99,6 +99,10 @@ const BOT_PROPOSAL_RESULT := "bot_proposal_result"
 const BOT_DECK_SUBMISSION_RESULT := "bot_deck_submission_result"
 const MY_BOTS := "my_bots"
 const BOT_DELETED := "bot_deleted"
+## Debug-only roster of every account signed in to the lobby. The server only
+## answers on debug/editor builds, so release builds never expose this list.
+const REQUEST_PLAYERS_ONLINE := "request_players_online"
+const PLAYERS_ONLINE := "players_online"
 
 static func make_message(message_type: String, payload: Dictionary = {}) -> Dictionary:
 	return {
@@ -248,7 +252,7 @@ static func validate_request(message: Dictionary) -> String:
 				return "Missing session id."
 			if str(payload.get("reconnect_token", "")).strip_edges().is_empty():
 				return "Missing reconnect token."
-		LIST_ROOMS, LEAVE_ROOM, REQUEST_ACCOUNT_DECKS, REQUEST_PROFILE_SUMMARY, REQUEST_FRIENDS:
+		LIST_ROOMS, LEAVE_ROOM, REQUEST_ACCOUNT_DECKS, REQUEST_PROFILE_SUMMARY, REQUEST_FRIENDS, REQUEST_PLAYERS_ONLINE:
 			pass
 		REQUEST_BOT_LADDER:
 			if payload.has("request_id"):

@@ -37,6 +37,7 @@ foreach ($path in @($roomFile, $hostResult, $clientResult, $lobbyPidFile, $lobby
 }
 
 $hostArgs = @(
+    '--audio-driver', 'Dummy',
     '--path', $project,
     '--log-file', $hostLog,
     '--',
@@ -56,6 +57,7 @@ $hostArgs = @(
 )
 
 $clientArgs = @(
+    '--audio-driver', 'Dummy',
     '--path', $project,
     '--log-file', $clientLog,
     '--',

@@ -317,47 +317,55 @@ func clear_league_bots() -> Dictionary:
 	_league_list_ids = cleaned_ids
 	return {"success": true, "removed": total_removed, "removed_by_god": removed_by_god}
 
+func _is_league_bot_list_id(list_id: String) -> bool:
+	return str(list_id).begins_with("league_")
+
+static func _played_matches(list: Dictionary) -> int:
+	return int(list.get("wins", 0)) + int(list.get("losses", 0)) + int(list.get("draws", 0))
+
+func _league_bot_summary(list: Dictionary) -> Dictionary:
+	return {
+		"deck_name": str(list.get("deck_name", "")),
+		"list_id": str(list.get("list_id", "")),
+		"wins": int(list.get("wins", 0)),
+		"losses": int(list.get("losses", 0)),
+		"draws": int(list.get("draws", 0)),
+		"stars": int(list.get("stars", 0)),
+		"matches": _played_matches(list),
+	}
+
 func get_league_status() -> Dictionary:
+	# Reports only seeded league bots (list ids starting with "league_") and how
+	# many matches each has played. Pre-existing ranked bots are not reported.
 	var gods: Array = []
+	var total_bots := 0
+	var total_matches := 0
 	for god_name in _by_god.keys():
 		var pool: Dictionary = _by_god[god_name]
-		var league_lists := 0
+		var league_bots: Array = []
 		for list: Dictionary in pool.get("lists", []):
-			if bool(list.get("league_list", false)):
-				league_lists += 1
-		# After finalize, all seeded bots are normal ladder bots (flag cleared).
-		# The quarantined worst lives in quarantined_lists; the strongest is
-		# surfaced as "kept" for the status summary.
-		var kept_summary: Dictionary = {}
-		var quarantined_summary: Dictionary = {}
-		for list: Dictionary in pool.get("lists", []):
-			if not bool(list.get("league_list", false)) and kept_summary.is_empty():
-				kept_summary = {
-					"deck_name": str(list.get("deck_name", "")),
-					"list_id": str(list.get("list_id", "")),
-					"wins": int(list.get("wins", 0)),
-					"losses": int(list.get("losses", 0)),
-					"draws": int(list.get("draws", 0)),
-					"stars": int(list.get("stars", 0)),
-				}
+			if _is_league_bot_list_id(str(list.get("list_id", ""))):
+				league_bots.append(_league_bot_summary(list))
 		for list: Dictionary in pool.get("quarantined_lists", []):
-			quarantined_summary = {
-				"deck_name": str(list.get("deck_name", "")),
-				"list_id": str(list.get("list_id", "")),
-				"wins": int(list.get("wins", 0)),
-				"losses": int(list.get("losses", 0)),
-				"draws": int(list.get("draws", 0)),
-				"stars": int(list.get("stars", 0)),
-			}
+			if _is_league_bot_list_id(str(list.get("list_id", ""))):
+				league_bots.append(_league_bot_summary(list))
+		league_bots.sort_custom(func(first, second): return _is_stronger_record(second, first))
+		var god_matches := 0
+		for bot in league_bots:
+			god_matches += int(bot["matches"])
+		total_bots += league_bots.size()
+		total_matches += god_matches
+		var best := {}
+		if not league_bots.is_empty():
+			best = league_bots[0]
 		gods.append({
 			"god_name": str(god_name),
-			"league_lists": league_lists,
-			"kept": kept_summary,
-			"quarantined": quarantined_summary,
-			"quarantined_ids": pool.get("quarantined_ids", []).duplicate(),
-			"quarantined_id": str(pool.get("quarantined_id", "")),
+			"league_bots": league_bots,
+			"bot_count": league_bots.size(),
+			"matches_played": god_matches,
+			"best": best,
 		})
-	return {"league_mode": _league_mode, "gods": gods}
+	return {"league_mode": _league_mode, "gods": gods, "total_bots": total_bots, "total_matches": total_matches}
 
 static func _is_stronger_record(first: Dictionary, second: Dictionary) -> bool:
 	if int(first.get("stars", 0)) != int(second.get("stars", 0)):

@@ -35,6 +35,7 @@ const SERVER_BOT_AUTH_MODE := "bot"
 const SERVER_BOT_TYPE_FUZZ := "practice_fuzz"
 const MAX_BOT_SELF_PLAY := 10
 const MAX_CLIENT_BOT_WORKERS_PER_ACCOUNT := 6
+const LEAGUE_ROUND_ROBIN_DEFAULT_MATCHES_PER_BOT := 50
 const BOT_SELF_PLAY_LIMIT_ENV := "OTHERGODS_BOT_SELF_PLAY_LIMIT"
 const BOT_SELF_PLAY_FRAME_LIMIT := 0.055
 const BOT_SELF_PLAY_MEMORY_RESERVE := 512 * 1024 * 1024
@@ -484,6 +485,8 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 			_handle_reconnect_request(peer_id, payload)
 		LobbyProtocolScript.REPORT_HOST_VIABILITY:
 			_handle_report_host_viability(peer_id, payload)
+		LobbyProtocolScript.REQUEST_PLAYERS_ONLINE:
+			_handle_request_players_online(peer_id)
 
 func _can_accept_password_recovery(peer_id: int) -> bool:
 	if peer_id == 1:
@@ -929,6 +932,48 @@ func _handle_report_host_viability(peer_id: int, payload: Dictionary) -> void:
 	])
 
 
+## Debug-only roster of signed-in accounts. Release builds refuse the request so
+## a public server never broadcasts who is logged in.
+func _handle_request_players_online(peer_id: int) -> void:
+	if not (OS.is_debug_build() or Engine.is_editor_hint()):
+		_send_error_to_peer(peer_id, "Players online list is only available on debug lobby builds.")
+		return
+	var players: Array[Dictionary] = []
+	for session_id_variant in sessions_by_id.keys():
+		var raw_entry: Variant = sessions_by_id.get(session_id_variant, {})
+		if not (raw_entry is Dictionary) or raw_entry.is_empty():
+			continue
+		var entry := raw_entry as Dictionary
+		if bool(entry.get("is_bot", false)):
+			continue
+		var username := str(entry.get("username", "")).strip_edges()
+		var player_name := str(entry.get("player_name", "")).strip_edges()
+		if username.is_empty() and player_name.is_empty():
+			continue
+		players.append({
+			"session_id": str(entry.get("session_id", "")),
+			"username": username,
+			"player_name": player_name,
+			"is_connected": bool(entry.get("connected", false)),
+			"is_local": bool(entry.get("is_local", false)),
+		})
+	players.sort_custom(_compare_players_online_entries)
+	_send_to_peer(peer_id, LobbyProtocolScript.PLAYERS_ONLINE, {
+		"players": players,
+		"count": players.size(),
+	})
+
+
+static func _compare_players_online_entries(a: Dictionary, b: Dictionary) -> bool:
+	var a_name := str(a.get("username", "")).strip_edges()
+	if a_name.is_empty():
+		a_name = str(a.get("player_name", "")).strip_edges()
+	var b_name := str(b.get("username", "")).strip_edges()
+	if b_name.is_empty():
+		b_name = str(b.get("player_name", "")).strip_edges()
+	return a_name.to_lower() < b_name.to_lower()
+
+
 func _handle_request_account_decks(peer_id: int) -> void:
 	var session: Dictionary = _get_session_for_peer(peer_id)
 	if session.is_empty():
@@ -1230,6 +1275,9 @@ func _handle_request_bot_league_status(peer_id: int, payload: Dictionary = {}) -
 		"success": true,
 		"league_mode": bool(status.get("league_mode", false)),
 		"gods": status.get("gods", []),
+		"total_bots": int(status.get("total_bots", 0)),
+		"total_matches": int(status.get("total_matches", 0)),
+		"target_matches_per_bot": LEAGUE_ROUND_ROBIN_DEFAULT_MATCHES_PER_BOT,
 	})
 
 func _handle_run_league_round_robin(peer_id: int, payload: Dictionary = {}) -> void:

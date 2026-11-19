@@ -70,6 +70,8 @@ const GUEST_USERNAME_PREFIX := "guest#"
 const GUEST_ACCOUNT_PROMPT := "Make an account to save decks across instances."
 const ACCOUNT_SETTINGS_SECTION_TITLE := "Account"
 const SEEK_AUTO_REFRESH_INTERVAL_SECONDS := 3.0
+# Debug-only roster refresh cadence for the connected lobby.
+const PLAYERS_ONLINE_REFRESH_INTERVAL_SECONDS := 5.0
 const FRESH_LOBBY_RECONNECT_DELAY_SECONDS := 0.6
 const LOBBY_SIGN_IN_WATCHDOG_SECONDS := 12.0
 # NAT hole punching for spectating client-hosted bot challenges. Quick bounces
@@ -387,6 +389,8 @@ var _tutorial_coach_target: Node = null
 var _tutorial_coach_baseline: Dictionary = {}
 var _tutorial_coach_seen_stack: bool = false
 var _seek_auto_refresh_elapsed: float = 0.0
+var _players_online_label: Label = null
+var _players_online_refresh_elapsed: float = 0.0
 var _seek_list_request_pending: bool = false
 var _request_next_notices: VBoxContainer = null
 var _deck_picker_button: Button = null
@@ -505,6 +509,7 @@ func _ready() -> void:
 	_startup_trace("_ready: auth prefs restored")
 	_build_profile_summary_controls()
 	_build_seek_tabs()
+	_build_players_online_controls()
 	_build_recent_activity_panel()
 	_build_account_identity_controls()
 	_build_friends_controls()
@@ -1524,6 +1529,14 @@ func _refresh_server_version_overlay_visibility() -> void:
 func _process(delta: float) -> void:
 	_poll_host_viability_probe()
 	_poll_local_bot_spectate_probe()
+	if OS.is_debug_build():
+		if not _should_auto_refresh_seeks():
+			_players_online_refresh_elapsed = 0.0
+		else:
+			_players_online_refresh_elapsed += delta
+			if _players_online_refresh_elapsed >= PLAYERS_ONLINE_REFRESH_INTERVAL_SECONDS:
+				_players_online_refresh_elapsed = 0.0
+				_request_players_online()
 	if not _deferred_required_update.is_empty() and not _should_defer_required_update():
 		var pending_update := _deferred_required_update
 		_deferred_required_update = {}
@@ -2830,6 +2843,23 @@ func _build_seek_tabs() -> void:
 		_seek_action_row.add_child(_clear_league_bots_button)
 	_apply_seek_action_button_sizing()
 
+## Debug-only roster of everyone signed in to the connected lobby. The lobby
+## refuses this request on release builds, so the control only exists in debug.
+func _build_players_online_controls() -> void:
+	if not OS.is_debug_build() or multiplayer_container == null:
+		return
+	if _players_online_label != null and is_instance_valid(_players_online_label):
+		return
+	_players_online_label = Label.new()
+	_players_online_label.name = "PlayersOnlineLabel"
+	_players_online_label.text = "Players online: sign in to the lobby."
+	_players_online_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_players_online_label.modulate = Color(0.72, 0.86, 0.98)
+	_players_online_label.add_theme_font_size_override("font_size", 13)
+	multiplayer_container.add_child(_players_online_label)
+	if seek_list != null:
+		multiplayer_container.move_child(_players_online_label, seek_list.get_index())
+
 func _build_recent_activity_panel() -> void:
 	if is_instance_valid(_recent_activity_panel):
 		return
@@ -3403,44 +3433,22 @@ func _on_bot_league_result_received(result: Dictionary) -> void:
 func _on_bot_league_status_received(status: Dictionary) -> void:
 	var league_mode := bool(status.get("league_mode", false))
 	var gods: Array = status.get("gods", [])
+	var target := int(status.get("target_matches_per_bot", 50))
 	var lines: Array[String] = []
 	lines.append("League mode: %s" % ["on" if league_mode else "off"])
-	lines.append("Gods: %d" % gods.size())
-	var total_seeded := 0
-	var total_lists := 0
-	var total_quarantined := 0
+	lines.append("League bots: %d, matches played: %d (target %d each)" % [
+		int(status.get("total_bots", 0)), int(status.get("total_matches", 0)), target])
 	for god in gods:
 		var god_name := str(god.get("god_name", ""))
-		var league_lists := int(god.get("league_lists", 0))
-		var total_lists_god := int(god.get("total_lists", 0))
-		var kept: Dictionary = god.get("kept", {})
-		var quarantined: Dictionary = god.get("quarantined", {})
-		var quarantined_ids: Array = god.get("quarantined_ids", [])
-		total_seeded += league_lists
-		total_lists += total_lists_god
-		if not str(quarantined.get("list_id", "")).is_empty():
-			total_quarantined += 1
+		var league_bots: Array = god.get("league_bots", [])
 		lines.append("")
-		lines.append("%s:" % god_name)
-		lines.append("  ladder bots: %d" % total_lists_god)
-		if not kept.is_empty():
-			lines.append("  strongest (kept): %s (%d ★, %d-%d)" % [
-				str(kept.get("deck_name", "")), int(kept.get("stars", 0)),
-				int(kept.get("wins", 0)), int(kept.get("losses", 0))])
-		if not quarantined.is_empty():
-			lines.append("  quarantined (forced-match bad bot): %s (%d ★, %d-%d)" % [
-				str(quarantined.get("deck_name", "")), int(quarantined.get("stars", 0)),
-				int(quarantined.get("wins", 0)), int(quarantined.get("losses", 0))])
-		var ids_text := ""
-		for i in quarantined_ids.size():
-			ids_text += str(quarantined_ids[i])
-			if i < quarantined_ids.size() - 1:
-				ids_text += ", "
-		lines.append("  quarantined ids: %s" % ids_text)
-	lines.append("")
-	lines.append("Totals -> %d gods, %d ladder bots, %d quarantined" % [
-		gods.size(), total_lists, total_quarantined])
-
+		lines.append("%s: %d bots, %d matches played" % [
+			god_name, league_bots.size(), int(god.get("matches_played", 0))])
+		for bot in league_bots:
+			lines.append("  %s: %d-%d-%d, %d ★, %d/%d matches" % [
+				str(bot.get("deck_name", "")),
+				int(bot.get("wins", 0)), int(bot.get("losses", 0)), int(bot.get("draws", 0)),
+				int(bot.get("stars", 0)), int(bot.get("matches", 0)), target])
 	var dialog := AcceptDialog.new()
 	dialog.title = "Bot League Status"
 	var dialog_text := ""
@@ -3451,7 +3459,8 @@ func _on_bot_league_status_received(status: Dictionary) -> void:
 	dialog.dialog_text = dialog_text
 	add_child(dialog)
 	dialog.popup_centered()
-	status_label.text = "Bot league status: %d gods, %d ladder bots." % [gods.size(), total_lists]
+	status_label.text = "Bot league: %d bots, %d matches played." % [
+		int(status.get("total_bots", 0)), int(status.get("total_matches", 0))]
 	print("[Bot League] status: %s" % JSON.stringify(status))
 
 func _on_run_league_round_robin_pressed() -> void:
@@ -3787,6 +3796,49 @@ func _queue_room_list_refresh(show_status: bool = true) -> void:
 	if show_status:
 		status_label.text = "Refreshing seeks and live matches..."
 	lobby_client.list_rooms()
+
+func _request_players_online() -> void:
+	if lobby_client == null or not is_instance_valid(lobby_client):
+		return
+	lobby_client.request_players_online()
+
+func _on_players_online_received(players: Array) -> void:
+	_render_players_online(players)
+
+func _render_players_online(players: Array) -> void:
+	if _players_online_label == null or not is_instance_valid(_players_online_label):
+		return
+	var names: Array[String] = []
+	var offline_count := 0
+	for player in players:
+		if not (player is Dictionary):
+			continue
+		var entry := player as Dictionary
+		if not bool(entry.get("is_connected", true)):
+			offline_count += 1
+			continue
+		var name := str(entry.get("username", "")).strip_edges()
+		if name.is_empty():
+			name = str(entry.get("player_name", "")).strip_edges()
+		if name.is_empty():
+			continue
+		if bool(entry.get("is_local", false)):
+			name += " (local)"
+		names.append(name)
+	names.sort()
+	if names.is_empty():
+		_players_online_label.text = "Players online: none"
+	else:
+		_players_online_label.text = "Players online (%d): %s" % [names.size(), ", ".join(names)]
+	if offline_count > 0:
+		_players_online_label.text += "  ·  %d reconnecting" % offline_count
+	_players_online_label.visible = true
+
+func _clear_players_online() -> void:
+	_players_online_refresh_elapsed = 0.0
+	if _players_online_label == null or not is_instance_valid(_players_online_label):
+		return
+	_players_online_label.text = "Players online: not connected."
 
 func _on_seek_item_clicked(index: int, _at_position: Vector2, _mouse_button_index: int) -> void:
 	if seek_list == null or index < 0 or index >= seek_list.get_item_count():
@@ -9003,6 +9055,8 @@ func _bind_lobby_client_signals() -> void:
 		lobby_client.friends_state_received.connect(_on_friends_state_received)
 	if lobby_client.has_signal("account_settings_updated") and not lobby_client.account_settings_updated.is_connected(_on_account_settings_updated):
 		lobby_client.account_settings_updated.connect(_on_account_settings_updated)
+	if lobby_client.has_signal("players_online_received") and not lobby_client.players_online_received.is_connected(_on_players_online_received):
+		lobby_client.players_online_received.connect(_on_players_online_received)
 	if not lobby_client.connection_failed.is_connected(_on_lobby_connection_failed):
 		lobby_client.connection_failed.connect(_on_lobby_connection_failed)
 	if not lobby_client.disconnected_from_lobby.is_connected(_on_lobby_disconnected):
@@ -9126,6 +9180,7 @@ func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, play
 	_maybe_request_profile_summary()
 	_request_bot_ladder()
 	_request_friends_state()
+	_request_players_online()
 	# Proactively report whether this client can host a player-hosted match so
 	# unranked seeks can use listen-server topology when viable. Best-effort and
 	# deferred so it never blocks login or the lobby UI.
@@ -9230,6 +9285,7 @@ func _on_lobby_reconnect_succeeded(
 	_maybe_request_profile_summary()
 	_request_bot_ladder()
 	_request_friends_state()
+	_request_players_online()
 	# Proactively report whether this client can host a player-hosted match so
 	# unranked seeks can use listen-server topology when viable. Best-effort and
 	# deferred so it never blocks login or the lobby UI.
@@ -10141,6 +10197,7 @@ func _on_lobby_connection_failed(message: String) -> void:
 	_set_connected_server_version("")
 	_seek_list_request_pending = false
 	_seek_auto_refresh_elapsed = 0.0
+	_clear_players_online()
 	if _is_lobby_auto_reconnecting():
 		if status_label != null:
 			status_label.text = "Connection lost. Reconnecting to the lobby..."
@@ -10177,6 +10234,7 @@ func _on_lobby_disconnected() -> void:
 	_set_connected_server_version("")
 	_seek_list_request_pending = false
 	_seek_auto_refresh_elapsed = 0.0
+	_clear_players_online()
 	if _is_lobby_auto_reconnecting():
 		return
 	if _should_retry_host_lobby_connect():

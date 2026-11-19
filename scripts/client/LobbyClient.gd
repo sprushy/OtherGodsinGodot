@@ -62,6 +62,7 @@ signal bot_proposal_result(success: bool, message: String)
 signal bot_deck_submission_result(success: bool, message: String, bot: Dictionary)
 signal my_bots_received(bots: Array)
 signal bot_deleted(success: bool, message: String, bot_id: String)
+signal players_online_received(players: Array)
 signal bot_league_result_received(result: Dictionary)
 signal bot_league_status_received(status: Dictionary)
 signal league_round_robin_result_received(result: Dictionary)
@@ -395,6 +396,14 @@ func create_room(is_ranked: bool = true, best_of: int = 1) -> void:
 
 func list_rooms() -> void:
 	_send_request(LobbyProtocolScript.LIST_ROOMS)
+
+## Debug-only roster request. The lobby only answers on debug/editor builds.
+func request_players_online() -> void:
+	if not (OS.is_debug_build() or Engine.is_editor_hint()):
+		return
+	if not is_authenticated():
+		return
+	_send_request(LobbyProtocolScript.REQUEST_PLAYERS_ONLINE)
 
 func join_room(room_id: String) -> void:
 	_send_request(LobbyProtocolScript.JOIN_ROOM, {"room_id": room_id.strip_edges().to_upper()})
@@ -869,6 +878,10 @@ func lobby_event(message: Dictionary) -> void:
 			my_bots_received.emit(payload.get("bots", []))
 		LobbyProtocolScript.BOT_DELETED:
 			bot_deleted.emit(bool(payload.get("success", false)), str(payload.get("message", "")), str(payload.get("bot_id", "")))
+		LobbyProtocolScript.PLAYERS_ONLINE:
+			if is_authenticated():
+				var players = payload.get("players", [])
+				players_online_received.emit(players if players is Array else [])
 		LobbyProtocolScript.FRIENDS_STATE:
 			friends_state_received.emit(payload)
 		LobbyProtocolScript.ACCOUNT_SETTINGS_UPDATED:
