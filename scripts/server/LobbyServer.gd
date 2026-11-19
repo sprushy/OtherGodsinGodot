@@ -1390,11 +1390,14 @@ func _handle_dump_bot_deck_results(peer_id: int, payload: Dictionary = {}) -> vo
 	_refresh_ranked_bot_deck_pool()
 	var results = _collect_bot_deck_results_from_files()
 	var dump_result := _ranked_bot_deck_pool.dump_bot_deck_results(results)
+	var pool_dump := _ranked_bot_deck_pool.dump_pool_state()
 	_send_to_peer(peer_id, LobbyProtocolScript.DUMP_BOT_DECK_RESULTS_RESULT, {
 		"success": true,
 		"total": int(dump_result.get("total", 0)),
 		"league_count": int(dump_result.get("league_count", 0)),
 		"non_league_count": int(dump_result.get("non_league_count", 0)),
+		"pool_dump_path": str(pool_dump.get("path", "")),
+		"pool_dump_ok": bool(pool_dump.get("success", false)),
 	})
 
 func _find_community_bot(account_id: String, bot_id: String) -> Dictionary:

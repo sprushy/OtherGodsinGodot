@@ -1,6 +1,8 @@
 extends RefCounted
 
 const RankedProgressionScript = preload("res://scripts/server/RankedProgression.gd")
+const ServerPathsScript = preload("res://scripts/server/ServerPaths.gd")
+const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
 const LISTS_PER_GOD := 7
 const EARLY_RETIREMENT_GAMES := 60
 const EXPLORATION_CHANCE := 0.25
@@ -321,6 +323,30 @@ func clear_league_bots() -> Dictionary:
 	_league_list_ids = cleaned_ids
 	return {"success": true, "removed": total_removed, "removed_by_god": removed_by_god}
 
+# Dumps the current pool state (all gods, lists, records) to a JSON file for
+# offline inspection. Path: server_data/league_pool_dump.json
+func dump_pool_state() -> Dictionary:
+	var out: Dictionary = {}
+	for god_name in _by_god.keys():
+		var pool: Dictionary = _by_god[god_name]
+		var lists_out: Array = []
+		for list in pool.get("lists", []):
+			lists_out.append({
+				"list_id": str(list.get("list_id", "")),
+				"deck_name": str(list.get("deck_name", "")),
+				"god_name": str(list.get("god_name", "")),
+				"wins": int(list.get("wins", 0)),
+				"losses": int(list.get("losses", 0)),
+				"draws": int(list.get("draws", 0)),
+				"stars": int(list.get("stars", 0)),
+				"league_list": bool(list.get("league_list", false)),
+			})
+		out[str(god_name)] = lists_out
+	var path := ServerPathsScript.get_server_data_file_path("league_pool_dump.json")
+	var ok := JsonStoreScript.save_json(path, out, "RankedBotDeckPool")
+	print("[Bot League Debug] pool state dumped to %s (ok=%s)" % [path, str(ok)])
+	return {"success": ok, "path": path, "god_count": out.size()}
+
 # Dumps all bot deck results from match history for debugging. Shows list_ids,
 # gods, and outcomes so you can verify results are being stored.
 func dump_bot_deck_results(results: Array[Dictionary]) -> Dictionary:
@@ -436,8 +462,18 @@ func get_league_status() -> Dictionary:
 	var gods: Array = []
 	var total_bots := 0
 	var total_matches := 0
+	print("[Bot League Debug] get_league_status: _by_god has %d gods" % _by_god.size())
 	for god_name in _by_god.keys():
 		var pool: Dictionary = _by_god[god_name]
+		var all_lists = pool.get("lists", [])
+		var all_ids_text := ""
+		var first := true
+		for list in all_lists:
+			if not first:
+				all_ids_text += ", "
+			all_ids_text += str(list.get("list_id", ""))
+			first = false
+		print("[Bot League Debug]   %s: %d lists (%s)" % [god_name, all_lists.size(), all_ids_text])
 		var league_bots: Array = []
 		for list: Dictionary in pool.get("lists", []):
 			if _is_league_bot_list_id(str(list.get("list_id", ""))):
