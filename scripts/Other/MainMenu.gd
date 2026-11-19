@@ -158,6 +158,11 @@ var _current_room_snapshot: Dictionary = {}
 var _open_seek_rooms: Array[Dictionary] = []
 var _bot_match_live: Array = []
 var _seek_action_row: HBoxContainer
+var _tab_bar: HBoxContainer
+var _multiplayer_tab_button: Button
+var _bot_league_tab_button: Button
+var _bot_league_content_panel: VBoxContainer
+var _bot_league_tab_active: bool = false
 var _ladder_button: Button
 var _host_bot_match_button: Button
 var _host_another_bot_match_button: Button
@@ -1253,6 +1258,147 @@ func _apply_seek_action_button_sizing() -> void:
 		button.add_theme_font_size_override("font_size", 16)
 		button.custom_minimum_size = Vector2(0.0, 36.0)
 		button.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+
+func _build_multiplayer_tabs() -> void:
+	if multiplayer_container == null:
+		return
+	if _tab_bar != null and is_instance_valid(_tab_bar):
+		return
+	_tab_bar = HBoxContainer.new()
+	_tab_bar.name = "MultiplayerTabBar"
+	_tab_bar.add_theme_constant_override("separation", 4)
+	_tab_bar.alignment = BoxContainer.ALIGNMENT_BEGIN
+
+	_multiplayer_tab_button = Button.new()
+	_multiplayer_tab_button.text = "Multiplayer"
+	_multiplayer_tab_button.pressed.connect(_on_multiplayer_tab_pressed)
+	_tab_bar.add_child(_multiplayer_tab_button)
+
+	if OS.is_debug_build():
+		_bot_league_tab_button = Button.new()
+		_bot_league_tab_button.text = "Bot League"
+		_bot_league_tab_button.pressed.connect(_on_bot_league_tab_pressed)
+		_tab_bar.add_child(_bot_league_tab_button)
+
+	multiplayer_container.add_child(_tab_bar)
+	multiplayer_container.move_child(_tab_bar, _seek_action_row.get_index() + 1)
+
+	_build_bot_league_content_panel()
+	multiplayer_container.add_child(_bot_league_content_panel)
+	_bot_league_content_panel.hide()
+
+	_on_multiplayer_tab_pressed()
+
+func _build_bot_league_content_panel() -> void:
+	if _bot_league_content_panel != null and is_instance_valid(_bot_league_content_panel):
+		return
+	var panel := VBoxContainer.new()
+	panel.name = "BotLeagueContent"
+	panel.add_theme_constant_override("separation", 6)
+
+	var header := Label.new()
+	header.text = "Bot League"
+	header.add_theme_font_size_override("font_size", 14)
+	header.add_theme_color_override("font_color", Color(0.72, 0.82, 1.0))
+	panel.add_child(header)
+
+	var row1 := HBoxContainer.new()
+	row1.add_theme_constant_override("separation", 8)
+	row1.alignment = BoxContainer.ALIGNMENT_BEGIN
+	var row2 := HBoxContainer.new()
+	row2.add_theme_constant_override("separation", 8)
+	row2.alignment = BoxContainer.ALIGNMENT_BEGIN
+
+	_seed_bot_league_button = _make_bot_league_button("Seed Bot League", "Builds 10 ranked bot decks per god for the bot league.", _on_seed_bot_league_pressed)
+	row1.add_child(_seed_bot_league_button)
+	_finalize_bot_league_button = _make_bot_league_button("Finalize Bot League", "Keeps best 1 per god on ladder, quarantines worst 1 per god, removes the rest.", _on_finalize_bot_league_pressed)
+	row1.add_child(_finalize_bot_league_button)
+	_status_bot_league_button = _make_bot_league_button("Bot League Status", "Shows current bot league state: seeded lists, kept/quarantined bots per god.", _on_status_bot_league_pressed)
+	row1.add_child(_status_bot_league_button)
+	_run_league_round_robin_button = _make_bot_league_button("Run League Round Robin", "Schedules 50 matches per bot for the league round robin (played by volunteer bot workers).", _on_run_league_round_robin_pressed)
+	row1.add_child(_run_league_round_robin_button)
+
+	_clear_league_bots_button = _make_bot_league_button("Clear League Bots", "Removes every seeded league bot (list ids starting with league_), including any 0-0-0 leftovers.", _on_clear_league_bots_pressed)
+	row2.add_child(_clear_league_bots_button)
+	_rebuild_league_records_button = _make_bot_league_button("Rebuild League Records", "Replays all bot match history into league bots, re-registering any culled bots that still have recorded results.", _on_rebuild_league_records_pressed)
+	row2.add_child(_rebuild_league_records_button)
+	_dump_bot_deck_results_button = _make_bot_league_button("Dump Bot Deck Results", "Prints every bot match result from match history to the console so you can verify results exist and what list_ids they reference.", _on_dump_bot_deck_results_pressed)
+	row2.add_child(_dump_bot_deck_results_button)
+
+	panel.add_child(row1)
+	panel.add_child(row2)
+
+	_apply_bot_league_button_sizing(panel)
+
+	_bot_league_content_panel = panel
+
+func _make_bot_league_button(text: String, tooltip: String, on_pressed: Callable) -> Button:
+	var button := Button.new()
+	button.text = text
+	button.tooltip_text = tooltip
+	button.pressed.connect(on_pressed)
+	return button
+
+func _apply_bot_league_button_sizing(panel: Node) -> void:
+	if panel == null:
+		return
+	for child in panel.get_children():
+		if not child is HBoxContainer:
+			continue
+		for button in child.get_children():
+			if not button is Button:
+				continue
+			button.add_theme_font_size_override("font_size", 16)
+			button.custom_minimum_size = Vector2(0.0, 36.0)
+			button.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+
+func _on_multiplayer_tab_pressed() -> void:
+	if _bot_league_tab_active:
+		_bot_league_tab_active = false
+		if _bot_league_content_panel != null and is_instance_valid(_bot_league_content_panel):
+			_bot_league_content_panel.hide()
+		_show_multiplayer_tab_children()
+		_update_tab_button_states()
+
+func _on_bot_league_tab_pressed() -> void:
+	if not _bot_league_tab_active:
+		_bot_league_tab_active = true
+		_hide_multiplayer_tab_children()
+		if _bot_league_content_panel != null and is_instance_valid(_bot_league_content_panel):
+			_bot_league_content_panel.show()
+		_update_tab_button_states()
+
+func _update_tab_button_states() -> void:
+	if _multiplayer_tab_button != null and is_instance_valid(_multiplayer_tab_button):
+		_multiplayer_tab_button.button_pressed = not _bot_league_tab_active
+	if _bot_league_tab_button != null and is_instance_valid(_bot_league_tab_button):
+		_bot_league_tab_button.button_pressed = _bot_league_tab_active
+
+func _hide_multiplayer_tab_children() -> void:
+	if multiplayer_container == null:
+		return
+	for child in multiplayer_container.get_children():
+		if not child is Control:
+			continue
+		if child == _tab_bar:
+			continue
+		if child == _bot_league_content_panel:
+			continue
+		if child.name == "MultiplayerHeaderRow":
+			continue
+		child.hide()
+
+func _show_multiplayer_tab_children() -> void:
+	if multiplayer_container == null:
+		return
+	for child in multiplayer_container.get_children():
+		if not child is Control:
+			continue
+		if child == _bot_league_content_panel:
+			continue
+		child.show()
+	if _bot_league_content_panel != null and is_instance_valid(_bot_league_content_panel):
+		_bot_league_content_panel.hide()
 
 func _apply_main_menu_text_sizing_recursive(root: Node) -> void:
 	if root == null:
@@ -2813,43 +2959,9 @@ func _build_seek_tabs() -> void:
 	_host_bot_gauntlet_button.text = "Host Gauntlet for Your Bot"
 	_host_bot_gauntlet_button.pressed.connect(_open_my_bot_picker.bind(true))
 	_seek_action_row.add_child(_host_bot_gauntlet_button)
-	if OS.is_debug_build():
-		_seed_bot_league_button = Button.new()
-		_seed_bot_league_button.text = "Seed Bot League"
-		_seed_bot_league_button.tooltip_text = "Builds 10 ranked bot decks per god for the bot league."
-		_seed_bot_league_button.pressed.connect(_on_seed_bot_league_pressed)
-		_seek_action_row.add_child(_seed_bot_league_button)
-		_finalize_bot_league_button = Button.new()
-		_finalize_bot_league_button.text = "Finalize Bot League"
-		_finalize_bot_league_button.tooltip_text = "Keeps best 1 per god on ladder, quarantines worst 1 per god, removes the rest."
-		_finalize_bot_league_button.pressed.connect(_on_finalize_bot_league_pressed)
-		_seek_action_row.add_child(_finalize_bot_league_button)
-		_status_bot_league_button = Button.new()
-		_status_bot_league_button.text = "Bot League Status"
-		_status_bot_league_button.tooltip_text = "Shows current bot league state: seeded lists, kept/quarantined bots per god."
-		_status_bot_league_button.pressed.connect(_on_status_bot_league_pressed)
-		_seek_action_row.add_child(_status_bot_league_button)
-		_run_league_round_robin_button = Button.new()
-		_run_league_round_robin_button.text = "Run League Round Robin"
-		_run_league_round_robin_button.tooltip_text = "Schedules 50 matches per bot for the league round robin (played by volunteer bot workers)."
-		_run_league_round_robin_button.pressed.connect(_on_run_league_round_robin_pressed)
-		_seek_action_row.add_child(_run_league_round_robin_button)
-		_clear_league_bots_button = Button.new()
-		_clear_league_bots_button.text = "Clear League Bots"
-		_clear_league_bots_button.tooltip_text = "Removes every seeded league bot (list ids starting with league_), including any 0-0-0 leftovers."
-		_clear_league_bots_button.pressed.connect(_on_clear_league_bots_pressed)
-		_seek_action_row.add_child(_clear_league_bots_button)
-		_rebuild_league_records_button = Button.new()
-		_rebuild_league_records_button.text = "Rebuild League Records"
-		_rebuild_league_records_button.tooltip_text = "Replays all bot match history into league bots, re-registering any culled bots that still have recorded results."
-		_rebuild_league_records_button.pressed.connect(_on_rebuild_league_records_pressed)
-		_seek_action_row.add_child(_rebuild_league_records_button)
-		_dump_bot_deck_results_button = Button.new()
-		_dump_bot_deck_results_button.text = "Dump Bot Deck Results"
-		_dump_bot_deck_results_button.tooltip_text = "Prints every bot match result from match history to the console so you can verify results exist and what list_ids they reference."
-		_dump_bot_deck_results_button.pressed.connect(_on_dump_bot_deck_results_pressed)
-		_seek_action_row.add_child(_dump_bot_deck_results_button)
 	_apply_seek_action_button_sizing()
+	if OS.is_debug_build():
+		_build_multiplayer_tabs()
 
 ## Debug-only roster of everyone signed in to the connected lobby. The lobby
 ## refuses this request on release builds, so the control only exists in debug.

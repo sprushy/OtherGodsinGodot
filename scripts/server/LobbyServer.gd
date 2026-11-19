@@ -2722,8 +2722,11 @@ func _refresh_ranked_bot_deck_pool() -> void:
 	if not _same_community_bot_ids(_known_community_bot_ids, community_bot_ids):
 		_ranked_bot_deck_pool.invalidate_replay()
 	_known_community_bot_ids = community_bot_ids.duplicate()
+	# Collect bot deck results directly from result files, bypassing the
+	# MatchHistoryStore cache which may not include dedicated result files
+	# written to server_data/match_history_results/.
 	var results: Array[Dictionary] = []
-	for raw_result in match_history_store.get_bot_deck_results():
+	for raw_result in _collect_bot_deck_results_from_files():
 		var result: Dictionary = raw_result.duplicate(true)
 		var list_id := str(result.get("list_id", "")).strip_edges()
 		# Results recorded before community bots joined the ladder stored the
