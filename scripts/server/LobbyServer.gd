@@ -936,11 +936,10 @@ func _handle_report_host_viability(peer_id: int, payload: Dictionary) -> void:
 	])
 
 
-## Debug-only roster of signed-in accounts. Release builds refuse the request so
-## a public server never broadcasts who is logged in.
+## Debug-only roster of signed-in accounts. Release builds silently ignore the
+## request so a public server never tells anyone who is logged in.
 func _handle_request_players_online(peer_id: int) -> void:
 	if not (OS.is_debug_build() or Engine.is_editor_hint()):
-		_send_error_to_peer(peer_id, "Players online list is only available on debug lobby builds.")
 		return
 	var players: Array[Dictionary] = []
 	for session_id_variant in sessions_by_id.keys():
@@ -1338,29 +1337,48 @@ func _handle_rebuild_league_records(peer_id: int, payload: Dictionary = {}) -> v
 # found even on a fresh server instance.
 func _collect_bot_deck_results_from_files() -> Array[Dictionary]:
 	var results: Array[Dictionary] = []
+	# Source 1: dedicated per-match result files (dedicated results mode)
 	var results_dir := ServerPathsScript.get_server_data_file_path("match_history_results")
 	var dir := DirAccess.open(results_dir)
-	if dir == null:
-		print("[Bot League Debug] no dedicated results dir at %s" % results_dir)
-		return results
-	dir.list_dir_begin()
-	var file_name := dir.get_next()
-	while not file_name.is_empty():
-		if not dir.current_is_dir() and file_name.ends_with(".json"):
-			var path := results_dir.path_join(file_name)
-			var entry := JsonStoreScript.load_dictionary(path, {}, "MatchHistoryStore")
-			if not entry.is_empty() and entry.has("bot_deck_results"):
-				for row: Dictionary in entry.get("bot_deck_results", []):
-					if row is Dictionary:
-						var result := row.duplicate(true)
-						result["match_id"] = str(entry.get("match_id", ""))
-						if entry.get("bot_deck_results", []).size() > 1:
-							result["match_id"] = "%s_%d" % [result["match_id"], int(result.get("player_index", 0))]
-						result["bot_eliminated"] = false
-						results.append(result)
-		file_name = dir.get_next()
-	dir.list_dir_end()
-	print("[Bot League Debug] collected %d bot deck results from dedicated files" % results.size())
+	if dir != null:
+		dir.list_dir_begin()
+		var file_name := dir.get_next()
+		while not file_name.is_empty():
+			if not dir.current_is_dir() and file_name.ends_with(".json"):
+				var path := results_dir.path_join(file_name)
+				var entry := JsonStoreScript.load_dictionary(path, {}, "MatchHistoryStore")
+				if not entry.is_empty() and entry.has("bot_deck_results"):
+					for row: Dictionary in entry.get("bot_deck_results", []):
+						if row is Dictionary:
+							var result := row.duplicate(true)
+							result["match_id"] = str(entry.get("match_id", ""))
+							if entry.get("bot_deck_results", []).size() > 1:
+								result["match_id"] = "%s_%d" % [result["match_id"], int(result.get("player_index", 0))]
+							result["bot_eliminated"] = false
+							results.append(result)
+			file_name = dir.get_next()
+		dir.list_dir_end()
+	print("[Bot League Debug] collected %d results from dedicated dir %s" % [results.size(), results_dir])
+	# Source 2: legacy match_history.json (non-dedicated results mode)
+	var history_path := ServerPathsScript.get_server_data_file_path("match_history.json")
+	if FileAccess.file_exists(history_path):
+		var history := JsonStoreScript.load_dictionary(history_path, {}, "MatchHistoryStore")
+		var stored_matches: Dictionary = history.get("matches_by_id", {})
+		if stored_matches is Dictionary:
+			for match_id_variant in stored_matches.keys():
+				var entry: Dictionary = stored_matches[match_id_variant]
+				if entry is Dictionary and entry.has("bot_deck_results"):
+					for row: Dictionary in entry.get("bot_deck_results", []):
+						if row is Dictionary:
+							var result := row.duplicate(true)
+							result["match_id"] = str(match_id_variant)
+							if entry.get("bot_deck_results", []).size() > 1:
+								result["match_id"] = "%s_%d" % [result["match_id"], int(result.get("player_index", 0))]
+							result["bot_eliminated"] = false
+							results.append(result)
+		print("[Bot League Debug] collected %d results total (including legacy match_history.json)" % results.size())
+	else:
+		print("[Bot League Debug] no legacy match_history.json at %s" % history_path)
 	return results
 
 func _handle_dump_bot_deck_results(peer_id: int, payload: Dictionary = {}) -> void:
