@@ -68,7 +68,7 @@ const KEYWORD_HINTS = {
 	"Stone Skin": "This creature cannot be sent to the graveyard by combat destruction.",
 	"Terror": "When this card enters the field, return a lower-level opposing creature to its owner's hand.",
 	"God Death": "After you have had a God in play, if you control no face-up, awake God on the field, you gain 1 less upkeep mana, cannot use powers, and lose 7 followers at upkeep.",
-	"Status": "A status is an ongoing condition on a card, such as Sleep, Petrified, or Cannot Attack. Removing status changes clears those active statuses.",
+	"Paralyze": "This creature cannot move, switch stance, attack, or intercept.",
 	"Fractions": "When an ability asks for a fraction of a value, such as half, Other Gods rounds down unless the card specifically says otherwise.",
 }
 

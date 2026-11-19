@@ -62,6 +62,10 @@ const RUN_LEAGUE_ROUND_ROBIN := "run_league_round_robin"
 const LEAGUE_ROUND_ROBIN_RESULT := "league_round_robin_result"
 const CLEAR_LEAGUE_BOTS := "clear_league_bots"
 const CLEAR_LEAGUE_BOTS_RESULT := "clear_league_bots_result"
+const REBUILD_LEAGUE_RECORDS := "rebuild_league_records"
+const REBUILD_LEAGUE_RECORDS_RESULT := "rebuild_league_records_result"
+const DUMP_BOT_DECK_RESULTS := "dump_bot_deck_results"
+const DUMP_BOT_DECK_RESULTS_RESULT := "dump_bot_deck_results_result"
 const BOT_LEAGUE_RESULT := "bot_league_result"
 
 const HELLO_OK := "hello_ok"
@@ -294,6 +298,10 @@ static func validate_request(message: Dictionary) -> String:
 				if count < 1 or count > 500:
 					return "Invalid matches per bot."
 		CLEAR_LEAGUE_BOTS:
+			pass
+		REBUILD_LEAGUE_RECORDS:
+			pass
+		DUMP_BOT_DECK_RESULTS:
 			pass
 		REQUEST_MY_BOTS:
 			pass

@@ -2214,7 +2214,7 @@ func _is_enemy_creature_answer(card: Card, target: Card, score: int) -> bool:
 	return CardStrategy.key(card) in [
 		"DivineLightning", "RunicSpellbreaker", "BitMeseri", "ClayEaters", "Alu", "Nimue",
 		"Dromi", "Gleipnir", "Snowball", "SapStrength", "VisionOfTartarus", "Absence",
-		"Sap", "SepLemutti", "Lindwyrm", "GungnirTheSpearOfOdin",
+		"Sap", "SepLemutti", "Lindwyrm", "GungnirTheSpearOfOdin", "FairyBlast",
 	]
 
 func _try_summon_askelladen_answer() -> bool:
@@ -4653,7 +4653,7 @@ func _get_known_attack_response_cards(action: CardAction) -> Array[Card]:
 		return responses
 	for zone in opponent.frontline_zones + opponent.reserve_zones:
 		for card in zone.cards:
-			if not (card is TheInferno or card is VoidShield or card is Smite) or not CardStrategy.visible(self, card):
+			if not (card is TheInferno or card is VoidShield or card is Smite or card is ObsidianReflection) or not CardStrategy.visible(self, card):
 				continue
 			if game_manager.can_card_respond_to_action(card, action, opponent):
 				responses.append(card)
@@ -4678,6 +4678,11 @@ func _estimate_known_attack_response(response: Card, action: CardAction, project
 		"bot_wins": false,
 		"opponent_wins": false,
 	}
+	if response is ObsidianReflection:
+		var reversed_damage := _get_direct_follower_damage(action.attacker)
+		result["bot_followers_lost"] = reversed_damage
+		result["opponent_followers_lost"] = 0
+		return result
 	if response is VoidShield or response is Smite:
 		var victim := action.attacker
 		var destroys := response is Smite

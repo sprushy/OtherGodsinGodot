@@ -40,9 +40,10 @@ const TACTICAL_CARDS := [
 	"FalloftheMighty", "BaneOfTheSvartalfar", "CircleofRebirth", "Absence",
 	"LightOfMorningsDoors", "FoolishOptimism", "DivineLightning", "FifaTheMagicalArrow", "Exorcism",
 	"GungnirTheSpearOfOdin", "NamburbiApotropaeon", "HeroicStand", "Hringhorni",
-	"Banishment", "SpellDemolition", "Sap", "SepLemutti", "Smite", "VoidShield",
+	"Banishment", "SpellDemolition", "Sap", "SepLemutti", "Smite", "VoidShield", "ObsidianReflection",
 	"TheInferno", "TheDeluge", "Dromi", "Gleipnir", "SapStrength", "VisionOfTartarus", "VisionOfOdin", "Hermes",
 	"Drought", "HeavySnow", "Storm", "SavingGrace", "JiangZiyaFisherOfKings", "ShroudOfTheAncients", "WildMagic",
+	"FairyBlast",
 ]
 const ACTIVE_POWERS := ["AcceleratedFate", "OraclesSight", "BerserkerMead", "MechFactory", "Palisade", "ManaGuard"]
 const BOARD_ABILITIES := ["Alu", "Lindwyrm", "Lamashatu", "ClayEaters", "AncientPyre", "Watchtower", "Gawain", "Beyla", "Nimue", "JiangZiyaFisherOfKings",
@@ -517,6 +518,8 @@ static func _disable_durations(bot, target: Card, include_pending: bool = false)
 				_extend_disables(durations, ["cannot_attack", "cannot_intercept"], duration)
 			"petrified":
 				_extend_disables(durations, ["cannot_attack", "cannot_intercept", "cannot_move", "activation_locked", Card.ABILITY_NEGATED_STATUS], duration)
+			"paralyzed", "paralyze":
+				_extend_disables(durations, ["cannot_attack", "cannot_intercept", "cannot_move"], duration)
 			Card.ABILITY_NEGATED_STATUS:
 				_extend_disables(durations, ["activation_locked", Card.ABILITY_NEGATED_STATUS], duration)
 			"cannot_attack", "cannot_intercept", "cannot_move", "activation_locked":
@@ -747,6 +750,10 @@ static func stat_changes(bot, card: Card, target: Card) -> Dictionary:
 			return {"str": sign_value * VisionOfOdin.STR_SWING, "res": 0, "spd": sign_value * VisionOfOdin.SPEED_SWING}
 		"Hermes": return {"str": 0, "res": 0, "spd": Hermes.SPEED_BONUS}
 		"Snowball": return {"str": -2, "res": 0, "spd": 0}
+		"FairyBlast":
+			var fairy_str := target.get_effective_strength() if target != null else 0
+			var fairy_spd := target.get_effective_speed() if target != null else 0
+			return {"str": -int(fairy_str / 2.0), "res": 0, "spd": -int(fairy_spd / 2.0)}
 		"SapStrength": return {"str": -10, "res": 0, "spd": 0}
 		"VisionOfTartarus":
 			var reduction: int = -3 * card._count_void_creatures(bot.game_manager)
@@ -844,7 +851,8 @@ static func additive_combat_stats(bot, source: Card, target: Card) -> Vector3i:
 	if source == null or target == null:
 		return Vector3i.ZERO
 	if not (source is FifaTheMagicalArrow or source is Snowball or source is SapStrength \
-			or source is VisionOfOdin or source is VisionOfTartarus or source is Hermes):
+			or source is VisionOfOdin or source is VisionOfTartarus or source is Hermes \
+			or source is FairyBlast):
 		return Vector3i.ZERO
 	if not visible(bot, target) or target.current_zone == null or not target.current_zone.is_board_zone() \
 			or target.negates_external_effects() or bot.game_manager.is_immune_to_source(target, source) \
@@ -925,6 +933,22 @@ static func target_score(bot, card: Card, target: Card, action: CardAction = nul
 			if not enemy:
 				return BAD
 			return stat_gain(bot, card, target, action)
+		"ObsidianReflection":
+			if not enemy or not visible(bot, target):
+				return BAD
+			var reversed_damage := target.get_effective_strength()
+			if bot.has_method("_get_direct_follower_damage"):
+				reversed_damage = bot._get_direct_follower_damage(target)
+			return maxi(1000, reversed_damage * 100)
+		"FairyBlast":
+			if not enemy or not visible(bot, target):
+				return BAD
+			if target.is_paralyzed():
+				return BAD
+			var fairy_score := stat_gain(bot, card, target, action)
+			var fairy_value := value(bot, target)
+			fairy_score += _disable_gain(bot, target, {"cannot_attack": fairy_value * 0.5, "cannot_intercept": fairy_value * 0.3, "cannot_move": fairy_value * 0.2})
+			return fairy_score
 		"FifaTheMagicalArrow", "BerserkerMead", "Lamashatu":
 			if not own:
 				return BAD

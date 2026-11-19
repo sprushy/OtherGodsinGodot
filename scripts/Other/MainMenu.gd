@@ -156,7 +156,6 @@ var lobby_server: LobbyServer = null
 var lobby_client: LobbyClient = null
 var _current_room_snapshot: Dictionary = {}
 var _open_seek_rooms: Array[Dictionary] = []
-var _seek_tabs: TabBar
 var _bot_match_live: Array = []
 var _seek_action_row: HBoxContainer
 var _ladder_button: Button
@@ -171,6 +170,8 @@ var _finalize_bot_league_button: Button
 var _status_bot_league_button: Button
 var _run_league_round_robin_button: Button
 var _clear_league_bots_button: Button
+var _rebuild_league_records_button: Button
+var _dump_bot_deck_results_button: Button
 var _host_bot_gauntlet_id := ""
 var _host_bot_gauntlet_remaining := 0
 var _host_bot_gauntlet_opponents: Dictionary = {}
@@ -179,6 +180,10 @@ var _my_bot_dialog: AcceptDialog
 var _my_bot_option: OptionButton
 var _choose_bot_gauntlet := false
 var _bot_match_hosting_enabled := false
+# True while the default "host one bot match on sign in" mode is active. It
+# keeps exactly one bot match running and recurs when it finishes, but gives way
+# whenever the player needs the space to play or spectate.
+var _default_bot_hosting := false
 var _pending_local_bot_match_modes: Array[bool] = []
 var _local_bot_match_workers: Dictionary = {}
 var _local_bot_match_supervisor: MatchSupervisor
@@ -2777,17 +2782,11 @@ func _get_selected_multiplayer_deck() -> Dictionary:
 func _build_seek_tabs() -> void:
 	if seek_list == null:
 		return
-	_seek_tabs = TabBar.new()
-	_seek_tabs.add_tab("Seeks")
-	_seek_tabs.add_tab("View Bot Matches")
-	multiplayer_container.add_child(_seek_tabs)
-	multiplayer_container.move_child(_seek_tabs, seek_list.get_index())
-	_seek_tabs.tab_changed.connect(_on_seek_tab_changed)
 	multiplayer_container.visibility_changed.connect(_on_ladder_lobby_visibility_changed)
 	_seek_action_row = HBoxContainer.new()
 	_seek_action_row.add_theme_constant_override("separation", 8)
 	multiplayer_container.add_child(_seek_action_row)
-	multiplayer_container.move_child(_seek_action_row, _seek_tabs.get_index() + 1)
+	multiplayer_container.move_child(_seek_action_row, seek_list.get_index() + 1)
 	_ladder_button = Button.new()
 	_ladder_button.text = "Ladder"
 	_ladder_button.pressed.connect(_open_bot_ladder)
@@ -2795,26 +2794,25 @@ func _build_seek_tabs() -> void:
 	multiplayer_container.add_child(_ladder_button)
 	if ip_line_edit != null:
 		multiplayer_container.move_child(_ladder_button, ip_line_edit.get_index())
+	# Bot match hosting commands live in the seek list itself now (no separate
+	# "View Bot Matches" tab). Bot matches are listed alongside player seeks,
+	# with player matches sorted first.
 	_host_another_bot_match_button = Button.new()
 	_host_another_bot_match_button.text = "Host One Bot Match"
 	_host_another_bot_match_button.pressed.connect(_on_host_another_bot_match_pressed)
 	_seek_action_row.add_child(_host_another_bot_match_button)
-	_host_another_bot_match_button.hide()
-	_host_own_bot_button = Button.new()
-	_host_own_bot_button.text = "Host Match for Your Bot"
-	_host_own_bot_button.pressed.connect(_open_my_bot_picker.bind(false))
-	_seek_action_row.add_child(_host_own_bot_button)
-	_host_own_bot_button.hide()
-	_host_bot_gauntlet_button = Button.new()
-	_host_bot_gauntlet_button.text = "Host Gauntlet for Your Bot"
-	_host_bot_gauntlet_button.pressed.connect(_open_my_bot_picker.bind(true))
-	_seek_action_row.add_child(_host_bot_gauntlet_button)
-	_host_bot_gauntlet_button.hide()
 	_host_bot_match_button = Button.new()
 	_host_bot_match_button.text = "Host Bot Matches"
 	_host_bot_match_button.pressed.connect(_on_host_bot_match_pressed)
 	_seek_action_row.add_child(_host_bot_match_button)
-	_host_bot_match_button.hide()
+	_host_own_bot_button = Button.new()
+	_host_own_bot_button.text = "Host Match for Your Bot"
+	_host_own_bot_button.pressed.connect(_open_my_bot_picker.bind(false))
+	_seek_action_row.add_child(_host_own_bot_button)
+	_host_bot_gauntlet_button = Button.new()
+	_host_bot_gauntlet_button.text = "Host Gauntlet for Your Bot"
+	_host_bot_gauntlet_button.pressed.connect(_open_my_bot_picker.bind(true))
+	_seek_action_row.add_child(_host_bot_gauntlet_button)
 	if OS.is_debug_build():
 		_seed_bot_league_button = Button.new()
 		_seed_bot_league_button.text = "Seed Bot League"
@@ -2841,6 +2839,16 @@ func _build_seek_tabs() -> void:
 		_clear_league_bots_button.tooltip_text = "Removes every seeded league bot (list ids starting with league_), including any 0-0-0 leftovers."
 		_clear_league_bots_button.pressed.connect(_on_clear_league_bots_pressed)
 		_seek_action_row.add_child(_clear_league_bots_button)
+		_rebuild_league_records_button = Button.new()
+		_rebuild_league_records_button.text = "Rebuild League Records"
+		_rebuild_league_records_button.tooltip_text = "Replays all bot match history into league bots, re-registering any culled bots that still have recorded results."
+		_rebuild_league_records_button.pressed.connect(_on_rebuild_league_records_pressed)
+		_seek_action_row.add_child(_rebuild_league_records_button)
+		_dump_bot_deck_results_button = Button.new()
+		_dump_bot_deck_results_button.text = "Dump Bot Deck Results"
+		_dump_bot_deck_results_button.tooltip_text = "Prints every bot match result from match history to the console so you can verify results exist and what list_ids they reference."
+		_dump_bot_deck_results_button.pressed.connect(_on_dump_bot_deck_results_pressed)
+		_seek_action_row.add_child(_dump_bot_deck_results_button)
 	_apply_seek_action_button_sizing()
 
 ## Debug-only roster of everyone signed in to the connected lobby. The lobby
@@ -2981,18 +2989,6 @@ func _request_recent_match_activity() -> void:
 		return
 	lobby_client.request_bot_match_history()
 
-func _on_seek_tab_changed(tab: int) -> void:
-	if is_instance_valid(_host_bot_match_button):
-		_host_bot_match_button.visible = tab == 1
-		_host_another_bot_match_button.visible = tab == 1
-		_host_own_bot_button.visible = tab == 1
-		_host_bot_gauntlet_button.visible = tab == 1
-		_update_host_bot_match_button()
-	if tab == 1:
-		if lobby_client != null:
-			lobby_client.request_bot_match_history()
-	_refresh_seek_list()
-
 func _on_host_bot_match_pressed() -> void:
 	if _bot_match_hosting_enabled:
 		_stop_local_bot_match_worker()
@@ -3030,15 +3026,21 @@ func _on_status_bot_league_pressed() -> void:
 	status_label.text = "Requesting bot league status..."
 	lobby_client.request_bot_league_status()
 
-func _request_continuous_bot_match() -> void:
+func _request_continuous_bot_match(max_slots: int = -1) -> void:
 	if not _bot_match_hosting_enabled or _has_pending_continuous_bot_match():
 		_update_host_bot_match_button()
 		return
 	# Fill every open hosting slot instead of maintaining a single match:
 	# each pending request holds one slot, and assignment results and match
-	# closes call back here to keep the pool topped up.
+	# closes call back here to keep the pool topped up. When max_slots is set
+	# (used by the default sign-in hosting), only keep that many matches.
+	var effective_max := max_slots
+	if effective_max < 0 and _default_bot_hosting:
+		effective_max = 1
 	var open_slots := _get_local_bot_match_capacity() \
 		- _get_local_bot_match_count() - _pending_local_bot_match_modes.size()
+	if effective_max >= 0:
+		open_slots = mini(open_slots, effective_max)
 	for _slot in range(open_slots):
 		_request_local_bot_match(true)
 	_update_host_bot_match_button()
@@ -3169,11 +3171,15 @@ func _update_host_bot_match_button() -> void:
 	var local_match_count := _get_local_bot_match_count() + _pending_local_bot_match_modes.size()
 	var has_capacity := local_match_count < _get_local_bot_match_capacity()
 	if is_instance_valid(_host_another_bot_match_button):
-		_host_another_bot_match_button.visible = is_instance_valid(_seek_tabs) \
-			and _seek_tabs.current_tab == 1
+		# Bot match hosting commands are always shown in the seek list.
+		_host_another_bot_match_button.visible = true
 		_host_another_bot_match_button.text = "Host Another Bot Match" \
 			if _get_local_bot_match_count() > 0 else "Host One Bot Match"
 		_host_another_bot_match_button.disabled = lobby_client == null or not lobby_client.is_authenticated() or not has_capacity
+	if is_instance_valid(_host_own_bot_button):
+		_host_own_bot_button.visible = true
+	if is_instance_valid(_host_bot_gauntlet_button):
+		_host_bot_gauntlet_button.visible = true
 
 func _get_local_bot_match_capacity() -> int:
 	if OS.get_name() not in ["Windows", "macOS", "Linux"] or OS.get_processor_count() < 4:
@@ -3347,7 +3353,10 @@ func _on_local_bot_match_closed(match_id: String, _room_id: String, final_status
 	_update_local_bot_hosting_state()
 	_refresh_seek_list()
 	if not submitting and finished and _bot_match_hosting_enabled:
-		_request_continuous_bot_match()
+		if _default_bot_hosting:
+			_request_continuous_bot_match(1)
+		else:
+			_request_continuous_bot_match()
 	elif not finished and continuous and _bot_match_hosting_enabled:
 		_schedule_continuous_bot_match_retry()
 
@@ -3390,7 +3399,10 @@ func _on_local_bot_work_result(job_id: String, success: bool, message: String) -
 	if success and lobby_client != null:
 		lobby_client.request_bot_match_history()
 	if _bot_match_hosting_enabled:
-		_request_continuous_bot_match()
+		if _default_bot_hosting:
+			_request_continuous_bot_match(1)
+		else:
+			_request_continuous_bot_match()
 
 func _on_bot_league_result_received(result: Dictionary) -> void:
 	var request := str(result.get("request", ""))
@@ -3498,8 +3510,41 @@ func _on_clear_league_bots_result_received(result: Dictionary) -> void:
 	status_label.text = "Cleared %d league bots." % removed
 	print("[Bot League] cleared %d league bots" % removed)
 
+func _on_rebuild_league_records_pressed() -> void:
+	if lobby_client == null or not lobby_client.is_authenticated():
+		status_label.text = "Sign in to rebuild league records."
+		return
+	_rebuild_league_records_button.disabled = true
+	status_label.text = "Rebuilding league records from match history..."
+	lobby_client.request_rebuild_league_records()
+
+func _on_rebuild_league_records_result_received(result: Dictionary) -> void:
+	_rebuild_league_records_button.disabled = false
+	var re_registered := int(result.get("re_registered", 0))
+	var replayed := int(result.get("replayed", 0))
+	var league_result_count := int(result.get("league_result_count", 0))
+	status_label.text = "League records rebuilt: %d re-registered, %d results replayed (%d league results found)." % [re_registered, replayed, league_result_count]
+	print("[Bot League] rebuilt: %d re-registered, %d replayed, %d league results found" % [re_registered, replayed, league_result_count])
+
+func _on_dump_bot_deck_results_pressed() -> void:
+	if lobby_client == null or not lobby_client.is_authenticated():
+		status_label.text = "Sign in to dump bot deck results."
+		return
+	_dump_bot_deck_results_button.disabled = true
+	status_label.text = "Dumping bot deck results to console..."
+	lobby_client.request_dump_bot_deck_results()
+
+func _on_dump_bot_deck_results_result_received(result: Dictionary) -> void:
+	_dump_bot_deck_results_button.disabled = false
+	var total := int(result.get("total", 0))
+	var league_count := int(result.get("league_count", 0))
+	var non_league_count := int(result.get("non_league_count", 0))
+	status_label.text = "Dumped %d results (%d league, %d non-league) to console." % [total, league_count, non_league_count]
+	print("[Bot League] dump: %d total results, %d league, %d non-league" % [total, league_count, non_league_count])
+
 func _stop_local_bot_match_worker() -> void:
 	_bot_match_hosting_enabled = false
+	_default_bot_hosting = false
 	_watch_next_local_bot_match_pending = false
 	if is_instance_valid(_bot_match_retry_timer):
 		_bot_match_retry_timer.stop()
@@ -3523,6 +3568,34 @@ func _stop_local_bot_match_worker() -> void:
 func _update_local_bot_hosting_state() -> void:
 	_update_host_bot_match_button()
 
+## Start hosting a single bot match by default when a player signs into
+## multiplayer. It recurs when the match finishes. Does nothing when there is no
+## hosting capacity, when hosting is already enabled, or when the player already
+## has a pending match action, so it never blocks playing or spectating.
+func _maybe_start_default_bot_hosting() -> void:
+	if _bot_match_hosting_enabled:
+		return
+	if lobby_client == null or not lobby_client.is_authenticated():
+		return
+	if _get_local_bot_match_capacity() <= 0:
+		return
+	if _has_pending_new_seek_action() or not _get_saved_active_match().is_empty():
+		return
+	_default_bot_hosting = true
+	_bot_match_hosting_enabled = true
+	# Host exactly one match at a time by default; it recurs when it finishes.
+	_request_continuous_bot_match(1)
+	_update_host_bot_match_button()
+	status_label.text = "Hosting a bot match by default."
+
+## Free bot hosting space when the player needs it to play or spectate.
+func _yield_bot_hosting_for_play() -> void:
+	if not _bot_match_hosting_enabled:
+		return
+	_stop_local_bot_match_worker()
+	_refresh_seek_list()
+	status_label.text = "Giving up bot match space to play or spectate."
+
 func _on_bot_match_history_received(history: Dictionary) -> void:
 	_bot_match_live = history.get("live_matches", [])
 	_render_recent_match_activities(history.get("activities", []))
@@ -3532,15 +3605,12 @@ func _refresh_seek_list() -> void:
 	if seek_list == null:
 		return
 	seek_list.clear()
-	var tab := _seek_tabs.current_tab if is_instance_valid(_seek_tabs) else 0
+	# Player matches (open seeks and live rooms) are listed first, then bot
+	# matches (volunteer live matches plus matches hosted on this computer).
 	for room in _open_seek_rooms:
-		if bool(room.get("is_bot_self_play", false)) != (tab == 1):
-			continue
 		var host_name := str(room.get("host_name", "Host")).strip_edges()
 		if room.has("match_player_names"):
 			host_name = " vs ".join(room["match_player_names"])
-		elif tab == 1:
-			host_name = " vs ".join(room.get("bot_names", []))
 		elif bool(room.get("host_is_bot", false)):
 			host_name += "  ·  Bot"
 			if _get_room_is_ranked(room) and room.has("bot_stars"):
@@ -3570,89 +3640,90 @@ func _refresh_seek_list() -> void:
 			var action_index: int = seek_list.add_item("    Request Next")
 			seek_list.set_item_metadata(action_index, request_next_match_id)
 			seek_list.set_item_tooltip(action_index, "Tell the player in this match you'd like to play them next.")
-	if tab == 1:
-		var live_entries: Array[Dictionary] = []
-		var listed_live_job_ids := {}
-		for match_entry: Dictionary in _bot_match_live:
-			var live_players: Array = match_entry.get("players", [])
-			if live_players.size() != 2:
-				continue
-			var job_id := str(match_entry.get("match_id", "")).trim_prefix("volunteer_")
-			listed_live_job_ids[job_id] = true
-			if _local_bot_match_submitting.has(job_id):
-				continue
-			var local_match := _local_bot_match_workers.has(job_id)
-			var live_label := "Watch on this computer" if local_match else "Live · volunteer"
-			var live_rank_names: Array = []
-			var live_leagues: Array = []
-			var live_stars: Array = []
-			for live_player in live_players:
-				var live_rank := str(live_player.get("rank", "")).strip_edges()
-				live_rank_names.append(live_rank)
-				var live_player_stars := int(live_player.get("stars", 0))
-				live_stars.append(live_player_stars)
-				live_leagues.append(
-					RankBadgeCatalog.league_for_rank(live_rank)
-					if not live_rank.is_empty()
-					else _league_for_bot_stars(live_player_stars)
-				)
-			live_entries.append({
-				"label": "%s vs %s  ·  %s" % [live_players[0].get("name", "Bot"), live_players[1].get("name", "Bot"), live_label],
-				"local_match_id": job_id if local_match else "",
-				"leagues": live_leagues,
-				"stars": live_stars,
-				"rank_names": live_rank_names,
-				"turn_count": _get_local_bot_match_turn_count(job_id) if local_match \
-					else maxi(0, int(match_entry.get("turn_count", 0))),
-				"started_unix": int(match_entry.get("played_unix", 0)),
-			})
-		for raw_match_id in _local_bot_match_workers.keys():
-			var local_job_id := str(raw_match_id)
-			if listed_live_job_ids.has(local_job_id) or _local_bot_match_submitting.has(local_job_id):
-				continue
-			var worker: Dictionary = _local_bot_match_workers[raw_match_id]
-			var session = worker.get("session", null)
-			if session == null:
-				continue
-			var local_players: Array = session.get_public_player_names()
-			if local_players.size() != 2:
-				continue
-			var local_rank_names: Array = []
-			var local_leagues: Array = []
-			var local_stars: Array = []
-			for badge in session.get_public_rank_badges():
-				var badge_rank := str(badge.get("rank_name", "")).strip_edges()
-				local_rank_names.append(badge_rank)
-				local_leagues.append(RankBadgeCatalog.league_for_rank(badge_rank))
-			for bot_stars in session.get_public_bot_player_stars():
-				local_stars.append(int(bot_stars))
-			live_entries.append({
-				"label": "%s vs %s  ·  Watch on this computer" % [local_players[0], local_players[1]],
-				"local_match_id": local_job_id,
-				"leagues": local_leagues,
-				"stars": local_stars,
-				"rank_names": local_rank_names,
-				"turn_count": _get_local_bot_match_turn_count(local_job_id),
-				"started_unix": int(session.created_unix),
-			})
-		# Hosted bot matches list by bot rank (highest matchup first), not start time.
-		for live_entry in live_entries:
-			_fill_live_bot_match_sort_keys(live_entry)
-		live_entries.sort_custom(_compare_live_bot_match_entries)
-		for live_entry in live_entries:
-			var entry_label := str(live_entry["label"])
-			var entry_turn_count := int(live_entry["turn_count"])
-			if entry_turn_count > 0:
-				entry_label += "  ·  Turn %d" % entry_turn_count
-			var live_index: int = seek_list.add_item(entry_label)
-			var local_match_id := str(live_entry.get("local_match_id", ""))
-			if local_match_id.is_empty():
-				seek_list.set_item_disabled(live_index, true)
-			else:
-				seek_list.set_item_metadata(live_index, {"local_bot_match_id": local_match_id})
-			_apply_match_row_rank_outline(live_index, live_entry["leagues"], live_entry["rank_names"])
+	# Bot matches: volunteer live matches plus matches hosted on this computer,
+	# listed after the player matches and ordered by bot rank (highest matchup
+	# first), not start time.
+	var live_entries: Array[Dictionary] = []
+	var listed_live_job_ids := {}
+	for match_entry: Dictionary in _bot_match_live:
+		var live_players: Array = match_entry.get("players", [])
+		if live_players.size() != 2:
+			continue
+		var job_id := str(match_entry.get("match_id", "")).trim_prefix("volunteer_")
+		listed_live_job_ids[job_id] = true
+		if _local_bot_match_submitting.has(job_id):
+			continue
+		var local_match := _local_bot_match_workers.has(job_id)
+		var live_label := "Watch on this computer" if local_match else "Live · volunteer"
+		var live_rank_names: Array = []
+		var live_leagues: Array = []
+		var live_stars: Array = []
+		for live_player in live_players:
+			var live_rank := str(live_player.get("rank", "")).strip_edges()
+			live_rank_names.append(live_rank)
+			var live_player_stars := int(live_player.get("stars", 0))
+			live_stars.append(live_player_stars)
+			live_leagues.append(
+				RankBadgeCatalog.league_for_rank(live_rank)
+				if not live_rank.is_empty()
+				else _league_for_bot_stars(live_player_stars)
+			)
+		live_entries.append({
+			"label": "%s vs %s  ·  %s" % [live_players[0].get("name", "Bot"), live_players[1].get("name", "Bot"), live_label],
+			"local_match_id": job_id if local_match else "",
+			"leagues": live_leagues,
+			"stars": live_stars,
+			"rank_names": live_rank_names,
+			"turn_count": _get_local_bot_match_turn_count(job_id) if local_match \
+				else maxi(0, int(match_entry.get("turn_count", 0))),
+			"started_unix": int(match_entry.get("played_unix", 0)),
+		})
+	for raw_match_id in _local_bot_match_workers.keys():
+		var local_job_id := str(raw_match_id)
+		if listed_live_job_ids.has(local_job_id) or _local_bot_match_submitting.has(local_job_id):
+			continue
+		var worker: Dictionary = _local_bot_match_workers[raw_match_id]
+		var session = worker.get("session", null)
+		if session == null:
+			continue
+		var local_players: Array = session.get_public_player_names()
+		if local_players.size() != 2:
+			continue
+		var local_rank_names: Array = []
+		var local_leagues: Array = []
+		var local_stars: Array = []
+		for badge in session.get_public_rank_badges():
+			var badge_rank := str(badge.get("rank_name", "")).strip_edges()
+			local_rank_names.append(badge_rank)
+			local_leagues.append(RankBadgeCatalog.league_for_rank(badge_rank))
+		for bot_stars in session.get_public_bot_player_stars():
+			local_stars.append(int(bot_stars))
+		live_entries.append({
+			"label": "%s vs %s  ·  Watch on this computer" % [local_players[0], local_players[1]],
+			"local_match_id": local_job_id,
+			"leagues": local_leagues,
+			"stars": local_stars,
+			"rank_names": local_rank_names,
+			"turn_count": _get_local_bot_match_turn_count(local_job_id),
+			"started_unix": int(session.created_unix),
+		})
+	for live_entry in live_entries:
+		_fill_live_bot_match_sort_keys(live_entry)
+	live_entries.sort_custom(_compare_live_bot_match_entries)
+	for live_entry in live_entries:
+		var entry_label := str(live_entry["label"])
+		var entry_turn_count := int(live_entry["turn_count"])
+		if entry_turn_count > 0:
+			entry_label += "  ·  Turn %d" % entry_turn_count
+		var live_index: int = seek_list.add_item(entry_label)
+		var local_match_id := str(live_entry.get("local_match_id", ""))
+		if local_match_id.is_empty():
+			seek_list.set_item_disabled(live_index, true)
+		else:
+			seek_list.set_item_metadata(live_index, {"local_bot_match_id": local_match_id})
+		_apply_match_row_rank_outline(live_index, live_entry["leagues"], live_entry["rank_names"])
 	if seek_list.get_item_count() == 0:
-		seek_list.add_item("No live bot matches right now." if tab == 1 else "No open seeks or live matches right now.")
+		seek_list.add_item("No open seeks or live matches right now.")
 		seek_list.set_item_disabled(0, true)
 
 ## Colors a match row with a rank outline: half one player's rank color, half
@@ -4025,6 +4096,7 @@ func _on_create_seek_option_pressed(is_ranked: bool, best_of: int) -> void:
 	if not auth_error.is_empty():
 		status_label.text = auth_error
 		return
+	_yield_bot_hosting_for_play()
 	if _get_selected_multiplayer_deck().is_empty():
 		status_label.text = "Choose a saved legal deck before creating a seek."
 		return
@@ -4051,6 +4123,7 @@ func _on_join_seek_requested(room_id: String, has_bot: bool = false) -> void:
 	if not auth_error.is_empty():
 		status_label.text = auth_error
 		return
+	_yield_bot_hosting_for_play()
 	status_label.text = "Joining seek..."
 	_begin_match_loading(has_bot, true)
 	# Paint feedback before deck validation and lobby work begin.
@@ -4085,6 +4158,7 @@ func _on_observe_match_requested(room_id: String, has_bot: bool) -> void:
 	if not auth_error.is_empty():
 		status_label.text = auth_error
 		return
+	_yield_bot_hosting_for_play()
 	if not _current_room_snapshot.is_empty():
 		status_label.text = "Leave your current seek before observing another match."
 		return
@@ -9051,6 +9125,10 @@ func _bind_lobby_client_signals() -> void:
 		lobby_client.league_round_robin_result_received.connect(_on_league_round_robin_result_received)
 	if lobby_client.has_signal("clear_league_bots_result_received") and not lobby_client.clear_league_bots_result_received.is_connected(_on_clear_league_bots_result_received):
 		lobby_client.clear_league_bots_result_received.connect(_on_clear_league_bots_result_received)
+	if lobby_client.has_signal("rebuild_league_records_result_received") and not lobby_client.rebuild_league_records_result_received.is_connected(_on_rebuild_league_records_result_received):
+		lobby_client.rebuild_league_records_result_received.connect(_on_rebuild_league_records_result_received)
+	if lobby_client.has_signal("dump_bot_deck_results_result_received") and not lobby_client.dump_bot_deck_results_result_received.is_connected(_on_dump_bot_deck_results_result_received):
+		lobby_client.dump_bot_deck_results_result_received.connect(_on_dump_bot_deck_results_result_received)
 	if lobby_client.has_signal("friends_state_received") and not lobby_client.friends_state_received.is_connected(_on_friends_state_received):
 		lobby_client.friends_state_received.connect(_on_friends_state_received)
 	if lobby_client.has_signal("account_settings_updated") and not lobby_client.account_settings_updated.is_connected(_on_account_settings_updated):
@@ -9239,6 +9317,9 @@ func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, play
 		return
 	status_label.text = "Signed in as %s." % resolved_identity_name
 	_run_pending_multiplayer_action()
+	# Signing into multiplayer hosts a single bot match by default, recurring
+	# when it finishes, unless the player has no space or is joining/playing.
+	_maybe_start_default_bot_hosting()
 
 func _on_lobby_reconnect_succeeded(
 	session_id: String,
@@ -9365,7 +9446,7 @@ func _on_lobby_room_list_updated(rooms: Array) -> void:
 		_clear_current_seek_state()
 		retried_seek_switch = _retry_pending_seek_switch_after_room_clear()
 	_refresh_seek_list()
-	if is_instance_valid(_seek_tabs) and _seek_tabs.current_tab == 1 and lobby_client != null:
+	if lobby_client != null and lobby_client.is_authenticated():
 		lobby_client.request_bot_match_history()
 	if _current_room_snapshot.is_empty() and not retried_seek_switch:
 		if _open_seek_rooms.is_empty():
@@ -10539,8 +10620,6 @@ func _cleanup_lobby(clear_session: bool) -> void:
 	_pending_seek_switch_join_room_id = ""
 	_open_seek_rooms.clear()
 	_bot_match_live.clear()
-	if is_instance_valid(_seek_tabs):
-		_seek_tabs.current_tab = 0
 	_seek_list_request_pending = false
 	_seek_auto_refresh_elapsed = 0.0
 	_refresh_seek_list()

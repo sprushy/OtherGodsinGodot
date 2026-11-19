@@ -441,6 +441,10 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 			_handle_run_league_round_robin(peer_id, payload)
 		LobbyProtocolScript.CLEAR_LEAGUE_BOTS:
 			_handle_clear_league_bots(peer_id, payload)
+		LobbyProtocolScript.REBUILD_LEAGUE_RECORDS:
+			_handle_rebuild_league_records(peer_id, payload)
+		LobbyProtocolScript.DUMP_BOT_DECK_RESULTS:
+			_handle_dump_bot_deck_results(peer_id, payload)
 		LobbyProtocolScript.SUBMIT_ISSUE_REPORT:
 			_handle_submit_issue_report(peer_id, payload)
 		LobbyProtocolScript.SUBMIT_BOT_PROPOSAL:
@@ -1308,6 +1312,71 @@ func _handle_clear_league_bots(peer_id: int, payload: Dictionary = {}) -> void:
 		"success": true,
 		"removed": int(result.get("removed", 0)),
 		"removed_by_god": result.get("removed_by_god", {}),
+	})
+
+func _handle_rebuild_league_records(peer_id: int, payload: Dictionary = {}) -> void:
+	var session := _get_session_for_peer(peer_id)
+	if session.is_empty() or str(session.get("account_id", "")).is_empty():
+		_send_error_to_peer(peer_id, "Sign in before rebuilding league records.")
+		return
+	_ensure_match_history_store()
+	_refresh_ranked_bot_deck_pool()
+	# Scan dedicated result files directly, bypassing get_bot_deck_results() cache
+	# which can return empty on a fresh server instance if results were written
+	# to per-match files rather than match_history.json.
+	var results: Array[Dictionary] = _collect_bot_deck_results_from_files()
+	var result := _ranked_bot_deck_pool.rebuild_league_records(results)
+	_send_to_peer(peer_id, LobbyProtocolScript.REBUILD_LEAGUE_RECORDS_RESULT, {
+		"success": true,
+		"re_registered": int(result.get("re_registered", 0)),
+		"replayed": int(result.get("replayed", 0)),
+		"league_result_count": int(result.get("league_result_count", 0)),
+	})
+
+# Scans server_data/match_history_results/ directly and collects every
+# bot_deck_results entry. Bypasses the MatchHistoryStore cache so results are
+# found even on a fresh server instance.
+func _collect_bot_deck_results_from_files() -> Array[Dictionary]:
+	var results: Array[Dictionary] = []
+	var results_dir := ServerPathsScript.get_server_data_file_path("match_history_results")
+	var dir := DirAccess.open(results_dir)
+	if dir == null:
+		print("[Bot League Debug] no dedicated results dir at %s" % results_dir)
+		return results
+	dir.list_dir_begin()
+	var file_name := dir.get_next()
+	while not file_name.is_empty():
+		if not dir.current_is_dir() and file_name.ends_with(".json"):
+			var path := results_dir.path_join(file_name)
+			var entry := JsonStoreScript.load_dictionary(path, {}, "MatchHistoryStore")
+			if not entry.is_empty() and entry.has("bot_deck_results"):
+				for row: Dictionary in entry.get("bot_deck_results", []):
+					if row is Dictionary:
+						var result := row.duplicate(true)
+						result["match_id"] = str(entry.get("match_id", ""))
+						if entry.get("bot_deck_results", []).size() > 1:
+							result["match_id"] = "%s_%d" % [result["match_id"], int(result.get("player_index", 0))]
+						result["bot_eliminated"] = false
+						results.append(result)
+		file_name = dir.get_next()
+	dir.list_dir_end()
+	print("[Bot League Debug] collected %d bot deck results from dedicated files" % results.size())
+	return results
+
+func _handle_dump_bot_deck_results(peer_id: int, payload: Dictionary = {}) -> void:
+	var session := _get_session_for_peer(peer_id)
+	if session.is_empty() or str(session.get("account_id", "")).is_empty():
+		_send_error_to_peer(peer_id, "Sign in before dumping bot deck results.")
+		return
+	_ensure_match_history_store()
+	_refresh_ranked_bot_deck_pool()
+	var results = _collect_bot_deck_results_from_files()
+	var dump_result := _ranked_bot_deck_pool.dump_bot_deck_results(results)
+	_send_to_peer(peer_id, LobbyProtocolScript.DUMP_BOT_DECK_RESULTS_RESULT, {
+		"success": true,
+		"total": int(dump_result.get("total", 0)),
+		"league_count": int(dump_result.get("league_count", 0)),
+		"non_league_count": int(dump_result.get("non_league_count", 0)),
 	})
 
 func _find_community_bot(account_id: String, bot_id: String) -> Dictionary:

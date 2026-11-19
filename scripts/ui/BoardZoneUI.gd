@@ -4259,7 +4259,7 @@ func _build_debuff_entry_from_status(card: Card, status: Dictionary) -> Dictiona
 			"preview_texture": FREYJA_ABILITY_BADGE_TEXTURE,
 			"count": 1,
 		}
-	if status_name in ["cannot_attack", "cannot_intercept", "cannot_move", "activation_locked", Card.ABILITY_NEGATED_STATUS, "silence"]:
+	if status_name in ["cannot_attack", "cannot_intercept", "cannot_move", "activation_locked", Card.ABILITY_NEGATED_STATUS, "silence", "paralyzed", "paralyze"]:
 		return {
 			"key": "source:%s" % source_key,
 			"source_card": source_card,

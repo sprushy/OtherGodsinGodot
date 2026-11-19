@@ -23797,6 +23797,7 @@ func _creature_can_move(card: Card) -> bool:
 		and card.can_take_minor_creature_action()
 		and card.get_status_effect("cannot_move").is_empty()
 		and not card.is_sleeping
+		and not card.is_paralyzed()
 	)
 
 func _creature_can_change_stance(card: Card) -> bool:
@@ -23804,6 +23805,7 @@ func _creature_can_change_stance(card: Card) -> bool:
 		card.card_type == Card.CardType.CREATURE
 		and card.can_take_minor_creature_action()
 		and not card.is_sleeping
+		and not card.is_paralyzed()
 	)
 
 func _get_intercept_target_row_depth(protected_target) -> int:

@@ -111,6 +111,7 @@ var _pending_return_to_hand_send_to_abyss: bool = false
 var _pending_return_to_hand_continue: Callable = Callable()
 var _pending_return_to_hand_steal_actor: Card = null
 var _temporary_combat_follower_damage_halved: bool = false
+var _temporary_combat_follower_damage_reversed: bool = false
 var _combat_resolution_deferred: bool = false
 var _deferred_combat_resume: Callable = Callable()
 var _committed_combat_snapshots: Dictionary = {}
@@ -568,6 +569,9 @@ func get_game_result_message(winner: Player = winning_player, loser: Player = lo
 
 func set_temporary_combat_follower_damage_halved(halved: bool) -> void:
 	_temporary_combat_follower_damage_halved = halved
+
+func set_temporary_combat_follower_damage_reversed(reversed: bool) -> void:
+	_temporary_combat_follower_damage_reversed = reversed
 
 static func combat_halves_follower_damage(attacker: Card, defender: Card = null, partner: Card = null) -> bool:
 	if attacker != null and attacker.halves_follower_damage_inflicted():
@@ -1856,6 +1860,9 @@ func creature_move(creature: Card, target_zone: Zone) -> bool:
 	if not creature.get_status_effect("cannot_move").is_empty():
 		return false
 	
+	if creature.is_paralyzed():
+		return false
+	
 	if not creature.can_take_minor_creature_action():
 		return false
 
@@ -1884,6 +1891,9 @@ func creature_change_mode(creature: Card, target_mode = -1) -> bool:
 	if is_game_over:
 		return false
 	if creature.card_type != Card.CardType.CREATURE:
+		return false
+	
+	if creature.is_sleeping or creature.is_paralyzed():
 		return false
 	
 	if not creature.can_take_minor_creature_action():
@@ -2228,6 +2238,10 @@ func creature_attack(attacker: Card, target) -> void:
 		note_player_feedback(attacker.card_name + " cannot attack because of " + source_name + ".")
 		return
 	
+	if attacker.is_paralyzed():
+		note_player_feedback(attacker.card_name + " cannot attack because it is paralyzed.")
+		return
+	
 	if not attacker.can_take_major_creature_action():
 		note_player_feedback(attacker.card_name + " cannot attack because it has already used its major action this turn.")
 		return
@@ -2299,13 +2313,18 @@ func resolve_followers_attack(attackers: Array[Card], defending_player: Player) 
 	var halved_by_combatant := false
 	for combatant in active_attackers:
 		halved_by_combatant = halved_by_combatant or combatant.halves_follower_damage_in_combat()
+	var damage_target_player := defending_player
+	if _temporary_combat_follower_damage_reversed and not active_attackers.is_empty():
+		var attacker_controller := active_attackers[0].get_controller()
+		if attacker_controller != null:
+			damage_target_player = attacker_controller
 	var follower_damage := 0
 	for combatant in active_attackers:
 		var halve_follower_damage := halved_by_combatant or combat_halves_follower_damage(combatant)
 		if _source_converts_combat_follower_damage(combatant):
-			follower_damage += _apply_combat_follower_damage(combatant, defending_player, combatant.get_effective_strength(), halve_follower_damage)
+			follower_damage += _apply_combat_follower_damage(combatant, damage_target_player, combatant.get_effective_strength(), halve_follower_damage)
 		else:
-			follower_damage += _apply_combat_follower_damage(null, defending_player, combatant.get_effective_strength(), halve_follower_damage, [combatant])
+			follower_damage += _apply_combat_follower_damage(null, damage_target_player, combatant.get_effective_strength(), halve_follower_damage, [combatant])
 		if is_game_over:
 			break
 
@@ -2319,6 +2338,7 @@ func resolve_followers_attack(attackers: Array[Card], defending_player: Player) 
 	for combatant in active_attackers:
 		_notify_opponent_attacks_followers(combatant, defending_player)
 
+	_temporary_combat_follower_damage_reversed = false
 	return follower_damage
 
 func _notify_attack_declared(attacker: Card, target: Card = null) -> void:
@@ -2346,6 +2366,8 @@ func _can_intercept_followers(defender: Card, attacker: Card) -> bool:
 	if defender.card_type != Card.CardType.CREATURE:
 		return false
 	if defender.is_sleeping:
+		return false
+	if defender.is_paralyzed():
 		return false
 	if not defender.get_status_effect("cannot_intercept").is_empty():
 		return false
@@ -2414,11 +2436,13 @@ func resolve_combat(attacker: Card, defender: Card, continue_callback: Callable 
 	var ignore_targeting_limits := attacker.can_ignore_attack_targeting_restrictions(defender)
 	if is_attack_blocked_by_active_structure(attacker, defender):
 		print(attacker.card_name + " cannot engage " + defender.card_name + ".")
+		_temporary_combat_follower_damage_reversed = false
 		if continue_callback.is_valid():
 			continue_callback.call()
 		return false
 	if not ignore_targeting_limits and attacker.has_method("can_engage") and not attacker.can_engage(defender):
 		print(attacker.card_name + " cannot engage " + defender.card_name + ".")
+		_temporary_combat_follower_damage_reversed = false
 		if continue_callback.is_valid():
 			continue_callback.call()
 		return false
@@ -2433,6 +2457,7 @@ func resolve_combat(attacker: Card, defender: Card, continue_callback: Callable 
 	var finish := func() -> void:
 		_notify_after_combat(attacker, defender)
 		_clear_combat_engagement_state(defender)
+		_temporary_combat_follower_damage_reversed = false
 		if continue_callback.is_valid():
 			continue_callback.call()
 	attacker.reveal_from_stealth(self)
@@ -2440,7 +2465,10 @@ func resolve_combat(attacker: Card, defender: Card, continue_callback: Callable 
 	_notify_attack_declared(attacker, defender)
 	if defender.is_god:
 		# Gods cannot be targeted in combat — redirect to follower damage
-		var god_damage := _apply_combat_follower_damage(attacker, defender_controller, attacker.get_effective_strength(), combat_halves_follower_damage(attacker, defender))
+		var god_damage_target := defender_controller
+		if _temporary_combat_follower_damage_reversed:
+			god_damage_target = attacker_controller
+		var god_damage := _apply_combat_follower_damage(attacker, god_damage_target, attacker.get_effective_strength(), combat_halves_follower_damage(attacker, defender))
 		print(attacker.card_name + " attacks " + defender_controller.player_name + "'s followers for " + str(god_damage) + " (via god)!")
 		finish.call()
 		return true
@@ -2469,11 +2497,17 @@ func resolve_combat(attacker: Card, defender: Card, continue_callback: Callable 
 			print("	STR vs STR: " + str(attacker_str) + " vs " + str(defender_str_real) + ((" (disdain→damage as %d)" % defender_str_for_damage) if defender_str_for_damage != defender_str_real else ""))
 
 			if attacker_str > defender_str_real:
-				var diff = _apply_combat_follower_damage(attacker, defender_controller, attacker_str - defender_str_for_damage, halve_follower_damage)
+				var reversed_damaged_player := defender_controller
+				if _temporary_combat_follower_damage_reversed:
+					reversed_damaged_player = attacker_controller
+				var diff = _apply_combat_follower_damage(attacker, reversed_damaged_player, attacker_str - defender_str_for_damage, halve_follower_damage)
 				print("	" + defender.card_name + " destroyed! " + defender_controller.player_name + " loses " + str(diff) + " followers")
 				_combat_kill(attacker, defender)
 			elif defender_str_real > attacker_str:
-				var diff = _apply_combat_follower_damage(defender, attacker_controller, defender_str_real - attacker_str_for_damage, halve_follower_damage)
+				var reversed_damaged_player2 := attacker_controller
+				if _temporary_combat_follower_damage_reversed:
+					reversed_damaged_player2 = defender_controller
+				var diff = _apply_combat_follower_damage(defender, reversed_damaged_player2, defender_str_real - attacker_str_for_damage, halve_follower_damage)
 				print("	" + attacker.card_name + " destroyed! " + attacker_controller.player_name + " loses " + str(diff) + " followers")
 				_combat_kill(defender, attacker)
 			else:	# Tie — pre-compute routing before either card moves zones
@@ -2498,9 +2532,14 @@ func resolve_combat(attacker: Card, defender: Card, continue_callback: Callable 
 				_combat_kill(attacker, defender)
 			elif attacker_str_vs_res < defender_res_real:
 				# Followers convert using the defender's full resilience, with Giant's Disdain reducing only the opposing attack stat.
+				var from_player := attacker_controller
+				var to_player := defender_controller
+				if _temporary_combat_follower_damage_reversed:
+					from_player = defender_controller
+					to_player = attacker_controller
 				var diff_damage: int = _convert_combat_follower_damage(
-					attacker_controller,
-					defender_controller,
+					from_player,
+					to_player,
 					maxi(0, defender_res_real - attacker_str_for_conversion),
 					halve_follower_damage,
 					defender
@@ -2689,13 +2728,17 @@ func resolve_combat_with_continuation(
 	var finish := func() -> void:
 		_notify_after_combat(attacker, defender)
 		_clear_combat_engagement_state(defender)
+		_temporary_combat_follower_damage_reversed = false
 		if continue_callback.is_valid():
 			continue_callback.call()
 	attacker.reveal_from_stealth(self)
 	defender.reveal_from_stealth(self)
 	_notify_attack_declared(attacker, defender)
 	if defender.is_god:
-		var god_damage := _apply_combat_follower_damage(attacker, defender_controller, attacker.get_effective_strength(), combat_halves_follower_damage(attacker, defender))
+		var god_damage_target := defender_controller
+		if _temporary_combat_follower_damage_reversed:
+			god_damage_target = attacker_controller
+		var god_damage := _apply_combat_follower_damage(attacker, god_damage_target, attacker.get_effective_strength(), combat_halves_follower_damage(attacker, defender))
 		print(attacker.card_name + " attacks " + defender_controller.player_name + "'s followers for " + str(god_damage) + " (via god)!")
 		_notify_opponent_attacks_followers(attacker, defender_controller)
 		finish.call()
@@ -2831,6 +2874,7 @@ func _resolve_committed_combat_snapshot(
 	var finish := func() -> void:
 		_notify_after_combat(attacker, defender)
 		_clear_combat_engagement_state(defender)
+		_temporary_combat_follower_damage_reversed = false
 		if continue_callback.is_valid():
 			continue_callback.call()
 	var kill_if_present := func(killer: Card, victim: Card, next: Callable) -> void:

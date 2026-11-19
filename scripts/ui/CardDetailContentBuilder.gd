@@ -919,7 +919,7 @@ static func _get_intercept_target_labels(card: Card, reach_value: int) -> Array[
 	var target_labels: Array[String] = []
 	if card == null or card.current_zone == null:
 		return target_labels
-	if card.card_type != Card.CardType.CREATURE or card.is_sleeping:
+	if card.card_type != Card.CardType.CREATURE or card.is_sleeping or card.is_paralyzed():
 		return target_labels
 	if not card.get_status_effect("cannot_intercept").is_empty():
 		return target_labels

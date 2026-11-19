@@ -392,6 +392,7 @@ var _pending_action_point_spend_visual_kinds: Array[String] = []
 var _creature_mode: CreatureMode = CreatureMode.DEFENSIVE
 var _board_leave_hooks_processed: bool = false
 
+const PARALYZED_STATUS := "paralyzed"
 const EXTERNAL_EFFECT_NEGATION_STATUS := "external_effect_negation"
 const ABILITY_NEGATED_STATUS := "ability_negated"
 const COST_KIND_POWER_UNLOCK := "power_unlock"
@@ -585,8 +586,11 @@ func is_enslaved() -> bool:
 		and has_status_effect("enslaved")
 
 func has_status_effect(status_name: String) -> bool:
+	var normalized_name := status_name
+	if normalized_name == "paralyze":
+		normalized_name = PARALYZED_STATUS
 	for status in _get_effective_statuses():
-		if status.get("name", "") == status_name:
+		if status.get("name", "") == normalized_name or status.get("name", "") == status_name:
 			return true
 	return false
 
@@ -594,13 +598,19 @@ func is_shapeshift_locked() -> bool:
 	return has_status_effect("tonal_extraction_no_shift")
 
 func get_status_effect(status_name: String) -> Dictionary:
+	var normalized_name := status_name
+	if normalized_name == "paralyze":
+		normalized_name = PARALYZED_STATUS
 	for status in _get_effective_statuses():
-		if status.get("name", "") == status_name:
+		if status.get("name", "") == normalized_name or status.get("name", "") == status_name:
 			return status
 	return {}
 
 func is_petrified() -> bool:
 	return has_status_effect("petrified")
+
+func is_paralyzed() -> bool:
+	return has_status_effect(PARALYZED_STATUS) or has_status_effect("paralyze")
 
 func is_temporarily_revealed() -> bool:
 	return has_status_effect("temporarily_revealed")
@@ -1136,12 +1146,15 @@ func add_status_effect(
 	_emit_visual_state_changed()
 
 func remove_status_effects_by_name(status_name: String) -> void:
+	var normalized_name := status_name
+	if normalized_name == "paralyze":
+		normalized_name = PARALYZED_STATUS
 	var previous_status_count := active_statuses.size()
 	_restore_removed_status_side_effects(active_statuses.filter(func(s):
-		return s.get("name", "") == status_name
+		return s.get("name", "") == normalized_name or s.get("name", "") == status_name
 	))
 	active_statuses = active_statuses.filter(func(s):
-		return s.get("name", "") != status_name
+		return s.get("name", "") != normalized_name and s.get("name", "") != status_name
 	)
 	_sync_status_flags()
 	if active_statuses.size() != previous_status_count:

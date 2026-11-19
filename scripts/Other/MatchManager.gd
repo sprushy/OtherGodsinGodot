@@ -3919,6 +3919,7 @@ func can_attack(card: Card) -> bool:
 		and not game_manager.is_first_turn_attack_blocked_by_weather(card)
 		and card.can_take_major_creature_action()
 		and not card.is_sleeping
+		and not card.is_paralyzed()
 		and not card.has_status_effect("cannot_attack")
 		and game_manager.turn_number > 1
 		and (card.creature_mode == Card.CreatureMode.AGGRESSIVE or card.is_stealth)
@@ -3962,6 +3963,8 @@ func get_attack_invalid_reason(card: Card) -> String:
 		return card.card_name + " has already used all of its minor actions this turn."
 	if card.is_sleeping:
 		return card.card_name + " is Sleeping and cannot act."
+	if card.is_paralyzed():
+		return card.card_name + " is Paralyzed and cannot act."
 	if card.has_status_effect("cannot_attack"):
 		var status = card.get_status_effect("cannot_attack")
 		var source = status.get("source", "an effect")
