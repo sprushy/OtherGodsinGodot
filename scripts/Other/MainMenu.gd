@@ -166,6 +166,7 @@ var _custom_bot_ids_pending: Array[String] = []
 # Debug controls for the bot league feature (debug builds only).
 var _seed_bot_league_button: Button
 var _finalize_bot_league_button: Button
+var _status_bot_league_button: Button
 var _host_bot_gauntlet_id := ""
 var _host_bot_gauntlet_remaining := 0
 var _host_bot_gauntlet_opponents: Dictionary = {}
@@ -2810,6 +2811,11 @@ func _build_seek_tabs() -> void:
 		_finalize_bot_league_button.tooltip_text = "Keeps best 1 per god on ladder, quarantines worst 1 per god, removes the rest."
 		_finalize_bot_league_button.pressed.connect(_on_finalize_bot_league_pressed)
 		_seek_action_row.add_child(_finalize_bot_league_button)
+		_status_bot_league_button = Button.new()
+		_status_bot_league_button.text = "Bot League Status"
+		_status_bot_league_button.tooltip_text = "Shows current bot league state: seeded lists, kept/quarantined bots per god."
+		_status_bot_league_button.pressed.connect(_on_status_bot_league_pressed)
+		_seek_action_row.add_child(_status_bot_league_button)
 	_apply_seek_action_button_sizing()
 
 func _build_recent_activity_panel() -> void:
@@ -2974,6 +2980,13 @@ func _on_finalize_bot_league_pressed() -> void:
 	_finalize_bot_league_button.disabled = true
 	status_label.text = "Finalizing bot league..."
 	lobby_client.request_finalize_bot_league()
+
+func _on_status_bot_league_pressed() -> void:
+	if lobby_client == null or not lobby_client.is_authenticated():
+		status_label.text = "Sign in to view bot league status."
+		return
+	status_label.text = "Requesting bot league status..."
+	lobby_client.request_bot_league_status()
 
 func _request_continuous_bot_match() -> void:
 	if not _bot_match_hosting_enabled or _has_pending_continuous_bot_match():
@@ -3374,6 +3387,60 @@ func _on_bot_league_result_received(result: Dictionary) -> void:
 		else:
 			status_label.text = "Finalize failed: %s" % message
 	_update_host_bot_match_button()
+
+func _on_bot_league_status_received(status: Dictionary) -> void:
+	var league_mode := bool(status.get("league_mode", false))
+	var gods: Array = status.get("gods", [])
+	var lines: Array[String] = []
+	lines.append("League mode: %s" % ["on" if league_mode else "off"])
+	lines.append("Gods: %d" % gods.size())
+	var total_seeded := 0
+	var total_lists := 0
+	var total_quarantined := 0
+	for god in gods:
+		var god_name := str(god.get("god_name", ""))
+		var league_lists := int(god.get("league_lists", 0))
+		var total_lists_god := int(god.get("total_lists", 0))
+		var kept: Dictionary = god.get("kept", {})
+		var quarantined: Dictionary = god.get("quarantined", {})
+		var quarantined_ids: Array = god.get("quarantined_ids", [])
+		total_seeded += league_lists
+		total_lists += total_lists_god
+		if not str(quarantined.get("list_id", "")).is_empty():
+			total_quarantined += 1
+		lines.append("")
+		lines.append("%s:" % god_name)
+		lines.append("  ladder bots: %d" % total_lists_god)
+		if not kept.is_empty():
+			lines.append("  strongest (kept): %s (%d ★, %d-%d)" % [
+				str(kept.get("deck_name", "")), int(kept.get("stars", 0)),
+				int(kept.get("wins", 0)), int(kept.get("losses", 0))])
+		if not quarantined.is_empty():
+			lines.append("  quarantined (forced-match bad bot): %s (%d ★, %d-%d)" % [
+				str(quarantined.get("deck_name", "")), int(quarantined.get("stars", 0)),
+				int(quarantined.get("wins", 0)), int(quarantined.get("losses", 0))])
+		var ids_text := ""
+		for i in quarantined_ids.size():
+			ids_text += str(quarantined_ids[i])
+			if i < quarantined_ids.size() - 1:
+				ids_text += ", "
+		lines.append("  quarantined ids: %s" % ids_text)
+	lines.append("")
+	lines.append("Totals -> %d gods, %d ladder bots, %d quarantined" % [
+		gods.size(), total_lists, total_quarantined])
+
+	var dialog := AcceptDialog.new()
+	dialog.title = "Bot League Status"
+	var dialog_text := ""
+	for i in lines.size():
+		dialog_text += lines[i]
+		if i < lines.size() - 1:
+			dialog_text += "\n"
+	dialog.dialog_text = dialog_text
+	add_child(dialog)
+	dialog.popup_centered()
+	status_label.text = "Bot league status: %d gods, %d ladder bots." % [gods.size(), total_lists]
+	print("[Bot League] status: %s" % JSON.stringify(status))
 
 func _stop_local_bot_match_worker() -> void:
 	_bot_match_hosting_enabled = false
@@ -8879,6 +8946,8 @@ func _bind_lobby_client_signals() -> void:
 		lobby_client.bot_match_history_received.connect(_on_bot_match_history_received)
 	if lobby_client.has_signal("bot_league_result_received") and not lobby_client.bot_league_result_received.is_connected(_on_bot_league_result_received):
 		lobby_client.bot_league_result_received.connect(_on_bot_league_result_received)
+	if lobby_client.has_signal("bot_league_status_received") and not lobby_client.bot_league_status_received.is_connected(_on_bot_league_status_received):
+		lobby_client.bot_league_status_received.connect(_on_bot_league_status_received)
 	if lobby_client.has_signal("friends_state_received") and not lobby_client.friends_state_received.is_connected(_on_friends_state_received):
 		lobby_client.friends_state_received.connect(_on_friends_state_received)
 	if lobby_client.has_signal("account_settings_updated") and not lobby_client.account_settings_updated.is_connected(_on_account_settings_updated):
@@ -12773,14 +12842,14 @@ func _run_card_network_smoke(role: String) -> void:
 		human_player.is_turn_player = false
 		var bear := BrownBear.new()
 		bear.card_owner = bot_player
-		var bear_zone := bot_player.frontline_zones[0]
+		var bear_zone: Zone = bot_player.frontline_zones[0]
 		bear_zone.add_card(bear)
 		if test_hringhorni:
 			await _run_hringhorni_network_host(server, human_player, bear)
 			return
 		var habrok := HabrokParagonOfHawks.new()
 		habrok.card_owner = human_player
-		var habrok_zone := human_player.reserve_zones[0]
+		var habrok_zone: Zone = human_player.reserve_zones[0]
 		habrok_zone.add_card(habrok)
 		_write_smoke_trace("habrok_network:server_ready")
 		if not await _wait_for_practice_thor_smoke_condition_seconds(func() -> bool:
@@ -12876,7 +12945,7 @@ func _run_hringhorni_network_client(client) -> void:
 	if not await _wait_for_practice_thor_smoke_condition_seconds(func() -> bool:
 		var rules: GameManager = client.game_manager
 		var action := rules.get_top_live_stack_action()
-		var cards := rules.players[1].reserve_zones[0].cards
+		var cards: Array[Card] = rules.players[1].reserve_zones[0].cards
 		if not client._is_priority_prompt_visible() or action == null:
 			return false
 		if action.event_name == "frontline_entry":
@@ -12905,7 +12974,7 @@ func _run_hringhorni_network_client(client) -> void:
 	if not await _wait_for_practice_thor_smoke_condition_seconds(func() -> bool:
 		var rules: GameManager = client.game_manager
 		var action := rules.get_top_live_stack_action()
-		var cards := rules.players[1].reserve_zones[1].cards
+		var cards: Array[Card] = rules.players[1].reserve_zones[1].cards
 		if not client._is_priority_prompt_visible() or action == null:
 			return false
 		if action.event_name == "summon":
@@ -13216,7 +13285,7 @@ func _run_practice_thor_summon_smoke() -> void:
 		_describe_smoke_hand(practice_game.player1),
 	])
 
-	var summon_zone := _find_first_open_smoke_summon_zone(practice_game.player1)
+	var summon_zone: Zone = _find_first_open_smoke_summon_zone(practice_game.player1)
 	var summon_card := _find_smoke_hand_card_by_name(practice_game.player1, "Blessed Knights") as BlessedKnights
 	if summon_zone != null and summon_card == null:
 		summon_card = BlessedKnights.new()
@@ -13362,8 +13431,8 @@ func _run_practice_thor_intercept_smoke() -> void:
 	practice_game.game_manager._upkeep_started_turn = 2
 	practice_game.game_manager._upkeep_resolved_turn = 2
 
-	var attacker_zone := _find_first_open_smoke_frontline_zone(practice_game.player2)
-	var interceptor_zone := _find_first_open_smoke_frontline_zone(practice_game.player1)
+	var attacker_zone: Zone = _find_first_open_smoke_frontline_zone(practice_game.player2)
+	var interceptor_zone: Zone = _find_first_open_smoke_frontline_zone(practice_game.player1)
 	if attacker_zone == null or interceptor_zone == null:
 		_fail_smoke_if_enabled("practice_thor_intercept_missing_frontline_zone")
 		return
@@ -13577,7 +13646,7 @@ func _run_practice_thor_divine_lightning_smoke() -> void:
 		divine_lightning.card_owner = practice_game.player2
 		practice_game.player2.hand_zone.add_card(divine_lightning)
 
-	var target_zone := _find_first_open_smoke_summon_zone(practice_game.player1)
+	var target_zone: Zone = _find_first_open_smoke_summon_zone(practice_game.player1)
 	if target_zone == null:
 		_fail_smoke_if_enabled("practice_thor_divine_lightning_target_zone_missing")
 		return

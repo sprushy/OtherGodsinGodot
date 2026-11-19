@@ -204,64 +204,58 @@ func register_league_list(god_name: String, deck: Dictionary) -> String:
 	return list_id
 
 func finalize_league(god_names: Array[String]) -> Dictionary:
-	# Keeps the best seeded bot of each god as the active ladder bot, quarantines
-	# the worst seeded bot of each god as a forced-matchmaking bad bot, and
-	# removes every other seeded bot.
+	# Keeps every seeded bot on the ladder (pre-existing ranked bots plus all
+	# new tournament bots), clears their tournament flags, and marks the weakest
+	# seeded bot of each god as quarantined for forced matchmaking (Iron V and
+	# post-loss Iron/Bronze pairing). Nothing is removed.
 	var summary: Dictionary = {}
 	for god_name in god_names:
 		var pool: Dictionary = _by_god.get(str(god_name), {})
 		if pool.is_empty():
 			continue
-		var lists: Array = pool.get("lists", []) as Array
-		if lists.is_empty():
+		var all_lists: Array = pool.get("lists", []) as Array
+		if all_lists.is_empty():
 			continue
-		lists.sort_custom(func(first: Dictionary, second: Dictionary) -> bool:
+		var league_lists: Array = []
+		for list: Dictionary in all_lists:
+			if bool(list.get("league_list", false)):
+				league_lists.append(list)
+		if league_lists.is_empty():
+			continue
+		league_lists.sort_custom(func(first: Dictionary, second: Dictionary) -> bool:
 			return _is_stronger_record(second, first)
 		)
-		var best: Dictionary = lists[0].duplicate(true)
-		var worst: Dictionary = lists.back().duplicate(true)
-		best.erase("league_list")
-		worst.erase("league_list")
+		var best: Dictionary = league_lists[0]
+		var worst: Dictionary = league_lists.back()
 		var best_list_id := str(best.get("list_id", ""))
 		var worst_list_id := str(worst.get("list_id", ""))
-		var removed_ids: Dictionary = {}
-		var kept: Array = [best]
-		for i in range(1, lists.size()):
-			var list: Dictionary = lists[i]
-			var list_id := str(list.get("list_id", ""))
-			if list_id == worst_list_id:
-				continue
-			removed_ids[list_id] = true
-			_league_list_ids.erase(list_id)
-		_league_list_ids.erase(best_list_id)
-		_league_list_ids.erase(worst_list_id)
-		pool["lists"] = kept
-		pool["quarantined_lists"] = [worst]
+		# Clear the tournament flag on every seeded bot so they are normal
+		# ladder-eligible bots going forward.
+		for list: Dictionary in league_lists:
+			list.erase("league_list")
+			_league_list_ids.erase(str(list.get("list_id", "")))
+		# Mark the weakest seeded bot as quarantined for forced matchmaking.
+		pool["quarantined_lists"] = [worst.duplicate(true)]
 		pool["quarantined_ids"] = [worst_list_id] if not worst_list_id.is_empty() else []
 		pool["quarantined_id"] = worst_list_id
+		# All lists (regular + seeded) stay in the pool and appear on the ladder.
+		pool["lists"] = all_lists
 		var challenger: Dictionary = pool.get("challenger", {})
 		if not challenger.is_empty() and str(challenger.get("list_id", "")) == worst_list_id:
 			pool["challenger"] = {}
-		var surviving_pending: Array = []
-		for pending: Dictionary in pool.get("pending", []):
-			if not removed_ids.has(str(pending.get("list_id", ""))):
-				surviving_pending.append(pending)
-		pool["pending"] = surviving_pending
 		if _league_list_ids.is_empty():
 			_league_mode = false
-		var removed_names: Array = []
-		for i in range(1, lists.size()):
-			var list: Dictionary = lists[i]
-			if str(list.get("list_id", "")) == worst_list_id:
-				continue
-			removed_names.append(str(list.get("deck_name", "")))
 		summary[str(god_name)] = {
 			"kept": str(best.get("deck_name", "")),
 			"kept_list_id": best_list_id,
+			"kept_wins": int(best.get("wins", 0)),
+			"kept_losses": int(best.get("losses", 0)),
+			"kept_stars": int(best.get("stars", 0)),
 			"quarantined": str(worst.get("deck_name", "")),
 			"quarantined_list_id": worst_list_id,
-			"removed": removed_names.size(),
-			"removed_names": removed_names,
+			"quarantined_stars": int(worst.get("stars", 0)),
+			"seeded_count": league_lists.size(),
+			"total_lists": all_lists.size(),
 		}
 	return summary
 
@@ -273,9 +267,35 @@ func get_league_status() -> Dictionary:
 		for list: Dictionary in pool.get("lists", []):
 			if bool(list.get("league_list", false)):
 				league_lists += 1
+		# After finalize, all seeded bots are normal ladder bots (flag cleared).
+		# The quarantined worst lives in quarantined_lists; the strongest is
+		# surfaced as "kept" for the status summary.
+		var kept_summary: Dictionary = {}
+		var quarantined_summary: Dictionary = {}
+		for list: Dictionary in pool.get("lists", []):
+			if not bool(list.get("league_list", false)) and kept_summary.is_empty():
+				kept_summary = {
+					"deck_name": str(list.get("deck_name", "")),
+					"list_id": str(list.get("list_id", "")),
+					"wins": int(list.get("wins", 0)),
+					"losses": int(list.get("losses", 0)),
+					"draws": int(list.get("draws", 0)),
+					"stars": int(list.get("stars", 0)),
+				}
+		for list: Dictionary in pool.get("quarantined_lists", []):
+			quarantined_summary = {
+				"deck_name": str(list.get("deck_name", "")),
+				"list_id": str(list.get("list_id", "")),
+				"wins": int(list.get("wins", 0)),
+				"losses": int(list.get("losses", 0)),
+				"draws": int(list.get("draws", 0)),
+				"stars": int(list.get("stars", 0)),
+			}
 		gods.append({
 			"god_name": str(god_name),
 			"league_lists": league_lists,
+			"kept": kept_summary,
+			"quarantined": quarantined_summary,
 			"quarantined_ids": pool.get("quarantined_ids", []).duplicate(),
 			"quarantined_id": str(pool.get("quarantined_id", "")),
 		})

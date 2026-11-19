@@ -433,6 +433,8 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 			_handle_seed_bot_league(peer_id, payload)
 		LobbyProtocolScript.FINALIZE_BOT_LEAGUE:
 			_handle_finalize_bot_league(peer_id, payload)
+		LobbyProtocolScript.REQUEST_BOT_LEAGUE_STATUS:
+			_handle_request_bot_league_status(peer_id, payload)
 		LobbyProtocolScript.SUBMIT_ISSUE_REPORT:
 			_handle_submit_issue_report(peer_id, payload)
 		LobbyProtocolScript.SUBMIT_BOT_PROPOSAL:
@@ -1178,6 +1180,18 @@ func _handle_finalize_bot_league(peer_id: int, payload: Dictionary = {}) -> void
 		"request": LobbyProtocolScript.FINALIZE_BOT_LEAGUE,
 		"success": bool(result.get("success", false)),
 		"summary": result.get("summary", {}),
+	})
+
+func _handle_request_bot_league_status(peer_id: int, payload: Dictionary = {}) -> void:
+	var session := _get_session_for_peer(peer_id)
+	if session.is_empty():
+		_send_error_to_peer(peer_id, "Join the lobby to view bot league status.")
+		return
+	var status := get_bot_league_status()
+	_send_to_peer(peer_id, LobbyProtocolScript.BOT_LEAGUE_STATUS, {
+		"success": true,
+		"league_mode": bool(status.get("league_mode", false)),
+		"gods": status.get("gods", []),
 	})
 
 func _find_community_bot(account_id: String, bot_id: String) -> Dictionary:
