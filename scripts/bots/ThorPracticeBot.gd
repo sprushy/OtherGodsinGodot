@@ -626,12 +626,12 @@ func _score_priority_card(card: Card, action: CardAction, danger: int) -> Dictio
 		# Sighting summons this card from hand for free; the body is pure gain.
 		return {"score": 2000, "target": null}
 	if card is E2Abzu:
-		var best := {"score": CardStrategy.BAD, "target": null}
+		var dodge_best := {"score": CardStrategy.BAD, "target": null}
 		for target: Card in card.get_priority_field_targets(game_manager, action):
 			var score := _score_e2_abzu_dodge(card, target, action)
-			if score > int(best["score"]):
-				best = {"score": score, "target": target}
-		return best
+			if score > int(dodge_best["score"]):
+				dodge_best = {"score": score, "target": target}
+		return dodge_best
 	var targets := CardStrategy.targets(self, card, action)
 	if targets.is_empty():
 		targets = [null]
@@ -1915,10 +1915,10 @@ func _estimate_face_up_summon_forced_combat(creature: Card, zone: Zone, defensiv
 				continue
 		elif spell.current_zone != bot_player.hand_zone or not game_manager.can_play_card(bot_player, spell, null):
 			continue
-		var attackers := spell.get_lowest_level_attacker_choices(game_manager).filter(func(card: Card) -> bool: return card not in removed)
+		var attackers := spell.get_lowest_level_attacker_choices(game_manager).filter(func(candidate: Card) -> bool: return candidate not in removed)
 		if attackers.is_empty():
 			continue
-		var existing := spell.get_highest_level_defender_choices(game_manager).filter(func(card: Card) -> bool: return card not in removed)
+		var existing := spell.get_highest_level_defender_choices(game_manager).filter(func(candidate: Card) -> bool: return candidate not in removed)
 		var level := creature.get_effective_level()
 		if not existing.is_empty() and existing[0].get_effective_level() > level:
 			continue
@@ -3169,9 +3169,9 @@ func _plan_board_withdrawal(source: Card, danger: int) -> Dictionary:
 					continue
 				var gain := _follower_safety_gain(danger, {"removed": [victim, target]})
 				var target_value := CardStrategy.value(self, target)
-				var score := gain - tax - _get_card_economic_value(victim) + (target_value if target.get_controller() == opponent else -target_value)
-				if gain > 0 and score > int(best.get("score", 0)):
-					best = {"score": score, "command": {"type": "activate_card_ability", "source_uid": source.uid,
+				var blood_score := gain - tax - _get_card_economic_value(victim) + (target_value if target.get_controller() == opponent else -target_value)
+				if gain > 0 and blood_score > int(best.get("score", 0)):
+					best = {"score": blood_score, "command": {"type": "activate_card_ability", "source_uid": source.uid,
 						"option": {"target_uid": target.uid, "sacrifice_uid": victim.uid}}}
 		return best
 	var command := {"type": "activate_card_ability", "source_uid": source.uid}
@@ -3265,7 +3265,7 @@ func _tree_of_life_absence_cost(kur_jara: KurJara, resurrects_to_reserve: bool) 
 	var presence := CardStrategy.value(self, kur_jara) - CardStrategy.kur_jara_engine_premium(kur_jara)
 	return missed_turns * int(round(float(presence) / KUR_JARA_PRESENCE_TURNS))
 
-func _tree_of_life_continuation_bonus(kur_jara: KurJara, target: Card) -> int:
+func _tree_of_life_continuation_bonus(_kur_jara: KurJara, target: Card) -> int:
 	if target == null:
 		return 0
 	for engine_card in bot_player.graveyard_zone.cards:
@@ -4478,7 +4478,7 @@ func _forecast_incoming_follower_loss(change: Dictionary = {}) -> int:
 				replies[interceptor] = _forecast_incoming_combat(action, interceptor_stance, (defensive and interceptor == stance) or (defensive_summons and interceptor in summons), projected_stealth, removed, stats)
 			attack_lines.append({"attacker": attacker, "target": target, "replies": replies, "barriers": barriers, "cost": cost})
 	if attack_lines.is_empty():
-		return mini(followers, upkeep_loss)
+		return mini(followers, upkeep_loss + _aphrodite_exposure_pulse())
 	var guard := int(change.get("guard", bot_player.guard))
 	var most_damage := 0
 	# The opponent chooses the attack and the bot chooses whether to intercept.
@@ -4511,7 +4511,7 @@ func _forecast_incoming_follower_loss(change: Dictionary = {}) -> int:
 		most_damage = maxi(most_damage, least_damage)
 		if upkeep_loss + most_damage >= followers:
 			break
-	return mini(followers, upkeep_loss + most_damage)
+	return mini(followers, upkeep_loss + most_damage + _aphrodite_exposure_pulse())
 
 func _projected_upkeep_follower_loss(removed: Array, projected_followers: int) -> int:
 	if game_manager == null or opponent == null:
@@ -4555,7 +4555,10 @@ func _forecast_incoming_combat(action: CardAction, stance: Card, defensive: bool
 		var target := _choose_combat_reveal_removal(defender, targets, action, result["casualties"] + removed)
 		if target != null:
 			result["casualties"].append(target)
-	return {"damage": damage, "source": result.get("bot_loss_source"), "casualties": result["casualties"]}
+	# Her attack kills a bot creature, unlocking Violent Delights on HER turn;
+	# the follow-up enslaved value must flow to the defense forecast.
+	return {"damage": damage, "source": result.get("bot_loss_source"), "casualties": result["casualties"],
+		"enslavement_risk": int(result.get("enslavement_risk", 0))}
 
 func _forecast_follower_damage(result: Dictionary, guard: int) -> int:
 	var damage := maxi(0, int(result["damage"]) - guard)
@@ -7741,6 +7744,10 @@ func _estimate_raw_attack_economy(action: CardAction, stats: Dictionary, project
 	var attacker := action.attacker
 	var partner := action.united_front_partner
 	var defender := _get_attack_defender_card(action)
+	# Aphrodite can only activate Violent Delights on her own turn, so the
+	# risk of her follow-up Enslave counts only when HER attack is the one
+	# making the bot-side creature die in combat.
+	var her_attack := action.attacker.get_controller() == opponent
 	var attacker_stats: Vector3i = stats.get(attacker, Vector3i.ZERO)
 	var partner_stats: Vector3i = stats.get(partner, Vector3i.ZERO)
 	var defender_stats: Vector3i = stats.get(defender, Vector3i.ZERO)
@@ -7758,7 +7765,7 @@ func _estimate_raw_attack_economy(action: CardAction, stats: Dictionary, project
 		return result
 	if defender.is_petrified() or defender.card_type == Card.CardType.STRUCTURE:
 		if attacker_strength > defender.get_effective_resilience(defender_stats.y):
-			_add_combat_casualty(result, attacker, defender)
+			_add_combat_casualty(result, attacker, defender, her_attack)
 		return result
 	if defender.card_type != Card.CardType.CREATURE:
 		return result
@@ -7768,26 +7775,26 @@ func _estimate_raw_attack_economy(action: CardAction, stats: Dictionary, project
 	if defender_mode == Card.CreatureMode.AGGRESSIVE:
 		var defender_strength := _get_vision_adjusted_strength(defender, defender_stats.x, attacker)
 		if attacker_strength > defender_strength:
-			_add_combat_casualty(result, attacker, defender)
+			_add_combat_casualty(result, attacker, defender, her_attack)
 			var defender_damage_strength := game_manager._get_giants_disdain_damage_stat(defender, attackers, defender_strength)
 			_add_follower_loss_to_economy(result, defender.get_controller(), attacker_strength - defender_damage_strength, damage_source)
 		elif defender_strength > attacker_strength:
-			_add_combat_casualty(result, defender, attacker)
-			_add_combat_casualty(result, defender, partner)
+			_add_combat_casualty(result, defender, attacker, her_attack)
+			_add_combat_casualty(result, defender, partner, her_attack)
 			var attacker_damage_strength := game_manager._get_giants_disdain_damage_stat(attacker, opposing_cards, attacker_strength - support_strength)
 			attacker_damage_strength += game_manager._get_giants_disdain_damage_stat(partner, opposing_cards, support_strength)
 			_add_follower_loss_to_economy(result, attacker.get_controller(), defender_strength - attacker_damage_strength, defender)
 		else:
-			_add_combat_casualty(result, defender, attacker)
-			_add_combat_casualty(result, defender, partner)
-			_add_combat_casualty(result, attacker, defender)
+			_add_combat_casualty(result, defender, attacker, her_attack)
+			_add_combat_casualty(result, defender, partner, her_attack)
+			_add_combat_casualty(result, attacker, defender, her_attack)
 		return result
 
 	var attack_strength_vs_defense := _get_vision_adjusted_strength_vs_defense(attacker, attacker_stats.x, defender)
 	attack_strength_vs_defense += _get_vision_adjusted_strength_vs_defense(partner, partner_stats.x, defender)
 	var defender_resilience := defender.get_effective_resilience(defender_stats.y)
 	if attack_strength_vs_defense > defender_resilience:
-		_add_combat_casualty(result, attacker, defender)
+		_add_combat_casualty(result, attacker, defender, her_attack)
 	else:
 		if attack_strength_vs_defense < defender_resilience:
 			_add_follower_loss_to_economy(result, attacker.get_controller(), defender_resilience - attack_strength_vs_defense)
@@ -7797,11 +7804,11 @@ func _estimate_raw_attack_economy(action: CardAction, stats: Dictionary, project
 			# attacker's final converted loss.
 			result["defensive_conversion_defender"] = defender
 		if game_manager._has_ferocious_defence(defender.get_controller()):
-			_add_combat_casualty(result, defender, attacker)
-			_add_combat_casualty(result, defender, partner)
+			_add_combat_casualty(result, defender, attacker, her_attack)
+			_add_combat_casualty(result, defender, partner, her_attack)
 	return result
 
-func _add_combat_casualty(result: Dictionary, killer: Card, victim: Card) -> void:
+func _add_combat_casualty(result: Dictionary, killer: Card, victim: Card, her_attack: bool = false) -> void:
 	if victim == null or CardStrategy.destruction_guard(victim):
 		return
 	if not killer.can_destroy_combat_protected_creatures(victim):
@@ -7835,9 +7842,12 @@ func _add_combat_casualty(result: Dictionary, killer: Card, victim: Card) -> voi
 			and victim not in result.get("returning_casualties", []):
 		value -= _opponent_freyja_reanimate_discount(victim)
 	_add_destroyed_card_to_economy(result, victim, value)
-	if victim.get_controller() == bot_player and killer.get_controller() == opponent:
-		# Their defender killing our creature unlocks Violent Delights for the
-		# opponent's next turn; charge part of the expected enslave target.
+	if victim.get_controller() == bot_player and killer.get_controller() == opponent \
+			and her_attack and victim.card_type == Card.CardType.CREATURE:
+		# Aphrodite can only activate Violent Delights on her own turn, so the
+		# risk charges only for a combat kill her attack makes; when the BOT's
+		# attack kills her, the unlock doesn't follow (her turn starts with
+		# empty combat events). Charge part of the expected enslaved target.
 		var enslave_risk := _opponent_aphrodite_enslavement_risk(victim)
 		if enslave_risk > 0:
 			result["enslavement_risk"] = int(result.get("enslavement_risk", 0)) + enslave_risk
@@ -7894,9 +7904,10 @@ func _opponent_freyja_reanimate_discount(victim: Card) -> int:
 	@warning_ignore("integer_division")
 	return _get_card_economic_value(victim) / 3
 
-# Killing one of our creatures in combat unlocks Violent Delights on the
-# opponent's next turn. If their Aphrodite could pay and a target remains,
-# the forecast should expect to lose part of that creature's value.
+# Killing one of our creatures in combat unlocks Violent Delights on Aphrodite's
+# OWN turn (the guard's combat events clear every turn start). If her Aphrodite
+# could pay and a target remains, the forecast should expect to lose part of
+# that creature's value.
 func _opponent_aphrodite_enslavement_risk(dying_victim: Card) -> int:
 	if opponent == null or game_manager == null:
 		return 0
@@ -7919,6 +7930,76 @@ func _opponent_aphrodite_enslavement_risk(dying_victim: Card) -> int:
 	# She still has to reach her turn, pay, and find the window open.
 	@warning_ignore("integer_division")
 	return best / 4
+
+# Stack strength that kills a creature: aggressive targets die to STR > STR,
+# defensive ones to STR > RES (e.g. a 7/3 body falls to an 8-strength attacker).
+func _creature_kill_barrier(creature: Card) -> int:
+	if creature == null:
+		return 0
+	if creature.creature_mode == Card.CreatureMode.DEFENSIVE:
+		return creature.get_effective_resilience()
+	return creature.get_effective_strength()
+
+# Whether her visible stack can kill this creature next turn: a board attacker
+# that can strike it, or a visible hand pull whose summon + attack tax fits the
+# budget and clears the barrier.
+func _visible_stack_can_kill(creature: Card, budget: int) -> bool:
+	for attacker in _get_creature_attackers_next_turn(creature, []):
+		if attacker != null and attacker.get_effective_strength() > _creature_kill_barrier(creature):
+			return true
+	for card in opponent.hand_zone.cards:
+		if not CardStrategy.visible(self, card) or not (card is CreatureCard) \
+				or (card is ActiveGodCard) or card.is_face_down:
+			continue
+		if game_manager.get_creature_summon_mana_cost(opponent, card) \
+				+ game_manager.get_creature_action_mana_cost(card, "attack") > budget:
+			continue
+		if card.get_effective_strength() > _creature_kill_barrier(creature):
+			return true
+	return false
+
+# Half-weight danger pulse for the incoming-forecast danger number: her combo
+# needs a combat kill on one of my bodies plus 5 mana for Violent Delights;
+# the freed creature is the real loss. (_forecast_incoming_follower_loss
+# reports physical followers.)
+func _aphrodite_exposure_pulse() -> int:
+	var exposure := _opponent_aphrodite_enslave_exposure()
+	if exposure <= 0:
+		return 0
+	@warning_ignore("integer_division")
+	return int(exposure / 50)
+
+# Whole-board exposure estimate for the user-facing scenario where the combo
+# lives behind a creature in hand: her hand is invisible, so when no visible
+# stack kills any of my bodies the budget-bounded worst case counts — the
+# standard summon-strength bound may well still produce the killer.
+func _opponent_aphrodite_enslave_exposure() -> int:
+	if opponent == null or game_manager == null:
+		return 0
+	var aphrodite := _find_opponent_god() as AphroditeAreia
+	if aphrodite == null or aphrodite.is_muted or not CardStrategy.visible(self, aphrodite):
+		return 0
+	if opponent.mana + 4 < AphroditeAreia.ACTIVATION_COST:
+		return 0
+	var budget := opponent.mana + game_manager.get_automatic_upkeep_mana_gain(opponent, game_manager.turn_number + 1) \
+		+ game_manager.get_effective_upkeep_mana_gain(game_manager.get_base_upkeep_mana_gain(), opponent)
+	if budget <= 0:
+		return 0
+	var exposure := 0
+	for creature in _get_board_creatures(bot_player):
+		if creature == null or creature.is_face_down or not CardStrategy.visible(self, creature):
+			continue
+		if not aphrodite.is_valid_activation_target(creature):
+			continue
+		if game_manager._is_protected_from_enslavement(creature):
+			continue
+		var barrier := _creature_kill_barrier(creature)
+		if barrier <= 0:
+			continue
+		if _visible_stack_can_kill(creature, budget) \
+				or budget * ECON_FORECAST_SUMMON_STR_PER_MANA > barrier:
+			exposure = maxi(exposure, _opponent_aphrodite_enslavement_risk(creature))
+	return exposure
 
 # Tactical Break value of a single tactic counter: every TACTIC_COUNTER_COST
 # counters destroy one board card, so one counter is a quarter of the best
@@ -9013,11 +9094,13 @@ func _score_effect_summon_sacrifice_followup(summoned: Array, setup_mana: int, r
 		var payment_penalty := 0
 		for body in payment:
 			payment_penalty += _effect_body_sacrifice_penalty(body, doomed_bodies)
+		@warning_ignore("integer_division")
 		var followup_value := _score_projected_card(creature) - payment_penalty \
 			- _get_play_cost(creature, false) * 120 * _mana_rate() / 1000
 		var standalone_value := 0
 		if existing.size() >= creature.sacrifice_cost:
 			var current_payment := _choose_lowest_scored_cards(existing, creature.sacrifice_cost, "sacrifice")
+			@warning_ignore("integer_division")
 			standalone_value = _score_projected_card(creature) - _get_play_cost(creature, false) * 120 * _mana_rate() / 1000
 			for body in current_payment:
 				standalone_value -= _score_summon_sacrifice_candidate(body)

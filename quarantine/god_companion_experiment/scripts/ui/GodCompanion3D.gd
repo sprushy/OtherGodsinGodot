@@ -153,15 +153,15 @@ func _load_obj_mesh(path: String) -> ArrayMesh:
 	return surface.commit()
 
 func _make_companion_material() -> StandardMaterial3D:
-	var material := StandardMaterial3D.new()
-	material.albedo_color = Color.WHITE
-	material.roughness = 0.88
-	material.metallic = 0.0
-	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	var companion_material := StandardMaterial3D.new()
+	companion_material.albedo_color = Color.WHITE
+	companion_material.roughness = 0.88
+	companion_material.metallic = 0.0
+	companion_material.cull_mode = BaseMaterial3D.CULL_DISABLED
 	var texture := load(DIFFUSE_TEXTURE_PATH)
 	if texture is Texture2D:
-		material.albedo_texture = texture
-	return material
+		companion_material.albedo_texture = texture
+	return companion_material
 
 func _build_shadow(parent: Node3D) -> void:
 	var shadow_material := StandardMaterial3D.new()

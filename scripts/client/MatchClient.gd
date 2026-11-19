@@ -18,6 +18,12 @@ const InProcessGameInputScript = preload("res://scripts/Other/InProcessGameInput
 ##   match on expiry; the client just stops trying sooner than the server does.
 
 const CONNECT_ATTEMPT_TIMEOUT_SECONDS := 5.0
+## Punch-mode spectating can need several seconds for the lobby to relay the
+## spectator's bounce and the host to open its NAT toward it. Tearing the
+## dialing socket down at the normal 5s deadline discards the mapping the host
+## is punching and forces a fresh socket (plus a fresh relay) on retry, so the
+## first attempt stays alive longer for that flow.
+const PUNCH_SPECTATE_CONNECT_ATTEMPT_TIMEOUT_SECONDS := 15.0
 const INITIAL_JOIN_RETRY_BUDGET_SECONDS := 60.0
 const INITIAL_JOIN_RETRY_BACKOFF_SECONDS := 1.0
 const DEFAULT_RECONNECT_WINDOW_SECONDS := 90.0
@@ -246,7 +252,7 @@ func _now_unix() -> float:
 
 func _get_reconnect_window_seconds() -> float:
 	var configured := int(_match_info.get("reconnect_window_seconds", DEFAULT_RECONNECT_WINDOW_SECONDS))
-	return float(clampi(configured, MIN_RECONNECT_WINDOW_SECONDS, MAX_RECONNECT_WINDOW_SECONDS))
+	return clampf(float(configured), MIN_RECONNECT_WINDOW_SECONDS, MAX_RECONNECT_WINDOW_SECONDS)
 
 func _arm_reconnect_deadline() -> void:
 	if _reconnect_deadline_unix <= 0.0:
@@ -274,7 +280,7 @@ func _try_reconnect() -> bool:
 	if _now_unix() + backoff_seconds >= _reconnect_deadline_unix:
 		return false
 	_is_reconnecting = true
-	var attempt_cost := CONNECT_ATTEMPT_TIMEOUT_SECONDS + backoff_seconds
+	var attempt_cost := _get_connect_attempt_timeout_seconds() + backoff_seconds
 	var payload := {
 		"attempts_remaining": _get_attempts_remaining_for_deadline(_reconnect_deadline_unix, attempt_cost),
 		"seconds_remaining": _get_seconds_until_deadline(_reconnect_deadline_unix),
@@ -322,7 +328,7 @@ func _try_initial_connect_retry() -> bool:
 	if _now_unix() + INITIAL_JOIN_RETRY_BACKOFF_SECONDS >= _join_deadline_unix:
 		return false
 	_is_retrying_initial_connect = true
-	var attempt_cost := CONNECT_ATTEMPT_TIMEOUT_SECONDS + INITIAL_JOIN_RETRY_BACKOFF_SECONDS
+	var attempt_cost := _get_connect_attempt_timeout_seconds() + INITIAL_JOIN_RETRY_BACKOFF_SECONDS
 	var payload := {
 		"attempts_remaining": _get_attempts_remaining_for_deadline(_join_deadline_unix, attempt_cost),
 		"seconds_remaining": _get_seconds_until_deadline(_join_deadline_unix),
@@ -391,6 +397,12 @@ func _arm_connect_timeout_if_connecting() -> void:
 		return
 	_arm_connect_attempt_timeout()
 
+func _get_connect_attempt_timeout_seconds() -> float:
+	if bool(_match_info.get("observer_mode", false)) \
+			and bool(_match_info.get("spectate_via_punch", false)):
+		return PUNCH_SPECTATE_CONNECT_ATTEMPT_TIMEOUT_SECONDS
+	return CONNECT_ATTEMPT_TIMEOUT_SECONDS
+
 func _arm_connect_attempt_timeout() -> void:
 	if network_manager == null:
 		return
@@ -399,7 +411,7 @@ func _arm_connect_attempt_timeout() -> void:
 		return
 	_connect_attempt_serial += 1
 	var expected_serial := _connect_attempt_serial
-	var timeout_timer := tree.create_timer(CONNECT_ATTEMPT_TIMEOUT_SECONDS)
+	var timeout_timer := tree.create_timer(_get_connect_attempt_timeout_seconds())
 	timeout_timer.timeout.connect(Callable(self, "_on_connect_attempt_timer_timeout").bind(expected_serial))
 
 func _cancel_connect_attempt_timeout() -> void:

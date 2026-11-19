@@ -5,6 +5,7 @@ const ServerPathsScript = preload("res://scripts/server/ServerPaths.gd")
 const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
 const RankedProgressionScript = preload("res://scripts/server/RankedProgression.gd")
 const DEFAULT_STORAGE_FILE_NAME := "match_history.json"
+const SERVE_QUARANTINED_STORAGE_FILE := "serve_quarantined_next.json"
 
 var _storage_file_name: String = DEFAULT_STORAGE_FILE_NAME
 var _uses_dedicated_results: bool
@@ -20,6 +21,9 @@ var _sorted_ranked_ids_by_account_id: Dictionary = {}
 var _bot_match_ids_by_list_id: Dictionary = {}
 var _dedicated_result_files_loaded: Dictionary = {}
 var _loaded: bool = false
+# Per-account matchmaking state: when true, the next ranked match for an Iron
+# or Bronze player who just lost is served against a quarantined bad bot.
+var _serve_quarantined_next: Dictionary = {}
 
 func _init(storage_file_name: String = DEFAULT_STORAGE_FILE_NAME, uses_dedicated_results: bool = false) -> void:
 	_uses_dedicated_results = uses_dedicated_results
@@ -466,7 +470,6 @@ func get_recent_ranked_bot_matches_for_list(list_id: String, limit: int = 10, re
 		if bot_result.is_empty():
 			continue
 		var player_index := int(bot_result.get("player_index", -1))
-		var player: Dictionary = _get_player_entry_for_index(entry, player_index)
 		var opponent: Dictionary = _get_opponent_entry_for_index(entry, player_index)
 		matches.append({
 			"played_unix": int(entry.get("played_unix", 0)),
@@ -486,12 +489,6 @@ func _get_player_entry_for_account(entry: Dictionary, account_id: String) -> Dic
 func _get_opponent_entry_for_account(entry: Dictionary, account_id: String) -> Dictionary:
 	for player: Dictionary in entry.get("players", []):
 		if str(player.get("account_id", "")) != account_id:
-			return player
-	return {}
-
-func _get_player_entry_for_index(entry: Dictionary, player_index: int) -> Dictionary:
-	for player: Dictionary in entry.get("players", []):
-		if int(player.get("player_index", -1)) == player_index:
 			return player
 	return {}
 
@@ -718,6 +715,43 @@ func _ensure_loaded() -> void:
 		_matches_by_id = (stored_matches as Dictionary).duplicate(true)
 	if stored_history_ids is Dictionary:
 		_history_ids_by_profile_id = (stored_history_ids as Dictionary).duplicate(true)
+	_load_serve_quarantined()
+
+func _serve_quarantined_path() -> String:
+	return ServerPathsScript.get_server_data_file_path(SERVE_QUARANTINED_STORAGE_FILE)
+
+func _load_serve_quarantined() -> void:
+	var path := _serve_quarantined_path()
+	if not FileAccess.file_exists(path):
+		return
+	var loaded := JsonStoreScript.load_dictionary(path, {}, "ServeQuarantinedNext")
+	if loaded is Dictionary:
+		_serve_quarantined_next = (loaded as Dictionary).duplicate(true)
+
+func _save_serve_quarantined() -> void:
+	var path := _serve_quarantined_path()
+	JsonStoreScript.save_json(path, _serve_quarantined_next, "ServeQuarantinedNext")
+
+# Marks (or clears) whether an Iron/Bronze account that just lost should be
+# served a quarantined bad bot on its next ranked match.
+func set_serve_quarantined_next(account_id: String, value: bool) -> void:
+	if account_id.is_empty():
+		return
+	if value:
+		_serve_quarantined_next[account_id] = true
+	else:
+		_serve_quarantined_next.erase(account_id)
+	_save_serve_quarantined()
+
+# Returns whether the account is due a quarantined bad bot next, then clears the
+# flag so it is served at most once per loss.
+func take_serve_quarantined_next(account_id: String) -> bool:
+	if account_id.is_empty():
+		return false
+	var due := bool(_serve_quarantined_next.get(account_id, false))
+	_serve_quarantined_next.erase(account_id)
+	_save_serve_quarantined()
+	return due
 
 func _save() -> bool:
 	var storage_path: String = _get_storage_path()

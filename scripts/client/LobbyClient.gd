@@ -62,6 +62,7 @@ signal bot_proposal_result(success: bool, message: String)
 signal bot_deck_submission_result(success: bool, message: String, bot: Dictionary)
 signal my_bots_received(bots: Array)
 signal bot_deleted(success: bool, message: String, bot_id: String)
+signal bot_league_result_received(result: Dictionary)
 signal connection_failed(message: String)
 signal disconnected_from_lobby()
 signal match_host_viability_requested()
@@ -546,6 +547,14 @@ func request_bot_work(bot_id: String = "", excluded_list_ids: Array = []) -> voi
 	if is_authenticated():
 		_send_request(LobbyProtocolScript.REQUEST_BOT_WORK, {"bot_id": bot_id, "excluded_list_ids": excluded_list_ids})
 
+func request_seed_bot_league(count_per_god: int = 10) -> void:
+	if is_authenticated():
+		_send_request(LobbyProtocolScript.SEED_BOT_LEAGUE, {"count_per_god": clampi(count_per_god, 1, 64)})
+
+func request_finalize_bot_league() -> void:
+	if is_authenticated():
+		_send_request(LobbyProtocolScript.FINALIZE_BOT_LEAGUE, {})
+
 func report_bot_work_started(job_id: String, turn_count: int = 0) -> void:
 	if is_authenticated():
 		_send_request(LobbyProtocolScript.REPORT_BOT_WORK_STARTED, {
@@ -823,6 +832,9 @@ func lobby_event(message: Dictionary) -> void:
 		LobbyProtocolScript.BOT_WORK_RESULT:
 			if is_authenticated():
 				bot_work_result_received.emit(str(payload.get("job_id", "")), bool(payload.get("success", false)), str(payload.get("message", "")))
+		LobbyProtocolScript.BOT_LEAGUE_RESULT:
+			if is_authenticated():
+				bot_league_result_received.emit(payload)
 		LobbyProtocolScript.ISSUE_REPORT_RESULT:
 			issue_report_result.emit(bool(payload.get("success", false)), str(payload.get("message", "")))
 		LobbyProtocolScript.BOT_PROPOSAL_RESULT:
@@ -1281,7 +1293,7 @@ func _display_name_from_email(email: String) -> String:
 func _trace(message: String) -> void:
 	if not trace_network and trace_file_path.is_empty():
 		return
-	var line := "LobbyClient[%s]: %s" % [name, message]
+	var line := "LobbyClient[%s] @%s: %s" % [name, str(snappedf(Time.get_unix_time_from_system(), 0.001)), message]
 	if trace_network:
 		print(line)
 	if trace_file_path.is_empty():

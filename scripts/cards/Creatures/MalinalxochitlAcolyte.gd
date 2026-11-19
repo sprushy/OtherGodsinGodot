@@ -2,9 +2,9 @@ extends CreatureCard
 class_name MalinalxochitlAcolyte
 
 const ART_PATH := "res://images/card_art/creatures/MalinalxochitalAcolyteEdit2.png"
-const POISON_STATUS := "malinalxochitl_poison"
+const POISON_STATUS := "poison"
 const POISON_SOURCE := "Malinalxochitl Acolyte Poison Glands"
-const POISON_EFFECT_TYPE := "malinalxochitl_poison_tick"
+const POISON_EFFECT_TYPE := "poison_tick"
 const POISON_RES_LOSS := 5
 
 func _init() -> void:
@@ -18,7 +18,7 @@ func _init() -> void:
 	resilience = 16
 	strength = 27
 	flavor_text = ""
-	ability_text = "[b]Poison Glands[/b] ([b]Passive[/b]): After combat with a friendly Insect, the other creature loses 5 Res at the start of each of its owner's turns. If this effect brings a creature's Res below 0, the creature dies."
+	ability_text = "[b]Poison Glands[/b] ([b]Passive[/b]): After combat with a friendly Insect, the other creature loses 5 Res at the start of each of its owner's turns. If this effect brings a creature's Res to 0 or below, the creature dies."
 	culture = "Nahuatl"
 	artist = ""
 	art_path = ART_PATH
@@ -43,6 +43,8 @@ func on_friendly_creature_after_combat(game_manager: GameManager, friendly_creat
 	if opposing_card.current_zone == null or not opposing_card.current_zone.is_board_zone():
 		return
 	if game_manager.is_immune_to_source(opposing_card, self):
+		return
+	if opposing_card.is_immune_to_poison():
 		return
 
 	opposing_card.add_status_effect(
@@ -105,6 +107,8 @@ static func _apply_persistent_poison_tick(game_manager: GameManager, target: Car
 	var target_name := target.get_target_log_display_name(viewer)
 	var lethal_source: Card = null
 	var applied_poison_tick := false
+	if target.is_immune_to_poison():
+		return
 	for source_key in counts.keys():
 		var entry: Dictionary = counts[source_key]
 		var stack_count := int(entry.get("count", 0))
@@ -114,7 +118,7 @@ static func _apply_persistent_poison_tick(game_manager: GameManager, target: Car
 		if game_manager.is_immune_to_source(target, poison_source_card):
 			continue
 		applied_poison_tick = true
-		var resilience_before_tick := target.get_effective_resilience()
+		var resilience_before_tick := target.get_unclamped_effective_resilience()
 		var source_owner := poison_source_card.card_owner if poison_source_card != null else null
 		for _i in range(stack_count):
 			target.add_buff(
@@ -127,7 +131,7 @@ static func _apply_persistent_poison_tick(game_manager: GameManager, target: Car
 				POISON_EFFECT_TYPE
 			)
 		var total_loss := POISON_RES_LOSS * stack_count
-		if resilience_before_tick >= 0 and target.get_effective_resilience() < 0:
+		if resilience_before_tick > 0 and target.get_unclamped_effective_resilience() <= 0:
 			lethal_source = poison_source_card
 		var source_label := str(entry.get("source_label", POISON_SOURCE))
 		game_manager.note_player_feedback(
@@ -138,7 +142,7 @@ static func _apply_persistent_poison_tick(game_manager: GameManager, target: Car
 				_get_player_turn_label(target.get_controller())
 			]
 		)
-	if applied_poison_tick and target.get_effective_resilience() < 0:
+	if applied_poison_tick and target.get_unclamped_effective_resilience() <= 0:
 		game_manager.request_send_to_graveyard(target, func() -> void:
 			if game_manager.reached_public_destroyed_destination(target):
 				var destroyed_name := game_manager.get_resolved_destruction_log_name(target, viewer, target_name)

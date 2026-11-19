@@ -126,7 +126,7 @@ func _position_camera(viewer: int) -> void:
 
 
 ## Call with replicated turn state. Never rotate merely because a pull was attempted.
-func set_turn_state(owner: int, viewer: int, turn: int, allowed: bool) -> void:
+func set_turn_state(seat_owner: int, viewer: int, turn: int, allowed: bool) -> void:
 	if not is_node_ready():
 		return
 	if _viewer_index != viewer:
@@ -135,10 +135,10 @@ func set_turn_state(owner: int, viewer: int, turn: int, allowed: bool) -> void:
 	if _owner_index < 0 or turn < _turn_number:
 		if _rotation_tween != null:
 			_rotation_tween.kill()
-		_target_angle = PI * float(owner)
+		_target_angle = PI * float(seat_owner)
 		_mechanism.casing.rotation.y = _target_angle
 		clear_request()
-	elif owner != _owner_index or turn != _turn_number:
+	elif seat_owner != _owner_index or turn != _turn_number:
 		if _rotation_tween != null:
 			_rotation_tween.kill()
 		_target_angle += PI * float(maxi(1, turn - _turn_number))
@@ -146,7 +146,7 @@ func set_turn_state(owner: int, viewer: int, turn: int, allowed: bool) -> void:
 		_rotation_tween.tween_property(_mechanism.casing, "rotation:y", _target_angle, rotation_duration).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 		_rotation_tween.finished.connect(_refresh_interaction)
 		clear_request()
-	_owner_index = owner
+	_owner_index = seat_owner
 	_turn_number = turn
 	# A dismissed choice prompt may return control without advancing the turn.
 	if _request_latched and not allowed:
@@ -243,23 +243,23 @@ func capture_pull_input(event: InputEvent) -> bool:
 	return false
 
 
-func _event_local(position: Vector2) -> Vector2:
-	return get_global_transform_with_canvas().affine_inverse() * position
+func _event_local(event_position: Vector2) -> Vector2:
+	return get_global_transform_with_canvas().affine_inverse() * event_position
 
 
-func _begin_pull(position: Vector2, touch: int) -> void:
+func _begin_pull(pull_start: Vector2, touch: int) -> void:
 	if _dragging:
 		return
 	grab_focus()
 	_dragging = true
 	_touch_index = touch
-	_drag_start = position
+	_drag_start = pull_start
 	_peak_pull = 0.0
 	_pull = 0.0
 
 
-func _update_pull(position: Vector2) -> void:
-	_pull = clampf((position.y - _drag_start.y) / PULL_PIXELS, 0.0, 1.0)
+func _update_pull(pull_position: Vector2) -> void:
+	_pull = clampf((pull_position.y - _drag_start.y) / PULL_PIXELS, 0.0, 1.0)
 	_peak_pull = maxf(_peak_pull, _pull)
 	_mechanism.set_pull(_pull)
 

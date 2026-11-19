@@ -882,6 +882,7 @@ func _hex_to_bytes(hex: String) -> PackedByteArray:
 	var output := PackedByteArray()
 	if clean_hex.length() % 2 != 0:
 		return output
+	@warning_ignore("integer_division")
 	output.resize(clean_hex.length() / 2)
 	for index in range(output.size()):
 		var high := _hex_value(clean_hex.unicode_at(index * 2))

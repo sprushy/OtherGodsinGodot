@@ -74,50 +74,50 @@ func _build_mist_layers() -> void:
 		layer.color = Color.WHITE
 		layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		layer.z_index = i
-		var material := _make_layer_material(i)
-		layer.material = material
-		_layer_materials.append(material)
+		var layer_material := _make_layer_material(i)
+		layer.material = layer_material
+		_layer_materials.append(layer_material)
 		add_child(layer)
 
 func _make_layer_material(layer_index: int) -> ShaderMaterial:
-	var material := ShaderMaterial.new()
-	material.shader = _get_mist_shader()
-	material.set_shader_parameter("fog_alpha", fog_alpha - float(layer_index) * 0.060)
-	material.set_shader_parameter("cloud_scale", 1.12 + float(layer_index) * 0.26)
-	material.set_shader_parameter("drift_speed", 0.090 + float(layer_index) * 0.034)
-	material.set_shader_parameter("phase", float(layer_index) * 3.17)
-	material.set_shader_parameter("layer_card_scale", Vector2.ONE)
-	material.set_shader_parameter("cursor_uv", Vector2(-10.0, -10.0))
-	material.set_shader_parameter("cursor_clear_strength", 0.0)
-	material.set_shader_parameter("cursor_brush_radius", 0.18)
-	material.set_shader_parameter("hover_clear_uv_min", Vector2(2.0, 2.0))
-	material.set_shader_parameter("hover_clear_uv_max", Vector2(-1.0, -1.0))
+	var layer_material := ShaderMaterial.new()
+	layer_material.shader = _get_mist_shader()
+	layer_material.set_shader_parameter("fog_alpha", fog_alpha - float(layer_index) * 0.060)
+	layer_material.set_shader_parameter("cloud_scale", 1.12 + float(layer_index) * 0.26)
+	layer_material.set_shader_parameter("drift_speed", 0.090 + float(layer_index) * 0.034)
+	layer_material.set_shader_parameter("phase", float(layer_index) * 3.17)
+	layer_material.set_shader_parameter("layer_card_scale", Vector2.ONE)
+	layer_material.set_shader_parameter("cursor_uv", Vector2(-10.0, -10.0))
+	layer_material.set_shader_parameter("cursor_clear_strength", 0.0)
+	layer_material.set_shader_parameter("cursor_brush_radius", 0.18)
+	layer_material.set_shader_parameter("hover_clear_uv_min", Vector2(2.0, 2.0))
+	layer_material.set_shader_parameter("hover_clear_uv_max", Vector2(-1.0, -1.0))
 	for i in range(CURSOR_TRAIL_COUNT):
-		material.set_shader_parameter("cursor_trail_%d" % i, Vector4(-10.0, -10.0, 0.0, 0.18))
+		layer_material.set_shader_parameter("cursor_trail_%d" % i, Vector4(-10.0, -10.0, 0.0, 0.18))
 	var smoke_texture := _get_smoke_texture()
 	if smoke_texture != null:
-		material.set_shader_parameter("smoke_texture", smoke_texture)
-		material.set_shader_parameter("use_smoke_texture", true)
+		layer_material.set_shader_parameter("smoke_texture", smoke_texture)
+		layer_material.set_shader_parameter("use_smoke_texture", true)
 	var cloud_texture := _get_cloud_texture()
 	if cloud_texture != null:
-		material.set_shader_parameter("cloud_texture", cloud_texture)
-		material.set_shader_parameter("use_cloud_texture", true)
+		layer_material.set_shader_parameter("cloud_texture", cloud_texture)
+		layer_material.set_shader_parameter("use_cloud_texture", true)
 	var detail_texture := _get_detail_texture()
 	if detail_texture != null:
-		material.set_shader_parameter("detail_texture", detail_texture)
-		material.set_shader_parameter("use_detail_texture", true)
-	material.set_meta("layer_index", layer_index)
-	return material
+		layer_material.set_shader_parameter("detail_texture", detail_texture)
+		layer_material.set_shader_parameter("use_detail_texture", true)
+	layer_material.set_meta("layer_index", layer_index)
+	return layer_material
 
 func _sync_layer_size() -> void:
 	if _layer_materials.is_empty() or size.x <= 0.0 or size.y <= 0.0:
 		return
 	for i in range(_layer_materials.size()):
-		var material := _layer_materials[i]
-		if material == null:
+		var layer_material := _layer_materials[i]
+		if layer_material == null:
 			continue
 		var layer_scale := 1.0 + float(i) * 0.015
-		material.set_shader_parameter("layer_card_scale", Vector2(layer_scale, layer_scale))
+		layer_material.set_shader_parameter("layer_card_scale", Vector2(layer_scale, layer_scale))
 
 func _animate_mist_layers() -> void:
 	if _layer_materials.is_empty():
@@ -127,15 +127,15 @@ func _animate_mist_layers() -> void:
 	var sway_multiplier := _seeded_range(seed_value, 2, 0.72, 1.06)
 	var speed_multiplier := _seeded_range(seed_value, 3, 0.84, 1.22)
 	for i in range(_layer_materials.size()):
-		var material := _layer_materials[i]
-		if material == null:
+		var layer_material := _layer_materials[i]
+		if layer_material == null:
 			continue
 		var layer_phase := cluster_phase + float(i) * 1.73
 		var speed_x := (0.36 + float(i) * 0.10) * speed_multiplier
 		var speed_y := (0.29 + float(i) * 0.08) * speed_multiplier
 		var sway_x := sin(_motion_elapsed * speed_x + layer_phase) * (0.034 + float(i) * 0.015) * sway_multiplier
 		var sway_y := cos(_motion_elapsed * speed_y + layer_phase * 0.82) * (0.026 + float(i) * 0.011) * sway_multiplier
-		material.set_shader_parameter("layer_motion_offset", Vector2(sway_x, sway_y))
+		layer_material.set_shader_parameter("layer_motion_offset", Vector2(sway_x, sway_y))
 
 func _refresh_cursor_motion() -> void:
 	_refresh_cursor_motion_at(get_global_mouse_position() + CURSOR_CENTER_OFFSET_PIXELS)
@@ -162,9 +162,9 @@ func _clear_cursor_motion(add_last_sample: bool = false) -> void:
 	_cursor_actual_position = Vector2.INF
 	_cursor_clear_strength = 0.0
 
-func _push_cursor_trail_sample(position: Vector2) -> void:
+func _push_cursor_trail_sample(sample_position: Vector2) -> void:
 	_cursor_trail.push_front({
-		"position": position,
+		"position": sample_position,
 		"age": 0.0,
 	})
 	if _cursor_trail.size() > CURSOR_TRAIL_COUNT:
@@ -211,23 +211,23 @@ func _sync_cursor_shader_parameters() -> void:
 					brush_radius
 				)
 		trail_values.append(trail_value)
-	for material in _layer_materials:
-		if material == null:
+	for layer_material in _layer_materials:
+		if layer_material == null:
 			continue
-		material.set_shader_parameter("cursor_uv", cursor_uv)
-		material.set_shader_parameter("cursor_clear_strength", clear_strength)
-		material.set_shader_parameter("cursor_brush_radius", brush_radius)
+		layer_material.set_shader_parameter("cursor_uv", cursor_uv)
+		layer_material.set_shader_parameter("cursor_clear_strength", clear_strength)
+		layer_material.set_shader_parameter("cursor_brush_radius", brush_radius)
 		for i in range(CURSOR_TRAIL_COUNT):
-			material.set_shader_parameter("cursor_trail_%d" % i, trail_values[i])
+			layer_material.set_shader_parameter("cursor_trail_%d" % i, trail_values[i])
 
 func _update_alpha() -> void:
 	for i in range(_layer_materials.size()):
-		var material := _layer_materials[i]
-		if material == null:
+		var layer_material := _layer_materials[i]
+		if layer_material == null:
 			continue
 		var seed_value := variant_seed if variant_seed != 0 else get_instance_id()
 		var layer_seed := seed_value + i * 101
-		material.set_shader_parameter(
+		layer_material.set_shader_parameter(
 			"fog_alpha",
 			maxf(0.0, fog_alpha - float(i) * 0.060) * _seeded_range(layer_seed, 11, 0.88, 1.10)
 		)
@@ -245,35 +245,35 @@ func _configure_variant() -> void:
 	drift_direction = drift_direction.normalized()
 
 	for i in range(_layer_materials.size()):
-		var material := _layer_materials[i]
-		if material == null:
+		var layer_material := _layer_materials[i]
+		if layer_material == null:
 			continue
 		var layer_seed := seed_value + i * 101
-		material.set_shader_parameter("phase", float(i) * 3.17 + _seeded_range(layer_seed, 10, 0.0, TAU))
-		material.set_shader_parameter("cloud_scale", (1.12 + float(i) * 0.26) * _seeded_range(layer_seed, 12, 0.90, 1.18))
-		material.set_shader_parameter("drift_speed", (0.090 + float(i) * 0.034) * _seeded_range(layer_seed, 13, 0.82, 1.28))
-		material.set_shader_parameter("variant_uv_offset_a", Vector2(
+		layer_material.set_shader_parameter("phase", float(i) * 3.17 + _seeded_range(layer_seed, 10, 0.0, TAU))
+		layer_material.set_shader_parameter("cloud_scale", (1.12 + float(i) * 0.26) * _seeded_range(layer_seed, 12, 0.90, 1.18))
+		layer_material.set_shader_parameter("drift_speed", (0.090 + float(i) * 0.034) * _seeded_range(layer_seed, 13, 0.82, 1.28))
+		layer_material.set_shader_parameter("variant_uv_offset_a", Vector2(
 			_seeded_range(layer_seed, 14, -0.18, 0.18),
 			_seeded_range(layer_seed, 15, -0.16, 0.16)
 		))
-		material.set_shader_parameter("variant_uv_offset_b", Vector2(
+		layer_material.set_shader_parameter("variant_uv_offset_b", Vector2(
 			_seeded_range(layer_seed, 16, -0.14, 0.14),
 			_seeded_range(layer_seed, 17, -0.18, 0.18)
 		))
-		material.set_shader_parameter("variant_drift", drift_direction.rotated(_seeded_range(layer_seed, 18, -0.38, 0.38)))
-		material.set_shader_parameter("smoke_scale", _seeded_range(layer_seed, 19, 0.82, 1.20))
-		material.set_shader_parameter("density_bias", _seeded_range(layer_seed, 20, -0.035, 0.045))
-		material.set_shader_parameter("texture_mix", _seeded_range(layer_seed, 21, 0.36, 0.58))
-		material.set_shader_parameter("smoke_rotation", Vector3(
+		layer_material.set_shader_parameter("variant_drift", drift_direction.rotated(_seeded_range(layer_seed, 18, -0.38, 0.38)))
+		layer_material.set_shader_parameter("smoke_scale", _seeded_range(layer_seed, 19, 0.82, 1.20))
+		layer_material.set_shader_parameter("density_bias", _seeded_range(layer_seed, 20, -0.035, 0.045))
+		layer_material.set_shader_parameter("texture_mix", _seeded_range(layer_seed, 21, 0.36, 0.58))
+		layer_material.set_shader_parameter("smoke_rotation", Vector3(
 			_seeded_range(layer_seed, 22, 0.0, TAU),
 			_seeded_range(layer_seed, 23, 0.0, TAU),
 			_seeded_range(layer_seed, 24, 0.0, TAU)
 		))
-		material.set_shader_parameter("smoke_flip", Vector2(
+		layer_material.set_shader_parameter("smoke_flip", Vector2(
 			-1.0 if _seeded_unit(layer_seed, 25) < 0.5 else 1.0,
 			-1.0 if _seeded_unit(layer_seed, 26) < 0.5 else 1.0
 		))
-		material.set_shader_parameter("smoke_anchor", Vector2(
+		layer_material.set_shader_parameter("smoke_anchor", Vector2(
 			_seeded_range(layer_seed, 27, -0.22, 0.22),
 			_seeded_range(layer_seed, 28, -0.20, 0.20)
 		))

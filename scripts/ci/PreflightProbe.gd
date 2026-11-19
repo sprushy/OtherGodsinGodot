@@ -539,24 +539,24 @@ func _check_game_state_privacy(failures: PackedStringArray) -> void:
 
 func _check_public_deck_knowledge(failures: PackedStringArray) -> void:
 	var manager := _new_fixture_game()
-	var owner := _new_fixture_player()
-	manager.players.assign([owner, _new_fixture_player()])
-	var deck := owner.deck_zone
+	var deck_owner := _new_fixture_player()
+	manager.players.assign([deck_owner, _new_fixture_player()])
+	var deck := deck_owner.deck_zone
 	var hidden := BrownBear.new()
-	hidden.card_owner = owner
+	hidden.card_owner = deck_owner
 	deck.add_card(hidden)
 	var first := RedCap.new()
-	first.card_owner = owner
+	first.card_owner = deck_owner
 	deck.add_card(first)
 	deck.prime_card(first)
 	var second := Huginn.new()
-	second.card_owner = owner
-	owner.hand_zone.add_card(second)
-	owner.move_card(second, deck, Zone.DeckPlacement.PRIMED)
+	second.card_owner = deck_owner
+	deck_owner.hand_zone.add_card(second)
+	deck_owner.move_card(second, deck, Zone.DeckPlacement.PRIMED)
 	var shelved := Muninn.new()
-	shelved.card_owner = owner
-	owner.hand_zone.add_card(shelved)
-	owner.shelve_card(shelved)
+	shelved.card_owner = deck_owner
+	deck_owner.hand_zone.add_card(shelved)
+	deck_owner.shelve_card(shelved)
 
 	var mirror := _new_fixture_game()
 	mirror.players.assign([_new_fixture_player(), _new_fixture_player()])
@@ -593,7 +593,7 @@ func _check_public_deck_knowledge(failures: PackedStringArray) -> void:
 			break
 	var opponent := manager.players[1]
 	manager.current_player = opponent
-	manager.other_player = owner
+	manager.other_player = deck_owner
 	manager.turn_player = opponent
 	var throne := HildskjalfThroneOfOdin.new()
 	throne.card_owner = opponent
@@ -604,11 +604,11 @@ func _check_public_deck_knowledge(failures: PackedStringArray) -> void:
 	opponent.reserve_zones[0].remove_card(throne)
 	var bot := ThorPracticeBot.new()
 	bot.bot_player = opponent
-	bot.opponent = owner
+	bot.opponent = deck_owner
 	if BotCardStrategyScript.visible(bot, shelved) or BotCardStrategyScript.visible(bot, hidden):
 		failures.append("Bot visibility did not distinguish public from unknown deck cards")
 
-	if owner.draw_card() != second or deck.get_primed_top_card() != first \
+	if deck_owner.draw_card() != second or deck.get_primed_top_card() != first \
 			or deck.get_deck_placement(second) != Zone.DeckPlacement.UNKNOWN:
 		failures.append("Drawing a primed card did not expose the next primed card")
 	deck.shelve_deck_card(first)
@@ -628,9 +628,9 @@ func _check_public_deck_knowledge(failures: PackedStringArray) -> void:
 	# primed from an unknown deck position remain hidden to the opponent.
 	deck.prime_card(second)
 	var grave_card := RedCap.new()
-	grave_card.card_owner = owner
-	owner.graveyard_zone.add_card(grave_card)
-	owner.move_card(grave_card, deck, Zone.DeckPlacement.PRIMED)
+	grave_card.card_owner = deck_owner
+	deck_owner.graveyard_zone.add_card(grave_card)
+	deck_owner.move_card(grave_card, deck, Zone.DeckPlacement.PRIMED)
 	GameState.apply_to_manager(GameState.serialize(manager, 1), mirror)
 	var grave_view := mirror_deck.get_primed_top_card()
 	if grave_view == null or grave_view.uid != grave_card.uid \
@@ -1652,6 +1652,7 @@ func _check_bot_removal_opens_attacks(failures: PackedStringArray) -> void:
 		blocker.speed = 5
 		blocker.creature_mode = Card.CreatureMode.AGGRESSIVE
 		opponent.frontline_zones[0].add_card(blocker)
+		@warning_ignore("incompatible_ternary")
 		var removal: Card = BitMeseri.new() if use_spell else AncientPyre.new()
 		removal.card_owner = player
 		var source_zone := player.hand_zone if use_spell else player.frontline_zones[4]
@@ -1703,6 +1704,7 @@ func _check_bot_paired_removals(failures: PackedStringArray) -> void:
 			attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
 			player.frontline_zones[index].add_card(attacker)
 		for index in range(2):
+			@warning_ignore("incompatible_ternary")
 			var blocker: Card = PalisadeBarrier.new() if scenario == "barriers" else CreatureCard.new()
 			blocker.card_owner = opponent
 			var zone := opponent.frontline_zones[index]

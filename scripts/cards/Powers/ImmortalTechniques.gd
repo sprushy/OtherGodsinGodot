@@ -38,10 +38,10 @@ func _try_grant_mana(player: Player, game_manager: GameManager) -> void:
 		game_manager.note_player_feedback("%s grants 1 mana." % card_name)
 
 func get_cost_adjustment_entries(
-	target_card: Card,
-	base_cost: int,
-	cost_kind: String,
-	game_manager: GameManager,
+	_target_card: Card,
+	_base_cost: int,
+	_cost_kind: String,
+	_game_manager: GameManager,
 	_metadata: Dictionary = {}
 ) -> Array[Dictionary]:
 	return []

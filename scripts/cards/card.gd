@@ -811,6 +811,16 @@ func get_effective_resilience(resilience_delta: int = 0) -> int:
 		total += buff.get("res", 0)
 	return max(0, total)
 
+# Effective resilience without the floor-at-zero clamp. Used to detect lethal
+# stat damage (e.g. poison) that should destroy a creature at 0 or below.
+func get_unclamped_effective_resilience() -> int:
+	var total := resilience
+	for equip in equipment:
+		total += equip.resilience_modifier
+	for buff in _get_effective_buffs():
+		total += buff.get("res", 0)
+	return total
+
 # Returns a human-readable breakdown of all active buffs for a stat ("str", "res", "spd", "lvl")
 func get_buff_tooltip(stat: String) -> String:
 	var lines: Array[String] = []
@@ -1208,6 +1218,9 @@ func remove_effects_from_player(player: Player) -> void:
 		_emit_visual_state_changed()
 
 func is_immune_to_sleep() -> bool:
+	return incorporeal
+
+func is_immune_to_poison() -> bool:
 	return incorporeal
 
 func apply_sleep(source_card: Card) -> void:

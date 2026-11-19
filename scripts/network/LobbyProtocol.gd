@@ -54,6 +54,9 @@ const SUBMIT_BOT_PROPOSAL := "submit_bot_proposal"
 const SUBMIT_BOT_DECK := "submit_bot_deck"
 const REQUEST_MY_BOTS := "request_my_bots"
 const DELETE_BOT := "delete_bot"
+const SEED_BOT_LEAGUE := "seed_bot_league"
+const FINALIZE_BOT_LEAGUE := "finalize_bot_league"
+const BOT_LEAGUE_RESULT := "bot_league_result"
 
 const HELLO_OK := "hello_ok"
 const ROOM_LIST := "room_list"
@@ -268,6 +271,11 @@ static func validate_request(message: Dictionary) -> String:
 			var excluded_list_ids = payload.get("excluded_list_ids", [])
 			if not excluded_list_ids is Array or excluded_list_ids.size() > 10:
 				return "Invalid bot gauntlet exclusions."
+		SEED_BOT_LEAGUE, FINALIZE_BOT_LEAGUE:
+			if payload.has("count_per_god"):
+				var count := int(payload.get("count_per_god", 10))
+				if count < 1 or count > 64:
+					return "Invalid bot league count per god."
 		REQUEST_MY_BOTS:
 			pass
 		DELETE_BOT:

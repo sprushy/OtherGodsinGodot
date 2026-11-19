@@ -71,4 +71,5 @@ func _can_poison_target(card: Card, game_manager: GameManager) -> bool:
 		and card.card_type == Card.CardType.CREATURE \
 		and card.current_zone != null \
 		and card.current_zone.is_board_zone() \
-		and not game_manager.is_immune_to_source(card, self)
+		and not game_manager.is_immune_to_source(card, self) \
+		and not card.is_immune_to_poison()

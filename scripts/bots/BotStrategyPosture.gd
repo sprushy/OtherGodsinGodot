@@ -117,6 +117,7 @@ static func _sustained_push(bot) -> int:
 		potential += damage
 		if bot._can_attack_followers_safely(attacker):
 			guaranteed += damage
+	@warning_ignore("integer_division")
 	return maxi(0, maxi(guaranteed, potential / 2) - bot.opponent.guard)
 
 

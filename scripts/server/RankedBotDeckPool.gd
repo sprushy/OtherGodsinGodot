@@ -4,6 +4,9 @@ const RankedProgressionScript = preload("res://scripts/server/RankedProgression.
 const LISTS_PER_GOD := 7
 const EARLY_RETIREMENT_GAMES := 60
 const EXPLORATION_CHANCE := 0.25
+# How many of the worst bots per god are kept as quarantined bad bots for
+# forced matchmaking (Iron V and post-loss Iron/Bronze pairing).
+const QUARANTINED_PER_GOD := 1
 # Opponents are drawn from the target league and the leagues directly above and
 # below it (e.g. Iron, Bronze, or Silver for a Bronze player). When the band has
 # no candidates, pairing falls back to the closest available league.
@@ -36,6 +39,10 @@ var _replayed_match_count := -1
 var _last_replayed_id := ""
 var _deck_auditor: Callable
 var _eliminated_bot_match_ids: Dictionary = {}
+# League (bot tournament) state. While league_mode is active, seeded bot lists
+# are exempt from early retirement so they can finish their round-robin.
+var _league_mode: bool = false
+var _league_list_ids: Array = []
 
 func set_deck_auditor(auditor: Callable) -> void:
 	_deck_auditor = auditor
@@ -134,7 +141,7 @@ func get_ladder_summary() -> Dictionary:
 		var lists: Array[Dictionary] = []
 		for list: Dictionary in pool["lists"]:
 			var summary := _summarize_list(list)
-			summary["quarantined"] = list["list_id"] == pool["quarantined_id"]
+			summary["quarantined"] = _is_quarantined_list(pool, list["list_id"])
 			lists.append(summary)
 		if lists.is_empty():
 			continue
@@ -146,6 +153,144 @@ func get_ladder_summary() -> Dictionary:
 			trial["trial_length"] = int(challenger["trial_target_games"])
 		gods.append({"god_name": god_name, "lists": lists, "challenger": trial})
 	return {"gods": gods, "list_capacity": LISTS_PER_GOD}
+
+func set_league_mode(enabled: bool) -> void:
+	_league_mode = bool(enabled)
+	if not _league_mode:
+		_league_list_ids.clear()
+
+func _league_next_index(god_name: String) -> int:
+	var count := 0
+	for key in _by_god.keys():
+		if str(key) != str(god_name):
+			continue
+		for list: Dictionary in _by_god[key].get("lists", []):
+			if bool(list.get("league_list", false)):
+				count += 1
+	return count
+
+# Registers a pre-built tournament bot list under a stable id. Match results are
+# matched to these lists by fingerprint during pool replay, so their records
+# accumulate here instead of spawning throwaway challengers. Exempt from early
+# retirement so the round-robin can complete.
+func register_league_list(god_name: String, deck: Dictionary) -> String:
+	if deck.is_empty() or deck.get("cards", {}).is_empty():
+		return ""
+	var list_id := "league_%s_%03d" % [str(god_name), _league_next_index(str(god_name))]
+	var pool: Dictionary = _by_god.get_or_add(str(god_name), {"lists": [], "challenger": {}, "pending": [], "quarantined_id": "", "quarantined_ids": [], "quarantined_lists": []})
+	for existing: Dictionary in pool.get("lists", []):
+		if existing.get("list_id", "") == list_id:
+			return list_id
+	var new_list := {
+		"list_id": list_id,
+		"fingerprint": _fingerprint(deck),
+		"god_name": str(god_name),
+		"deck_name": str(deck.get("deck_name", "%s Bot" % str(god_name))),
+		"cards": deck.get("cards", {}).duplicate(true),
+		"reinforcements": deck.get("reinforcements", {}).duplicate(true),
+		"special_setup": deck.get("special_setup", {}).duplicate(true),
+		"wins": 0,
+		"losses": 0,
+		"draws": 0,
+		"stars": 0,
+		"win_streak": 0,
+		"self_play_name": "",
+		"owner_name": "",
+		"league_list": true,
+	}
+	pool.get("lists", []).append(new_list)
+	_league_list_ids.append(list_id)
+	_league_mode = true
+	return list_id
+
+func finalize_league(god_names: Array[String]) -> Dictionary:
+	# Keeps the best seeded bot of each god as the active ladder bot, quarantines
+	# the worst seeded bot of each god as a forced-matchmaking bad bot, and
+	# removes every other seeded bot.
+	var summary: Dictionary = {}
+	for god_name in god_names:
+		var pool: Dictionary = _by_god.get(str(god_name), {})
+		if pool.is_empty():
+			continue
+		var lists: Array = pool.get("lists", []) as Array
+		if lists.is_empty():
+			continue
+		lists.sort_custom(func(first: Dictionary, second: Dictionary) -> bool:
+			return _is_stronger_record(second, first)
+		)
+		var best: Dictionary = lists[0].duplicate(true)
+		var worst: Dictionary = lists.back().duplicate(true)
+		best.erase("league_list")
+		worst.erase("league_list")
+		var best_list_id := str(best.get("list_id", ""))
+		var worst_list_id := str(worst.get("list_id", ""))
+		var removed_ids: Dictionary = {}
+		var kept: Array = [best]
+		for i in range(1, lists.size()):
+			var list: Dictionary = lists[i]
+			var list_id := str(list.get("list_id", ""))
+			if list_id == worst_list_id:
+				continue
+			removed_ids[list_id] = true
+			_league_list_ids.erase(list_id)
+		_league_list_ids.erase(best_list_id)
+		_league_list_ids.erase(worst_list_id)
+		pool["lists"] = kept
+		pool["quarantined_lists"] = [worst]
+		pool["quarantined_ids"] = [worst_list_id] if not worst_list_id.is_empty() else []
+		pool["quarantined_id"] = worst_list_id
+		var challenger: Dictionary = pool.get("challenger", {})
+		if not challenger.is_empty() and str(challenger.get("list_id", "")) == worst_list_id:
+			pool["challenger"] = {}
+		var surviving_pending: Array = []
+		for pending: Dictionary in pool.get("pending", []):
+			if not removed_ids.has(str(pending.get("list_id", ""))):
+				surviving_pending.append(pending)
+		pool["pending"] = surviving_pending
+		if _league_list_ids.is_empty():
+			_league_mode = false
+		var removed_names: Array = []
+		for i in range(1, lists.size()):
+			var list: Dictionary = lists[i]
+			if str(list.get("list_id", "")) == worst_list_id:
+				continue
+			removed_names.append(str(list.get("deck_name", "")))
+		summary[str(god_name)] = {
+			"kept": str(best.get("deck_name", "")),
+			"kept_list_id": best_list_id,
+			"quarantined": str(worst.get("deck_name", "")),
+			"quarantined_list_id": worst_list_id,
+			"removed": removed_names.size(),
+			"removed_names": removed_names,
+		}
+	return summary
+
+func get_league_status() -> Dictionary:
+	var gods: Array = []
+	for god_name in _by_god.keys():
+		var pool: Dictionary = _by_god[god_name]
+		var league_lists := 0
+		for list: Dictionary in pool.get("lists", []):
+			if bool(list.get("league_list", false)):
+				league_lists += 1
+		gods.append({
+			"god_name": str(god_name),
+			"league_lists": league_lists,
+			"quarantined_ids": pool.get("quarantined_ids", []).duplicate(),
+			"quarantined_id": str(pool.get("quarantined_id", "")),
+		})
+	return {"league_mode": _league_mode, "gods": gods}
+
+static func _is_stronger_record(first: Dictionary, second: Dictionary) -> bool:
+	if int(first.get("stars", 0)) != int(second.get("stars", 0)):
+		return int(first.get("stars", 0)) > int(second.get("stars", 0))
+	var first_games := int(first.get("wins", 0)) + int(first.get("losses", 0))
+	var second_games := int(second.get("wins", 0)) + int(second.get("losses", 0))
+	var first_score := int(first.get("wins", 0)) * second_games
+	var second_score := int(second.get("wins", 0)) * first_games
+	if first_score != second_score:
+		return first_score > second_score
+	return str(first.get("deck_name", "")).nocasecmp_to(str(second.get("deck_name", ""))) < 0
 
 func _summarize_list(list: Dictionary) -> Dictionary:
 	return {
@@ -187,9 +332,13 @@ func _deck_details(list: Dictionary) -> Dictionary:
 		"special_setup": list["special_setup"].duplicate(true),
 	}
 
-func select_deck(busy_list_ids: Dictionary, rng: RandomNumberGenerator, target_stars: int) -> Dictionary:
+func select_deck(busy_list_ids: Dictionary, rng: RandomNumberGenerator, target_stars: int, force_quarantined: bool = false) -> Dictionary:
 	var target_rank := RankedProgressionScript.summarize_bot_stars(target_stars)
 	var target_league := int(target_rank["league"])
+	if force_quarantined:
+		# Pair against a quarantined bad bot only, preferring the target's
+		# league band so the match is winnable but not trivial.
+		return _select_quarantined_deck(busy_list_ids, rng, target_league)
 	var band_candidates: Array = []
 	var candidates_by_gap: Dictionary = {}
 	for pool: Dictionary in _by_god.values():
@@ -198,7 +347,7 @@ func select_deck(busy_list_ids: Dictionary, rng: RandomNumberGenerator, target_s
 		if not challenger.is_empty():
 			lists.append(challenger)
 		for list: Dictionary in lists:
-			if list["list_id"] == pool["quarantined_id"] or busy_list_ids.has(list["list_id"]):
+			if bool(list.get("league_list", false)) or _is_quarantined_list(pool, list["list_id"]) or busy_list_ids.has(list["list_id"]):
 				continue
 			var gap := absi(_league_for_stars(int(list["stars"])) - target_league)
 			if gap <= MATCHMAKING_LEAGUE_TIER_WINDOW:
@@ -215,6 +364,45 @@ func select_deck(busy_list_ids: Dictionary, rng: RandomNumberGenerator, target_s
 	# Every opponent in the band is an equally likely pick, regardless of league.
 	return (candidates[rng.randi_range(0, candidates.size() - 1)] as Dictionary).duplicate(true)
 
+func _select_quarantined_deck(busy_list_ids: Dictionary, rng: RandomNumberGenerator, target_league: int) -> Dictionary:
+	var band_candidates: Array = []
+	var candidates_by_gap: Dictionary = {}
+	for pool: Dictionary in _by_god.values():
+		for list: Dictionary in pool.get("quarantined_lists", []):
+			var list_id := str(list.get("list_id", ""))
+			if busy_list_ids.has(list_id):
+				continue
+			var gap := absi(_league_for_stars(int(list["stars"])) - target_league)
+			if gap <= MATCHMAKING_LEAGUE_TIER_WINDOW:
+				band_candidates.append(list)
+				continue
+			var bucket: Array = candidates_by_gap.get(gap, [])
+			bucket.append(list)
+			candidates_by_gap[gap] = bucket
+	var candidates: Array = band_candidates
+	if candidates.is_empty() and not candidates_by_gap.is_empty():
+		candidates = candidates_by_gap[_closest_gap(candidates_by_gap)]
+	if candidates.is_empty():
+		return {}
+	return (candidates[rng.randi_range(0, candidates.size() - 1)] as Dictionary).duplicate(true)
+
+func _is_quarantined_list(pool: Dictionary, list_id: String) -> bool:
+	if list_id == pool.get("quarantined_id", ""):
+		return true
+	return list_id in pool.get("quarantined_ids", [])
+
+func _find_list_by_id(pool: Dictionary, list_id: String) -> Dictionary:
+	var challenger: Dictionary = pool.get("challenger", {})
+	if not challenger.is_empty() and challenger.get("list_id", "") == list_id:
+		return challenger
+	for list: Dictionary in pool.get("lists", []):
+		if list.get("list_id", "") == list_id:
+			return list
+	for pending: Dictionary in pool.get("pending", []):
+		if pending.get("list_id", "") == list_id:
+			return pending
+	return {}
+
 func select_self_play_pair(busy_list_ids: Dictionary, rng: RandomNumberGenerator) -> Array[Dictionary]:
 	var available: Array[Dictionary] = []
 	for pool: Dictionary in _by_god.values():
@@ -222,7 +410,7 @@ func select_self_play_pair(busy_list_ids: Dictionary, rng: RandomNumberGenerator
 		if not pool["challenger"].is_empty():
 			lists.append(pool["challenger"])
 		for list: Dictionary in lists:
-			if list["list_id"] != pool["quarantined_id"] and not busy_list_ids.has(list["list_id"]):
+			if not _is_quarantined_list(pool, list["list_id"]) and not busy_list_ids.has(list["list_id"]):
 				available.append(list)
 	var pairs_by_gap: Dictionary = {}
 	var trials_by_gap: Dictionary = {}
@@ -326,7 +514,7 @@ func can_play_list(god_name: String, list_id: String) -> bool:
 	if list_id.is_empty():
 		return true
 	var pool: Dictionary = _by_god.get(god_name, {})
-	if pool.is_empty() or pool["quarantined_id"] == list_id:
+	if pool.is_empty() or _is_quarantined_list(pool, list_id):
 		return false
 	if pool["challenger"].get("list_id", "") == list_id:
 		return true
@@ -345,7 +533,7 @@ func _apply_result(result: Dictionary) -> void:
 	# retroactively on the next full replay.
 	if outcome == "loss" and not bool(result.get("is_self_play", false)):
 		return
-	var pool: Dictionary = _by_god.get_or_add(god_name, {"lists": [], "challenger": {}, "pending": [], "quarantined_id": ""})
+	var pool: Dictionary = _by_god.get_or_add(god_name, {"lists": [], "challenger": {}, "pending": [], "quarantined_id": "", "quarantined_ids": [], "quarantined_lists": []})
 	var lists: Array = pool["lists"]
 	var challenger: Dictionary = pool["challenger"]
 	var is_community_bot := bool(result.get("is_community_bot", false))
@@ -479,6 +667,10 @@ func _update_record(list: Dictionary, outcome: String) -> void:
 	RankedProgressionScript.apply_bot_result(list, outcome)
 
 func _should_retire_early(list: Dictionary) -> bool:
+	# Seeded tournament bots must finish their round-robin, so they are never
+	# retired early while league mode is active.
+	if str(list.get("list_id", "")) in _league_list_ids:
+		return false
 	var games_played := _get_played_match_count(list)
 	if games_played <= 0 or games_played > EARLY_RETIREMENT_GAMES:
 		return false

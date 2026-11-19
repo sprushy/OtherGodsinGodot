@@ -3429,7 +3429,7 @@ func _set_bot_submission_status(message: String) -> void:
 	_bot_submission_status.text = message
 	_bot_submission_status.show()
 
-func _on_bot_proposal_result(success: bool, message: String) -> void:
+func _on_bot_proposal_result(_success: bool, message: String) -> void:
 	_set_bot_submission_status(message)
 
 func _on_bot_deck_submission_result(success: bool, message: String, _bot: Dictionary) -> void:

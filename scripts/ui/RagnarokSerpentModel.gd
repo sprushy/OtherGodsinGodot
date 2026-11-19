@@ -179,16 +179,16 @@ func _build_eye(profile: Array, side: float) -> void:
 	iris.transform = socket.scaled_local(Vector3(1.02, 0.77, 0.68))
 
 
-func _scale_color(row: float, angle: float, seed: float, facial: bool = false) -> Color:
+func _scale_color(row: float, angle: float, pattern_seed: float, facial: bool = false) -> Color:
 	# Broken longitudinal gold islands over black/olive hide, matching RagnarokEdit.
-	var fleck := fposmod(sin(seed * 12.9898 + 78.233) * 43758.5453, 1.0)
+	var fleck := fposmod(sin(pattern_seed * 12.9898 + 78.233) * 43758.5453, 1.0)
 	var ribbon := 0.5 + 0.5 * cos(angle * 3.0 + sin(row * 0.27) * 1.2)
 	var gold := smoothstep(0.58, 0.86, ribbon) * (0.55 + fleck * 0.45)
 	if facial:
 		gold = maxf(gold, smoothstep(0.44, 0.90, fleck) * 0.85)
-	var hide := Color(0.025, 0.027, 0.017).lerp(Color(0.16, 0.145, 0.072), fleck * 0.75)
+	var hide_color := Color(0.025, 0.027, 0.017).lerp(Color(0.16, 0.145, 0.072), fleck * 0.75)
 	var highlight := Color(0.40, 0.36, 0.19).lerp(Color(0.84, 0.81, 0.59), fleck * fleck)
-	return hide.lerp(highlight, gold)
+	return hide_color.lerp(highlight, gold)
 
 
 func _build_head_shields(profile: Array) -> void:
@@ -230,11 +230,11 @@ func _build_head_shields(profile: Array) -> void:
 
 
 func _plate_variation(index: int) -> Vector3:
-	var seed := float(index)
+	var pattern_seed := float(index)
 	return Vector3(
-		lerpf(0.82, 1.16, fposmod(seed * 0.618034, 1.0)),
-		lerpf(0.86, 1.15, fposmod(seed * 0.414214, 1.0)),
-		lerpf(-0.105, 0.105, fposmod(seed * 0.732051, 1.0))
+		lerpf(0.82, 1.16, fposmod(pattern_seed * 0.618034, 1.0)),
+		lerpf(0.86, 1.15, fposmod(pattern_seed * 0.414214, 1.0)),
+		lerpf(-0.105, 0.105, fposmod(pattern_seed * 0.732051, 1.0))
 	)
 
 
@@ -340,9 +340,11 @@ func _update_body(spine: PackedVector2Array, radii: PackedFloat32Array, unit: fl
 	if _ring_count != spine.size():
 		_ring_count = spine.size()
 		_indices = _tube_indices(_ring_count, SIDES)
+		@warning_ignore("integer_division")
 		_plates.multimesh.instance_count = ((_ring_count + SCALE_STRIDE - 3) / SCALE_STRIDE) * SCALE_SIDES
 		_scale_variation.resize(_plates.multimesh.instance_count)
 		for index in _plates.multimesh.instance_count:
+			@warning_ignore("integer_division")
 			var row := float(index / SCALE_SIDES)
 			var side_angle := float(index % SCALE_SIDES) / float(SCALE_SIDES) * TAU
 			_plates.multimesh.set_instance_color(index, _scale_color(row, side_angle, float(index)))
@@ -387,15 +389,16 @@ func _update_body(spine: PackedVector2Array, radii: PackedFloat32Array, unit: fl
 			for side in SCALE_SIDES:
 				if plate_index >= _plates.multimesh.instance_count:
 					break
+				@warning_ignore("integer_division")
 				var row := (ring - 1) / SCALE_STRIDE
 				var variation := _scale_variation[plate_index]
 				var angle := (float(side) + (0.5 if row % 2 == 0 else 0.0)) / float(SCALE_SIDES) * TAU + variation.z * 0.32
 				var normal := across * cos(angle) + up * sin(angle)
 				var circumference := -across * sin(angle) + up * cos(angle)
-				var basis := Basis(-forward, -circumference, normal)
+				var plate_basis := Basis(-forward, -circumference, normal)
 				var plate_size := Vector3(minf(unit * 0.145, radius * 0.65) * variation.x, maxf(0.5, radius * 0.33 * variation.y), maxf(0.3, radius * 0.10))
-				basis = basis * Basis.from_scale(plate_size)
-				_plates.multimesh.set_instance_transform(plate_index, Transform3D(basis, center + normal * radius * 0.997))
+				plate_basis = plate_basis * Basis.from_scale(plate_size)
+				_plates.multimesh.set_instance_transform(plate_index, Transform3D(plate_basis, center + normal * radius * 0.997))
 				plate_index += 1
 	var arrays: Array = []
 	arrays.resize(Mesh.ARRAY_MAX)

@@ -257,8 +257,8 @@ func _sync_stone_masks() -> void:
 		var texture: Texture2D = textures[index]
 		var key := ids[index]
 		if not _slab_masks.has(key):
-			var mask := Image.create(SLAB_MASK_SIZE, SLAB_MASK_SIZE, false, Image.FORMAT_RGBA8)
-			mask.fill(Color.BLACK)
+			var new_mask := Image.create(SLAB_MASK_SIZE, SLAB_MASK_SIZE, false, Image.FORMAT_RGBA8)
+			new_mask.fill(Color.BLACK)
 			if texture != null:
 				var source := texture.get_image()
 				if source != null:
@@ -270,8 +270,8 @@ func _sync_stone_masks() -> void:
 							# The soft cast shadow is grass, not stone. Only the
 							# opaque slab silhouette is used by both shader and sparks.
 							var value := smoothstep(0.94, 0.995, source.get_pixel(x, y).a)
-							mask.set_pixel(x, y, Color(value, value, value, 1.0))
-			_slab_masks[key] = mask
+							new_mask.set_pixel(x, y, Color(value, value, value, 1.0))
+			_slab_masks[key] = new_mask
 		var mask: Image = _slab_masks[key]
 		_stone_masks.append(mask)
 		atlas.blit_rect(mask, Rect2i(0, 0, SLAB_MASK_SIZE, SLAB_MASK_SIZE), Vector2i(index * SLAB_MASK_SIZE, 0))

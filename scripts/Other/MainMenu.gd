@@ -163,6 +163,9 @@ var _host_another_bot_match_button: Button
 var _host_own_bot_button: Button
 var _host_bot_gauntlet_button: Button
 var _custom_bot_ids_pending: Array[String] = []
+# Debug controls for the bot league feature (debug builds only).
+var _seed_bot_league_button: Button
+var _finalize_bot_league_button: Button
 var _host_bot_gauntlet_id := ""
 var _host_bot_gauntlet_remaining := 0
 var _host_bot_gauntlet_opponents: Dictionary = {}
@@ -907,20 +910,20 @@ func _layout_startup_splash_background(force_entry_offsets: bool = false) -> voi
 	if _startup_splash_texture == null:
 		return
 	var texture_size := _startup_splash_texture.get_size()
-	var draw_rect := _get_startup_splash_draw_rect(texture_size, size)
+	var splash_rect := _get_startup_splash_draw_rect(texture_size, size)
 	if _startup_splash_full_image != null and is_instance_valid(_startup_splash_full_image):
-		_startup_splash_full_image.position = draw_rect.position
-		_startup_splash_full_image.size = draw_rect.size
+		_startup_splash_full_image.position = splash_rect.position
+		_startup_splash_full_image.size = splash_rect.size
 	var slice_count := maxi(1, _startup_splash_slices.size())
 	for slice_index in range(_startup_splash_slices.size()):
 		var slice := _startup_splash_slices[slice_index]
 		if slice == null or not is_instance_valid(slice):
 			continue
 		var source_rect := _get_startup_splash_slice_source_rect(texture_size, slice_index, slice_count)
-		var left := draw_rect.position.x + draw_rect.size.x * source_rect.position.x / texture_size.x
-		var right := draw_rect.position.x + draw_rect.size.x * (source_rect.position.x + source_rect.size.x) / texture_size.x
-		var target_position := Vector2(left, draw_rect.position.y)
-		var target_size := Vector2(right - left, draw_rect.size.y)
+		var left := splash_rect.position.x + splash_rect.size.x * source_rect.position.x / texture_size.x
+		var right := splash_rect.position.x + splash_rect.size.x * (source_rect.position.x + source_rect.size.x) / texture_size.x
+		var target_position := Vector2(left, splash_rect.position.y)
+		var target_size := Vector2(right - left, splash_rect.size.y)
 		slice.size = target_size
 		slice.set_meta("target_position", target_position)
 		if force_entry_offsets:
@@ -972,12 +975,12 @@ func _on_startup_splash_animation_finished() -> void:
 	_set_startup_splash_final_frame_visible(true)
 	_apply_music_mute_state()
 
-func _set_startup_splash_final_frame_visible(visible: bool) -> void:
+func _set_startup_splash_final_frame_visible(frame_visible: bool) -> void:
 	if _startup_splash_full_image != null and is_instance_valid(_startup_splash_full_image):
-		_startup_splash_full_image.visible = visible
+		_startup_splash_full_image.visible = frame_visible
 	for slice in _startup_splash_slices:
 		if slice != null and is_instance_valid(slice):
-			slice.visible = not visible
+			slice.visible = not frame_visible
 
 func _load_startup_music_stream() -> AudioStream:
 	var music_path := _get_startup_music_path_for_track(get_startup_music_track())
@@ -1848,9 +1851,9 @@ func show_game() -> void:
 	_refresh_server_version_overlay_visibility()
 	_refresh_sound_mute_button()
 
-func _set_startup_splash_background_visible(is_visible: bool) -> void:
+func _set_startup_splash_background_visible(background_visible: bool) -> void:
 	if _startup_splash_background != null and is_instance_valid(_startup_splash_background):
-		_startup_splash_background.visible = is_visible
+		_startup_splash_background.visible = background_visible
 
 func _set_snowstorm_visible(active: bool) -> void:
 	var tree := get_tree()
@@ -2438,35 +2441,35 @@ func _refresh_multiplayer_deck_picker_button() -> void:
 	if _deck_picker_button == null:
 		return
 	var button_text := ""
-	var tooltip_text := ""
+	var button_tooltip := ""
 	var disabled := false
 	if _is_account_sign_in_required():
 		button_text = "Change Deck: Sign in required"
-		tooltip_text = "Sign in to load your account decks."
+		button_tooltip = "Sign in to load your account decks."
 		disabled = true
 	elif _multiplayer_deck_entries.is_empty():
 		button_text = "Change Deck: No saved decks"
-		tooltip_text = "No saved decks yet."
+		button_tooltip = "No saved decks yet."
 		disabled = true
 	else:
 		var selected_entry: Dictionary = _get_selected_multiplayer_deck_entry()
 		if selected_entry.is_empty():
 			button_text = "Change Deck: Choose a deck"
-			tooltip_text = "Choose one of your saved decks."
+			button_tooltip = "Choose one of your saved decks."
 		else:
 			var deck_name := str(selected_entry.get("deck_name", "Deck"))
 			if bool(selected_entry.get("is_legal", false)):
 				button_text = "Change Deck: %s" % deck_name
-				tooltip_text = "Current multiplayer deck: %s" % deck_name
+				button_tooltip = "Current multiplayer deck: %s" % deck_name
 			else:
 				var reason := str(selected_entry.get("reason", "")).strip_edges()
 				button_text = "Change Deck: %s (Unavailable)" % deck_name
-				tooltip_text = reason if not reason.is_empty() else "This deck is unavailable for multiplayer."
+				button_tooltip = reason if not reason.is_empty() else "This deck is unavailable for multiplayer."
 	for change_deck_button in [_deck_picker_button, _multiplayer_deck_change_button]:
 		if change_deck_button == null or not is_instance_valid(change_deck_button):
 			continue
 		change_deck_button.text = button_text
-		change_deck_button.tooltip_text = tooltip_text
+		change_deck_button.tooltip_text = button_tooltip
 		change_deck_button.disabled = disabled
 
 func _make_multiplayer_deck_entry_row(entry: Dictionary) -> Control:
@@ -2796,6 +2799,17 @@ func _build_seek_tabs() -> void:
 	_host_bot_match_button.pressed.connect(_on_host_bot_match_pressed)
 	_seek_action_row.add_child(_host_bot_match_button)
 	_host_bot_match_button.hide()
+	if OS.is_debug_build():
+		_seed_bot_league_button = Button.new()
+		_seed_bot_league_button.text = "Seed Bot League"
+		_seed_bot_league_button.tooltip_text = "Builds 10 ranked bot decks per god for the bot league."
+		_seed_bot_league_button.pressed.connect(_on_seed_bot_league_pressed)
+		_seek_action_row.add_child(_seed_bot_league_button)
+		_finalize_bot_league_button = Button.new()
+		_finalize_bot_league_button.text = "Finalize Bot League"
+		_finalize_bot_league_button.tooltip_text = "Keeps best 1 per god on ladder, quarantines worst 1 per god, removes the rest."
+		_finalize_bot_league_button.pressed.connect(_on_finalize_bot_league_pressed)
+		_seek_action_row.add_child(_finalize_bot_league_button)
 	_apply_seek_action_button_sizing()
 
 func _build_recent_activity_panel() -> void:
@@ -2943,6 +2957,24 @@ func _on_host_bot_match_pressed() -> void:
 func _on_host_another_bot_match_pressed() -> void:
 	_request_local_bot_match(false)
 
+func _on_seed_bot_league_pressed() -> void:
+	if lobby_client == null or not lobby_client.is_authenticated():
+		status_label.text = "Sign in to seed the bot league."
+		return
+	_seed_bot_league_button.disabled = true
+	_finalize_bot_league_button.disabled = true
+	status_label.text = "Seeding bot league..."
+	lobby_client.request_seed_bot_league()
+
+func _on_finalize_bot_league_pressed() -> void:
+	if lobby_client == null or not lobby_client.is_authenticated():
+		status_label.text = "Sign in to finalize the bot league."
+		return
+	_seed_bot_league_button.disabled = true
+	_finalize_bot_league_button.disabled = true
+	status_label.text = "Finalizing bot league..."
+	lobby_client.request_finalize_bot_league()
+
 func _request_continuous_bot_match() -> void:
 	if not _bot_match_hosting_enabled or _has_pending_continuous_bot_match():
 		_update_host_bot_match_button()
@@ -3020,7 +3052,7 @@ func _on_my_bots_received(bots: Array) -> void:
 		_my_bot_option.add_item("%s · %s" % [str(bot.get("deck_name", "Bot")), str(bot.get("god_name", ""))])
 	_my_bot_dialog.popup_centered()
 
-func _on_bot_deleted(success: bool, message: String, bot_id: String) -> void:
+func _on_bot_deleted(success: bool, message: String, _bot_id: String) -> void:
 	status_label.text = message
 	if success:
 		lobby_client.request_my_bots()
@@ -3100,6 +3132,7 @@ func _get_local_bot_match_capacity() -> int:
 		1,
 		int((processor_count - LOCAL_BOT_MATCH_RESERVED_CORES) / float(LOCAL_BOT_MATCH_CORES_PER_WORKER))
 	)
+	@warning_ignore("integer_division")
 	var memory_capacity := maxi(
 		1,
 		int((available_bytes - LOCAL_BOT_MATCH_MIN_AVAILABLE_BYTES) / LOCAL_BOT_MATCH_MEMORY_PER_WORKER)
@@ -3303,6 +3336,44 @@ func _on_local_bot_work_result(job_id: String, success: bool, message: String) -
 		lobby_client.request_bot_match_history()
 	if _bot_match_hosting_enabled:
 		_request_continuous_bot_match()
+
+func _on_bot_league_result_received(result: Dictionary) -> void:
+	var request := str(result.get("request", ""))
+	var success := bool(result.get("success", false))
+	var message := str(result.get("message", ""))
+	_seed_bot_league_button.disabled = false
+	_finalize_bot_league_button.disabled = false
+	if request == LobbyProtocolScript.SEED_BOT_LEAGUE:
+		var gods = result.get("gods", {})
+		if success:
+			var counts := {}
+			var total := 0
+			for god_name in gods.keys():
+				var info = gods[god_name]
+				var count := int(info.get("count", 0))
+				counts[str(god_name)] = count
+				total += count
+			status_label.text = "Bot league seeded: %d bots across %d gods." % [total, gods.size()]
+			print("[Bot League] seeded: %s" % JSON.stringify(counts))
+		else:
+			status_label.text = "Seed failed: %s" % message
+	elif request == LobbyProtocolScript.FINALIZE_BOT_LEAGUE:
+		var summary = result.get("summary", {})
+		if success:
+			var kept := []
+			var quarantined := []
+			var removed := 0
+			for god_name in summary.keys():
+				var info = summary[god_name]
+				kept.append("%s kept: %s" % [str(god_name), str(info.get("kept", ""))])
+				quarantined.append("%s quarantined: %s" % [str(god_name), str(info.get("quarantined", ""))])
+				removed += int(info.get("removed", 0))
+			status_label.text = "Bot league finalized: %d removed." % removed
+			print("[Bot League] kept: %s" % JSON.stringify(kept))
+			print("[Bot League] quarantined: %s" % JSON.stringify(quarantined))
+		else:
+			status_label.text = "Finalize failed: %s" % message
+	_update_host_bot_match_button()
 
 func _stop_local_bot_match_worker() -> void:
 	_bot_match_hosting_enabled = false
@@ -6103,8 +6174,8 @@ func _encode_bug_report_screenshot() -> String:
 	image.convert(Image.FORMAT_RGB8)
 	var max_dimension := maxi(image.get_width(), image.get_height())
 	if max_dimension > 480:
-		var scale := 480.0 / float(max_dimension)
-		image.resize(maxi(1, int(image.get_width() * scale)), maxi(1, int(image.get_height() * scale)), Image.INTERPOLATE_LANCZOS)
+		var scale_factor := 480.0 / float(max_dimension)
+		image.resize(maxi(1, int(image.get_width() * scale_factor)), maxi(1, int(image.get_height() * scale_factor)), Image.INTERPOLATE_LANCZOS)
 	for _attempt in range(5):
 		var jpeg_bytes := image.save_jpg_to_buffer(0.58)
 		if jpeg_bytes.size() <= 12000:
@@ -8806,6 +8877,8 @@ func _bind_lobby_client_signals() -> void:
 		lobby_client.bot_ladder_received.connect(_on_bot_ladder_received)
 		lobby_client.bot_deck_received.connect(_on_bot_deck_received)
 		lobby_client.bot_match_history_received.connect(_on_bot_match_history_received)
+	if lobby_client.has_signal("bot_league_result_received") and not lobby_client.bot_league_result_received.is_connected(_on_bot_league_result_received):
+		lobby_client.bot_league_result_received.connect(_on_bot_league_result_received)
 	if lobby_client.has_signal("friends_state_received") and not lobby_client.friends_state_received.is_connected(_on_friends_state_received):
 		lobby_client.friends_state_received.connect(_on_friends_state_received)
 	if lobby_client.has_signal("account_settings_updated") and not lobby_client.account_settings_updated.is_connected(_on_account_settings_updated):
@@ -9304,7 +9377,7 @@ func _on_local_bot_match_game_ended(result: Dictionary) -> void:
 		return
 	lobby_client.submit_local_bot_match_result(result)
 
-func _on_local_bot_match_confirmed(success: bool, ranked_result: Dictionary, message: String) -> void:
+func _on_local_bot_match_confirmed(success: bool, ranked_result: Dictionary, _message: String) -> void:
 	var mock_game = get_node_or_null("GameContainer/MockGame")
 	if success and mock_game != null and mock_game.has_method("apply_local_ranked_result"):
 		mock_game.apply_local_ranked_result(ranked_result)
@@ -9549,6 +9622,7 @@ func _poll_match_punch_watch() -> void:
 		return
 	if connection_status != MultiplayerPeer.CONNECTION_CONNECTING:
 		return
+	var observer_session_id := str(_match_punch_watch.get("observer_session_id", ""))
 	var now_msec := Time.get_ticks_msec()
 	if int(_match_punch_watch.get("peer_instance", 0)) != enet_peer.get_instance_id():
 		# A fresh socket (retry loop) needs an immediate bounce and report.
@@ -9557,12 +9631,14 @@ func _poll_match_punch_watch() -> void:
 	if now_msec < int(_match_punch_watch.get("next_bounce_msec", 0)):
 		return
 	_match_punch_watch["next_bounce_msec"] = now_msec + MATCH_PUNCH_WATCH_BOUNCE_INTERVAL_MSEC
+	# The reflector keys client bounces per observer; without the session id the
+	# lobby's relay lookup (client:<match>:<observer>) never matches, so the host
+	# never learns this spectator's endpoint and never punches it.
 	var bounce_err: Error = mock_game.network_manager.send_punch_bounce(
-		_current_lobby_ip, reflector_port, match_id, PunchReflectorScript.BOUNCE_KIND_CLIENT)
+		_current_lobby_ip, reflector_port, match_id, PunchReflectorScript.BOUNCE_KIND_CLIENT, observer_session_id)
 	if bounce_err != OK:
 		_match_punch_watch["next_bounce_msec"] = now_msec + MATCH_PUNCH_WATCH_BOUNCE_INTERVAL_MSEC
 		return
-	var observer_session_id := str(_match_punch_watch.get("observer_session_id", ""))
 	if observer_session_id.is_empty() or now_msec < int(_match_punch_watch.get("next_report_msec", 0)):
 		return
 	_match_punch_watch["next_report_msec"] = now_msec + MATCH_PUNCH_WATCH_REPORT_INTERVAL_MSEC
@@ -9838,9 +9914,9 @@ func _hunting_tactics_log_contains(log_path: String, needle: String) -> bool:
 		return false
 	# Only scan the tail to avoid re-reading the whole file each frame.
 	file.seek_end()
-	var size := file.get_position()
-	file.seek(maxi(0, size - 16384))
-	var tail := file.get_buffer(mini(16384, int(size))).get_string_from_utf8()
+	var log_size := file.get_position()
+	file.seek(maxi(0, log_size - 16384))
+	var tail := file.get_buffer(mini(16384, int(log_size))).get_string_from_utf8()
 	file.close()
 	return tail.find(needle) >= 0
 
@@ -10608,7 +10684,7 @@ func _capture_logged_in_profile(player_name: String) -> void:
 	_update_resume_controls()
 	_refresh_account_identity_label()
 
-func _retry_account_switch_if_identity_mismatch(player_name: String) -> bool:
+func _retry_account_switch_if_identity_mismatch(_player_name: String) -> bool:
 	if not _account_switch_pending or lobby_client == null:
 		return false
 	var desired_email := _selected_account_username.strip_edges().to_lower()

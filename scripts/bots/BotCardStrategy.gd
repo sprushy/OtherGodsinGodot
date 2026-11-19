@@ -176,6 +176,7 @@ static func kur_jara_engine_premium(card: Card) -> int:
 	if card.get_tree_of_life_target() != null or card.get_tree_of_life_pending_destroy_count() > 0:
 		# A cycle is already running: the body survives in the grave and
 		# comes back, but nothing new can activate until it resolves.
+		@warning_ignore("integer_division")
 		return KUR_JARA_ENGINE_PREMIUM / 2
 	var fuel := false
 	if card.card_owner != null and card.card_owner.graveyard_zone != null:
@@ -185,6 +186,7 @@ static func kur_jara_engine_premium(card: Card) -> int:
 				fuel = true
 				break
 	# Graves are public board knowledge, so fuel is visible to both sides.
+	@warning_ignore("integer_division")
 	return KUR_JARA_ENGINE_PREMIUM if fuel else KUR_JARA_ENGINE_PREMIUM / 3
 
 static func _would_destroying_god_cause_god_death(bot, god: Card) -> bool:
@@ -214,6 +216,7 @@ static func mana_penalty(bot, amount: int, available_mana: int = -1, ignore_alta
 	if spend > 0 and not bot.bot_player.has_summoned_this_turn:
 		var creature: Card = bot._get_best_affordable_hand_creature(0)
 		if creature != null and bot._get_play_cost(creature, false) > bot.bot_player.mana - spend:
+			@warning_ignore("integer_division")
 			score += CARD_VALUE / 2
 	# A spend that dips the stock below the held Altar of Dreams line's
 	# funding strands its removal window until later upkeep income rebuilds
@@ -334,7 +337,9 @@ static func _mana_value_floor(bot) -> int:
 	if bool(profile.get("win_condition", false)):
 		return MANA_VALUE
 	if bool(profile.get("defensive", false)):
+		@warning_ignore("integer_division")
 		return MANA_VALUE * MANA_SINK_DEFENSIVE_FLOOR_PCT / 100
+	@warning_ignore("integer_division")
 	return MANA_VALUE * MANA_VALUE_FLOOR_PCT / 100
 
 static func mana_sink_profile(bot) -> Dictionary:
@@ -433,6 +438,7 @@ static func removal_score(bot, source: Card, target: Card, action: CardAction = 
 		if combat_visible(bot, action) and (action.attacker == target or bot._get_attack_defender_card(action) == target):
 			score -= bot._score_attack_economy(bot._estimate_attack_economy(action, null, 0, 0))
 	else:
+		@warning_ignore("integer_division")
 		score += CARD_VALUE / 5
 	return score
 
@@ -449,14 +455,14 @@ static func _debilitation_discount(bot, target: Card) -> int:
 	var other_effects := {}
 	for status in target._get_effective_statuses():
 		var name := str(status.get("name", ""))
-		if name not in ["malinalxochitl_poison", "destroy_at_turn_end", "freyja_active_open_sessrumnir", "tonal_extraction_no_shift"]:
+		if name not in ["poison", "destroy_at_turn_end", "freyja_active_open_sessrumnir", "tonal_extraction_no_shift"]:
 			continue
 		var duration := 1.0
 		if name != "destroy_at_turn_end" and (status.get("expires_after_combat", false) \
 				or int(status.get("expires_turn", bot.game_manager.turn_number + 2)) <= bot.game_manager.turn_number + 1):
 			duration = 0.5
 		other_effects[name] = maxf(float(other_effects.get(name, 0.0)), duration)
-	weight += 0.15 * float(other_effects.get("malinalxochitl_poison", 0.0))
+	weight += 0.15 * float(other_effects.get("poison", 0.0))
 	weight += 0.75 * float(other_effects.get("destroy_at_turn_end", 0.0))
 	weight += 0.6 * float(other_effects.get("freyja_active_open_sessrumnir", 0.0))
 	weight += 0.1 * float(other_effects.get("tonal_extraction_no_shift", 0.0))
@@ -891,6 +897,7 @@ static func target_score(bot, card: Card, target: Card, action: CardAction = nul
 			if own and target is EquipmentCard:
 				for bearer in bot._get_board_creatures(bot.bot_player):
 					if target.can_equip_to(bearer):
+						@warning_ignore("integer_division")
 						return value(bot, target) / 2
 				return BAD
 			if own and can_remove_from_board(bot, card, target, false):
@@ -1170,6 +1177,7 @@ static func effect_score(bot, card: Card, target: Card = null, action: CardActio
 					gain += value(bot, action.target)
 				elif action.card.has_method("would_destroy_creature_of_player") and action.card.would_destroy_creature_of_player(bot.game_manager, bot.bot_player, action.target):
 					for creature in bot._get_board_creatures(bot.bot_player):
+						@warning_ignore("integer_division")
 						gain += value(bot, creature) / 2
 		"Smite", "VoidShield":
 			gain = removal_score(bot, card, action.attacker, action, id != "VoidShield") if action != null else BAD
@@ -1185,6 +1193,7 @@ static func effect_score(bot, card: Card, target: Card = null, action: CardActio
 			elif action != null and action.card != null and action.card.has_method("would_destroy_creature_of_player"):
 				if action.card.would_destroy_creature_of_player(bot.game_manager, bot.bot_player, action.target):
 					for creature in bot._get_board_creatures(bot.bot_player):
+						@warning_ignore("integer_division")
 						gain += value(bot, creature) / 2
 		"HeroicStand": gain = mana_gain_value(bot, 7)
 		"TheInferno", "TheDeluge", "Earthquake", "FiresOfJudgment", "Famine", "OccultSingularity", "FalloftheMighty", "BaneOfTheSvartalfar":
@@ -1312,6 +1321,7 @@ static func wild_magic_gain(bot, spell: Card) -> int:
 		samples += 1
 		total += _wild_magic_card_gain(bot, card)
 	if first_known_magic == null:
+		@warning_ignore("integer_division")
 		return total / samples if samples > 0 else BAD
 	var known_chance: float = bot._sample_avoids(unknown_count, samples, unknown_slots_before_known_magic)
 	var unknown_gain := float(total) / samples if samples > 0 else 0.0
@@ -1320,6 +1330,7 @@ static func wild_magic_gain(bot, spell: Card) -> int:
 static func _wild_magic_card_gain(bot, card: Card) -> int:
 	if card is WildMagic or not supports_ranked_deck_card(card):
 		return 0
+	@warning_ignore("integer_division")
 	var gain: int = CARD_VALUE + bot._get_hand_value(card) * 30 - activation_cost(bot, card) * 400 * marginal_mana_value(bot) / 1000
 	if card is SpellCard and bot.game_manager.spells_must_be_prepared():
 		gain += MANA_VALUE
@@ -1393,6 +1404,7 @@ static func wake_gain(bot, source: Card, norse_only: bool = false) -> int:
 				continue
 			if bot.game_manager.is_immune_to_source(creature, source):
 				continue
+			@warning_ignore("integer_division")
 			gain += (1 if player == bot.bot_player else -1) * value(bot, creature) / 2
 	return gain
 
@@ -1456,6 +1468,7 @@ static func equipment_score(bot, equipment: Card, bearer: Card) -> int:
 		# Str is the largest equipment swing in the catalog and stays on the
 		# bearer permanently, so keep a positive floor once a legal bearer
 		# exists instead of waiting for a forecastable combat flip.
+		@warning_ignore("integer_division")
 		var sharur_base := maxi(gain + 2000 - CARD_VALUE / 2, 600)
 		return sharur_base - mana_penalty(bot, activation_cost(bot, equipment))
 	if key(equipment) == "BeardedAxe" and bearer.culture == "Norse" and bearer.has_type("Warrior"):
@@ -1511,6 +1524,7 @@ static func structure_score(bot, structure: Card, excluded: Array = []) -> int:
 					and bot.opponent.followers > 0:
 				var clock_turns := ceili(float(bot.opponent.followers) / float(AncientPyre.USES_PER_TURN * AncientPyre.EFFECT_AMOUNT))
 				if clock_turns > 0:
+					@warning_ignore("integer_division")
 					gain = maxi(gain, CARD_VALUE + CARD_VALUE * 2 / clock_turns)
 		"Watchtower":
 			# Counters arrive from future enemy entries, not existing cards.
@@ -1541,6 +1555,7 @@ static func structure_score(bot, structure: Card, excluded: Array = []) -> int:
 				return BAD
 			for creature in bot._get_board_creatures(bot.opponent):
 				if visible(bot, creature) and not creature.is_sleeping and not creature.has_status_effect("cannot_attack"):
+					@warning_ignore("integer_division")
 					gain += value(bot, creature) / 2
 			gain += 2500 if bot.bot_player.followers < 50 else 0
 		"E2Abzu":
@@ -1597,6 +1612,7 @@ static func structure_score(bot, structure: Card, excluded: Array = []) -> int:
 static func preparation_score(bot, card: Card) -> int:
 	var id := key(card)
 	if card is ShroudOfTheAncients:
+		@warning_ignore("integer_division")
 		var score := maxi(0, shroud_gain(bot, card) / 2)
 		for enemy in bot._get_board_creatures(bot.opponent):
 			if visible(bot, enemy) and enemy.current_zone in bot.opponent.frontline_zones \
@@ -1681,15 +1697,18 @@ static func cleanse_score(bot, source: Card, target: Card) -> int:
 	for status in target.active_statuses:
 		gain += healing_score(bot, target, status)
 		match str(status.get("name", "")):
-			"ability_negated", "activation_locked", "cannot_move", "destroy_at_turn_end", "malinalxochitl_poison":
+			"ability_negated", "activation_locked", "cannot_move", "destroy_at_turn_end", "poison":
+				@warning_ignore("integer_division")
 				gain += value(bot, target) / 3
 			"guardian", "immune", "stone_skin", "temporarily_revealed":
+				@warning_ignore("integer_division")
 				gain -= value(bot, target) / 4
 	for buff in target.active_buffs:
 		gain -= int(buff.get("str", 0)) * 240 + int(buff.get("res", 0)) * 140 + int(buff.get("spd", 0)) * 700
 	return gain if target.get_controller() == bot.bot_player else -gain
 
 static func blot_summon_gain(bot, card: Card) -> int:
+	@warning_ignore("integer_division")
 	return bot._get_card_economic_value(card) - CARD_VALUE / 2 + (bot._get_play_cost(card, false) + card.sacrifice_cost * 2) * MANA_VALUE
 
 static func budget_choices(bot, uids: Array, budget: int, count_limit: int, harmful: bool = false, blot: bool = false) -> Array[String]:
@@ -1717,9 +1736,9 @@ static func budget_choices(bot, uids: Array, budget: int, count_limit: int, harm
 			var score := int(previous[state]["score"]) + gain
 			if score <= int(states.get(next, {"score": BAD})["score"]):
 				continue
-			var selected: Array = previous[state]["uids"].duplicate()
-			selected.append(uid)
-			states[next] = {"score": score, "uids": selected}
+			var state_uids: Array = previous[state]["uids"].duplicate()
+			state_uids.append(uid)
+			states[next] = {"score": score, "uids": state_uids}
 	var best := {"score": 0, "uids": []}
 	for state in states.values():
 		if int(state["score"]) > int(best["score"]):
@@ -1894,8 +1913,10 @@ static func unlock_score(bot, power: PowerCard, unlock_cost: int = -1) -> int:
 		if not bot._posture_evaluating and bot.has_method("_strategy_posture"):
 			var posture := str(bot._strategy_posture().get("posture", "balanced"))
 			if posture == "race" and bot.bot_player.followers >= bot.opponent.followers:
+				@warning_ignore("integer_division")
 				gain -= CARD_VALUE / 2
 			elif posture == "locked_behind":
+				@warning_ignore("integer_division")
 				gain += CARD_VALUE / 2
 	return gain - mana_penalty(bot, unlock_cost)
 
@@ -2276,6 +2297,7 @@ static func divine_manifestation_wake_adjustment(bot, card: Card) -> int:
 		for enemy in bot._get_board_creatures(bot.opponent):
 			if enemy == card or enemy.is_sleeping or enemy.is_immune_to_sleep():
 				continue
+			@warning_ignore("integer_division")
 			adjustment -= duat_sleep_lock_value(bot, enemy) / 2
 	return adjustment
 
@@ -2383,6 +2405,7 @@ static func altar_unlock_line_gain(bot) -> int:
 		for enemy in bot._get_board_creatures(bot.opponent):
 			if not enemy.is_sleeping and visible(bot, enemy) \
 					and enemy.get_effective_strength() >= duat.get_effective_resilience():
+				@warning_ignore("integer_division")
 				renewal = renewal / 2
 		gain += renewal
 	return gain

@@ -182,6 +182,7 @@ static func create_void_frames() -> Array[Texture2D]:
 	)
 	for frame_index in range(VOID_FRAME_COUNT):
 		var column := frame_index % VOID_FRAME_COLUMNS
+		@warning_ignore("integer_division")
 		var row := frame_index / VOID_FRAME_COLUMNS
 		var frame := AtlasTexture.new()
 		frame.atlas = VOID_SHEET_TEXTURE

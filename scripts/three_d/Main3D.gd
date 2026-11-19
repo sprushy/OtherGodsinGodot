@@ -240,11 +240,11 @@ func _has_viewport_meta(meta_name: StringName) -> bool:
 
 func _is_cursor_meta_active(meta_value: Variant) -> bool:
 	if meta_value is Dictionary:
-		for owner in (meta_value as Dictionary).values():
-			if owner is Object:
-				if is_instance_valid(owner):
+		for entry_value in (meta_value as Dictionary).values():
+			if entry_value is Object:
+				if is_instance_valid(entry_value):
 					return true
-			elif bool(owner):
+			elif bool(entry_value):
 				return true
 		return false
 	return bool(meta_value)
@@ -865,7 +865,7 @@ func _refresh_stealth_fog_top_ui_overlay() -> void:
 		_clear_stealth_fog_top_ui_copies()
 		return
 	_stealth_fog_top_ui_root.size = view_size
-	var scale := Vector2(view_size.x / game_size.x, view_size.y / game_size.y)
+	var view_scale := Vector2(view_size.x / game_size.x, view_size.y / game_size.y)
 	var active_keys: Dictionary = {}
 	for node in get_tree().get_nodes_in_group(STEALTH_FOG_TOP_UI_GROUP):
 		var control := node as Control
@@ -885,7 +885,7 @@ func _refresh_stealth_fog_top_ui_overlay() -> void:
 				continue
 			_stealth_fog_top_ui_copies[key] = copy
 			_stealth_fog_top_ui_root.add_child(copy)
-		_sync_stealth_fog_top_ui_copy(copy, control, rect, scale)
+		_sync_stealth_fog_top_ui_copy(copy, control, rect, view_scale)
 	var stale_keys: Array = []
 	for key in _stealth_fog_top_ui_copies.keys():
 		if active_keys.has(key):
@@ -941,9 +941,9 @@ func _make_stealth_fog_top_ui_label_copy(source_label: Label) -> Label:
 	label.add_theme_color_override("font_color", source_label.get_theme_color("font_color"))
 	return label
 
-func _sync_stealth_fog_top_ui_copy(copy: Control, source: Control, rect: Rect2, scale: Vector2) -> void:
-	copy.position = rect.position * scale
-	copy.size = rect.size * scale
+func _sync_stealth_fog_top_ui_copy(copy: Control, source: Control, rect: Rect2, view_scale: Vector2) -> void:
+	copy.position = rect.position * view_scale
+	copy.size = rect.size * view_scale
 	copy.visible = true
 	var source_label := _find_first_label(source)
 	var copy_label := _find_first_label(copy)

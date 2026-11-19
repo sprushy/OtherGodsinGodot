@@ -59,6 +59,7 @@ func set_mana(value: int) -> void:
 
 
 func _update_tooltip() -> void:
+	@warning_ignore("integer_division")
 	tooltip_text = "Mana: %d\nScale: 0–%d • each division = %d mana" % [_mana, _scale_max, _scale_max / 10]
 	if _mana >= 100:
 		tooltip_text += "\nGlobe is full at 100 mana."

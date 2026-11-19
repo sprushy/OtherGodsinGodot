@@ -68,6 +68,7 @@ func build(
 		rank_panel.build(ranked_result, animate)
 	var turns := int(stats.get("turns", 0))
 	var seconds := int(stats.get("duration_seconds", 0))
+	@warning_ignore("integer_division")
 	_label(body, "%d TURNS   /   %d:%02d   /   THE FINAL CHRONICLE" % [turns, seconds / 60, seconds % 60], 13, _accent)
 	_rule(body)
 	_label(body, "HALL OF LEGENDS", 18, _accent)
@@ -190,12 +191,12 @@ func _award(title: String, subtitle: String, entry: Dictionary, stats: Dictionar
 	card_label.custom_minimum_size.y = 36
 	card_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	card_label.tooltip_text = card_name
-	var owner := "—"
+	var owner_name := "—"
 	var players: Array = stats.get("players", [])
 	var index := int(entry.get("player_index", -1))
 	if index >= 0 and index < players.size():
-		owner = str(players[index].get("name", ""))
-	_label(column, owner, 13, _muted)
+		owner_name = str(players[index].get("name", ""))
+	_label(column, owner_name, 13, _muted)
 	_label(column, str(entry.get(metric, "—")), 34, accent)
 	_label(column, unit if not entry.is_empty() else "No eligible card", 13, _muted)
 	_label(column, subtitle, 13, accent)

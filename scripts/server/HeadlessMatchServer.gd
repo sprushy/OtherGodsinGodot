@@ -810,8 +810,8 @@ func _on_bot_review_move_failed(reason: String) -> void:
 	if _bot_review_issues.has(reason) or _bot_review_issues.size() < 32:
 		_increment_bot_review_count(_bot_review_issues, reason)
 
-func _increment_bot_review_count(counts: Dictionary, name: String) -> void:
-	counts[name] = int(counts.get(name, 0)) + 1
+func _increment_bot_review_count(counts: Dictionary, entry_name: String) -> void:
+	counts[entry_name] = int(counts.get(entry_name, 0)) + 1
 
 func _bot_battle_summary() -> Dictionary:
 	var followers: Array[int] = []
@@ -826,13 +826,13 @@ func _write_bot_review(winner_index: int) -> void:
 		var deck: Dictionary = match_session.registered_player_decks_by_session.get(id, {})
 		var never_played: Array[String] = []
 		var unplayed_main_deck: Array[String] = []
-		for name in _bot_review_drawn[i]:
-			if not _bot_review_played[i].has(name) and not _bot_review_activated[i].has(name):
-				never_played.append(name)
+		for card_name in _bot_review_drawn[i]:
+			if not _bot_review_played[i].has(card_name) and not _bot_review_activated[i].has(card_name):
+				never_played.append(card_name)
 		never_played.sort()
-		for name in deck.get("cards", {}):
-			if name != deck.get("bot_god_name", "") and not _bot_review_played[i].has(name) and not _bot_review_activated[i].has(name):
-				unplayed_main_deck.append(name)
+		for card_name in deck.get("cards", {}):
+			if card_name != deck.get("bot_god_name", "") and not _bot_review_played[i].has(card_name) and not _bot_review_activated[i].has(card_name):
+				unplayed_main_deck.append(card_name)
 		unplayed_main_deck.sort()
 		seats.append({"name": match_session.get_player_display_name(id, i), "list_id": deck.get("bot_list_id", ""),
 			"cards": deck.get("cards", {}), "seen_in_hand": _bot_review_drawn[i], "played": _bot_review_played[i],

@@ -1448,8 +1448,8 @@ func _ensure_card_priority_toggle_button(card_uid: String, card_name: String) ->
 	_promote_transient_ui(button, TRANSIENT_UI_Z_INDEX + 120)
 	return button
 
-func _card_can_have_priority_toggle(card: Card, owner: Player) -> bool:
-	if card == null or owner == null or card.card_owner != owner:
+func _card_can_have_priority_toggle(card: Card, card_owner: Player) -> bool:
+	if card == null or card_owner == null or card.card_owner != card_owner:
 		return false
 	if card.card_name == "Hermes":
 		return false
@@ -1468,8 +1468,8 @@ func _card_can_have_priority_toggle(card: Card, owner: Player) -> bool:
 		return true
 	return false
 
-func _add_visible_priority_toggle_target(targets: Dictionary, card: Card, rect: Rect2, owner: Player) -> void:
-	if not _card_can_have_priority_toggle(card, owner):
+func _add_visible_priority_toggle_target(targets: Dictionary, card: Card, rect: Rect2, card_owner: Player) -> void:
+	if not _card_can_have_priority_toggle(card, card_owner):
 		return
 	if card.uid.strip_edges().is_empty() or targets.has(card.uid):
 		return
@@ -1482,14 +1482,14 @@ func _get_visible_priority_toggle_targets() -> Dictionary:
 	var targets: Dictionary = {}
 	if not _add_priority_toggles_to_all_cards or _is_observer_mode:
 		return targets
-	var owner := _get_priority_toggle_player()
-	if owner == null:
+	var toggle_player := _get_priority_toggle_player()
+	if toggle_player == null:
 		return targets
 	for zone_ui in _board_zone_uis:
 		var zu := zone_ui as BoardZoneUI
 		if zu == null or not is_instance_valid(zu) or not zu.visible or zu.zone == null or zu.zone.cards.is_empty():
 			continue
-		_add_visible_priority_toggle_target(targets, zu.zone.cards[0] as Card, zu.get_global_rect(), owner)
+		_add_visible_priority_toggle_target(targets, zu.zone.cards[0] as Card, zu.get_global_rect(), toggle_player)
 	if _player_god_zone_ui != null \
 			and is_instance_valid(_player_god_zone_ui) \
 			and _player_god_zone_ui.visible \
@@ -1499,19 +1499,19 @@ func _get_visible_priority_toggle_targets() -> Dictionary:
 			targets,
 			_player_god_zone_ui.zone.cards[0] as Card,
 			_player_god_zone_ui.get_global_rect(),
-			owner
+			toggle_player
 		)
 	var hand_player := _get_visible_hand_player()
-	if hand_player == owner:
+	if hand_player == toggle_player:
 		for hand_vc in _hand_visual_cards:
 			var vc := _get_valid_visual_card(hand_vc)
 			if vc == null \
 					or not is_instance_valid(vc) \
 					or not vc.visible \
 					or vc.card_data == null \
-					or vc.card_data.current_zone != owner.hand_zone:
+					or vc.card_data.current_zone != toggle_player.hand_zone:
 				continue
-			_add_visible_priority_toggle_target(targets, vc.card_data, vc.get_global_rect(), owner)
+			_add_visible_priority_toggle_target(targets, vc.card_data, vc.get_global_rect(), toggle_player)
 	return targets
 
 func _layout_all_card_priority_toggles() -> void:
@@ -6199,15 +6199,15 @@ func _register_action_log_hover_abilities(card: Card) -> void:
 		var entries: Array = _action_log_hover_abilities.get(ability_name, [])
 		var description := str(ability.get("description", "")).strip_edges()
 		var qualifiers := str(ability.get("qualifiers", "")).strip_edges()
-		var duplicate := false
+		var is_duplicate := false
 		for raw_entry in entries:
 			var existing := raw_entry as Dictionary
 			if str(existing.get("card_name", "")) == card.card_name \
 				and str(existing.get("description", "")) == description \
 				and str(existing.get("qualifiers", "")) == qualifiers:
-				duplicate = true
+				is_duplicate = true
 				break
-		if duplicate:
+		if is_duplicate:
 			continue
 		entries.append({
 			"name": ability_name,
@@ -8979,9 +8979,9 @@ func _continue_mopsus_hand_selection_after_reveal() -> void:
 		return
 	var selected_cards: Array[Card] = []
 	for uid in _pending_mopsus_selected_uids:
-		var selected_card := game_manager.get_card_by_uid(uid)
-		if selected_card != null:
-			selected_cards.append(selected_card)
+		var mopsus_card := game_manager.get_card_by_uid(uid)
+		if mopsus_card != null:
+			selected_cards.append(mopsus_card)
 	if selected_cards.size() >= _pending_mopsus_required_count:
 		_resolve_mopsus_hand_choice(source, selected_cards)
 	else:
@@ -9017,8 +9017,8 @@ func _get_follower_casualty_records_for_key(player_key: String) -> Array:
 	_follower_casualty_records_by_player_key[player_key] = records
 	return records
 
-func _follower_noise01(seed: int) -> float:
-	var value := sin(float(seed) * 12.9898 + 78.233) * 43758.5453
+func _follower_noise01(noise_seed: int) -> float:
+	var value := sin(float(noise_seed) * 12.9898 + 78.233) * 43758.5453
 	return value - floor(value)
 
 func _make_follower_body_record(record_index: int, state: String = "hidden", transient: bool = false) -> Dictionary:
@@ -9316,11 +9316,11 @@ func _mark_follower_bodies_converted_out(records: Array, count: int) -> int:
 		remaining -= 1
 	return count - remaining
 
-func _prepare_follower_conversion_record(record: Dictionary, from_key: String, to_key: String, phrase_queue: Array[String], seed: int) -> Dictionary:
+func _prepare_follower_conversion_record(record: Dictionary, from_key: String, to_key: String, phrase_queue: Array[String], noise_seed: int) -> Dictionary:
 	var left_count := int(ceil(float(FOLLOWER_CASUALTY_MAX_RECORDS) * 0.5))
 	var slot_index := clampi(int(record.get("slot_index", 0)), 0, FOLLOWER_CASUALTY_MAX_RECORDS - 1)
 	var end_side := -1.0 if slot_index < left_count else 1.0
-	var start_side := -end_side if _follower_noise01(seed + 7) > 0.42 else end_side
+	var start_side := -end_side if _follower_noise01(noise_seed + 7) > 0.42 else end_side
 	record["state"] = "converting"
 	record["born_msec"] = Time.get_ticks_msec()
 	record["idle_until_msec"] = 0
@@ -9328,10 +9328,10 @@ func _prepare_follower_conversion_record(record: Dictionary, from_key: String, t
 	record["convert_to_key"] = to_key
 	record["convert_start_side"] = start_side
 	record["convert_end_side"] = end_side
-	record["convert_start_x"] = _follower_noise01(seed + 11)
-	record["convert_start_y"] = _follower_noise01(seed + 13)
-	record["convert_end_x"] = _follower_noise01(seed + 17)
-	record["convert_end_y"] = _follower_noise01(seed + 19)
+	record["convert_start_x"] = _follower_noise01(noise_seed + 11)
+	record["convert_start_y"] = _follower_noise01(noise_seed + 13)
+	record["convert_end_x"] = _follower_noise01(noise_seed + 17)
+	record["convert_end_y"] = _follower_noise01(noise_seed + 19)
 	record["speech_text"] = _pop_follower_flee_phrase(phrase_queue)
 	record["move_x"] = end_side
 	record["move_y"] = 0.0
@@ -9377,9 +9377,9 @@ func _append_transient_follower_fleeing(records: Array, count: int, phrase_queue
 		var slot_index := clampi(FOLLOWER_CASUALTY_MAX_RECORDS - 1 - i, 0, FOLLOWER_CASUALTY_MAX_RECORDS - 1)
 		var record := _make_follower_body_record(slot_index, "fleeing", true)
 		record["born_msec"] = now_msec
-		var seed := now_msec + i * 37 + slot_index * 11
-		record["mill_x"] = _follower_noise01(seed)
-		record["mill_y"] = _follower_noise01(seed + 1)
+		var noise_seed := now_msec + i * 37 + slot_index * 11
+		record["mill_x"] = _follower_noise01(noise_seed)
+		record["mill_y"] = _follower_noise01(noise_seed + 1)
 		var flee_side := -1.0 if slot_index < int(ceil(float(FOLLOWER_CASUALTY_MAX_RECORDS) * 0.5)) else 1.0
 		record["flee_side"] = flee_side
 		record["speech_text"] = _pop_follower_flee_phrase(phrase_queue)
@@ -9411,18 +9411,18 @@ func _start_follower_entries(records: Array, count: int) -> void:
 		remaining -= 1
 
 func _start_follower_idle(record: Dictionary, now_msec: int) -> Dictionary:
-	var seed := int(record.get("target_seed", 0)) + int(record.get("slot_index", 0)) * 53 + now_msec
-	var idle_seconds := lerpf(FOLLOWER_CASUALTY_IDLE_MIN_SECONDS, FOLLOWER_CASUALTY_IDLE_MAX_SECONDS, _follower_noise01(seed))
+	var noise_seed := int(record.get("target_seed", 0)) + int(record.get("slot_index", 0)) * 53 + now_msec
+	var idle_seconds := lerpf(FOLLOWER_CASUALTY_IDLE_MIN_SECONDS, FOLLOWER_CASUALTY_IDLE_MAX_SECONDS, _follower_noise01(noise_seed))
 	record["idle_until_msec"] = now_msec + int(idle_seconds * 1000.0)
 	record["move_x"] = 0.0
 	record["move_y"] = 0.0
 	return record
 
 func _retarget_follower_body(record: Dictionary) -> Dictionary:
-	var seed := int(record.get("target_seed", 0)) + 97
-	record["target_seed"] = seed
-	record["target_x"] = _follower_noise01(seed)
-	record["target_y"] = _follower_noise01(seed + 1)
+	var noise_seed := int(record.get("target_seed", 0)) + 97
+	record["target_seed"] = noise_seed
+	record["target_x"] = _follower_noise01(noise_seed)
+	record["target_y"] = _follower_noise01(noise_seed + 1)
 	record["idle_until_msec"] = 0
 	return record
 
@@ -9450,7 +9450,7 @@ func _advance_follower_milling(record: Dictionary, now_msec: int, movement_speed
 	var delta_seconds := clampf(float(now_msec - last_msec) / 1000.0, 0.0, 0.12)
 	if delta_seconds <= 0.0:
 		return record
-	var position := Vector2(
+	var milled_position := Vector2(
 		float(record.get("mill_x", 0.5)),
 		float(record.get("mill_y", 0.5))
 	)
@@ -9458,24 +9458,24 @@ func _advance_follower_milling(record: Dictionary, now_msec: int, movement_speed
 		float(record.get("target_x", 0.5)),
 		float(record.get("target_y", 0.5))
 	)
-	var offset := target - position
+	var offset := target - milled_position
 	var distance := offset.length()
 	var speed := float(record.get("mill_speed", 0.12))
 	var step := speed * movement_speed_scale * delta_seconds
 	if distance <= maxf(step, 0.018):
-		position = target
+		milled_position = target
 		if state == "alive":
 			record = _start_follower_idle(record, now_msec)
 		else:
 			record = _retarget_follower_body(record)
 	else:
 		var direction := offset.normalized()
-		position += direction * step
+		milled_position += direction * step
 		record["move_x"] = direction.x
 		record["move_y"] = direction.y
 		record["flip"] = direction.x < 0.0
-	record["mill_x"] = clampf(position.x, 0.0, 1.0)
-	record["mill_y"] = clampf(position.y, 0.0, 1.0)
+	record["mill_x"] = clampf(milled_position.x, 0.0, 1.0)
+	record["mill_y"] = clampf(milled_position.y, 0.0, 1.0)
 	return record
 
 func _advance_follower_body_records(records: Array, movement_speed_scale: float = 1.0) -> void:
@@ -9840,7 +9840,7 @@ func _set_follower_sprite_height(sprite: Sprite2D, target_height: float) -> void
 func _get_follower_body_variant(record: Dictionary) -> int:
 	return abs(int(record.get("variant", int(record.get("slot_index", 0)) % 2))) % 2
 
-func _prepare_follower_sprite_for_record(sprite: Sprite2D, record: Dictionary, state: String, age_seconds: float, height_scale: float, now_msec: int, animation_speed_scale: float = 1.0) -> void:
+func _prepare_follower_sprite_for_record(sprite: Sprite2D, record: Dictionary, state: String, _age_seconds: float, height_scale: float, now_msec: int, animation_speed_scale: float = 1.0) -> void:
 	sprite.visible = true
 	var target_height := FOLLOWER_CASUALTY_ALIVE_HEIGHT * height_scale
 	var use_female_variant := _get_follower_body_variant(record) == 1
@@ -9922,13 +9922,13 @@ func _get_follower_display_point_for_player_key(player_key: String, side: float,
 	var opponent_key := _get_follower_casualty_player_key(opponent_player) if opponent_player != null else ""
 	if player_key != "" and player_key == opponent_key:
 		var band_rect := _get_opponent_follower_band_rect()
-		var hand_bounds := _get_opponent_follower_hand_bounds()
-		var mill_rect := _get_opponent_follower_mill_rect(hand_bounds, side, band_rect)
+		var opponent_hand_bounds := _get_opponent_follower_hand_bounds()
+		var opponent_mill_rect := _get_opponent_follower_mill_rect(opponent_hand_bounds, side, band_rect)
 		var inset_y := FOLLOWER_CASUALTY_ALIVE_HEIGHT * OPPONENT_FOLLOWER_HEIGHT_SCALE * 0.56
-		var usable_height := maxf(1.0, mill_rect.size.y - inset_y * 2.0)
+		var usable_height := maxf(1.0, opponent_mill_rect.size.y - inset_y * 2.0)
 		return Vector2(
-			mill_rect.position.x + clampf(normalized_x, 0.0, 1.0) * mill_rect.size.x,
-			mill_rect.position.y + inset_y + clampf(normalized_y, 0.0, 1.0) * usable_height
+			opponent_mill_rect.position.x + clampf(normalized_x, 0.0, 1.0) * opponent_mill_rect.size.x,
+			opponent_mill_rect.position.y + inset_y + clampf(normalized_y, 0.0, 1.0) * usable_height
 		)
 	var hand_key := _get_follower_casualty_player_key(hand_player) if hand_player != null else ""
 	var hand_bounds := _get_follower_casualty_hand_bounds()
@@ -10080,7 +10080,7 @@ func _get_follower_open_battlefield_route(start_position: Vector2, end_position:
 		return []
 	return route if _is_follower_route_clear(route, occupied_rects) else []
 
-func _get_follower_side_conversion_route(start_position: Vector2, end_position: Vector2, record: Dictionary, occupied_rects: Array[Rect2]) -> Array:
+func _get_follower_side_conversion_route(start_position: Vector2, end_position: Vector2, _record: Dictionary, occupied_rects: Array[Rect2]) -> Array:
 	var battlefield_bounds := _get_follower_battlefield_bounds()
 	var viewport_width := size.x if size.x > 0.0 else get_viewport_rect().size.x
 	var edge_padding := maxf(FOLLOWER_CASUALTY_CONVERT_SIDE_PADDING, FOLLOWER_CASUALTY_SCREEN_EDGE_PADDING)
@@ -15615,7 +15615,7 @@ func _begin_bit_meseri_target_selection(spell: BitMeseri) -> void:
 	_set_action_label_text(spell.card_name + ": click a creature, structure, or equipment to void it.")
 	update_ui()
 
-func _submit_or_queue_card_ability_by_uid(card_uid: String, option: Dictionary = {}, resolution_text_override: String = "") -> void:
+func _submit_or_queue_card_ability_by_uid(card_uid: String, option: Dictionary = {}, _resolution_text_override: String = "") -> void:
 	if game_manager == null or card_uid.strip_edges() == "":
 		return
 	var source_card := game_manager.get_card_by_uid(card_uid)
@@ -25856,7 +25856,7 @@ func _hide_freyja_active_prompt() -> void:
 	_pending_freyja_active_prompt = null
 	_pending_freyja_active_prompt_targets.clear()
 
-func _resolve_freyja_active_prompt(targets: Array[Card], fallback_text: String = "") -> void:
+func _resolve_freyja_active_prompt(targets: Array[Card], _fallback_text: String = "") -> void:
 	var card := _get_pending_freyja_active_card()
 	_hide_freyja_active_prompt()
 	if card == null:
@@ -26691,10 +26691,6 @@ func _resolve_harii_shaman_activation(card: HariiShamanScript, target: Card, ani
 	var option := {"target_uid": target.uid}
 	if animal_subtype != "":
 		option["animal_subtype"] = animal_subtype
-	var target_label := _get_target_label(target, game_manager.get_feedback_viewer(), target.card_name)
-	var resolution_text := "%s is transforming %s." % [_get_attack_card_label(card, card.card_name), target_label]
-	if animal_subtype != "":
-		resolution_text = "%s is transforming %s into %s." % [_get_attack_card_label(card, card.card_name), target_label, animal_subtype]
 	game_input.submit_action({type = "activate_card_ability", source_uid = card.uid, option = option})
 
 func _resolve_erlqueens_nightingale_shift(return_to_hand_after_shift: bool) -> void:
@@ -27551,7 +27547,6 @@ func _hide_blot_sacrifice_prompt() -> void:
 
 func _on_blot_sacrifice_confirm_pressed() -> void:
 	var spell = _pending_blot_spell
-	var sacrifice_target := _pending_blot_sacrifice_target
 	var costs_paid := _pending_blot_costs_paid
 	_sanitize_blot_selected_creatures()
 	var chosen_creatures := _pending_blot_selected_creatures.duplicate()

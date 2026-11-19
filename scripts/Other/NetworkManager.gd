@@ -344,8 +344,9 @@ func reconnect_client(address: String = "", port: int = -1) -> Error:
 ## Send one punch-discovery packet from this peer's own UDP socket to the
 ## lobby's punch reflector. The reflector records the packet's public sender
 ## endpoint under the match/role key, so lobby signaling can tell the other
-## side exactly which NAT mapping will carry the real ENet traffic.
-func send_punch_bounce(reflector_ip: String, reflector_port: int, match_id: String, bounce_kind: String) -> Error:
+## side exactly which NAT mapping will carry the real ENet traffic. Client
+## bounces carry the observer session id so each spectator is keyed separately.
+func send_punch_bounce(reflector_ip: String, reflector_port: int, match_id: String, bounce_kind: String, observer_session_id: String = "") -> Error:
 	var enet_connection := _get_bound_enet_connection()
 	if enet_connection == null:
 		return ERR_UNAVAILABLE
@@ -354,7 +355,7 @@ func send_punch_bounce(reflector_ip: String, reflector_port: int, match_id: Stri
 	enet_connection.socket_send(
 		reflector_ip.strip_edges(),
 		reflector_port,
-		PunchReflectorScript.make_marker(bounce_kind, match_id)
+		PunchReflectorScript.make_marker(bounce_kind, match_id, observer_session_id)
 	)
 	return OK
 
@@ -788,6 +789,6 @@ func _trace(message: String) -> void:
 	if file == null:
 		return
 	file.seek_end()
-	file.store_line("NetworkManager[%s]: %s" % [name, message])
+	file.store_line("NetworkManager[%s] @%s: %s" % [name, str(snappedf(Time.get_unix_time_from_system(), 0.001)), message])
 	file.flush()
 	file.close()

@@ -51,7 +51,7 @@ func _has_point(point: Vector2) -> bool:
 
 func _draw() -> void:
 	var hovered := is_hovered() or has_focus()
-	var pressed := is_pressed()
+	var is_pressed_state := is_pressed()
 	var pulse := 0.5 + 0.5 * sin(_pulse_time)
 	var accent := PALE_GOLD if hovered else GOLD
 	var center := Vector2(size.x * 0.5, 35.0)
@@ -66,7 +66,7 @@ func _draw() -> void:
 	var glow := Color(accent, 0.04 + pulse * 0.018)
 	for width in range(18, 3, -2):
 		draw_polyline(edge, glow, float(width), true)
-	draw_colored_polygon(polygon, Color(0.075, 0.058, 0.040, 0.98) if pressed else Color(0.13, 0.105, 0.075, 0.98))
+	draw_colored_polygon(polygon, Color(0.075, 0.058, 0.040, 0.98) if is_pressed_state else Color(0.13, 0.105, 0.075, 0.98))
 	draw_polyline(edge, accent, 1.4 if not hovered else 2.0, true)
 	var inner := _outline(7.0)
 	inner.append(inner[0])

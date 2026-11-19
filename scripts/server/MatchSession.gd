@@ -553,11 +553,11 @@ static func from_launch_config(config: Dictionary) -> MatchSession:
 static func from_match_info(match_info: Dictionary) -> MatchSession:
 	if match_info.is_empty():
 		return null
-	var match_id := str(match_info.get("match_id", "")).strip_edges()
-	var room_id := str(match_info.get("room_id", "")).strip_edges()
+	var resolved_match_id := str(match_info.get("match_id", "")).strip_edges()
+	var resolved_room_id := str(match_info.get("room_id", "")).strip_edges()
 	var roster_value = match_info.get("host_roster", [])
 	var roster: Array = roster_value if roster_value is Array else []
-	var player_session_ids: Array[String] = []
+	var resolved_player_session_ids: Array[String] = []
 	var decks_by_session: Dictionary = {}
 	var identity_by_session: Dictionary = {}
 	var tokens_by_session: Dictionary = {}
@@ -565,9 +565,9 @@ static func from_match_info(match_info: Dictionary) -> MatchSession:
 		if not (entry is Dictionary):
 			continue
 		var resolved_session_id := str((entry as Dictionary).get("session_id", "")).strip_edges()
-		if resolved_session_id.is_empty() or player_session_ids.has(resolved_session_id):
+		if resolved_session_id.is_empty() or resolved_player_session_ids.has(resolved_session_id):
 			continue
-		player_session_ids.append(resolved_session_id)
+		resolved_player_session_ids.append(resolved_session_id)
 		decks_by_session[resolved_session_id] = {
 			"deck_name": str((entry as Dictionary).get("deck_name", "")),
 			"cards": (entry as Dictionary).get("cards", {}),
@@ -579,11 +579,11 @@ static func from_match_info(match_info: Dictionary) -> MatchSession:
 		if not token.is_empty():
 			tokens_by_session[resolved_session_id] = token
 	var session := MatchSession.new(
-		match_id,
-		room_id,
+		resolved_match_id,
+		resolved_room_id,
 		str(match_info.get("server_ip", "127.0.0.1")),
 		int(match_info.get("match_port", 12345)),
-		player_session_ids,
+		resolved_player_session_ids,
 		decks_by_session,
 		identity_by_session
 	)

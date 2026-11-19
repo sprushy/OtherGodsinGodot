@@ -429,6 +429,10 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 				_send_to_peer(peer_id, LobbyProtocolScript.BOT_MATCH_HISTORY, page)
 		LobbyProtocolScript.REQUEST_BOT_WORK:
 			_handle_request_bot_work(peer_id, payload)
+		LobbyProtocolScript.SEED_BOT_LEAGUE:
+			_handle_seed_bot_league(peer_id, payload)
+		LobbyProtocolScript.FINALIZE_BOT_LEAGUE:
+			_handle_finalize_bot_league(peer_id, payload)
 		LobbyProtocolScript.SUBMIT_ISSUE_REPORT:
 			_handle_submit_issue_report(peer_id, payload)
 		LobbyProtocolScript.SUBMIT_BOT_PROPOSAL:
@@ -1147,6 +1151,33 @@ func _handle_request_bot_work(peer_id: int, payload: Dictionary = {}) -> void:
 	_send_to_peer(peer_id, LobbyProtocolScript.BOT_WORK_ASSIGNMENT, {
 		"job_id": job_id,
 		"decks": [deck_a, deck_b],
+	})
+
+func _handle_seed_bot_league(peer_id: int, payload: Dictionary = {}) -> void:
+	var session := _get_session_for_peer(peer_id)
+	if session.is_empty() or str(session.get("account_id", "")).is_empty():
+		_send_error_to_peer(peer_id, "Sign in before seeding the bot league.")
+		return
+	var count_per_god := clampi(int(payload.get("count_per_god", 10)), 1, 64)
+	var result := seed_bot_league(count_per_god)
+	_send_to_peer(peer_id, LobbyProtocolScript.BOT_LEAGUE_RESULT, {
+		"request": LobbyProtocolScript.SEED_BOT_LEAGUE,
+		"success": bool(result.get("success", false)),
+		"message": result.get("message", ""),
+		"gods": result.get("gods", {}),
+		"count_per_god": count_per_god,
+	})
+
+func _handle_finalize_bot_league(peer_id: int, payload: Dictionary = {}) -> void:
+	var session := _get_session_for_peer(peer_id)
+	if session.is_empty():
+		_send_error_to_peer(peer_id, "Join the lobby before finalizing the bot league.")
+		return
+	var result := finalize_bot_league()
+	_send_to_peer(peer_id, LobbyProtocolScript.BOT_LEAGUE_RESULT, {
+		"request": LobbyProtocolScript.FINALIZE_BOT_LEAGUE,
+		"success": bool(result.get("success", false)),
+		"summary": result.get("summary", {}),
 	})
 
 func _find_community_bot(account_id: String, bot_id: String) -> Dictionary:
@@ -2254,15 +2285,76 @@ func _find_rank_matched_bot_deck(best_of: int, account_id: String) -> Dictionary
 	_refresh_ranked_bot_deck_pool()
 	var progress: Dictionary = match_history_store.get_current_ranked_progress(account_id, best_of)
 	var target_stars := int(progress.get("points", 0))
+	var rank := RankedProgressionScript.summarize_bot_stars(target_stars)
+	var league := int(rank["league"])
+	var stars := int(rank["stars"])
+	# Iron V always faces a quarantined bad bot.
+	var force_quarantined := (league == 0 and stars <= 2)
+	# An Iron or Bronze player who lost their last game faces a quarantined bad
+	# bot on the very next match, exactly once per loss.
+	if not force_quarantined and match_history_store.take_serve_quarantined_next(account_id):
+		force_quarantined = true
 	var unavailable := _busy_bot_list_ids()
-	var deck := _ranked_bot_deck_pool.select_deck(unavailable, _bot_deck_rng, target_stars)
+	var deck := _ranked_bot_deck_pool.select_deck(unavailable, _bot_deck_rng, target_stars, force_quarantined)
 	while not deck.is_empty():
 		var submission := _validate_server_bot_deck(deck)
 		if not submission.is_empty():
 			return submission
 		unavailable[deck["list_id"]] = true
-		deck = _ranked_bot_deck_pool.select_deck(unavailable, _bot_deck_rng, target_stars)
+		deck = _ranked_bot_deck_pool.select_deck(unavailable, _bot_deck_rng, target_stars, force_quarantined)
 	return {}
+
+# Seeds a bot league: builds `count_per_god` ranked-legal bot decks for every
+# ranked god and registers them in the ranked bot deck pool as tournament lists.
+# The lists are exempt from early retirement so they can finish their round-robin.
+# Actual games are then run by the existing bot self-play / volunteer workers,
+# which record results into match history; the pool replays them into records.
+func seed_bot_league(count_per_god: int = 10) -> Dictionary:
+	_ensure_match_history_store()
+	_ensure_server_bot_deck_factory()
+	_refresh_ranked_bot_deck_pool()
+	if server_bot_deck_factory == null:
+		return {"success": false, "message": "Bot deck factory is unavailable."}
+	var god_names: Array[String] = server_bot_deck_factory.get_ranked_god_names()
+	god_names.sort()
+	var seeded: Dictionary = {}
+	var base_seed := int(Time.get_unix_time_from_system())
+	for god_name in god_names:
+		var list_ids: Array = []
+		for i in range(count_per_god):
+			var deck: Dictionary = {}
+			var attempt := 0
+			while attempt < 32:
+				var seed_value := base_seed + i * 1000 + attempt
+				deck = server_bot_deck_factory.build_random_deck(seed_value, str(god_name), true)
+				attempt += 1
+				if not deck.is_empty() and not deck.get("cards", {}).is_empty():
+					break
+				deck = {}
+			if deck.is_empty():
+				continue
+			var list_id := _ranked_bot_deck_pool.register_league_list(str(god_name), deck)
+			if not list_id.is_empty():
+				list_ids.append(list_id)
+		seeded[str(god_name)] = {"list_ids": list_ids.duplicate(), "count": list_ids.size()}
+	return {"success": true, "gods": seeded, "count_per_god": count_per_god}
+
+# Finalizes the seeded bot league. Keeps the strongest seeded bot of each god as
+# the active ladder bot, quarantines the weakest seeded bot of each god as a
+# forced-matchmaking bad bot (for Iron V and post-loss Iron/Bronze pairing), and
+# removes every other seeded bot.
+func finalize_bot_league() -> Dictionary:
+	_ensure_match_history_store()
+	_ensure_server_bot_deck_factory()
+	_refresh_ranked_bot_deck_pool()
+	var god_names: Array[String] = server_bot_deck_factory.get_ranked_god_names()
+	var summary := _ranked_bot_deck_pool.finalize_league(god_names)
+	_ranked_bot_deck_pool.set_league_mode(false)
+	return {"success": true, "summary": summary}
+
+func get_bot_league_status() -> Dictionary:
+	_refresh_ranked_bot_deck_pool()
+	return _ranked_bot_deck_pool.get_league_status()
 
 func _busy_bot_list_ids() -> Dictionary:
 	var busy := {}
@@ -2482,6 +2574,7 @@ func _maintain_bot_self_play() -> void:
 	if overloaded or background.size() >= target or Time.get_ticks_msec() < _next_bot_self_play_msec:
 		if background.is_empty() and foreground == 0 and overloaded:
 			if headroom >= 0 and headroom < BOT_SELF_PLAY_MEMORY_RESERVE:
+				@warning_ignore("integer_division")
 				_log_bot_self_play_block("Memory headroom %d MB is below the 512 MB reserve." % int(headroom / (1024 * 1024)))
 			else:
 				_log_bot_self_play_block("Lobby frame time %d ms exceeds the %d ms shed threshold." % [
@@ -2495,6 +2588,7 @@ func _maintain_bot_self_play() -> void:
 		_log_bot_self_play_block("cpu_budget is 0 with %d logical cores reserved for the lobby." % OS.get_processor_count())
 		return
 	if headroom >= 0 and headroom < BOT_SELF_PLAY_MEMORY_RESERVE + BOT_SELF_PLAY_MEMORY_PER_WORKER:
+		@warning_ignore("integer_division")
 		_log_bot_self_play_block("Memory headroom %d MB is below the %d MB needed to launch a worker." % [
 			int(headroom / (1024 * 1024)),
 			int((BOT_SELF_PLAY_MEMORY_RESERVE + BOT_SELF_PLAY_MEMORY_PER_WORKER) / (1024 * 1024)),
@@ -3298,6 +3392,16 @@ func _handle_local_bot_match_result(peer_id: int, payload: Dictionary) -> void:
 			record_message = "Could not record the match result."
 		_send_error_to_peer(peer_id, record_message)
 		return
+	# If a human Iron/Bronze challenger lost, serve them a quarantined bad bot on
+	# their next ranked match, exactly once per loss.
+	var human_lost := winner_index != 0
+	if human_lost:
+		var loser_account_id := str(session.get("account_id", "")).strip_edges()
+		if not loser_account_id.is_empty():
+			var loser_progress: Dictionary = match_history_store.get_current_ranked_progress(loser_account_id, int(match_session.series_best_of))
+			var loser_rank_name := str(loser_progress.get("rank_name", ""))
+			if loser_rank_name.begins_with("Iron") or loser_rank_name.begins_with("Bronze"):
+				match_history_store.set_serve_quarantined_next(loser_account_id, true)
 	_local_bot_matches_by_id.erase(match_id)
 	var room_id := str(entry.get("room_id", ""))
 	if not room_id.is_empty() and rooms_by_id.has(room_id):
@@ -4409,7 +4513,7 @@ func _get_server_version() -> String:
 func _trace(message: String) -> void:
 	if not trace_network and trace_file_path.is_empty():
 		return
-	var line := "LobbyServer[%s]: %s" % [name, message]
+	var line := "LobbyServer[%s] @%s: %s" % [name, str(snappedf(Time.get_unix_time_from_system(), 0.001)), message]
 	if trace_network:
 		print(line)
 	if trace_file_path.is_empty():

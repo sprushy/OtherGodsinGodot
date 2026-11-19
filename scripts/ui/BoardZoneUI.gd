@@ -1885,7 +1885,7 @@ func _build_ability_badge(
 	dim_modulate: Color = Color(0.82, 0.82, 0.86, 0.9),
 	glow_color: Color = AVAILABLE_ABILITY_BADGE_GLOW_COLOR,
 	mouse_filter_mode: int = -1,
-	z_index: int = 31,
+	badge_z_index: int = 31,
 	extra_children_callback: Callable = Callable()
 ) -> void:
 	if overlay == null or texture == null:
@@ -1897,7 +1897,7 @@ func _build_ability_badge(
 	else:
 		badge.mouse_filter = mouse_filter_mode as Control.MouseFilter
 	badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if clickable else Control.CURSOR_ARROW
-	badge.z_index = z_index
+	badge.z_index = badge_z_index
 	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	badge.offset_left = badge_left
 	badge.offset_top = badge_top
@@ -2227,8 +2227,8 @@ func _can_show_board_card_custom_ability_badge_as_ready(card: Card) -> bool:
 		for player in game_manager.players:
 			if player == null:
 				continue
-			for zone in player.frontline_zones + player.reserve_zones:
-				for target in zone.cards:
+			for target_zone in player.frontline_zones + player.reserve_zones:
+				for target in target_zone.cards:
 					if statue.can_activate(game_manager, target):
 						return true
 		return false
@@ -2968,7 +2968,7 @@ func _make_intercept_preview_badge_container(badge_name: String) -> Control:
 func _add_intercept_preview_badge_icon(
 	badge: Control,
 	texture: Texture2D,
-	rotation_degrees: float,
+	icon_rotation_degrees: float,
 	modulate_color: Color = Color.WHITE
 ) -> TextureRect:
 	if badge == null or texture == null:
@@ -2980,7 +2980,7 @@ func _add_intercept_preview_badge_icon(
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	icon.pivot_offset = Vector2(INTERCEPT_PREVIEW_BADGE_SIZE, INTERCEPT_PREVIEW_BADGE_SIZE) * 0.5
-	icon.rotation_degrees = rotation_degrees
+	icon.rotation_degrees = icon_rotation_degrees
 	icon.modulate = modulate_color
 	badge.add_child(icon)
 	return icon
@@ -4246,7 +4246,7 @@ func _build_debuff_entry_from_status(card: Card, status: Dictionary) -> Dictiona
 				"count": 1,
 			}
 		return {}
-	if status_name == "malinalxochitl_poison" or status_name.contains("poison"):
+	if status_name == "poison" or status_name.contains("poison"):
 		return {
 			"key": "source:%s" % source_key,
 			"source_card": source_card,

@@ -251,6 +251,7 @@ func validate_reinforcement_swap(
 	return proposed_validation
 
 static func get_reinforcement_limit(regular_count: int, power_count: int) -> int:
+	@warning_ignore("integer_division")
 	return maxi(0, int((regular_count + power_count) / REINFORCEMENT_DIVISOR))
 
 func validate_card_array(deck: Array[Card], special_setup: Dictionary = {}) -> Dictionary:

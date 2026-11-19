@@ -101,17 +101,17 @@ func _update_tooltip() -> void:
 func set_primed_top_card(card: Card) -> void:
 	# A hidden placeholder (face-down card in a deck zone) means a primed card
 	# is present, but its identity is not public knowledge for this viewer.
-	var hidden := card != null \
+	var hidden_card := card != null \
 		and card.is_face_down \
 		and card.current_zone != null \
 		and card.current_zone.zone_type == Zone.ZoneType.DECK
-	var next_name := card.get_display_name_for_control(self) if card != null and not hidden else ""
-	var next_art := UITextureCacheScript.get_texture(card.art_path) if card != null and not hidden else null
-	if next_name == _top_card_name and next_art == _top_card_art and hidden == _top_card_hidden:
+	var next_name := card.get_display_name_for_control(self) if card != null and not hidden_card else ""
+	var next_art := UITextureCacheScript.get_texture(card.art_path) if card != null and not hidden_card else null
+	if next_name == _top_card_name and next_art == _top_card_art and hidden_card == _top_card_hidden:
 		return
 	_top_card_name = next_name
 	_top_card_art = next_art
-	_top_card_hidden = hidden
+	_top_card_hidden = hidden_card
 	_update_tooltip()
 	queue_redraw()
 

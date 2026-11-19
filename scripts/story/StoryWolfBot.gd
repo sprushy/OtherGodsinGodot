@@ -1,6 +1,6 @@
 extends "res://scripts/bots/ThorPracticeBot.gd"
 
-func _choose_upkeep_option(zone: Zone) -> Dictionary:
+func _choose_upkeep_option(_zone: Zone) -> Dictionary:
 	return {"choice": "draw"}
 
 func _try_attack() -> bool:

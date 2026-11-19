@@ -825,6 +825,7 @@ func _save(skip_backup_refresh: bool = false) -> void:
 	if not FileAccess.file_exists(STORAGE_BACKUP_PATH):
 		_copy_storage_snapshot(STORAGE_PATH, STORAGE_BACKUP_PATH)
 	_debug_save_counter += 1
+	@warning_ignore("integer_division")
 	print("[STARTUP] profile store save #%d took %dms (json=%dkB)" % [
 		_debug_save_counter,
 		Time.get_ticks_msec() - save_started_ms,

@@ -27,8 +27,8 @@ void fragment() {
 	COLOR = vec4(base.rgb * diffuse * snow_depth, base.a);
 }
 """
-	var material := ShaderMaterial.new()
-	material.shader = shader
-	material.set_shader_parameter("terrain_normal", load(NORMAL_PATH) as Texture2D)
-	material.set_shader_parameter("terrain_height", load(HEIGHT_PATH) as Texture2D)
-	self.material = material
+	var snow_material := ShaderMaterial.new()
+	snow_material.shader = shader
+	snow_material.set_shader_parameter("terrain_normal", load(NORMAL_PATH) as Texture2D)
+	snow_material.set_shader_parameter("terrain_height", load(HEIGHT_PATH) as Texture2D)
+	self.material = snow_material

@@ -71,37 +71,37 @@ func _material(color: Color, patina: Color, wear: Color, metal: float, roughness
 	return result
 
 
-func _mesh(parent: Node3D, mesh: Mesh, material: Material, position: Vector3) -> MeshInstance3D:
+func _mesh(parent: Node3D, mesh: Mesh, material: Material, mesh_position: Vector3) -> MeshInstance3D:
 	var instance := MeshInstance3D.new()
 	instance.mesh = mesh
 	instance.material_override = material
-	instance.position = position
+	instance.position = mesh_position
 	parent.add_child(instance)
 	return instance
 
 
-func _cylinder(parent: Node3D, radius: float, height: float, position: Vector3, material: Material) -> MeshInstance3D:
+func _cylinder(parent: Node3D, radius: float, height: float, mesh_position: Vector3, material: Material) -> MeshInstance3D:
 	var mesh := CylinderMesh.new()
 	mesh.top_radius = radius
 	mesh.bottom_radius = radius
 	mesh.height = height
 	mesh.radial_segments = 48
-	return _mesh(parent, mesh, material, position)
+	return _mesh(parent, mesh, material, mesh_position)
 
 
-func _box(parent: Node3D, dimensions: Vector3, position: Vector3, material: Material) -> MeshInstance3D:
+func _box(parent: Node3D, dimensions: Vector3, mesh_position: Vector3, material: Material) -> MeshInstance3D:
 	var mesh := BoxMesh.new()
 	mesh.size = dimensions
-	return _mesh(parent, mesh, material, position)
+	return _mesh(parent, mesh, material, mesh_position)
 
 
-func _sphere(parent: Node3D, radius: float, position: Vector3, material: Material) -> void:
+func _sphere(parent: Node3D, radius: float, mesh_position: Vector3, material: Material) -> void:
 	var mesh := SphereMesh.new()
 	mesh.radius = radius
 	mesh.height = radius * 2.0
 	mesh.radial_segments = 12
 	mesh.rings = 6
-	_mesh(parent, mesh, material, position)
+	_mesh(parent, mesh, material, mesh_position)
 
 
 func _ring(parent: Node3D, radius: float, thickness: float, height: float, material: Material) -> void:
@@ -141,8 +141,8 @@ func _build_casing() -> void:
 	_mesh(casing, _sector(0.94, 1.005, 2.34, 2.43, SLOT_HALF, TAU - SLOT_HALF), _trim, Vector3.ZERO)
 	_ring(casing, 0.95, 0.045, 0.43, _bronze)
 	for edge in [-SLOT_HALF, SLOT_HALF]:
-		var position := Vector3(sin(edge) * 0.96, 1.43, cos(edge) * 0.96)
-		var jamb := _box(casing, Vector3(0.075, 2.02, 0.10), position, _trim)
+		var jamb_position := Vector3(sin(edge) * 0.96, 1.43, cos(edge) * 0.96)
+		var jamb := _box(casing, Vector3(0.075, 2.02, 0.10), jamb_position, _trim)
 		jamb.rotation.y = edge
 	for step in range(7):
 		var angle := lerpf(SLOT_HALF + 0.08, TAU - SLOT_HALF - 0.08, float(step) / 6.0)
@@ -210,6 +210,7 @@ func _worn_plinth() -> ArrayMesh:
 	for band in range(profile.size()):
 		var points := PackedVector3Array()
 		for step in range(32):
+			@warning_ignore("integer_division")
 			var side := step / 4
 			var blend := float(step % 4) / 4.0
 			var start := Vector2(sin(float(side) * TAU / 8.0), cos(float(side) * TAU / 8.0))

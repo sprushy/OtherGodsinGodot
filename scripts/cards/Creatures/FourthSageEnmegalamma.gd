@@ -50,6 +50,7 @@ func get_valid_targets(_game_manager: GameManager) -> Array[Card]:
 func get_acquisition_cost(target: Card) -> int:
 	if target == null:
 		return 0
+	@warning_ignore("integer_division")
 	return maxi(0, target.level) / 2
 
 func resolve_search_sage_impact(game_manager: GameManager, target: Card) -> String:

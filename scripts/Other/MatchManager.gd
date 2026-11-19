@@ -3415,8 +3415,8 @@ func _advance_authoritative_priority() -> void:
 		return
 	var player := game_manager.priority_player
 	if player == null:
-		var top_action: CardAction = game_manager.action_stack.back()
-		player = top_action.initial_priority_player if top_action.initial_priority_player != null else game_manager.get_opponent(top_action.source_player)
+		var restore_action: CardAction = game_manager.action_stack.back()
+		player = restore_action.initial_priority_player if restore_action.initial_priority_player != null else game_manager.get_opponent(restore_action.source_player)
 		game_manager.priority_player = player
 	if player == null:
 		_log_authoritative_flow_state("priority_advance:no_player")
