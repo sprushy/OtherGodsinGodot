@@ -126,6 +126,10 @@ var _bot_proposal_last_submit_by_account: Dictionary = {}
 var _ladder_cache: Array[Dictionary] = []
 var _ladder_cache_dirty: bool = true
 
+# Pool rebuild is expensive (replays all bot match results). Only rebuild when
+# something has actually changed since the last refresh.
+var _pool_dirty: bool = true
+
 # Room-list broadcast throttle — limits broadcasts to at most once per second so
 # rapid room churn (e.g. bot self-play cycling) does not flood every connected peer.
 var _room_list_broadcast_pending: bool = false
@@ -135,6 +139,7 @@ const _ROOM_LIST_BROADCAST_MIN_INTERVAL_MSEC: int = 1000
 func _invalidate_ladder_cache() -> void:
 	_ladder_cache_dirty = true
 	_ladder_cache.clear()
+	_pool_dirty = true
 
 static func get_dedicated_bot_self_play_limit(launch_args: Dictionary) -> int:
 	var default_limit := MAX_BOT_SELF_PLAY
@@ -2770,17 +2775,21 @@ func _ensure_server_bot_deck_factory() -> void:
 	_ranked_bot_deck_pool.set_deck_auditor(Callable(server_bot_deck_factory, "audit_ranked_bot_deck"))
 
 func _refresh_ranked_bot_deck_pool() -> void:
+	if not _pool_dirty:
+		return
+	_pool_dirty = false
 	_ensure_match_history_store()
 	_ensure_server_bot_deck_factory()
 	var community_bot_ids := _get_community_bot_ids()
 	if not _same_community_bot_ids(_known_community_bot_ids, community_bot_ids):
 		_ranked_bot_deck_pool.invalidate_replay()
 	_known_community_bot_ids = community_bot_ids.duplicate()
-	# Collect bot deck results directly from result files, bypassing the
-	# MatchHistoryStore cache which may not include dedicated result files
-	# written to server_data/match_history_results/.
+	# Use the MatchHistoryStore cache, which already merges dedicated per-match
+	# result files via _load_dedicated_results(). This keeps the pool rebuild
+	# incremental and consistent with the injected store (e.g. tests) instead of
+	# re-scanning the default results directory on every refresh.
 	var results: Array[Dictionary] = []
-	for raw_result in _collect_bot_deck_results_from_files():
+	for raw_result in match_history_store.get_bot_deck_results():
 		var result: Dictionary = raw_result.duplicate(true)
 		var list_id := str(result.get("list_id", "")).strip_edges()
 		# Results recorded before community bots joined the ladder stored the

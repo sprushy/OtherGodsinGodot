@@ -2882,8 +2882,8 @@ func _build_seek_tabs() -> void:
 	_host_bot_gauntlet_button.pressed.connect(_open_my_bot_picker.bind(true))
 	_seek_action_row.add_child(_host_bot_gauntlet_button)
 	_apply_seek_action_button_sizing()
-	if OS.is_debug_build():
-		_build_bot_league_section()
+	# Bot league architecture quarantined: do not build its UI surface.
+	pass
 
 ## Debug-only roster of everyone signed in to the connected lobby. The lobby
 ## refuses this request on release builds, so the control only exists in debug.
