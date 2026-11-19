@@ -14,7 +14,7 @@ func _init() -> void:
 	resilience = 40
 	strength = 20
 	flavor_text = ""
-	ability_text = "Toxic Emergence ([b]Reveal[/b]): Poison all opposing creatures."
+	ability_text = "Toxic Emergence ([b]Reveal[/b]): Give all opposing creatures [b]Poison[/b]."
 	culture = "Triskelion"
 	artist = "User provided art"
 	art_path = ART_PATH
@@ -56,8 +56,10 @@ func resolve_toxic_emergence(game_manager: GameManager) -> String:
 				MalinalxochitlAcolyte.POISON_STATUS,
 				MalinalxochitlAcolyte.POISON_SOURCE,
 				self,
-				card_owner
+				card_owner,
+				{"applied_turn": game_manager.turn_number}
 			)
+			MalinalxochitlAcolyte.apply_poison_tick_on_application(game_manager, card, self, card_owner)
 			poisoned_targets.append(card.get_target_log_display_name(game_manager.get_feedback_viewer()))
 
 	if poisoned_targets.is_empty():

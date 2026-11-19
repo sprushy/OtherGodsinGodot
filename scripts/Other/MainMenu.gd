@@ -162,6 +162,7 @@ var _bot_league_section: VBoxContainer
 var _ladder_button: Button
 var _host_bot_match_button: Button
 var _host_another_bot_match_button: Button
+var _stop_hosting_bot_matches_button: Button
 var _host_own_bot_button: Button
 var _host_bot_gauntlet_button: Button
 var _custom_bot_ids_pending: Array[String] = []
@@ -2873,6 +2874,11 @@ func _build_seek_tabs() -> void:
 	_host_bot_match_button.text = "Host Bot Matches"
 	_host_bot_match_button.pressed.connect(_on_host_bot_match_pressed)
 	_seek_action_row.add_child(_host_bot_match_button)
+	_stop_hosting_bot_matches_button = Button.new()
+	_stop_hosting_bot_matches_button.text = "Stop Hosting Bot Matches"
+	_stop_hosting_bot_matches_button.pressed.connect(_stop_local_bot_match_worker)
+	_seek_action_row.add_child(_stop_hosting_bot_matches_button)
+	_stop_hosting_bot_matches_button.hide()
 	_host_own_bot_button = Button.new()
 	_host_own_bot_button.text = "Host Match for Your Bot"
 	_host_own_bot_button.pressed.connect(_open_my_bot_picker.bind(false))
@@ -3204,6 +3210,9 @@ func _update_host_bot_match_button() -> void:
 		or (not _bot_match_hosting_enabled and _get_local_bot_match_capacity() <= 0)
 	var local_match_count := _get_local_bot_match_count() + _pending_local_bot_match_modes.size()
 	var has_capacity := local_match_count < _get_local_bot_match_capacity()
+	if is_instance_valid(_stop_hosting_bot_matches_button):
+		_stop_hosting_bot_matches_button.visible = local_match_count > 0 or not _local_bot_match_submitting.is_empty()
+		_stop_hosting_bot_matches_button.disabled = local_match_count <= 0 and _local_bot_match_submitting.is_empty()
 	if is_instance_valid(_host_another_bot_match_button):
 		# Bot match hosting commands are always shown in the seek list.
 		_host_another_bot_match_button.visible = true

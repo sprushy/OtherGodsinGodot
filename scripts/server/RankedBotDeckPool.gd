@@ -208,6 +208,7 @@ func register_league_list(god_name: String, deck: Dictionary, explicit_list_id: 
 	pool.get("lists", []).append(new_list)
 	_league_list_ids.append(list_id)
 	_league_mode = true
+	_ensure_unique_deck_names()
 	return list_id
 
 func finalize_league(god_names: Array[String]) -> Dictionary:

@@ -2775,8 +2775,7 @@ func _ensure_server_bot_deck_factory() -> void:
 	_ranked_bot_deck_pool.set_deck_auditor(Callable(server_bot_deck_factory, "audit_ranked_bot_deck"))
 
 func _refresh_ranked_bot_deck_pool() -> void:
-	if not _pool_dirty:
-		return
+	_pool_dirty = true
 	_pool_dirty = false
 	_ensure_match_history_store()
 	_ensure_server_bot_deck_factory()
@@ -2789,7 +2788,7 @@ func _refresh_ranked_bot_deck_pool() -> void:
 	# incremental and consistent with the injected store (e.g. tests) instead of
 	# re-scanning the default results directory on every refresh.
 	var results: Array[Dictionary] = []
-	for raw_result in match_history_store.get_bot_deck_results():
+	for raw_result in _collect_bot_deck_results_from_files():
 		var result: Dictionary = raw_result.duplicate(true)
 		var list_id := str(result.get("list_id", "")).strip_edges()
 		# Results recorded before community bots joined the ladder stored the
