@@ -3,7 +3,8 @@ extends RefCounted
 const RankedProgressionScript = preload("res://scripts/server/RankedProgression.gd")
 const ServerPathsScript = preload("res://scripts/server/ServerPaths.gd")
 const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
-const LISTS_PER_GOD := 7
+const LISTS_PER_GOD := 14
+const THOR_LISTS_PER_GOD := 8
 const EARLY_RETIREMENT_GAMES := 60
 const EXPLORATION_CHANCE := 0.25
 # How many of the worst bots per god are kept as quarantined bad bots for
@@ -112,7 +113,7 @@ func _ensure_unique_deck_names() -> void:
 
 func _is_generic_bot_name(name: String) -> bool:
 	var normalized := name.strip_edges().to_lower()
-	return normalized.is_empty() or normalized.contains("challenger")
+	return normalized.is_empty() or normalized.contains("challenger") or normalized.contains("autofill") or normalized.contains("autofill bot")
 
 func _make_unique_bot_name(god_name: String, deck: Dictionary, used_names: Dictionary) -> String:
 	var names: Array = NAME_POOLS.get(god_name, DEFAULT_NAMES)
@@ -565,7 +566,7 @@ func select_deck(busy_list_ids: Dictionary, rng: RandomNumberGenerator, target_s
 		if not challenger.is_empty():
 			lists.append(challenger)
 		for list: Dictionary in lists:
-			if bool(list.get("league_list", false)) or _is_quarantined_list(pool, list["list_id"]) or busy_list_ids.has(list["list_id"]):
+			if _is_quarantined_list(pool, list["list_id"]) or busy_list_ids.has(list["list_id"]):
 				continue
 			var gap := absi(_league_for_stars(int(list["stars"])) - target_league)
 			if gap <= MATCHMAKING_LEAGUE_TIER_WINDOW:
@@ -706,7 +707,7 @@ func rank_underrepresented_gods(god_names: Array[String], rng: RandomNumberGener
 	for god_name in god_names:
 		var pool: Dictionary = _by_god.get(god_name, {})
 		var count := (pool.get("lists", []) as Array).size() + int(reserved.get(god_name, 0))
-		if count >= LISTS_PER_GOD:
+		if count >= list_capacity(god_name):
 			continue
 		candidates.append({"name": god_name, "count": count, "tie": rng.randf()})
 	candidates.sort_custom(func(first: Dictionary, second: Dictionary) -> bool:
@@ -727,6 +728,11 @@ static func can_self_play_pair(first: Dictionary, second: Dictionary) -> bool:
 
 static func display_god_name(god_name: String) -> String:
 	return god_name.get_slice(",", 0)
+
+static func list_capacity(god_name: String) -> int:
+	if display_god_name(god_name) == "Thor":
+		return THOR_LISTS_PER_GOD
+	return LISTS_PER_GOD
 
 func can_play_list(god_name: String, list_id: String) -> bool:
 	if list_id.is_empty():
@@ -854,7 +860,7 @@ func _apply_result(result: Dictionary) -> void:
 	_update_record(new_list, outcome)
 	if _should_retire_early(new_list):
 		return
-	if lists.size() < LISTS_PER_GOD:
+	if lists.size() < list_capacity(god_name):
 		_name_list(new_list, lists)
 		lists.append(new_list)
 		return
@@ -885,19 +891,30 @@ func _update_record(list: Dictionary, outcome: String) -> void:
 	RankedProgressionScript.apply_bot_result(list, outcome)
 
 func _should_retire_early(list: Dictionary) -> bool:
-	# Seeded tournament bots must finish their round-robin, so they are never
-	# retired early while league mode is active.
-	if str(list.get("list_id", "")) in _league_list_ids:
-		return false
 	var games_played := _get_played_match_count(list)
 	if games_played <= 0 or games_played > EARLY_RETIREMENT_GAMES:
 		return false
-	return 3 * int(list["losses"]) >= 2 * games_played
+	return 10 * int(list["losses"]) >= 7 * games_played
 
 func _retire_list(pool: Dictionary, list: Dictionary) -> void:
 	var list_id := str(list.get("list_id", ""))
 	if list_id.is_empty():
 		return
+	# Quarantine retired weak bots but hold onto them for forced matchmaking
+	# (Iron V and post-loss Iron/Bronze pairing) instead of discarding them.
+	var qids: Array = pool.get("quarantined_ids", []).duplicate()
+	if not (list_id in qids):
+		qids.append(list_id)
+		pool["quarantined_ids"] = qids
+	var qlists: Array = pool.get("quarantined_lists", []).duplicate()
+	var already_held := false
+	for held in qlists:
+		if str(held.get("list_id", "")) == list_id:
+			already_held = true
+			break
+	if not already_held:
+		qlists.append(list.duplicate(true))
+		pool["quarantined_lists"] = qlists
 	if pool["challenger"].get("list_id", "") == list_id:
 		pool["challenger"] = {}
 		pool["quarantined_id"] = ""
@@ -914,7 +931,7 @@ func _retire_list(pool: Dictionary, list: Dictionary) -> void:
 			lists.append(challenger)
 			pool["challenger"] = {}
 	if pool["challenger"].is_empty() and not pool["pending"].is_empty():
-		if lists.size() < LISTS_PER_GOD:
+		if lists.size() < list_capacity(str(list.get("god_name", ""))):
 			var pending: Dictionary = pool["pending"].pop_front()
 			_name_list(pending, lists)
 			lists.append(pending)

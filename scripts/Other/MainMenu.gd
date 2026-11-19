@@ -158,11 +158,7 @@ var _current_room_snapshot: Dictionary = {}
 var _open_seek_rooms: Array[Dictionary] = []
 var _bot_match_live: Array = []
 var _seek_action_row: HBoxContainer
-var _tab_bar: HBoxContainer
-var _multiplayer_tab_button: Button
-var _bot_league_tab_button: Button
-var _bot_league_content_panel: VBoxContainer
-var _bot_league_tab_active: bool = false
+var _bot_league_section: VBoxContainer
 var _ladder_button: Button
 var _host_bot_match_button: Button
 var _host_another_bot_match_button: Button
@@ -1259,48 +1255,20 @@ func _apply_seek_action_button_sizing() -> void:
 		button.custom_minimum_size = Vector2(0.0, 36.0)
 		button.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 
-func _build_multiplayer_tabs() -> void:
+func _build_bot_league_section() -> void:
 	if multiplayer_container == null:
 		return
-	if _tab_bar != null and is_instance_valid(_tab_bar):
+	if _bot_league_section != null and is_instance_valid(_bot_league_section):
 		return
-	_tab_bar = HBoxContainer.new()
-	_tab_bar.name = "MultiplayerTabBar"
-	_tab_bar.add_theme_constant_override("separation", 4)
-	_tab_bar.alignment = BoxContainer.ALIGNMENT_BEGIN
-
-	_multiplayer_tab_button = Button.new()
-	_multiplayer_tab_button.text = "Multiplayer"
-	_multiplayer_tab_button.pressed.connect(_on_multiplayer_tab_pressed)
-	_tab_bar.add_child(_multiplayer_tab_button)
-
-	if OS.is_debug_build():
-		_bot_league_tab_button = Button.new()
-		_bot_league_tab_button.text = "Bot League"
-		_bot_league_tab_button.pressed.connect(_on_bot_league_tab_pressed)
-		_tab_bar.add_child(_bot_league_tab_button)
-
-	multiplayer_container.add_child(_tab_bar)
-	multiplayer_container.move_child(_tab_bar, _seek_action_row.get_index() + 1)
-
-	_build_bot_league_content_panel()
-	multiplayer_container.add_child(_bot_league_content_panel)
-	_bot_league_content_panel.hide()
-
-	_on_multiplayer_tab_pressed()
-
-func _build_bot_league_content_panel() -> void:
-	if _bot_league_content_panel != null and is_instance_valid(_bot_league_content_panel):
-		return
-	var panel := VBoxContainer.new()
-	panel.name = "BotLeagueContent"
-	panel.add_theme_constant_override("separation", 6)
+	var section := VBoxContainer.new()
+	section.name = "BotLeagueSection"
+	section.add_theme_constant_override("separation", 6)
 
 	var header := Label.new()
 	header.text = "Bot League"
 	header.add_theme_font_size_override("font_size", 14)
 	header.add_theme_color_override("font_color", Color(0.72, 0.82, 1.0))
-	panel.add_child(header)
+	section.add_child(header)
 
 	var row1 := HBoxContainer.new()
 	row1.add_theme_constant_override("separation", 8)
@@ -1325,12 +1293,14 @@ func _build_bot_league_content_panel() -> void:
 	_dump_bot_deck_results_button = _make_bot_league_button("Dump Bot Deck Results", "Prints every bot match result from match history to the console so you can verify results exist and what list_ids they reference.", _on_dump_bot_deck_results_pressed)
 	row2.add_child(_dump_bot_deck_results_button)
 
-	panel.add_child(row1)
-	panel.add_child(row2)
+	section.add_child(row1)
+	section.add_child(row2)
 
-	_apply_bot_league_button_sizing(panel)
+	_apply_bot_league_button_sizing(section)
 
-	_bot_league_content_panel = panel
+	_bot_league_section = section
+	multiplayer_container.add_child(_bot_league_section)
+	multiplayer_container.move_child(_bot_league_section, _seek_action_row.get_index() + 1)
 
 func _make_bot_league_button(text: String, tooltip: String, on_pressed: Callable) -> Button:
 	var button := Button.new()
@@ -1339,10 +1309,10 @@ func _make_bot_league_button(text: String, tooltip: String, on_pressed: Callable
 	button.pressed.connect(on_pressed)
 	return button
 
-func _apply_bot_league_button_sizing(panel: Node) -> void:
-	if panel == null:
+func _apply_bot_league_button_sizing(section: Node) -> void:
+	if section == null:
 		return
-	for child in panel.get_children():
+	for child in section.get_children():
 		if not child is HBoxContainer:
 			continue
 		for button in child.get_children():
@@ -1351,54 +1321,6 @@ func _apply_bot_league_button_sizing(panel: Node) -> void:
 			button.add_theme_font_size_override("font_size", 16)
 			button.custom_minimum_size = Vector2(0.0, 36.0)
 			button.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-
-func _on_multiplayer_tab_pressed() -> void:
-	if _bot_league_tab_active:
-		_bot_league_tab_active = false
-		if _bot_league_content_panel != null and is_instance_valid(_bot_league_content_panel):
-			_bot_league_content_panel.hide()
-		_show_multiplayer_tab_children()
-		_update_tab_button_states()
-
-func _on_bot_league_tab_pressed() -> void:
-	if not _bot_league_tab_active:
-		_bot_league_tab_active = true
-		_hide_multiplayer_tab_children()
-		if _bot_league_content_panel != null and is_instance_valid(_bot_league_content_panel):
-			_bot_league_content_panel.show()
-		_update_tab_button_states()
-
-func _update_tab_button_states() -> void:
-	if _multiplayer_tab_button != null and is_instance_valid(_multiplayer_tab_button):
-		_multiplayer_tab_button.button_pressed = not _bot_league_tab_active
-	if _bot_league_tab_button != null and is_instance_valid(_bot_league_tab_button):
-		_bot_league_tab_button.button_pressed = _bot_league_tab_active
-
-func _hide_multiplayer_tab_children() -> void:
-	if multiplayer_container == null:
-		return
-	for child in multiplayer_container.get_children():
-		if not child is Control:
-			continue
-		if child == _tab_bar:
-			continue
-		if child == _bot_league_content_panel:
-			continue
-		if child.name == "MultiplayerHeaderRow":
-			continue
-		child.hide()
-
-func _show_multiplayer_tab_children() -> void:
-	if multiplayer_container == null:
-		return
-	for child in multiplayer_container.get_children():
-		if not child is Control:
-			continue
-		if child == _bot_league_content_panel:
-			continue
-		child.show()
-	if _bot_league_content_panel != null and is_instance_valid(_bot_league_content_panel):
-		_bot_league_content_panel.hide()
 
 func _apply_main_menu_text_sizing_recursive(root: Node) -> void:
 	if root == null:
@@ -2961,7 +2883,7 @@ func _build_seek_tabs() -> void:
 	_seek_action_row.add_child(_host_bot_gauntlet_button)
 	_apply_seek_action_button_sizing()
 	if OS.is_debug_build():
-		_build_multiplayer_tabs()
+		_build_bot_league_section()
 
 ## Debug-only roster of everyone signed in to the connected lobby. The lobby
 ## refuses this request on release builds, so the control only exists in debug.

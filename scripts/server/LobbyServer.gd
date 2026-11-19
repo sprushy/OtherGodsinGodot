@@ -120,6 +120,22 @@ var _spectator_acks_by_key: Dictionary = {}
 var _issue_report_last_submit_by_peer: Dictionary = {}
 var _bot_proposal_last_submit_by_account: Dictionary = {}
 
+# Ladder cache — the full sorted ladder is expensive to rebuild on every request.
+# It is rebuilt only when _ladder_cache_dirty is true, then reused for subsequent
+# requests until something mutates bot standings or match history.
+var _ladder_cache: Array[Dictionary] = []
+var _ladder_cache_dirty: bool = true
+
+# Room-list broadcast throttle — limits broadcasts to at most once per second so
+# rapid room churn (e.g. bot self-play cycling) does not flood every connected peer.
+var _room_list_broadcast_pending: bool = false
+var _room_list_broadcast_last_msec: int = 0
+const _ROOM_LIST_BROADCAST_MIN_INTERVAL_MSEC: int = 1000
+
+func _invalidate_ladder_cache() -> void:
+	_ladder_cache_dirty = true
+	_ladder_cache.clear()
+
 static func get_dedicated_bot_self_play_limit(launch_args: Dictionary) -> int:
 	var default_limit := MAX_BOT_SELF_PLAY
 	if OS.has_environment(BOT_SELF_PLAY_LIMIT_ENV):
@@ -1307,6 +1323,7 @@ func _handle_clear_league_bots(peer_id: int, payload: Dictionary = {}) -> void:
 	var result := _ranked_bot_deck_pool.clear_league_bots()
 	_ranked_bot_deck_pool.set_league_mode(false)
 	_pending_league_pairings.clear()
+	_invalidate_ladder_cache()
 	_send_to_peer(peer_id, LobbyProtocolScript.CLEAR_LEAGUE_BOTS_RESULT, {
 		"success": true,
 		"removed": int(result.get("removed", 0)),
@@ -1325,6 +1342,7 @@ func _handle_rebuild_league_records(peer_id: int, payload: Dictionary = {}) -> v
 	# to per-match files rather than match_history.json.
 	var results: Array[Dictionary] = _collect_bot_deck_results_from_files()
 	var result := _ranked_bot_deck_pool.rebuild_league_records(results)
+	_invalidate_ladder_cache()
 	_send_to_peer(peer_id, LobbyProtocolScript.REBUILD_LEAGUE_RECORDS_RESULT, {
 		"success": true,
 		"re_registered": int(result.get("re_registered", 0)),
@@ -1670,6 +1688,7 @@ func _handle_submit_bot_deck(peer_id: int, payload: Dictionary) -> void:
 	file.store_string(JSON.stringify(bot, "\t"))
 	file.flush()
 	file.close()
+	_invalidate_ladder_cache()
 	_send_to_peer(peer_id, LobbyProtocolScript.BOT_DECK_SUBMISSION_RESULT, {
 		"success": true, "message": "Bot submitted to the community pool.",
 		"bot": _public_bot_entry(bot),
@@ -1725,6 +1744,7 @@ func _handle_delete_bot(peer_id: int, payload: Dictionary) -> void:
 	# longer appears in standings or recent bot activity.
 	_ranked_bot_deck_pool.invalidate_replay()
 	_refresh_ranked_bot_deck_pool()
+	_invalidate_ladder_cache()
 	_send_to_peer(peer_id, LobbyProtocolScript.BOT_DELETED, {
 		"success": true, "message": "Bot deleted from the community pool.", "bot_id": bot_id,
 	})
@@ -1986,6 +2006,7 @@ func _handle_submit_bot_work_result(peer_id: int, payload: Dictionary) -> void:
 		accepted = bool(result.get("success", false))
 		if accepted:
 			_client_bot_jobs.erase(job_id)
+			_invalidate_ladder_cache()
 	_send_to_peer(peer_id, LobbyProtocolScript.BOT_WORK_RESULT, {
 		"job_id": job_id,
 		"success": accepted,
@@ -2026,48 +2047,26 @@ func _handle_request_bot_ladder(peer_id: int, message_type: String, payload: Dic
 
 func _build_ladder_page(request: Dictionary, current_username: String = "") -> Dictionary:
 	var is_paged := request.has("request_id")
-	var best_of := int(request["best_of"]) if is_paged else 1
-	var ladder: Array[Dictionary] = match_history_store.get_human_ladder(account_store.get_ladder_usernames(), best_of)
+	var best_of := int(request.get("best_of", 1)) if is_paged else 1
+	# For best_of == 1 (the default ladder), use the cached full ladder.
+	# Other best_of values are rare admin queries — always compute fresh.
+	var ladder: Array[Dictionary]
 	if best_of == 1:
-		_refresh_ranked_bot_deck_pool()
-		for god: Dictionary in _ranked_bot_deck_pool.get_ladder_summary()["gods"]:
-			var lists: Array = god["lists"].duplicate()
-			if not god["challenger"].is_empty():
-				lists.append(god["challenger"])
-			for bot: Dictionary in lists:
-				var rank := RankedProgressionScript.summarize_bot_stars(int(bot["stars"]))
-				var bot_deck := _ranked_bot_deck_pool.get_deck_details(str(bot["list_id"]))
-				var portrait := RankBadgeCatalog.portrait_from_deck(
-					int(rank["league"]),
-					bot_deck.get("cards", {}),
-					bot_deck.get("reinforcements", {})
-				)
-				var bot_owner_name := str(bot.get("owner_name", "")).strip_edges()
-				ladder.append({"name": bot["name"], "list_id": bot["list_id"], "points": bot["stars"],
-					"rank": rank["name"], "stars": rank["stars"], "is_bot": true,
-					"owner_name": bot_owner_name,
-					"can_delete": (not bot_owner_name.is_empty() and bot_owner_name == current_username.strip_edges()),
-					"portrait": portrait,
-					"wins": int(bot.get("wins", 0)), "losses": int(bot.get("losses", 0)), "draws": int(bot.get("draws", 0)),
-					"main_gods": [str(god.get("god_name", ""))],
-					"recent_matches": match_history_store.get_recent_ranked_bot_matches_for_list(str(bot["list_id"]), 10, false)})
-	ladder.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-		if int(a["points"]) != int(b["points"]):
-			return int(a["points"]) > int(b["points"])
-		var a_wins := int(a.get("wins", 0))
-		var b_wins := int(b.get("wins", 0))
-		var a_losses := int(a.get("losses", 0))
-		var b_losses := int(b.get("losses", 0))
-		var a_games := a_wins + a_losses
-		var b_games := b_wins + b_losses
-		var a_record_score := a_wins * b_games
-		var b_record_score := b_wins * a_games
-		if a_record_score != b_record_score:
-			return a_record_score > b_record_score
-		return a["name"].nocasecmp_to(b["name"]) < 0
-	)
-	for index in range(ladder.size()):
-		ladder[index]["ladder_position"] = index + 1
+		if _ladder_cache_dirty or _ladder_cache.is_empty():
+			_ladder_cache = _build_full_ladder()
+			_ladder_cache_dirty = false
+		# Deep-duplicate so per-request mutations (can_delete, filtering) don't
+		# corrupt the cache for other callers.
+		ladder = []
+		for row in _ladder_cache:
+			ladder.append(row.duplicate(true))
+	else:
+		ladder = _build_full_ladder_for_best_of(best_of)
+	# Annotate can_delete per request (depends on who is asking).
+	var trimmed_username := current_username.strip_edges()
+	for row in ladder:
+		var bot_owner := str(row.get("owner_name", "")).strip_edges()
+		row["can_delete"] = (not bot_owner.is_empty() and bot_owner == trimmed_username)
 	var player_type := str(request.get("player_type", LobbyProtocolScript.LADDER_FILTER_EVERYONE))
 	if player_type == LobbyProtocolScript.LADDER_FILTER_PLAYERS or player_type == LobbyProtocolScript.LADDER_FILTER_BOTS:
 		# Filter before paging so one type's standings compact into consecutive
@@ -2091,14 +2090,63 @@ func _build_ladder_page(request: Dictionary, current_username: String = "") -> D
 	if not is_paged:
 		return {"ladder": _public_ladder_rows(ladder)}
 	var last_page := maxi(0, ceili(float(ladder.size()) / LobbyProtocolScript.LADDER_PAGE_SIZE) - 1)
-	var page := mini(int(request["page"]), last_page)
+	var page := mini(int(request.get("page", 0)), last_page)
 	var start := page * LobbyProtocolScript.LADDER_PAGE_SIZE
 	return {
 		"ladder": _public_ladder_rows(ladder.slice(start, start + LobbyProtocolScript.LADDER_PAGE_SIZE)),
-		"request_id": request["request_id"],
+		"request_id": request.get("request_id", 0),
 		"page": page,
 		"last_page": last_page,
 	}
+
+# Expensive: builds the full sorted ladder with humans + bots for best_of=1.
+# Called only when the cache is dirty.
+func _build_full_ladder() -> Array[Dictionary]:
+	return _build_full_ladder_for_best_of(1)
+
+func _build_full_ladder_for_best_of(best_of: int) -> Array[Dictionary]:
+	var ladder: Array[Dictionary] = match_history_store.get_human_ladder(account_store.get_ladder_usernames(), best_of)
+	if best_of == 1:
+		_refresh_ranked_bot_deck_pool()
+		for god: Dictionary in _ranked_bot_deck_pool.get_ladder_summary()["gods"]:
+			var lists: Array = god["lists"].duplicate()
+			if not god["challenger"].is_empty():
+				lists.append(god["challenger"])
+			for bot: Dictionary in lists:
+				var rank := RankedProgressionScript.summarize_bot_stars(int(bot["stars"]))
+				var bot_deck := _ranked_bot_deck_pool.get_deck_details(str(bot["list_id"]))
+				var portrait := RankBadgeCatalog.portrait_from_deck(
+					int(rank["league"]),
+					bot_deck.get("cards", {}),
+					bot_deck.get("reinforcements", {})
+				)
+				var bot_owner_name := str(bot.get("owner_name", "")).strip_edges()
+				ladder.append({"name": bot["name"], "list_id": bot["list_id"], "points": bot["stars"],
+					"rank": rank["name"], "stars": rank["stars"], "is_bot": true,
+					"owner_name": bot_owner_name,
+					"can_delete": false,
+					"portrait": portrait,
+					"wins": int(bot.get("wins", 0)), "losses": int(bot.get("losses", 0)), "draws": int(bot.get("draws", 0)),
+					"main_gods": [str(god.get("god_name", ""))],
+					"recent_matches": match_history_store.get_recent_ranked_bot_matches_for_list(str(bot["list_id"]), 10, false)})
+	ladder.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		if int(a["points"]) != int(b["points"]):
+			return int(a["points"]) > int(b["points"])
+		var a_wins := int(a.get("wins", 0))
+		var b_wins := int(b.get("wins", 0))
+		var a_losses := int(a.get("losses", 0))
+		var b_losses := int(b.get("losses", 0))
+		var a_games := a_wins + a_losses
+		var b_games := b_wins + b_losses
+		var a_record_score := a_wins * b_games
+		var b_record_score := b_wins * a_games
+		if a_record_score != b_record_score:
+			return a_record_score > b_record_score
+		return a["name"].nocasecmp_to(b["name"]) < 0
+	)
+	for index in range(ladder.size()):
+		ladder[index]["ladder_position"] = index + 1
+	return ladder
 
 func _public_ladder_rows(rows: Array[Dictionary]) -> Array[Dictionary]:
 	for row in rows:
@@ -2557,6 +2605,7 @@ func seed_bot_league(count_per_god: int = 10) -> Dictionary:
 			if not list_id.is_empty():
 				list_ids.append(list_id)
 		seeded[str(god_name)] = {"list_ids": list_ids.duplicate(), "count": list_ids.size()}
+	_invalidate_ladder_cache()
 	return {"success": true, "gods": seeded, "count_per_god": count_per_god}
 
 # Finalizes the seeded bot league. Keeps the strongest seeded bot of each god as
@@ -2570,6 +2619,7 @@ func finalize_bot_league() -> Dictionary:
 	var god_names: Array[String] = server_bot_deck_factory.get_ranked_god_names()
 	var summary := _ranked_bot_deck_pool.finalize_league(god_names)
 	_ranked_bot_deck_pool.set_league_mode(false)
+	_invalidate_ladder_cache()
 	return {"success": true, "summary": summary}
 
 func get_bot_league_status() -> Dictionary:
@@ -2618,6 +2668,7 @@ func run_league_round_robin(matches_per_bot: int = 50) -> Dictionary:
 			match_counts[bot_id] = int(match_counts.get(bot_id, 0)) + 1
 			match_counts[opponent_id] = int(match_counts.get(opponent_id, 0)) + 1
 	_pending_league_pairings = pairings
+	_invalidate_ladder_cache()
 	return {"success": true, "total_matches": pairings.size(), "matches_per_bot": matches_per_bot, "bot_count": all_bots.size()}
 
 func _busy_bot_list_ids() -> Dictionary:
@@ -3662,6 +3713,7 @@ func _handle_local_bot_match_result(peer_id: int, payload: Dictionary) -> void:
 			record_message = "Could not record the match result."
 		_send_error_to_peer(peer_id, record_message)
 		return
+	_invalidate_ladder_cache()
 	# If a human Iron/Bronze challenger lost, serve them a quarantined bad bot on
 	# their next ranked match, exactly once per loss.
 	var human_lost := winner_index != 0
@@ -4213,6 +4265,23 @@ func _broadcast_room_snapshot(room: LobbyRoom) -> void:
 			local_room_snapshot_updated.emit(snapshot)
 
 func _broadcast_room_lists() -> void:
+	var now_msec := Time.get_ticks_msec()
+	if now_msec - _room_list_broadcast_last_msec >= _ROOM_LIST_BROADCAST_MIN_INTERVAL_MSEC:
+		_do_broadcast_room_lists()
+		_room_list_broadcast_last_msec = now_msec
+		_room_list_broadcast_pending = false
+	elif not _room_list_broadcast_pending:
+		_room_list_broadcast_pending = true
+		call_deferred("_flush_room_list_broadcast")
+
+func _flush_room_list_broadcast() -> void:
+	if not _room_list_broadcast_pending:
+		return
+	_room_list_broadcast_pending = false
+	_room_list_broadcast_last_msec = Time.get_ticks_msec()
+	_do_broadcast_room_lists()
+
+func _do_broadcast_room_lists() -> void:
 	for peer_id in session_id_by_peer.keys():
 		var session_id := str(session_id_by_peer.get(peer_id, "")).strip_edges()
 		_send_to_peer(int(peer_id), LobbyProtocolScript.ROOM_LIST, {
