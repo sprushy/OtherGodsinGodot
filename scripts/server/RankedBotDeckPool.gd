@@ -772,7 +772,12 @@ func _apply_result(result: Dictionary) -> void:
 				_resolve_trial(pool)
 			return
 		for list: Dictionary in lists:
-			if list["list_id"] == list_id and list.get("fingerprint", "") == _fingerprint(result):
+			if list["list_id"] == list_id:
+				# A bot is identified by its list_id, not its deck. If the deck
+				# changed, update the fingerprint so future results still match.
+				var fingerprint := _fingerprint(result)
+				if list.get("fingerprint", "") != fingerprint:
+					list["fingerprint"] = fingerprint
 				_update_record(list, outcome)
 				if list_id == pool["quarantined_id"] and not challenger.is_empty():
 					challenger["trial_target_games"] = _get_played_match_count(list)
