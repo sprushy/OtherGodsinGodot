@@ -981,7 +981,7 @@ func _choose_freyja_resurrection(freyja: Freyja) -> Card:
 		# The creature returns to the graveyard at our next upkeep. Its printed
 		# card value is not a permanent gain from this activation.
 		var score := _follower_safety_gain(danger, {"summon": target, "zone": zone, "stance": target})
-		score += _estimate_freyja_attack_gain(target, zone, cost, int(baseline.get("score", 0)))
+		score += _estimate_temporary_summon_attack_gain(target, zone, cost, int(baseline.get("score", 0)))
 		score += _score_effect_summon_sacrifice_followup([target], cost)
 		score -= cost * _mana_rate()
 		if score > best_score:
@@ -989,7 +989,22 @@ func _choose_freyja_resurrection(freyja: Freyja) -> Card:
 			best_score = score
 	return best_target
 
-func _estimate_freyja_attack_gain(target: Card, zone: Zone, activation_cost: int, baseline_score: int) -> int:
+func _estimate_tablet_attack_gain(tablet: TabletOfLife, target: Card, zone: Zone, setup_cost: int) -> int:
+	if game_manager.current_player != bot_player or zone not in bot_player.frontline_zones \
+			or game_manager.attack_restrictions.has(bot_player):
+		return 0
+	var preview := _preview_board_creature(target, zone)
+	preview.active_statuses = target.active_statuses.duplicate()
+	preview.creature_mode = Card.CreatureMode.AGGRESSIVE
+	preview.is_face_down = false
+	preview.is_stealth = false
+	preview.wake_up()
+	tablet._apply_tablet_of_life(preview, game_manager)
+	if preview.is_paralyzed() or preview.has_status_effect("cannot_attack"):
+		return 0
+	return _estimate_temporary_summon_attack_gain(preview, zone, setup_cost, 0)
+
+func _estimate_temporary_summon_attack_gain(target: Card, zone: Zone, activation_cost: int, baseline_score: int) -> int:
 	if zone not in bot_player.frontline_zones or game_manager.turn_number <= 1 \
 			or game_manager.has_resolved_attack_this_turn or game_manager.attack_restrictions.has(bot_player) \
 			or game_manager._any_active_structure_forces_defensive_summon() \
@@ -2748,34 +2763,10 @@ func _effect_follower_safety_gain(card: Card, target: Card, danger: int) -> int:
 				change.merge({"summon": target, "zone": zone, "stance": target, "defensive": false})
 			return _follower_safety_gain(danger, change)
 		"TabletOfLife":
-			var tablet_zone := _get_first_open_summon_zone(bot_player)
-			if target == null or tablet_zone == null:
-				return 0
-			if target.get_effective_level() < 3:
-				var tablet_change := {}
-				tablet_change.merge({"summon": target, "zone": tablet_zone, "stance": target, "defensive": false})
-				return _follower_safety_gain(danger, tablet_change)
-			# Level 3+ Tablets destroy the resurrected creature at turn's end, so
-			# it cannot stand as a defender on the opponent's next turn. It can
-			# still attack this turn, so value it highly when it can remove an
-			# aggressive opposing attacker.
-			var can_kill_attacker := false
-			for enemy in _get_board_creatures(opponent):
-				if enemy == null or enemy.creature_mode != Card.CreatureMode.AGGRESSIVE:
-					continue
-				if enemy.is_sleeping or enemy.has_status_effect("cannot_attack"):
-					continue
-				if not CardStrategy.visible(self, enemy):
-					continue
-				if not game_manager.can_cards_engage_each_other(target, enemy):
-					continue
-				if target.get_effective_strength() >= enemy.get_effective_strength():
-					can_kill_attacker = true
-					break
-			if not can_kill_attacker:
-				return 0
-			var desperate := danger >= bot_player.followers or bot_player.followers <= 25
-			return (ECON_CARD_VALUE * 30) if desperate else 8000
+			if target != null and target.get_effective_level() < 3:
+				var zone := (card as TabletOfLife)._get_best_summon_zone(target)
+				if zone != null:
+					return _follower_safety_gain(danger, {"summon": target, "zone": zone, "stance": target, "defensive": false})
 	return 0
 
 func _plan_special_card(card: Card, attacks: Array[Dictionary], attack: Dictionary, danger: int) -> Dictionary:
@@ -7013,13 +7004,13 @@ func _get_board_creatures(player: Player) -> Array[Card]:
 				creatures.append(card)
 	return creatures
 
-func _get_first_open_summon_zone(player: Player) -> Zone:
+func _get_first_open_summon_zone(player: Player, occupied_zone: Zone = null) -> Zone:
 	if player == null:
 		return null
-	var frontline_zone := _get_central_open_zone(player.frontline_zones)
+	var frontline_zone := _get_central_open_zone(player.frontline_zones, occupied_zone)
 	if frontline_zone != null:
 		return frontline_zone
-	return _get_central_open_zone(player.reserve_zones)
+	return _get_central_open_zone(player.reserve_zones, occupied_zone)
 
 # Summon lane candidates for the placement pass: the most central open
 # frontline lanes first, then reserve lanes. Column choice only changes
@@ -7063,14 +7054,14 @@ func _get_first_open_reserve_zone(player: Player) -> Zone:
 		return null
 	return _get_central_open_zone(player.reserve_zones)
 
-func _get_central_open_zone(zones: Array[Zone]) -> Zone:
+func _get_central_open_zone(zones: Array[Zone], occupied_zone: Zone = null) -> Zone:
 	# Prefer the middle lane, then work outward; equal distances keep row order.
 	var center := float(zones.size() - 1) / 2.0
 	var best_zone: Zone = null
 	var best_distance := INF
 	for index in range(zones.size()):
 		var zone := zones[index]
-		if zone == null or not zone.cards.is_empty():
+		if zone == null or zone == occupied_zone or not zone.cards.is_empty():
 			continue
 		var distance := absf(float(index) - center)
 		if distance < best_distance:
@@ -9086,7 +9077,7 @@ const DOOMED_EFFECT_BODY_PAYMENT_SHARE := 0.15
 # meaningful line has to remove the cast from consideration entirely.
 const BURNED_EFFECT_LINE_GATE := 1000
 
-func _score_effect_summon_sacrifice_followup(summoned: Array, setup_mana: int, removed: Array = [], doomed_bodies: Array = []) -> int:
+func _score_effect_summon_sacrifice_followup(summoned: Array, setup_mana: int, removed: Array = [], doomed_bodies: Array = [], occupied_zone: Zone = null) -> int:
 	# Value the extra normal summon made possible by creatures an effect puts on
 	# the board. The actual action is chosen again after the effect resolves.
 	# `doomed_bodies` marks projected bodies the effect destroys at this turn's
@@ -9122,7 +9113,7 @@ func _score_effect_summon_sacrifice_followup(summoned: Array, setup_mana: int, r
 		var payment := _choose_lowest_scored_cards(projected, creature.sacrifice_cost, "sacrifice")
 		if payment.size() != creature.sacrifice_cost or not payment.any(func(body: Card) -> bool: return body in produced):
 			continue
-		var zone := _get_first_open_summon_zone(bot_player)
+		var zone := _get_first_open_summon_zone(bot_player, occupied_zone)
 		if zone == null:
 			continue
 		var payment_penalty := 0
@@ -9145,13 +9136,18 @@ func _score_effect_summon_sacrifice_followup(summoned: Array, setup_mana: int, r
 			if body in produced:
 				produced_value += _effect_body_sacrifice_penalty(body, doomed_bodies)
 		var line_gain := followup_value - maxi(standalone_value, produced_value)
+		var uses_doomed_body := payment.any(func(body: Card) -> bool: return body in doomed_bodies)
+		if existing.size() < creature.sacrifice_cost and uses_doomed_body:
+			# The temporary body has no lasting value of its own. If it unlocks
+			# a summon, credit the card that can actually stay on the board.
+			line_gain += ECON_CARD_VALUE
 		if bot_player.has_summoned_this_turn and not game_manager._can_use_extra_normal_summon(bot_player, creature, zone):
 			# The turn's normal summon is spent, so the projected body cannot
 			# pay for this creature this turn. A body that survives the turn
 			# only delays the line, but a doomed body makes this cast burn the
 			# effect that was the creature's only fresh payment generator:
 			# hold the spell for a turn whose summon window is still open.
-			if payment.any(func(body: Card) -> bool: return body in doomed_bodies):
+			if uses_doomed_body:
 				burned_line_gain = maxi(burned_line_gain, line_gain)
 			continue
 		best_gain = maxi(best_gain, line_gain)

@@ -1256,10 +1256,15 @@ func _handle_request_bot_work(peer_id: int, payload: Dictionary = {}) -> void:
 		})
 		return
 	for deck in [deck_a, deck_b]:
-		deck["bot_god_name"] = deck["god_name"]
-		deck["bot_list_id"] = deck["list_id"]
-		deck["bot_stars"] = deck["stars"]
-		deck["bot_win_streak"] = int(deck.get("win_streak", 0))
+		var g_name := str(deck.get("god_name", ""))
+		deck["bot_god_name"] = g_name
+		var l_id := str(deck.get("bot_list_id", deck.get("list_id", ""))).strip_edges()
+		deck["list_id"] = l_id
+		deck["bot_list_id"] = l_id
+		deck["bot_stars"] = int(deck.get("stars", deck.get("bot_stars", 0)))
+		deck["bot_win_streak"] = int(deck.get("win_streak", deck.get("bot_win_streak", 0)))
+		if not deck.has("bot_name") or str(deck["bot_name"]).is_empty():
+			deck["bot_name"] = str(deck.get("deck_name", ""))
 	var job_id := _generate_id(32)
 	_client_bot_jobs[job_id] = {
 		"account_id": str(session["account_id"]),
@@ -1469,6 +1474,10 @@ func _find_community_bot(account_id: String, bot_id: String) -> Dictionary:
 	bot["bot_list_id"] = bot_id
 	bot["list_id"] = bot_id
 	bot["bot_god_name"] = str(bot.get("god_name", ""))
+	bot["owner_name"] = str(bot.get("owner_name", account_id)).strip_edges()
+	bot["bot_name"] = str(bot.get("bot_name", "")).strip_edges()
+	if bot["bot_name"].is_empty():
+		bot["bot_name"] = display_name
 	# Attach the ladder record replayed from this bot's stored results so its
 	# rank badge, live-match rows, and win-streak scoring keep updating as it
 	# plays, instead of restarting at zero stars in every hosted match.
@@ -1925,10 +1934,11 @@ func _get_recent_match_activity_notifications() -> Array[Dictionary]:
 	)
 	if activities.is_empty():
 		return activities
-	if _ladder_cache.is_empty() or _ladder_cache_dirty:
+	var now_msec := Time.get_ticks_msec()
+	if _ladder_cache.is_empty() or (_ladder_cache_dirty and now_msec - _ladder_cache_last_build_msec >= LADDER_CACHE_MIN_REBUILD_INTERVAL_MSEC):
 		_ladder_cache = _build_full_ladder()
 		_ladder_cache_dirty = false
-		_ladder_cache_last_build_msec = Time.get_ticks_msec()
+		_ladder_cache_last_build_msec = now_msec
 	var ladder_bo1: Array[Dictionary] = _ladder_cache
 	var ladder_bo3: Array[Dictionary] = []
 	for activity: Dictionary in activities:
@@ -2127,27 +2137,42 @@ func _build_full_ladder_for_best_of(best_of: int) -> Array[Dictionary]:
 	var ladder: Array[Dictionary] = match_history_store.get_human_ladder(account_store.get_ladder_usernames(), best_of)
 	if best_of == 1:
 		_refresh_ranked_bot_deck_pool()
+		var seen_bot_ids: Dictionary = {}
+		var seen_owner_fps: Dictionary = {}
 		for god: Dictionary in _ranked_bot_deck_pool.get_ladder_summary()["gods"]:
 			var lists: Array = god["lists"].duplicate()
 			if not god["challenger"].is_empty():
 				lists.append(god["challenger"])
 			for bot: Dictionary in lists:
-				var rank := RankedProgressionScript.summarize_bot_stars(int(bot["stars"]))
-				var bot_deck := _ranked_bot_deck_pool.get_deck_details(str(bot["list_id"]))
-				var portrait := RankBadgeCatalog.portrait_from_deck(
-					int(rank["league"]),
-					bot_deck.get("cards", {}),
-					bot_deck.get("reinforcements", {})
-				)
+				var bot_id_str := str(bot.get("list_id", "")).strip_edges()
+				if not bot_id_str.is_empty() and seen_bot_ids.has(bot_id_str):
+					continue
 				var bot_owner_name := str(bot.get("owner_name", "")).strip_edges()
-				ladder.append({"name": bot["name"], "list_id": bot["list_id"], "points": bot["stars"],
-					"rank": rank["name"], "stars": rank["stars"], "is_bot": true,
+				if not bot_owner_name.is_empty():
+					var bot_deck := _ranked_bot_deck_pool.get_deck_details(bot_id_str)
+					var bot_fp := JSON.stringify([bot_deck.get("cards", {}), bot_deck.get("reinforcements", {}), bot_deck.get("special_setup", {})]).sha256_text()
+					var owner_key := "%s:%s" % [bot_owner_name, bot_fp]
+					if seen_owner_fps.has(owner_key):
+						continue
+					seen_owner_fps[owner_key] = true
+				if not bot_id_str.is_empty():
+					seen_bot_ids[bot_id_str] = true
+				var rank := RankedProgressionScript.summarize_bot_stars(int(bot["stars"]))
+				ladder.append({
+					"name": bot["name"],
+					"list_id": bot_id_str,
+					"points": bot["stars"],
+					"rank": rank["name"],
+					"league": int(rank["league"]),
+					"stars": rank["stars"],
+					"is_bot": true,
 					"owner_name": bot_owner_name,
 					"can_delete": false,
-					"portrait": portrait,
-					"wins": int(bot.get("wins", 0)), "losses": int(bot.get("losses", 0)), "draws": int(bot.get("draws", 0)),
+					"wins": int(bot.get("wins", 0)),
+					"losses": int(bot.get("losses", 0)),
+					"draws": int(bot.get("draws", 0)),
 					"main_gods": [str(god.get("god_name", ""))],
-					"recent_matches": match_history_store.get_recent_ranked_bot_matches_for_list(str(bot["list_id"]), 10, false)})
+				})
 	ladder.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		if int(a["points"]) != int(b["points"]):
 			return int(a["points"]) > int(b["points"])
@@ -2167,7 +2192,23 @@ func _build_full_ladder_for_best_of(best_of: int) -> Array[Dictionary]:
 		ladder[index]["ladder_position"] = index + 1
 	return ladder
 
+func _decorate_ladder_rows(rows: Array[Dictionary]) -> void:
+	for row in rows:
+		if bool(row.get("is_bot", false)):
+			var list_id := str(row.get("list_id", ""))
+			if not row.has("portrait"):
+				var league := int(row.get("league", 0))
+				var bot_deck := _ranked_bot_deck_pool.get_deck_details(list_id)
+				row["portrait"] = RankBadgeCatalog.portrait_from_deck(
+					league,
+					bot_deck.get("cards", {}),
+					bot_deck.get("reinforcements", {})
+				)
+			if not row.has("recent_matches"):
+				row["recent_matches"] = match_history_store.get_recent_ranked_bot_matches_for_list(list_id, 10, false)
+
 func _public_ladder_rows(rows: Array[Dictionary]) -> Array[Dictionary]:
+	_decorate_ladder_rows(rows)
 	for row in rows:
 		var account_id := str(row.get("account_id", ""))
 		row.erase("account_id")
@@ -2520,10 +2561,13 @@ func _apply_server_bot_deck(room: LobbyRoom, deck_submission: Dictionary, bot_se
 		deck_submission.get("reinforcements", {})
 	):
 		return
-	room.deck_submission_by_session_id[bot_session_id]["bot_list_id"] = deck_submission["list_id"]
-	room.deck_submission_by_session_id[bot_session_id]["bot_god_name"] = deck_submission["god_name"]
-	room.deck_submission_by_session_id[bot_session_id]["bot_stars"] = deck_submission["stars"]
+	room.deck_submission_by_session_id[bot_session_id]["bot_list_id"] = str(deck_submission.get("bot_list_id", deck_submission["list_id"]))
+	room.deck_submission_by_session_id[bot_session_id]["bot_god_name"] = str(deck_submission.get("bot_god_name", deck_submission["god_name"]))
+	room.deck_submission_by_session_id[bot_session_id]["bot_stars"] = int(deck_submission.get("stars", 0))
 	room.deck_submission_by_session_id[bot_session_id]["bot_win_streak"] = int(deck_submission.get("win_streak", 0))
+	room.deck_submission_by_session_id[bot_session_id]["bot_name"] = str(deck_submission.get("bot_name", deck_submission.get("deck_name", "")))
+	room.deck_submission_by_session_id[bot_session_id]["owner_name"] = str(deck_submission.get("owner_name", "")).strip_edges()
+	room.deck_submission_by_session_id[bot_session_id]["is_community_bot"] = bool(deck_submission.get("is_community_bot", false))
 	sessions_by_id[bot_session_id]["player_name"] = deck_submission["deck_name"]
 	sessions_by_id[bot_session_id]["username"] = deck_submission["deck_name"]
 	room.set_ready(bot_session_id, true)
@@ -2781,14 +2825,19 @@ func _validate_server_bot_deck(deck: Dictionary) -> Dictionary:
 	if validation_cards.is_empty():
 		return {}
 	var god_name: String = str(completed_deck.get("god_name", ""))
-	var list_id := str(completed_deck.get("list_id", ""))
+	var list_id := str(completed_deck.get("bot_list_id", completed_deck.get("list_id", "")))
 	var deck_name := str(completed_deck.get("deck_name", completed_deck.get("name", "")))
 	if deck_name.is_empty() or list_id.is_empty():
 		deck_name = "%s: Challenger" % RankedBotDeckPoolScript.display_god_name(god_name)
 	return {
 		"deck_name": deck_name,
 		"list_id": list_id,
+		"bot_list_id": list_id,
 		"god_name": god_name,
+		"bot_god_name": god_name,
+		"owner_name": str(completed_deck.get("owner_name", "")).strip_edges(),
+		"bot_name": str(completed_deck.get("bot_name", "")).strip_edges(),
+		"is_community_bot": bool(completed_deck.get("is_community_bot", false)),
 		"stars": int(deck.get("stars", 0)),
 		"win_streak": int(deck.get("win_streak", 0)),
 		"cards": validation_cards,
@@ -2827,6 +2876,18 @@ func _refresh_ranked_bot_deck_pool() -> void:
 	if not _same_community_bot_ids(_known_community_bot_ids, community_bot_ids):
 		_ranked_bot_deck_pool.invalidate_replay()
 	_known_community_bot_ids = community_bot_ids.duplicate()
+	var community_bots := _load_all_community_bots()
+	var community_by_id: Dictionary = {}
+	var community_by_owner_and_fp: Dictionary = {}
+	for c_bot in community_bots:
+		var c_id := str(c_bot.get("bot_id", "")).strip_edges()
+		if not c_id.is_empty():
+			community_by_id[c_id] = c_bot
+		var c_owner := str(c_bot.get("owner_name", c_bot.get("account_id", ""))).strip_edges()
+		var c_fp := JSON.stringify([c_bot.get("cards", {}), c_bot.get("reinforcements", {}), c_bot.get("special_setup", {})]).sha256_text()
+		if not c_owner.is_empty():
+			community_by_owner_and_fp["%s:%s" % [c_owner, c_fp]] = c_bot
+
 	# Use the MatchHistoryStore cache, which already merges dedicated per-match
 	# result files via _load_dedicated_results(). This keeps the pool rebuild
 	# incremental and in-memory instead of re-scanning the disk on every refresh.
@@ -2834,11 +2895,19 @@ func _refresh_ranked_bot_deck_pool() -> void:
 	for raw_result in bot_deck_results:
 		var result: Dictionary = raw_result.duplicate(true)
 		var list_id := str(result.get("list_id", "")).strip_edges()
-		# Results recorded before community bots joined the ladder stored the
-		# submitter's bot id without a community flag: restore the flag so the
-		# pool replay keeps those results on the bot's ladder entry.
-		if community_bot_ids.has(list_id):
+		var owner_name := str(result.get("owner_name", "")).strip_edges()
+		var fp := JSON.stringify([result.get("cards", {}), result.get("reinforcements", {}), result.get("special_setup", {})]).sha256_text()
+		var matched_c_bot: Dictionary = {}
+		if community_by_id.has(list_id):
+			matched_c_bot = community_by_id[list_id]
+		elif not owner_name.is_empty() and community_by_owner_and_fp.has("%s:%s" % [owner_name, fp]):
+			matched_c_bot = community_by_owner_and_fp["%s:%s" % [owner_name, fp]]
+
+		if not matched_c_bot.is_empty():
 			result["is_community_bot"] = true
+			result["list_id"] = str(matched_c_bot.get("bot_id", list_id))
+			result["owner_name"] = str(matched_c_bot.get("owner_name", owner_name))
+			result["bot_name"] = str(matched_c_bot.get("deck_name", result.get("bot_name", "")))
 			results.append(result)
 		elif bool(result.get("is_community_bot", false)):
 			# A deleted community bot's historical results must not keep
@@ -2848,12 +2917,29 @@ func _refresh_ranked_bot_deck_pool() -> void:
 			results.append(result)
 		else:
 			results.append(result)
-	# Use rebuild_league_records() instead of refresh() so league bots keep
-	# their league_ list_ids and records. refresh() clears _by_god and replays
-	# from scratch, which would replace league_ ids with match_id-based ids.
-	_ranked_bot_deck_pool.rebuild_league_records(results)
+	for c_bot in community_bots:
+		_ranked_bot_deck_pool.ensure_community_bot(c_bot)
+	_ranked_bot_deck_pool.refresh(results)
 	if is_default_store:
 		_ranked_bot_deck_pool.save_state(_pool_state_path, result_count)
+
+func _load_all_community_bots() -> Array[Dictionary]:
+	var bots: Array[Dictionary] = []
+	var bot_dir := ServerPathsScript.get_server_data_file_path("community_bot_pool")
+	var directory := DirAccess.open(bot_dir)
+	if directory == null:
+		return bots
+	directory.list_dir_begin()
+	var file_name := directory.get_next()
+	while not file_name.is_empty():
+		if not directory.current_is_dir() and file_name.ends_with(".json"):
+			var bot := JsonStoreScript.load_dictionary(bot_dir.path_join(file_name), {}, "CommunityBotPool")
+			if not bot.is_empty():
+				bot["bot_id"] = file_name.get_basename()
+				bots.append(bot)
+		file_name = directory.get_next()
+	directory.list_dir_end()
+	return bots
 
 func _get_community_bot_ids() -> Dictionary:
 	var ids := {}
@@ -3247,6 +3333,15 @@ func _observe_local_bot_match(session_id: String, match_id: String) -> void:
 		_send_error_to_session(session_id, "That bot challenge is not accepting spectators right now.")
 		return
 
+	var via_punch := bool(entry.get("spectate_via_punch", false))
+	if via_punch:
+		# Keepalive bounces can update the host's public mapping after it
+		# first advertised this match.
+		var host_bounce := _get_punch_bounce("host:%s" % match_id, PUNCH_DISCOVERY_BOUNCE_TTL_SECONDS)
+		if not host_bounce.is_empty():
+			spectate_ip = str(host_bounce.get("ip", spectate_ip))
+			spectate_port = int(host_bounce.get("port", spectate_port))
+
 	var identities: Dictionary = entry.get("identity_by_session", {})
 	if not (identities is Dictionary):
 		identities = {}
@@ -3288,7 +3383,7 @@ func _observe_local_bot_match(session_id: String, match_id: String) -> void:
 		"series": {},
 		"reconnect_window_seconds": 0,
 		"waiting_for_reconnect": false,
-		"spectate_via_punch": bool(entry.get("spectate_via_punch", false)),
+		"spectate_via_punch": via_punch,
 		"punch_reflector_port": _punch_reflector_port,
 	})
 	_trace("observer %s joined local bot match %s" % [session_id, match_id])

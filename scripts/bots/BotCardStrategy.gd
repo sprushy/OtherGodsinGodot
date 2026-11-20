@@ -963,22 +963,27 @@ static func target_score(bot, card: Card, target: Card, action: CardAction = nul
 				score -= 1500 # Sleeping through the next turn costs another action.
 			return score
 		"TabletOfLife", "Hringhorni":
-			if bot._get_first_open_summon_zone(bot.bot_player) == null:
+			var tablet := card as TabletOfLife
+			var zone: Zone = tablet._get_best_summon_zone(target) if tablet != null else bot._get_first_open_summon_zone(bot.bot_player)
+			if zone == null:
 				return BAD
-			var score := value(bot, target)
-			var doomed_bodies: Array = []
-			if key(card) == "TabletOfLife" and target.get_effective_level() >= 3:
-				score = int(score * 0.45)
-				# The resurrection is destroyed at this turn's end, so its only
-				# window as sacrifice payment for a hand Demon is the same turn
-				# the spell resolves.
-				doomed_bodies = [target]
-			var followup: int = bot._score_effect_summon_sacrifice_followup([target], activation_cost(bot, card), [], doomed_bodies)
+			var cost := activation_cost(bot, card)
+			if tablet != null:
+				cost += bot.game_manager.get_creature_summon_mana_cost(bot.bot_player, target, tablet, true)
+			var temporary := tablet != null and target.get_effective_level() >= 3
+			var doomed_bodies: Array = [target] if temporary else []
+			var followup: int = bot._score_effect_summon_sacrifice_followup([target], cost, [], doomed_bodies, zone if temporary else null)
 			if followup <= BAD:
 				# The cast would burn the sacrifice line that docks a hand
 				# Demon here; hold the spell for a turn with its window open.
 				return BAD
-			return score + followup
+			if temporary:
+				# Tablet blanks the creature and destroys it at turn's end.
+				# The attack and sacrifice are alternative uses of that body.
+				var attack_gain: int = bot._estimate_tablet_attack_gain(tablet, target, zone, cost)
+				var payoff := maxi(attack_gain, followup)
+				return payoff if payoff > 0 else BAD
+			return value(bot, target) + followup
 		"BookOfLife":
 			if bot._get_first_open_summon_zone(bot.bot_player) == null:
 				return BAD

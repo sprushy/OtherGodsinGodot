@@ -3703,8 +3703,7 @@ func _refresh_seek_list() -> void:
 	if seek_list == null:
 		return
 	seek_list.clear()
-	# Player matches (open seeks and live rooms) are listed first, then bot
-	# matches (volunteer live matches plus matches hosted on this computer).
+	# Bot seeks come first, followed by other open seeks and live rooms.
 	for room in _open_seek_rooms:
 		var host_name := str(room.get("host_name", "Host")).strip_edges()
 		if room.has("match_player_names"):
@@ -3739,7 +3738,7 @@ func _refresh_seek_list() -> void:
 			seek_list.set_item_metadata(action_index, request_next_match_id)
 			seek_list.set_item_tooltip(action_index, "Tell the player in this match you'd like to play them next.")
 	# Bot matches: volunteer live matches plus matches hosted on this computer,
-	# listed after the player matches and ordered by bot rank (highest matchup
+	# listed after the lobby rooms and ordered by bot rank (highest matchup
 	# first), not start time.
 	var live_entries: Array[Dictionary] = []
 	var listed_live_job_ids := {}
@@ -4039,7 +4038,7 @@ func _on_seek_item_clicked(index: int, _at_position: Vector2, _mouse_button_inde
 		if _has_active_lobby_connection():
 			lobby_client.request_next(room_entry)
 		else:
-			_show_request_next_notice("Reconnect to the lobby to request the next match.")
+			_show_lobby_notice("Reconnect to the lobby to request the next match.")
 		return
 	if not (room_entry is Dictionary):
 		return
@@ -4129,13 +4128,13 @@ func _on_watch_next_local_bot_match_requested() -> void:
 	status_label.text = "Waiting for the next hosted bot match..."
 
 func _on_request_next_received(requester_name: String) -> void:
-	_show_request_next_notice("%s would like to play you next." % requester_name)
+	_show_lobby_notice("%s would like to play you next." % requester_name)
 
 func _on_request_next_result(message: String) -> void:
-	_show_request_next_notice(message)
+	_show_lobby_notice(message)
 	_queue_room_list_refresh(false)
 
-func _show_request_next_notice(message: String) -> void:
+func _show_lobby_notice(message: String) -> void:
 	if message.is_empty():
 		return
 	if not is_instance_valid(_request_next_notices):
@@ -9555,6 +9554,7 @@ func _on_lobby_reconnect_succeeded(
 func _on_lobby_room_list_updated(rooms: Array) -> void:
 	_seek_list_request_pending = false
 	_open_seek_rooms.clear()
+	var other_rooms: Array[Dictionary] = []
 	var current_room_id := str(_current_room_snapshot.get("room_id", "")).strip_edges()
 	var current_room_still_visible := false
 	for room in rooms:
@@ -9566,7 +9566,14 @@ func _on_lobby_room_list_updated(rooms: Array) -> void:
 		var room_status := str(entry.get("status", "")).strip_edges().to_lower()
 		if room_status != LobbyRoomScript.STATUS_IN_MATCH and int(entry.get("member_count", 0)) >= int(entry.get("max_players", 2)):
 			continue
-		_open_seek_rooms.append(entry)
+		if room_status != LobbyRoomScript.STATUS_IN_MATCH and bool(entry.get("host_is_bot", false)):
+			_open_seek_rooms.append(entry)
+		else:
+			other_rooms.append(entry)
+	_open_seek_rooms.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return _get_room_is_ranked(a) and not _get_room_is_ranked(b)
+	)
+	_open_seek_rooms.append_array(other_rooms)
 	var retried_seek_switch := false
 	if not current_room_id.is_empty() and not current_room_still_visible:
 		_clear_current_seek_state()
@@ -9985,7 +9992,6 @@ func _poll_match_punch_watch() -> void:
 	if _match_punch_watch.is_empty():
 		return
 	if lobby_client == null or not lobby_client.is_authenticated():
-		_match_punch_watch = {}
 		return
 	var match_id := str(_match_punch_watch.get("match_id", ""))
 	var reflector_port := int(_match_punch_watch.get("reflector_port", 0))
@@ -10000,9 +10006,6 @@ func _poll_match_punch_watch() -> void:
 	if enet_peer == null:
 		return
 	var connection_status := enet_peer.get_connection_status()
-	if connection_status == MultiplayerPeer.CONNECTION_CONNECTED:
-		_match_punch_watch = {}
-		return
 	if connection_status != MultiplayerPeer.CONNECTION_CONNECTING:
 		return
 	var observer_session_id := str(_match_punch_watch.get("observer_session_id", ""))
@@ -10011,6 +10014,7 @@ func _poll_match_punch_watch() -> void:
 		# A fresh socket (retry loop) needs an immediate bounce and report.
 		_match_punch_watch["peer_instance"] = enet_peer.get_instance_id()
 		_match_punch_watch["next_bounce_msec"] = 0
+		_match_punch_watch["next_report_msec"] = 0
 	if now_msec < int(_match_punch_watch.get("next_bounce_msec", 0)):
 		return
 	_match_punch_watch["next_bounce_msec"] = now_msec + MATCH_PUNCH_WATCH_BOUNCE_INTERVAL_MSEC
@@ -10516,6 +10520,9 @@ func _on_game_match_connection_lost(reason: String) -> void:
 	_restore_lobby_after_match_connection_lost(reason)
 
 func _restore_lobby_after_match_connection_lost(reason: String) -> void:
+	var active_game := _get_active_embedded_game()
+	var was_observing := active_game != null and bool(active_game.get("_is_observer_mode"))
+	_match_punch_watch = {}
 	_pending_rematch_room_id = ""
 	_pending_rematch_ready_submitted = false
 	multiplayer_container.visible = true
@@ -10537,7 +10544,12 @@ func _restore_lobby_after_match_connection_lost(reason: String) -> void:
 	if clean_reason.is_empty():
 		clean_reason = "The match connection was lost."
 	status_label.text = clean_reason
+	if was_observing:
+		_show_lobby_notice(clean_reason)
 	if lobby_client != null and lobby_client.is_authenticated():
+		if was_observing:
+			_queue_room_list_refresh(false)
+			return
 		# Reuse the existing rejoin flow with the live lobby's latest state.
 		_on_lobby_reconnect_succeeded(
 			lobby_client.current_session_id,
@@ -10726,6 +10738,8 @@ func _get_active_match_room_id() -> String:
 		return str(_current_room_snapshot.get("room_id", "")).strip_edges()
 	var match_info = active_game.get("_current_match_info")
 	if match_info is Dictionary:
+		if bool(match_info.get("observer_mode", false)):
+			return ""
 		return str((match_info as Dictionary).get("room_id", "")).strip_edges()
 	return str(_current_room_snapshot.get("room_id", "")).strip_edges()
 

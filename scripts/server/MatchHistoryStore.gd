@@ -19,6 +19,7 @@ var _bot_results: Array[Dictionary] = []
 # views indexed instead of re-sorting every stored match on each row.
 var _sorted_ranked_ids_by_account_id: Dictionary = {}
 var _bot_match_ids_by_list_id: Dictionary = {}
+var _sorted_bot_ids_by_list_id: Dictionary = {}
 var _dedicated_result_files_loaded: Dictionary = {}
 var _player_ladder_cache: Dictionary = {}
 var _player_ladder_cache_season: int = -1
@@ -249,11 +250,17 @@ func _build_bot_deck_results(match_session, player_entries: Array[Dictionary]) -
 		var deck: Dictionary = match_session.registered_player_decks_by_session.get(session_id, {})
 		if str(deck.get("bot_god_name", "")).is_empty() or deck.get("cards", {}).is_empty():
 			continue
+		var list_id := str(deck.get("bot_list_id", deck.get("list_id", ""))).strip_edges()
+		var bot_name := str(deck.get("bot_name", "")).strip_edges()
+		if bot_name.is_empty():
+			bot_name = str(player_entry.get("player_name", "")).strip_edges()
+		if bot_name.is_empty():
+			bot_name = str(deck.get("deck_name", "")).strip_edges()
 		results.append({
 			"god_name": deck["bot_god_name"],
-			"bot_name": player_entry["player_name"],
-			"list_id": deck.get("bot_list_id", ""),
-			"owner_name": str(deck.get("owner_name", "")),
+			"bot_name": bot_name,
+			"list_id": list_id,
+			"owner_name": str(deck.get("owner_name", "")).strip_edges(),
 			"is_community_bot": bool(deck.get("is_community_bot", false)),
 			"cards": deck["cards"],
 			"reinforcements": deck.get("reinforcements", {}),
@@ -492,7 +499,7 @@ func get_recent_ranked_bot_matches_for_list(list_id: String, limit: int = 10, re
 	if rescan:
 		_load_dedicated_results()
 	var matches: Array[Dictionary] = []
-	var match_ids := _get_sorted_match_ids(_bot_match_ids_by_list_id.get(list_id, []))
+	var match_ids := _get_sorted_bot_ids_for_list(list_id)
 	for index in range(match_ids.size() - 1, -1, -1):
 		if matches.size() >= maxi(1, limit):
 			break
@@ -604,7 +611,9 @@ func _index_result(entry: Dictionary) -> void:
 		for bot_result in entry.get("bot_deck_results", []):
 			if not (bot_result is Dictionary):
 				continue
-			_bot_match_ids_by_list_id.get_or_add(str(bot_result.get("list_id", "")), []).append(match_id)
+			var list_id := str(bot_result.get("list_id", ""))
+			_bot_match_ids_by_list_id.get_or_add(list_id, []).append(match_id)
+			_sorted_bot_ids_by_list_id.erase(list_id)
 	for player_entry in entry["players"]:
 		_add_history_id(_history_ids_by_profile_id, str(player_entry["profile_id"]), match_id)
 		if bool(entry.get("advances_rank", false)):
@@ -690,6 +699,13 @@ func _get_sorted_ranked_ids_for_account(account_id: String) -> Array[String]:
 	_sorted_ranked_ids_by_account_id[account_id] = sorted_ids
 	return sorted_ids
 
+func _get_sorted_bot_ids_for_list(list_id: String) -> Array[String]:
+	if _sorted_bot_ids_by_list_id.has(list_id):
+		return _sorted_bot_ids_by_list_id[list_id]
+	var sorted_ids := _get_sorted_match_ids(_bot_match_ids_by_list_id.get(list_id, []))
+	_sorted_bot_ids_by_list_id[list_id] = sorted_ids
+	return sorted_ids
+
 func _match_finished_before(left_id: String, right_id: String) -> bool:
 	var left_time := float(_matches_by_id.get(left_id, {}).get("played_unix", 0))
 	var right_time := float(_matches_by_id.get(right_id, {}).get("played_unix", 0))
@@ -738,6 +754,7 @@ func _ensure_loaded() -> void:
 	_matches_by_id = {}
 	_history_ids_by_profile_id = {}
 	_sorted_ranked_ids_by_account_id = {}
+	_sorted_bot_ids_by_list_id = {}
 	_bot_match_ids_by_list_id = {}
 	_player_ladder_cache = {}
 	_player_ladder_cache_season = -1

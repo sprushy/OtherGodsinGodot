@@ -15,20 +15,104 @@ const QUARANTINED_PER_GOD := 1
 # no candidates, pairing falls back to the closest available league.
 const MATCHMAKING_LEAGUE_TIER_WINDOW := 1
 const NAME_POOLS := {
-	"Thor": ["Bloodaxe", "Moon", "Stormbreaker", "Thunderhead", "Iron Ram", "Cloudsplitter", "Red Hammer", "Mjolnir's Wake"],
-	"Odin": ["Ravenwatch", "Runeweaver", "Grey Wanderer", "Gallows Tree", "Spear of Oaths", "Winter King", "Last Wisdom", "Hanged One"],
-	"Baldr": ["Daystar", "Goldbranch", "White Flame", "Dream of Dawn", "Summer Shield", "Bright Oath", "Sunwake", "Mistletoe Oath"],
-	"Freyja": ["Amber Tears", "Falcon Mantle", "Goldweaver", "Battlefield Rose", "Witchlight", "Boar's Charge", "Hall of the Slain", "Brisingamen"],
-	"Dellingr": ["First Light", "Sunrise Gate", "Crimson Sky", "Dawn Watch", "Horizon", "Daybreak", "Eastern Flame", "Morning Star"],
-	"Cernunnos": ["Black Stag", "Briar Crown", "Green Hunt", "Antler Throne", "Hollow Oak", "Wildwood", "Winter Herd", "Horned Guardian"],
-	"Guan Yu": ["Jade Dragon", "Red Hare", "Green Crescent", "Iron Oath", "Peach Garden", "Long March", "Banner of Shu", "Five Passes"],
-	"Aphrodite Areia": ["Rose of War", "Crimson Kiss", "Seafoam", "Gilded Spear", "Thorn Crown", "Velvet Blade", "Bronze Mirror", "Spartan Grace"],
-	"Hermes": ["Winged Sandal", "Crossroads", "Golden Road", "Quickstep", "Night Courier", "Herald", "Thief's Star", "Caduceus Run"],
-	"Manannán mac Lir": ["Sea Mist", "Silver Bough", "Wave Rider", "Tidewalker", "Hidden Isle", "White Sail", "Deepwater", "Land of Youth"],
-	"Nusku": ["Emberguard", "Night Lantern", "Red Hearth", "Kindling", "Cinder Crown", "Watchfire", "Dawn Torch", "Everflame"],
-	"Mummu": ["First Whisper", "Black Water", "Still Depths", "Entropy", "Sunken Word", "Deep Counsel", "Silent Tide", "Apsu's Dream"],
-	"Tezcatlipoca": ["Obsidian", "Night Jaguar", "Smoking Glass", "Black Wind", "Starless Sky", "Shadow Step", "Broken Reflection", "Tezcatl's Mirror"],
-	"Tiamat": ["Salt Tide", "Deep Coil", "First Sea", "Abyssal Crown", "Chaos Brood", "Black Current", "World Serpent", "Primordial Surge"],
+	"Thor": [
+		"Bloodaxe", "Moon", "Stormbreaker", "Thunderhead",
+		"Iron Ram", "Cloudsplitter", "Red Hammer", "Mjolnir's Wake",
+		"Goatstorm", "Oakbreaker", "Thunder Road", "Giant's Bane",
+		"Copper Lightning", "Mountainfall", "Storm Belt", "Ashen Hammer",
+		"Sky Anvil", "Fjord Thunder", "Battering Rain", "Midgard's Ward",
+	],
+	"Odin": [
+		"Ravenwatch", "Runeweaver", "Grey Wanderer", "Gallows Tree",
+		"Spear of Oaths", "Winter King", "Last Wisdom", "Hanged One",
+		"One-Eyed Guest", "Well of Memory", "Raven's Counsel", "Spear Cast",
+		"Nine Nights", "Ashen Gallows", "Wolf Throne", "Gungnir's Mark",
+		"Eight Hooves", "The Hooded King", "Mead of Runes", "Valhalla's Call",
+	],
+	"Baldr": [
+		"Daystar", "Goldbranch", "White Flame", "Dream of Dawn",
+		"Summer Shield", "Bright Oath", "Sunwake", "Mistletoe Oath",
+		"Ivory Gleam", "Fair Radiance", "Hall of Light", "Unbroken Vow",
+		"Sunlit Ashes", "Bright Funeral", "Quiet Gleam", "Golden Pyre",
+		"Light of Breidablik", "White Garland", "Softest Arrow", "Light Returned",
+	],
+	"Freyja": [
+		"Amber Tears", "Falcon Mantle", "Goldweaver", "Battlefield Rose",
+		"Witchlight", "Boar's Charge", "Hall of the Slain", "Brisingamen",
+		"Falconflight", "Seer's Gold", "Amber Chariot", "Boar of Battle",
+		"Golden Tresses", "Field of the Fallen", "Seidr's Call", "Cat's Grace",
+		"Battle Honey", "Gold on the Snow", "Falcon's Descent", "Half the Slain",
+	],
+	"Dellingr": [
+		"First Light", "Sunrise Gate", "Crimson Sky", "Dawn Watch",
+		"Horizon", "Daybreak", "Eastern Flame", "Morning Star",
+		"Rosy Threshold", "Edge of Morning", "Night's End", "Copper Dawn",
+		"Sunrise Herald", "Early Ember", "Break of Gold", "Eastern Gleam",
+		"Dewfire", "Waking Sky", "Morning's Promise", "Dawnward",
+	],
+	"Cernunnos": [
+		"Black Stag", "Briar Crown", "Green Hunt", "Antler Throne",
+		"Hollow Oak", "Wildwood", "Winter Herd", "Horned Guardian",
+		"Moss Crown", "Horn and Torc", "Hart of the Glade", "Fernhide",
+		"Rootbound", "Oakshadow", "Silver Antler", "Bramble Hart",
+		"Deep Grove", "Serpent's Torc", "Green Hollow", "Forest's Tithe",
+	],
+	"Guan Yu": [
+		"Jade Dragon", "Red Hare", "Green Crescent", "Iron Oath",
+		"Peach Garden", "Long March", "Banner of Shu", "Five Passes",
+		"Jade General", "Oath of Brotherhood", "Crescent Blade", "Peach Blossom Banner",
+		"Swift Red Hooves", "Night Watch of Shu", "Green Robe", "Passbreaker",
+		"Warrior's Seal", "Han Loyalist", "Blade Across the Pass", "Three Brothers",
+	],
+	"Aphrodite Areia": [
+		"Rose of War", "Crimson Kiss", "Seafoam", "Gilded Spear",
+		"Thorn Crown", "Velvet Blade", "Bronze Mirror", "Spartan Grace",
+		"Foam and Steel", "Rosepoint", "Myrtle Shield", "Bronze Embrace",
+		"Spear of Desire", "Crimson Myrtle", "Spartan Rose", "War Bride",
+		"Thorn Kiss", "Beauty in Bronze", "Silken Aegis", "Rose Standard",
+	],
+	"Hermes": [
+		"Winged Sandal", "Crossroads", "Golden Road", "Quickstep",
+		"Night Courier", "Herald", "Thief's Star", "Caduceus Run",
+		"Silver Tongue", "Fleetfoot", "The Crooked Mile", "Dawn Dispatch",
+		"Swift Coin", "Wayfarer's Luck", "Stolen Herd", "Hidden Milestone",
+		"Border Runner", "Winged Cap", "The Kindly Guide", "Lyre of Shell",
+	],
+	"Manannán mac Lir": [
+		"Sea Mist", "Silver Bough", "Wave Rider", "Tidewalker",
+		"Hidden Isle", "White Sail", "Deepwater", "Land of Youth",
+		"Wave Sweeper", "Mist Cloak", "Sea Chariot", "Foam Horse",
+		"The Far Strand", "Silver Apples", "Isle Behind the Mist", "Grey Current",
+		"Orchard Beyond the Sea", "Oarless Voyage", "Keeper of the Veil", "Tide of Silver",
+	],
+	"Nusku": [
+		"Emberguard", "Night Lantern", "Red Hearth", "Kindling",
+		"Cinder Crown", "Watchfire", "Dawn Torch", "Everflame",
+		"Night Warden", "Temple Lamp", "Ashen Wick", "Sacred Brazier",
+		"Firekeeper", "Lantern of Ur", "Ember at the Gate", "Flame of the Vigil",
+		"Hearthward", "Cinder Lantern", "Red Wick", "Smoke of Incense",
+	],
+	"Mummu": [
+		"First Whisper", "Black Water", "Still Depths", "Entropy",
+		"Sunken Word", "Deep Counsel", "Silent Tide", "Apsu's Dream",
+		"Whisper Below", "Abyssal Scribe", "Oldest Counsel", "Veiled Design",
+		"Voice in the Deep", "Drowned Thought", "The Unshaped", "Hidden Advisor",
+		"Murmur Under Stone", "Thought Before Light", "Depths Awoken", "The Quiet Plot",
+	],
+	"Tezcatlipoca": [
+		"Obsidian", "Night Jaguar", "Smoking Glass", "Black Wind",
+		"Starless Sky", "Shadow Step", "Broken Reflection", "Tezcatl's Mirror",
+		"Jaguar's Prowl", "Mirror of Night", "Obsidian Claw", "Midnight Pelt",
+		"Jaguar Throne", "Smoke Without Flame", "Mirror in Shadow", "The Unseen Wind",
+		"Obsidian Eclipse", "The Hidden Footstep", "Smoke and Fangs", "Lord of Near and Far",
+	],
+	"Tiamat": [
+		"Salt Tide", "Deep Coil", "First Sea", "Abyssal Crown",
+		"Chaos Brood", "Black Current", "World Serpent", "Primordial Surge",
+		"Mother of Monsters", "Saltwater Maw", "Coil Beneath Creation", "Bitter Deep",
+		"Broodmother's Wake", "The Sea Unbound", "Salt and Scales", "Mother of the First Waters",
+		"Dragon's Undertow", "Teeth of the Deep", "Abyssal Spawn", "Sea Before the Sky",
+	],
 }
 const DEFAULT_NAMES := ["Bloodaxe", "Moon", "Iron Crown", "Ember", "Oathkeeper", "Nightfall", "Stormcall", "Northwind"]
 const NAME_EPITHETS := [
@@ -46,6 +130,7 @@ var _eliminated_bot_match_ids: Dictionary = {}
 # are exempt from early retirement so they can finish their round-robin.
 var _league_mode: bool = false
 var _league_list_ids: Array = []
+var _assigned_names_by_list_id: Dictionary = {}
 
 func set_deck_auditor(auditor: Callable) -> void:
 	_deck_auditor = auditor
@@ -84,13 +169,51 @@ func _ensure_unique_deck_names() -> void:
 		var challenger: Dictionary = pool["challenger"]
 		if not challenger.is_empty():
 			decks.append({"god_name": str(god_name), "deck": challenger})
-	decks.sort_custom(func(first: Dictionary, second: Dictionary) -> bool:
+
+	var used_names := {}
+	var needs_name: Array[Dictionary] = []
+
+	# Pass 1: Community bots (owner_name != "") are immutable anchors.
+	# Their author-given name must NEVER be changed or stolen.
+	for entry: Dictionary in decks:
+		var deck: Dictionary = entry["deck"]
+		var list_id := str(deck.get("list_id", "")).strip_edges()
+		var owner_name := str(deck.get("owner_name", "")).strip_edges()
+		if not owner_name.is_empty():
+			var self_name := str(deck.get("self_play_name", "")).strip_edges()
+			var deck_name := str(deck.get("deck_name", "")).strip_edges()
+			var effective_name := deck_name
+			if _is_generic_bot_name(deck_name) and not self_name.is_empty() and not _is_generic_bot_name(self_name):
+				effective_name = self_name
+				deck["deck_name"] = effective_name
+			if not effective_name.is_empty():
+				used_names[effective_name.to_lower()] = true
+				if not list_id.is_empty():
+					_assigned_names_by_list_id[list_id] = effective_name
+
+	# Pass 2: Previously assigned names from _assigned_names_by_list_id
+	for entry: Dictionary in decks:
+		var deck: Dictionary = entry["deck"]
+		var list_id := str(deck.get("list_id", "")).strip_edges()
+		if not list_id.is_empty() and _assigned_names_by_list_id.has(list_id):
+			var assigned := str(_assigned_names_by_list_id[list_id]).strip_edges()
+			if not _is_generic_bot_name(assigned) and not used_names.has(assigned.to_lower()):
+				deck["deck_name"] = assigned
+				used_names[assigned.to_lower()] = true
+
+	# Pass 3: Established bots with non-generic names that don't collide
+	var non_community: Array[Dictionary] = []
+	for entry: Dictionary in decks:
+		var deck: Dictionary = entry["deck"]
+		var list_id := str(deck.get("list_id", "")).strip_edges()
+		if str(deck.get("owner_name", "")).strip_edges().is_empty() and not (not list_id.is_empty() and _assigned_names_by_list_id.has(list_id)):
+			non_community.append(entry)
+
+	non_community.sort_custom(func(first: Dictionary, second: Dictionary) -> bool:
 		var first_deck: Dictionary = first["deck"]
 		var second_deck: Dictionary = second["deck"]
 		if str(first["god_name"]) != str(second["god_name"]):
 			return str(first["god_name"]) < str(second["god_name"])
-		# Established bots (played matches or user-submitted) pick names first so
-		# new league bots get fresh names instead of stealing existing ones.
 		var first_priority := _bot_name_priority(first_deck)
 		var second_priority := _bot_name_priority(second_deck)
 		if first_priority != second_priority:
@@ -101,22 +224,29 @@ func _ensure_unique_deck_names() -> void:
 			return first_id < second_id
 		return str(first_deck.get("fingerprint", "")) < str(second_deck.get("fingerprint", ""))
 	)
-	var used_names := {}
-	var needs_name: Array[Dictionary] = []
-	for entry: Dictionary in decks:
+
+	for entry: Dictionary in non_community:
 		var deck: Dictionary = entry["deck"]
+		var list_id := str(deck.get("list_id", "")).strip_edges()
 		var base_name := str(deck.get("deck_name", "")).strip_edges()
-		var owner_name := str(deck.get("owner_name", "")).strip_edges()
-		if (owner_name.is_empty() and _is_generic_bot_name(base_name)) or used_names.has(base_name.to_lower()):
+		if _is_generic_bot_name(base_name) or used_names.has(base_name.to_lower()):
 			needs_name.append(entry)
 			continue
 		used_names[base_name.to_lower()] = true
+		if not list_id.is_empty():
+			_assigned_names_by_list_id[list_id] = base_name
+
+	# Pass 4: Assign unique names only to bots that actually need one
+	# (transitioning from "Challenger" or resolving an exact duplicate).
 	for entry: Dictionary in needs_name:
 		var deck: Dictionary = entry["deck"]
+		var list_id := str(deck.get("list_id", "")).strip_edges()
 		var deck_god := display_god_name(str(entry["god_name"]))
 		var base_name := _make_unique_bot_name(deck_god, deck, used_names)
 		deck["deck_name"] = base_name
 		used_names[base_name.to_lower()] = true
+		if not list_id.is_empty():
+			_assigned_names_by_list_id[list_id] = base_name
 
 func _bot_name_priority(deck: Dictionary) -> int:
 	if str(deck.get("owner_name", "")).strip_edges() != "":
@@ -220,8 +350,87 @@ func register_league_list(god_name: String, deck: Dictionary, explicit_list_id: 
 	pool.get("lists", []).append(new_list)
 	_league_list_ids.append(list_id)
 	_league_mode = true
+	_assigned_names_by_list_id[list_id] = new_list["deck_name"]
 	_ensure_unique_deck_names()
 	return list_id
+
+func ensure_community_bot(bot_data: Dictionary) -> void:
+	var list_id := str(bot_data.get("bot_id", bot_data.get("list_id", ""))).strip_edges()
+	if list_id.is_empty():
+		return
+	var god := display_god_name(str(bot_data.get("god_name", "")))
+	var raw_name := str(bot_data.get("bot_name", "")).strip_edges()
+	var author_name := str(bot_data.get("deck_name", "")).strip_edges()
+	if author_name.is_empty() and not raw_name.is_empty():
+		author_name = "%s: %s" % [god, raw_name] if not raw_name.begins_with("%s: " % god) else raw_name
+	if not author_name.is_empty() and not _is_generic_bot_name(author_name):
+		_assigned_names_by_list_id[list_id] = author_name
+	var pool: Dictionary = _by_god.get(god, {})
+	if pool.is_empty():
+		return
+	var owner_name := str(bot_data.get("owner_name", bot_data.get("account_id", ""))).strip_edges()
+	var fp := ""
+	if bot_data.has("cards") and bot_data["cards"] is Dictionary and not (bot_data["cards"] as Dictionary).is_empty():
+		fp = _fingerprint(bot_data)
+
+	var lists: Array = pool.get("lists", [])
+	var canonical_index := -1
+	var to_remove_indices: Array[int] = []
+	for i in range(lists.size()):
+		var entry: Dictionary = lists[i]
+		var entry_id := str(entry.get("list_id", "")).strip_edges()
+		var entry_owner := str(entry.get("owner_name", "")).strip_edges()
+		var entry_fp := str(entry.get("fingerprint", ""))
+		if entry_id == list_id:
+			canonical_index = i
+		elif not owner_name.is_empty() and entry_owner == owner_name and (not fp.is_empty() and entry_fp == fp):
+			to_remove_indices.append(i)
+
+	if canonical_index >= 0:
+		var canonical: Dictionary = lists[canonical_index]
+		if not author_name.is_empty() and not _is_generic_bot_name(author_name):
+			canonical["deck_name"] = author_name
+		if not owner_name.is_empty():
+			canonical["owner_name"] = owner_name
+		if not fp.is_empty():
+			canonical["fingerprint"] = fp
+		for phantom_idx in to_remove_indices:
+			var phantom: Dictionary = lists[phantom_idx]
+			canonical["wins"] = int(canonical.get("wins", 0)) + int(phantom.get("wins", 0))
+			canonical["losses"] = int(canonical.get("losses", 0)) + int(phantom.get("losses", 0))
+			canonical["draws"] = int(canonical.get("draws", 0)) + int(phantom.get("draws", 0))
+			canonical["stars"] = maxi(int(canonical.get("stars", 0)), int(phantom.get("stars", 0)))
+		to_remove_indices.reverse()
+		for phantom_idx in to_remove_indices:
+			lists.remove_at(phantom_idx)
+	elif not to_remove_indices.is_empty():
+		var adopted: Dictionary = lists[to_remove_indices[0]]
+		adopted["list_id"] = list_id
+		if not author_name.is_empty() and not _is_generic_bot_name(author_name):
+			adopted["deck_name"] = author_name
+		adopted["owner_name"] = owner_name
+		if not fp.is_empty():
+			adopted["fingerprint"] = fp
+		to_remove_indices.remove_at(0)
+		to_remove_indices.reverse()
+		for phantom_idx in to_remove_indices:
+			lists.remove_at(phantom_idx)
+
+	var challenger: Dictionary = pool.get("challenger", {})
+	if not challenger.is_empty():
+		var ch_id := str(challenger.get("list_id", "")).strip_edges()
+		var ch_owner := str(challenger.get("owner_name", "")).strip_edges()
+		var ch_fp := str(challenger.get("fingerprint", ""))
+		if ch_id == list_id or (not owner_name.is_empty() and ch_owner == owner_name and (not fp.is_empty() and ch_fp == fp)):
+			if canonical_index >= 0 or not to_remove_indices.is_empty():
+				pool["challenger"] = {}
+			else:
+				challenger["list_id"] = list_id
+				if not author_name.is_empty() and not _is_generic_bot_name(author_name):
+					challenger["deck_name"] = author_name
+				challenger["owner_name"] = owner_name
+				if not fp.is_empty():
+					challenger["fingerprint"] = fp
 
 func finalize_league(god_names: Array[String]) -> Dictionary:
 	# Keeps every seeded bot on the ladder (pre-existing ranked bots plus all
@@ -720,6 +929,7 @@ func save_state(path: String, result_count: int = 0) -> bool:
 		"replayed_match_count": _replayed_match_count,
 		"last_replayed_id": _last_replayed_id,
 		"result_count": result_count,
+		"assigned_names": _assigned_names_by_list_id,
 	}
 	return JsonStoreScript.save_json(path, data, "RankedBotDeckPool")
 
@@ -731,6 +941,7 @@ func load_state(path: String) -> bool:
 	_eliminated_bot_match_ids = (loaded.get("eliminated", {}) as Dictionary).duplicate(true)
 	_replayed_match_count = int(loaded.get("replayed_match_count", -1))
 	_last_replayed_id = str(loaded.get("last_replayed_id", ""))
+	_assigned_names_by_list_id = (loaded.get("assigned_names", {}) as Dictionary).duplicate(true)
 	return true
 
 static func list_capacity(god_name: String) -> int:
@@ -775,9 +986,9 @@ func _apply_result(result: Dictionary) -> void:
 			if list["list_id"] == list_id:
 				# A bot is identified by its list_id, not its deck. If the deck
 				# changed, update the fingerprint so future results still match.
-				var fingerprint := _fingerprint(result)
-				if list.get("fingerprint", "") != fingerprint:
-					list["fingerprint"] = fingerprint
+				var new_fingerprint := _fingerprint(result)
+				if list.get("fingerprint", "") != new_fingerprint:
+					list["fingerprint"] = new_fingerprint
 				_update_record(list, outcome)
 				if list_id == pool["quarantined_id"] and not challenger.is_empty():
 					challenger["trial_target_games"] = _get_played_match_count(list)
@@ -810,32 +1021,6 @@ func _apply_result(result: Dictionary) -> void:
 		audited_result["cards"] = audited_deck.get("cards", {}).duplicate(true)
 		audited_result["reinforcements"] = audited_deck.get("reinforcements", {}).duplicate(true)
 		audited_result["special_setup"] = audited_deck.get("special_setup", {}).duplicate(true)
-	# A stable ladder id is authoritative: don't collapse it onto a different
-	# bot that happens to share the same deck fingerprint.
-	if list_id.is_empty():
-		var fingerprint := _fingerprint(audited_result)
-		for list: Dictionary in lists:
-			if list["fingerprint"] == fingerprint:
-				_update_record(list, outcome)
-				if list["list_id"] == pool["quarantined_id"] and not challenger.is_empty():
-					challenger["trial_target_games"] = _get_played_match_count(list)
-					return
-				if _should_retire_early(list):
-					_eliminated_bot_match_ids[str(result.get("match_id", ""))] = true
-					result["bot_eliminated"] = true
-					_retire_list(pool, list)
-				return
-		if challenger.get("fingerprint", "") == fingerprint:
-			_update_record(challenger, outcome)
-			if _get_played_match_count(challenger) >= int(challenger["trial_target_games"]):
-				_resolve_trial(pool)
-			return
-		for pending: Dictionary in pool["pending"]:
-			if pending["fingerprint"] == fingerprint:
-				_update_record(pending, outcome)
-				if _should_retire_early(pending):
-					pool["pending"].erase(pending)
-				return
 	var bot_name := str(result.get("bot_name", "")).strip_edges()
 	var owner_name := str(result.get("owner_name", "")).strip_edges()
 	if owner_name.is_empty():
@@ -845,6 +1030,50 @@ func _apply_result(result: Dictionary) -> void:
 		if separator > 0:
 			owner_name = bot_name.substr(0, separator).strip_edges()
 			bot_name = bot_name.substr(separator + 3).strip_edges()
+
+	var fingerprint := _fingerprint(audited_result)
+	# Check for existing bot:
+	# 1. By owner_name + fingerprint (for community bots) - prevents duplicate phantom bots!
+	# 2. By fingerprint (when list_id is empty).
+	if not owner_name.is_empty() or list_id.is_empty():
+		for list: Dictionary in lists:
+			var matched := false
+			if not owner_name.is_empty() and str(list.get("owner_name", "")).strip_edges() == owner_name and list.get("fingerprint", "") == fingerprint:
+				matched = true
+			elif list_id.is_empty() and list.get("fingerprint", "") == fingerprint:
+				matched = true
+			if matched:
+				_update_record(list, outcome)
+				if list["list_id"] == pool["quarantined_id"] and not challenger.is_empty():
+					challenger["trial_target_games"] = _get_played_match_count(list)
+					return
+				if _should_retire_early(list):
+					_eliminated_bot_match_ids[str(result.get("match_id", ""))] = true
+					result["bot_eliminated"] = true
+					_retire_list(pool, list)
+				return
+		var ch_match := false
+		if not owner_name.is_empty() and str(challenger.get("owner_name", "")).strip_edges() == owner_name and challenger.get("fingerprint", "") == fingerprint:
+			ch_match = true
+		elif list_id.is_empty() and challenger.get("fingerprint", "") == fingerprint:
+			ch_match = true
+		if ch_match:
+			_update_record(challenger, outcome)
+			if _get_played_match_count(challenger) >= int(challenger["trial_target_games"]):
+				_resolve_trial(pool)
+			return
+		for pending: Dictionary in pool["pending"]:
+			var p_match := false
+			if not owner_name.is_empty() and str(pending.get("owner_name", "")).strip_edges() == owner_name and pending.get("fingerprint", "") == fingerprint:
+				p_match = true
+			elif list_id.is_empty() and pending.get("fingerprint", "") == fingerprint:
+				p_match = true
+			if p_match:
+				_update_record(pending, outcome)
+				if _should_retire_early(pending):
+					pool["pending"].erase(pending)
+				return
+
 	var self_play_name := ""
 	# Self-play results and historical ladder results carry the bot's original
 	# display name; preserve it instead of replacing it with an autofill name.
@@ -857,13 +1086,19 @@ func _apply_result(result: Dictionary) -> void:
 		# Preserve the bot's original ladder id (e.g. volunteer/league list ids)
 		# so later results resolve to the same entry instead of creating a new bot.
 		adopted_list_id = list_id
-	var fingerprint := _fingerprint(audited_result)
+	var initial_deck_name := "%s: Challenger" % display_god_name(god_name)
+	if not adopted_list_id.is_empty() and _assigned_names_by_list_id.has(adopted_list_id):
+		initial_deck_name = str(_assigned_names_by_list_id[adopted_list_id])
+	elif not _is_generic_bot_name(self_play_name):
+		initial_deck_name = self_play_name
+	elif not _is_generic_bot_name(bot_name):
+		initial_deck_name = "%s: %s" % [display_god_name(god_name), bot_name] if not bot_name.begins_with("%s: " % display_god_name(god_name)) else bot_name
 
 	var new_list := {
 		"list_id": adopted_list_id,
 		"fingerprint": fingerprint,
 		"god_name": god_name,
-		"deck_name": "%s: Challenger" % display_god_name(god_name),
+		"deck_name": initial_deck_name,
 		"cards": audited_result["cards"],
 		"reinforcements": audited_result["reinforcements"],
 		"special_setup": audited_result["special_setup"],
@@ -875,6 +1110,8 @@ func _apply_result(result: Dictionary) -> void:
 		"self_play_name": self_play_name,
 		"owner_name": owner_name,
 	}
+	if not _is_generic_bot_name(initial_deck_name) and not adopted_list_id.is_empty():
+		_assigned_names_by_list_id[adopted_list_id] = initial_deck_name
 	_update_record(new_list, outcome)
 	# A historical result carrying an existing ladder id is restoring an
 	# established bot, so don't let a single early loss discard it. New
@@ -1018,17 +1255,52 @@ func _fingerprint(deck: Dictionary) -> String:
 	return JSON.stringify([deck["cards"], deck["reinforcements"], deck["special_setup"]]).sha256_text()
 
 func _name_list(list: Dictionary, other_lists: Array) -> void:
-	var self_play_name := str(list.get("self_play_name", ""))
-	var god := display_god_name(list["god_name"])
-	var names: Array = NAME_POOLS.get(god, DEFAULT_NAMES)
+	var list_id := str(list.get("list_id", "")).strip_edges()
+	if not list_id.is_empty() and _assigned_names_by_list_id.has(list_id):
+		var assigned := str(_assigned_names_by_list_id[list_id]).strip_edges()
+		if not _is_generic_bot_name(assigned):
+			list["deck_name"] = assigned
+			return
+
 	var used_names := {}
+	for name_val in _assigned_names_by_list_id.values():
+		var n_str := str(name_val).strip_edges().to_lower()
+		if not n_str.is_empty():
+			used_names[n_str] = true
 	for other: Dictionary in other_lists:
-		used_names[str(other["deck_name"]).to_lower()] = true
+		var other_name := str(other.get("deck_name", "")).strip_edges().to_lower()
+		if not other_name.is_empty():
+			used_names[other_name] = true
+
+	var current_name := str(list.get("deck_name", "")).strip_edges()
+	var self_play_name := str(list.get("self_play_name", "")).strip_edges()
+	var owner_name := str(list.get("owner_name", "")).strip_edges()
+
+	# Community bots keep their author name unconditionally
+	if not owner_name.is_empty():
+		var author_name := current_name if not _is_generic_bot_name(current_name) else self_play_name
+		if not _is_generic_bot_name(author_name):
+			list["deck_name"] = author_name
+			if not list_id.is_empty():
+				_assigned_names_by_list_id[list_id] = author_name
+			return
+
+	# Established non-generic name that doesn't collide
+	if not _is_generic_bot_name(current_name) and not used_names.has(current_name.to_lower()):
+		if not list_id.is_empty():
+			_assigned_names_by_list_id[list_id] = current_name
+		return
+
+	# Non-generic self_play_name that doesn't collide
 	if not _is_generic_bot_name(self_play_name) and not used_names.has(self_play_name.to_lower()):
 		list["deck_name"] = self_play_name
+		if not list_id.is_empty():
+			_assigned_names_by_list_id[list_id] = self_play_name
 		return
-	for suffix in names:
-		var name := "%s: %s" % [god, suffix]
-		if not used_names.has(name.to_lower()):
-			list["deck_name"] = name
-			return
+
+	# Transition from Challenger to a new permanent unique name
+	var god := display_god_name(str(list.get("god_name", "")))
+	var chosen_name := _make_unique_bot_name(god, list, used_names)
+	list["deck_name"] = chosen_name
+	if not list_id.is_empty():
+		_assigned_names_by_list_id[list_id] = chosen_name

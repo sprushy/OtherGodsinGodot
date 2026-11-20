@@ -1010,6 +1010,7 @@ const REINFORCEMENT_HOVER_Z_INDEX := REINFORCEMENT_OVERLAY_Z_INDEX + 20
 const REINFORCEMENT_DRAG_Z_INDEX := REINFORCEMENT_OVERLAY_Z_INDEX + 30
 const LEFT_PANEL_MIN_WIDTH := 196.0
 const SHOW_MATCH_INFO_PANELS := false
+const DECK_RANK_BADGE_EXTRA_GAP := 8.0
 const BOARD_RIGHT_NUDGE := 0.0
 const BOARD_HORIZONTAL_OFFSET := -12.0
 const ENEMY_BOARD_STRETCH_RATIO := 0.82
@@ -7158,7 +7159,7 @@ func _position_deck_rank_badge(badge: RankBadgeScript, deck: Control, prop_scale
 		return
 	var card: Rect2 = deck.get_top_card_rect()
 	var center_x: float = deck.position.x + card.get_center().x * prop_scale
-	var edge_y: float = deck.position.y + (card.position.y - 16.0 if above else card.end.y + 36.0) * prop_scale
+	var edge_y: float = deck.position.y + (card.position.y - 16.0 - DECK_RANK_BADGE_EXTRA_GAP if above else card.end.y + 36.0 + DECK_RANK_BADGE_EXTRA_GAP) * prop_scale
 	var available := edge_y - 4.0 if above else size.y - edge_y - 4.0
 	var extent := clampf(available, 48.0 * prop_scale, 76.0 * prop_scale)
 	badge.size = Vector2.ONE * extent
@@ -7174,7 +7175,7 @@ func _position_deck_rank_badge_name(label: Label, badge: RankBadgeScript, deck: 
 		return
 	var card: Rect2 = deck.get_top_card_rect()
 	var center_x: float = deck.position.x + card.get_center().x * prop_scale
-	var edge_y: float = deck.position.y + (card.position.y - 16.0 if above else card.end.y + 36.0) * prop_scale
+	var edge_y: float = deck.position.y + (card.position.y - 16.0 - DECK_RANK_BADGE_EXTRA_GAP if above else card.end.y + 36.0 + DECK_RANK_BADGE_EXTRA_GAP) * prop_scale
 	label.position = Vector2(center_x - label.size.x * 0.5,
 		edge_y + 2.0 if above else edge_y - label.size.y - 2.0)
 
@@ -30416,6 +30417,10 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 			_awaiting_initial_full_state = false
 			_set_match_reconnect_wait(false)
 			var denial_reason := str(data.get("reason", "Match authentication failed."))
+			if _is_observer_mode:
+				# The denial can arrive inside MultiplayerAPI.poll().
+				call_deferred("emit_signal", &"match_connection_lost", denial_reason)
+				return
 			_set_action_label_text(denial_reason)
 			match_session_cleared.emit()
 			update_ui()
@@ -30471,7 +30476,7 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 			var lost_reason := str(data.get("reason", "The match connection was lost.")).strip_edges()
 			if lost_reason.is_empty():
 				lost_reason = "The match connection was lost."
-			if _is_ranked_dedicated_match():
+			if not _is_observer_mode and _is_ranked_dedicated_match():
 				_cancel_match_locally("Ranked match cancelled because the match server disconnected. No rating was recorded.")
 				match_connection_lost.emit(lost_reason)
 				return
@@ -31513,6 +31518,8 @@ func _on_initial_match_state_timeout(generation: int) -> void:
 	if game_manager == null or game_manager.turn_number > 0 or game_manager.is_game_over:
 		return
 	var reason := "The match server connected but did not send a playable game state."
+	if _is_observer_mode:
+		reason = "Could not load the live match. The host may be unreachable or the match may have ended."
 	_awaiting_initial_full_state = false
 	_set_action_label_text(reason)
 	update_ui()

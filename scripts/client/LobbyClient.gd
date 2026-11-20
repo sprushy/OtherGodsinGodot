@@ -806,8 +806,10 @@ func lobby_event(message: Dictionary) -> void:
 				return
 			room_error.emit(error_message)
 		LobbyProtocolScript.MATCH_ASSIGNED:
-			current_active_match_info = _prepare_match_info(payload)
-			match_assigned.emit(current_active_match_info)
+			var assignment := _prepare_match_info(payload)
+			if not bool(assignment.get("observer_mode", false)):
+				current_active_match_info = assignment
+			match_assigned.emit(assignment)
 		LobbyProtocolScript.LOCAL_BOT_MATCH_ASSIGNED:
 			if is_authenticated():
 				current_active_match_info = _prepare_match_info(payload)

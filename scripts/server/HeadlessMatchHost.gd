@@ -240,7 +240,6 @@ func _on_match_join_requested(join_request: Dictionary, sender_info: Dictionary)
 			network_manager.broadcast_event_to_peer(peer_id, "series_game_ended", {
 				"series": match_session.get_series_snapshot(),
 			})
-			return
 		var spectator_state := GameState.serialize(game_manager, GameState.SPECTATOR_VIEWER_INDEX, visible_player_indices)
 		network_manager.broadcast_event_to_peer(peer_id, "full_state", {
 			state = spectator_state,

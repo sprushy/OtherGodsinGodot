@@ -71,6 +71,7 @@ func run() -> bool:
 	_check_bot_reserve_summon_threat(failures)
 	_check_bot_fenrir_summon(failures)
 	_check_bot_main_phase_combat_order(failures)
+	_check_bot_tablet_of_life_payoff(failures)
 	_check_bot_removal_opens_attacks(failures)
 	_check_bot_paired_removals(failures)
 	_check_bot_summon_and_removal_order(failures)
@@ -1621,6 +1622,50 @@ func _check_bot_main_phase_combat_order(failures: PackedStringArray) -> void:
 	blocker.mute_permanently(game)
 	if BotCardStrategyScript.effect_score(bot, fall) >= unbound_score:
 		failures.append("Bot ignored ability suppression when valuing removal of a debilitated creature")
+	bot.detach()
+
+func _check_bot_tablet_of_life_payoff(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	player.game_manager = game
+	opponent.game_manager = game
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	player.mana = 5
+	opponent.followers = 20
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var tablet := TabletOfLife.new()
+	tablet.card_owner = player
+	player.hand_zone.add_card(tablet)
+	var humbaba := HumbabaTheTerrible.new()
+	humbaba.card_owner = player
+	player.graveyard_zone.add_card(humbaba)
+	var stone := WardingStone.new()
+	stone.card_owner = opponent
+	opponent.frontline_zones[0].add_card(stone)
+	stone.on_summon(game)
+	if not bot._get_best_strategy_action([], {}).is_empty():
+		failures.append("Bot spent Tablet of Life on Humbaba with no payoff under Warding Stone")
+	var demon := AsagTheDestroyer.new()
+	demon.card_owner = player
+	player.hand_zone.add_card(demon)
+	var sacrifice: Dictionary = bot._get_best_strategy_action([], {}).get("command", {})
+	if sacrifice.get("spell_uid") != tablet.uid or sacrifice.get("target_uid") != humbaba.uid:
+		failures.append("Bot passed up Tablet of Life as sacrifice payment under Warding Stone")
+	player.move_card(demon, player.abyss_zone)
+	opponent.move_card(stone, opponent.graveyard_zone)
+	var command: Dictionary = bot._get_best_strategy_action([], {}).get("command", {})
+	if command.get("spell_uid") != tablet.uid or command.get("target_uid") != humbaba.uid:
+		failures.append("Bot passed up a lethal Tablet of Life attack once Warding Stone was gone")
+	game.has_resolved_attack_this_turn = true
+	if not bot._get_best_strategy_action([], {}).is_empty():
+		failures.append("Bot spent Tablet of Life on Humbaba after the first attack resolved")
 	bot.detach()
 
 func _check_bot_removal_opens_attacks(failures: PackedStringArray) -> void:
