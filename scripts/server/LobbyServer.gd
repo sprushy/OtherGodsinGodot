@@ -2775,7 +2775,8 @@ func _ensure_server_bot_deck_factory() -> void:
 	_ranked_bot_deck_pool.set_deck_auditor(Callable(server_bot_deck_factory, "audit_ranked_bot_deck"))
 
 func _refresh_ranked_bot_deck_pool() -> void:
-	_pool_dirty = true
+	if not _pool_dirty:
+		return
 	_pool_dirty = false
 	_ensure_match_history_store()
 	_ensure_server_bot_deck_factory()
