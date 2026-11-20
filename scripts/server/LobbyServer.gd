@@ -2796,16 +2796,8 @@ func _ensure_server_bot_deck_factory() -> void:
 	_ranked_bot_deck_pool.set_deck_auditor(Callable(server_bot_deck_factory, "audit_ranked_bot_deck"))
 
 func _refresh_ranked_bot_deck_pool() -> void:
-	var result_count := _count_bot_result_files()
-	var has_bots := false
-	for pool: Dictionary in _ranked_bot_deck_pool._by_god.values():
-		if not pool.get("lists", []).is_empty():
-			has_bots = true
-			break
-	if not _pool_dirty and has_bots and result_count == _pool_result_count:
-		return
 	_pool_dirty = false
-	_pool_result_count = result_count
+	_pool_result_count = _count_bot_result_files()
 	_ensure_match_history_store()
 	_ensure_server_bot_deck_factory()
 	var community_bot_ids := _get_community_bot_ids()

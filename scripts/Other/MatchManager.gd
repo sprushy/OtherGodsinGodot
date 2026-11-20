@@ -2163,6 +2163,16 @@ func _resolve_attack(action: CardAction) -> void:
 	var attacker_can_continue := _can_continue_declared_attack(action.attacker)
 	var partner_can_continue := _can_continue_declared_attack(action.united_front_partner)
 
+	# A declared attack that fizzles because its attacker was flipped face-down or
+	# pushed off the frontline still counts as that creature having attempted an
+	# attack this turn, so it cannot come back and attack again.
+	if not attacker_can_continue and action.attacker != null and is_instance_valid(action.attacker):
+		action.attacker.spend_major_creature_action()
+		action.attacker.mark_attacked_this_turn()
+	if not partner_can_continue and action.united_front_partner != null and is_instance_valid(action.united_front_partner):
+		action.united_front_partner.spend_major_creature_action()
+		action.united_front_partner.mark_attacked_this_turn()
+
 	if not attacker_can_continue and not partner_can_continue:
 		if actual_target is Card:
 			game_manager._clear_combat_engagement_state(actual_target)
@@ -2480,7 +2490,8 @@ func _is_attacker_still_on_frontline(attacker: Card) -> bool:
 
 func _can_continue_declared_attack(attacker: Card) -> bool:
 	return _is_attacker_still_on_frontline(attacker) \
-		and attacker.creature_mode == Card.CreatureMode.AGGRESSIVE
+		and attacker.creature_mode == Card.CreatureMode.AGGRESSIVE \
+		and (not attacker.is_face_down or attacker.is_stealth)
 
 func _get_declared_attack_fizzle_reason(attacker: Card, attacking_player: Player) -> String:
 	if attacker == null or not is_instance_valid(attacker):
@@ -3923,6 +3934,7 @@ func can_attack(card: Card) -> bool:
 		and not card.has_status_effect("cannot_attack")
 		and game_manager.turn_number > 1
 		and (card.creature_mode == Card.CreatureMode.AGGRESSIVE or card.is_stealth)
+		and not (card.is_face_down and not card.is_stealth)
 		and card.current_zone != null
 		and card.current_zone.zone_type == Zone.ZoneType.FRONTLINE
 		and not game_manager.attack_restrictions.has(card.get_controller())
@@ -3975,6 +3987,8 @@ func get_attack_invalid_reason(card: Card) -> String:
 		return "Cannot attack on the first turn!"
 	if card.creature_mode != Card.CreatureMode.AGGRESSIVE and not card.is_stealth:
 		return card.card_name + " is in defensive stance and cannot attack."
+	if card.is_face_down and not card.is_stealth:
+		return card.card_name + " is face down and cannot attack."
 	if card.current_zone == null or card.current_zone.zone_type != Zone.ZoneType.FRONTLINE:
 		return card.card_name + " cannot attack from the back row."
 	

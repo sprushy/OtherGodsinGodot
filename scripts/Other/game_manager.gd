@@ -2254,6 +2254,9 @@ func creature_attack(attacker: Card, target) -> void:
 	if attacker.creature_mode == Card.CreatureMode.DEFENSIVE and not attacker_was_stealth:
 		note_player_feedback(attacker.card_name + " cannot attack while in defensive stance.")
 		return
+	if attacker.is_face_down and not attacker_was_stealth:
+		note_player_feedback(attacker.card_name + " cannot attack while face down.")
+		return
 	if not can_pay_creature_action_mana_cost(attacker, "attack"):
 		note_player_feedback(attacker.card_name + " cannot attack because its controller cannot pay the action cost.")
 		return
@@ -3145,8 +3148,8 @@ func _can_continue_declared_attack(attacker: Card) -> bool:
 		and attacker.card_type == Card.CardType.CREATURE \
 		and attacker.current_zone != null \
 		and attacker.current_zone.zone_type == Zone.ZoneType.FRONTLINE \
-		and attacker.creature_mode == Card.CreatureMode.AGGRESSIVE
-
+		and attacker.creature_mode == Card.CreatureMode.AGGRESSIVE \
+		and (not attacker.is_face_down or attacker.is_stealth)
 func add_to_stack(action: CardAction) -> void:
 	action_stack.append(action)
 

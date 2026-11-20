@@ -405,39 +405,10 @@ func rebuild_league_records(results: Array[Dictionary]) -> Dictionary:
 		if _is_league_bot_list_id(list_id):
 			league_result_count += results_by_list[list_id].size()
 	print("[Bot League Debug] rebuild_league_records: %d total results, %d with league list_ids" % [results.size(), league_result_count])
-	# First pass: re-register any league bots that have results but are missing from the pool.
+	# Single pass: apply all results via _apply_result. Historical list ids are
+	# preserved by _apply_result's adopted_list_id logic, so league and normal
+	# bots compete for ladder slots in chronological order.
 	var re_registered := 0
-	for list_id in results_by_list.keys():
-		if not _is_league_bot_list_id(list_id):
-			continue
-		var found := false
-		for pool: Dictionary in _by_god.values():
-			for list: Dictionary in pool.get("lists", []):
-				if str(list.get("list_id", "")) == list_id:
-					found = true
-					break
-			if found:
-				break
-			if str(pool.get("quarantined_id", "")) == list_id:
-				found = true
-				break
-		if not found:
-			var result: Dictionary = results_by_list[list_id][0]
-			var god_name := str(result.get("god_name", ""))
-			var deck: Dictionary = {
-				"deck_name": str(result.get("bot_name", "")),
-				"cards": result.get("cards", {}),
-				"reinforcements": result.get("reinforcements", {}),
-				"special_setup": result.get("special_setup", {}),
-				"god_name": god_name,
-			}
-			var new_list_id := register_league_list(god_name, deck, list_id)
-			if not new_list_id.is_empty():
-				re_registered += 1
-				print("[Bot League Debug] re-registered %s as %s (%s)" % [str(result.get("bot_name", "")), list_id, god_name])
-	# Second pass: apply all results via _apply_result, which finds existing
-	# bots by list_id/fingerprint and updates them (or creates new entries).
-	# Does NOT clear _by_god, so league_ list_ids are preserved.
 	var applied := 0
 	for result: Dictionary in results:
 		_apply_result(result)
@@ -815,29 +786,32 @@ func _apply_result(result: Dictionary) -> void:
 		audited_result["cards"] = audited_deck.get("cards", {}).duplicate(true)
 		audited_result["reinforcements"] = audited_deck.get("reinforcements", {}).duplicate(true)
 		audited_result["special_setup"] = audited_deck.get("special_setup", {}).duplicate(true)
-	var fingerprint := _fingerprint(audited_result)
-	for list: Dictionary in lists:
-		if list["fingerprint"] == fingerprint:
-			_update_record(list, outcome)
-			if list["list_id"] == pool["quarantined_id"] and not challenger.is_empty():
-				challenger["trial_target_games"] = _get_played_match_count(list)
+	# A stable ladder id is authoritative: don't collapse it onto a different
+	# bot that happens to share the same deck fingerprint.
+	if list_id.is_empty():
+		var fingerprint := _fingerprint(audited_result)
+		for list: Dictionary in lists:
+			if list["fingerprint"] == fingerprint:
+				_update_record(list, outcome)
+				if list["list_id"] == pool["quarantined_id"] and not challenger.is_empty():
+					challenger["trial_target_games"] = _get_played_match_count(list)
+					return
+				if _should_retire_early(list):
+					_eliminated_bot_match_ids[str(result.get("match_id", ""))] = true
+					result["bot_eliminated"] = true
+					_retire_list(pool, list)
 				return
-			if _should_retire_early(list):
-				_eliminated_bot_match_ids[str(result.get("match_id", ""))] = true
-				result["bot_eliminated"] = true
-				_retire_list(pool, list)
+		if challenger.get("fingerprint", "") == fingerprint:
+			_update_record(challenger, outcome)
+			if _get_played_match_count(challenger) >= int(challenger["trial_target_games"]):
+				_resolve_trial(pool)
 			return
-	if challenger.get("fingerprint", "") == fingerprint:
-		_update_record(challenger, outcome)
-		if _get_played_match_count(challenger) >= int(challenger["trial_target_games"]):
-			_resolve_trial(pool)
-		return
-	for pending: Dictionary in pool["pending"]:
-		if pending["fingerprint"] == fingerprint:
-			_update_record(pending, outcome)
-			if _should_retire_early(pending):
-				pool["pending"].erase(pending)
-			return
+		for pending: Dictionary in pool["pending"]:
+			if pending["fingerprint"] == fingerprint:
+				_update_record(pending, outcome)
+				if _should_retire_early(pending):
+					pool["pending"].erase(pending)
+				return
 	var bot_name := str(result.get("bot_name", "")).strip_edges()
 	var owner_name := str(result.get("owner_name", "")).strip_edges()
 	if owner_name.is_empty():
@@ -859,6 +833,8 @@ func _apply_result(result: Dictionary) -> void:
 		# Preserve the bot's original ladder id (e.g. volunteer/league list ids)
 		# so later results resolve to the same entry instead of creating a new bot.
 		adopted_list_id = list_id
+	var fingerprint := _fingerprint(audited_result)
+
 	var new_list := {
 		"list_id": adopted_list_id,
 		"fingerprint": fingerprint,
@@ -881,6 +857,27 @@ func _apply_result(result: Dictionary) -> void:
 	# challengers (no stable list id) still use the early-retirement rule.
 	if _should_retire_early(new_list) and list_id.is_empty():
 		return
+	# Historical/established bots (stable ladder ids) take priority over fresh
+	# league bots: make room for them instead of dropping them when full.
+	if not list_id.is_empty() and lists.size() >= list_capacity(god_name):
+		var victim_index := 0
+		for i in range(1, lists.size()):
+			var current: Dictionary = lists[i]
+			var victim: Dictionary = lists[victim_index]
+			var current_is_league := str(current.get("list_id", "")).begins_with("league_")
+			var victim_is_league := str(victim.get("list_id", "")).begins_with("league_")
+			if current_is_league and not victim_is_league:
+				victim_index = i
+				continue
+			if victim_is_league and not current_is_league:
+				continue
+			var current_priority := _bot_name_priority(current)
+			var victim_priority := _bot_name_priority(victim)
+			if current_priority < victim_priority:
+				victim_index = i
+			elif current_priority == victim_priority and _get_played_match_count(current) < _get_played_match_count(victim):
+				victim_index = i
+		lists.remove_at(victim_index)
 	if lists.size() < list_capacity(god_name):
 		_name_list(new_list, lists)
 		lists.append(new_list)

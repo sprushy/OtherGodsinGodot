@@ -23870,8 +23870,8 @@ func _can_continue_declared_attack(attacker: Card) -> bool:
 		and attacker.card_type == Card.CardType.CREATURE \
 		and attacker.current_zone != null \
 		and attacker.current_zone.zone_type == Zone.ZoneType.FRONTLINE \
-		and attacker.creature_mode == Card.CreatureMode.AGGRESSIVE
-
+		and attacker.creature_mode == Card.CreatureMode.AGGRESSIVE \
+		and (not attacker.is_face_down or attacker.is_stealth)
 func _is_real_network_host() -> bool:
 	return headless_match_host != null \
 		and headless_match_host.should_route_prompts_via_network() \
