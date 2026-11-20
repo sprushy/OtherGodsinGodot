@@ -3911,6 +3911,17 @@ func _queue_room_list_refresh(show_status: bool = true) -> void:
 		status_label.text = "Refreshing seeks and live matches..."
 	lobby_client.list_rooms()
 
+## Set the players-online label to a loading state once the local account is
+## signed in, so it no longer says "sign in to the lobby" while waiting for the
+## server roster (which release-build lobby servers never answer). The actual
+## roster replaces this text when PLAYERS_ONLINE arrives.
+func _update_players_online_label_loading() -> void:
+	if _players_online_label == null or not is_instance_valid(_players_online_label):
+		return
+	var current := _players_online_label.text.strip_edges()
+	if current == "Players online: sign in to the lobby.":
+		_players_online_label.text = "Players online: loading..."
+
 func _request_players_online() -> void:
 	if lobby_client == null or not is_instance_valid(lobby_client):
 		return
@@ -8954,6 +8965,15 @@ func _start_practice_match(match_info: Dictionary = {}) -> PracticeThorGame:
 	practice_game.set_player_practice_deck(selected_practice_deck)
 	var practice_info := match_info.duplicate()
 	practice_info["player_names"] = [_get_active_profile_display_name("Player"), "Thor"]
+	# Mark this as a bot match and supply rank badge data so the deck rank
+	# badges and player names appear in the match UI (CombatMockGame reads
+	# has_bot / rank_badges / bot_player_stars from _current_match_info).
+	practice_info["has_bot"] = true
+	var ranked_progress = _current_profile_summary.get("ranked_progress", {})
+	if ranked_progress is Dictionary and not ranked_progress.is_empty():
+		var local_rank_name := str(ranked_progress.get("rank_name", ""))
+		if not local_rank_name.is_empty():
+			practice_info["rank_badges"] = [{"rank_name": local_rank_name}, {}]
 	await practice_game.start_game(false, false, "127.0.0.1", 12345, practice_info)
 	return practice_game
 
@@ -9304,6 +9324,10 @@ func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, play
 	_request_bot_ladder()
 	_request_friends_state()
 	_request_players_online()
+	# The roster label starts as "sign in to the lobby"; once we're signed in,
+	# show a loading state so it no longer says "sign in" while we wait for the
+	# server roster (which release-build lobby servers never answer).
+	_update_players_online_label_loading()
 	# Proactively report whether this client can host a player-hosted match so
 	# unranked seeks can use listen-server topology when viable. Best-effort and
 	# deferred so it never blocks login or the lobby UI.
@@ -9412,6 +9436,10 @@ func _on_lobby_reconnect_succeeded(
 	_request_bot_ladder()
 	_request_friends_state()
 	_request_players_online()
+	# The roster label starts as "sign in to the lobby"; once we're signed in,
+	# show a loading state so it no longer says "sign in" while we wait for the
+	# server roster (which release-build lobby servers never answer).
+	_update_players_online_label_loading()
 	# Proactively report whether this client can host a player-hosted match so
 	# unranked seeks can use listen-server topology when viable. Best-effort and
 	# deferred so it never blocks login or the lobby UI.

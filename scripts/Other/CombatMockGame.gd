@@ -25891,7 +25891,7 @@ func _show_freyja_active_prompt(card: FreyjaActive, prompt_targets: Array = []) 
 		if selected_uid not in _pending_freyja_active_prompt_targets:
 			_pending_freyja_active_selected_uids.erase(selected_uid)
 	if current_targets.is_empty() or summon_limit <= 0:
-		_resolve_freyja_active_prompt([])
+		_resolve_freyja_active_prompt([] as Array[Card])
 		return
 	_set_action_label_text(
 		"%s: left-click Norse Warriors in your graveyard to mark them, click Freyja again to confirm, right-click to skip. Up to %d."
@@ -26025,7 +26025,7 @@ func _confirm_freyja_active_prompt() -> bool:
 func _skip_freyja_active_prompt() -> bool:
 	if _get_pending_freyja_active_card() == null:
 		return false
-	_resolve_freyja_active_prompt([])
+	_resolve_freyja_active_prompt([] as Array[Card])
 	return true
 
 func _show_tezcatlipoca_active_titlacauan_prompt(card: Card, prompt_targets: Array = []) -> void:
@@ -26046,7 +26046,7 @@ func _show_tezcatlipoca_active_titlacauan_prompt(card: Card, prompt_targets: Arr
 		if selected_uid not in _pending_tezcatlipoca_titlacauan_prompt_targets:
 			_pending_tezcatlipoca_titlacauan_selected_uids.erase(selected_uid)
 	if current_targets.is_empty():
-		_resolve_tezcatlipoca_active_titlacauan_prompt([])
+		_resolve_tezcatlipoca_active_titlacauan_prompt([] as Array[Card])
 		return
 	_set_action_label_text(
 		"%s: left-click enemy creatures to toggle slaves, click Tez again to confirm, right-click to skip. Level cap %d."
@@ -26179,7 +26179,7 @@ func _confirm_tez_titlacauan_prompt() -> bool:
 func _skip_tez_titlacauan_prompt() -> bool:
 	if _pending_tezcatlipoca_active_prompt == null:
 		return false
-	_resolve_tezcatlipoca_active_titlacauan_prompt([])
+	_resolve_tezcatlipoca_active_titlacauan_prompt([] as Array[Card])
 	return true
 
 func _show_tez_titlacauan_cursor_overlay() -> void:
