@@ -3689,6 +3689,21 @@ func grant_temporary_control_of_creature(
 	creature.reveal_from_stealth(self)
 	return true
 
+func grant_control_of_creature(creature: Card, new_controller: Player) -> bool:
+	if creature == null or new_controller == null:
+		return false
+	var previous_controller := creature.get_controller()
+	if previous_controller == null or previous_controller == new_controller:
+		return false
+	if not can_temporarily_control_creature(creature, new_controller):
+		return false
+	var destination := _find_creature_control_destination(new_controller, creature.current_zone.zone_type, creature.current_zone.zone_index)
+	if destination == null:
+		return false
+	new_controller.move_card(creature, destination)
+	creature.reveal_from_stealth(self)
+	return true
+
 func _find_creature_control_destination(player: Player, zone_type: int, zone_index: int) -> Zone:
 	var preferred_rows: Array[Array] = []
 	if zone_type == Zone.ZoneType.FRONTLINE:

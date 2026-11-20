@@ -2274,6 +2274,11 @@ func _get_best_strategy_action(attacks: Array[Dictionary], attack: Dictionary, d
 			if _is_better_strategy_plan(infants_plan, best_plan):
 				best_plan = infants_plan
 			continue
+		if CardStrategy.key(card) == "TheChangelingExchange":
+			var changeling_plan := _plan_changeling_exchange(card, danger)
+			if _is_better_strategy_plan(changeling_plan, best_plan):
+				best_plan = changeling_plan
+			continue
 		if card is KurJara:
 			# Tree of Life is planned on its own: a proactive resurrection
 			# cycle, plus a withdrawal dodge that still returns its value.
@@ -3153,6 +3158,30 @@ func _plan_deucalions_infants(spell: DeucalionsInfants, danger: int, preparing: 
 					"enemy_target_uid": enemy.uid if enemy != null else "",
 				}}
 	return best
+
+func _plan_changeling_exchange(spell: Card, danger: int, preparing: bool = false) -> Dictionary:
+	if spell == null:
+		return {}
+	if spell.is_prepared:
+		if not spell.can_activate_prepared(game_manager, bot_player):
+			return {}
+	elif not preparing and not game_manager.can_play_card(bot_player, spell, null):
+		return {}
+	var friendly: Array = spell.get_friendly_targets(game_manager)
+	var enemy: Array = spell.get_enemy_targets(game_manager)
+	if friendly.is_empty() or enemy.is_empty():
+		return {}
+	friendly.sort_custom(func(a: Card, b: Card) -> bool: return _get_card_economic_value(a) < _get_card_economic_value(b))
+	enemy.sort_custom(func(a: Card, b: Card) -> bool: return _get_card_economic_value(a) > _get_card_economic_value(b))
+	var give: Card = friendly[0] as Card
+	var take: Card = enemy[0] as Card
+	var score := CardStrategy.value(self, take) - _get_card_economic_value(give)
+	score -= CardStrategy.mana_penalty(self, CardStrategy.activation_cost(self, spell))
+	if score <= 0:
+		return {}
+	var command := {"type": "cast_spell", "spell_uid": spell.uid, "prepared": spell.is_prepared,
+		"friendly_target_uid": give.uid, "enemy_target_uid": take.uid, "target_uid": take.uid}
+	return {"command": command, "score": score}
 
 func _plan_board_withdrawal(source: Card, danger: int) -> Dictionary:
 	if danger <= 0 or not source.can_activate(game_manager) or source.is_activation_locked(game_manager) \

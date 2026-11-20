@@ -135,8 +135,8 @@ func _make_unique_bot_name(god_name: String, deck: Dictionary, used_names: Dicti
 		if not used_names.has(candidate.to_lower()):
 			return candidate
 	for name_part in names:
-		for epithet in NAME_EPITHETS:
-			candidate = "%s: %s %s" % [god_name, str(name_part), str(epithet)]
+		for suffix in range(2, 100):
+			candidate = "%s: %s %d" % [god_name, str(name_part), suffix]
 			if not used_names.has(candidate.to_lower()):
 				return candidate
 	var identity := str(deck.get("list_id", deck.get("fingerprint", "bot"))).sha256_text().substr(0, 8)
@@ -422,7 +422,6 @@ func rebuild_league_records(results: Array[Dictionary]) -> Dictionary:
 					str(list.get("deck_name", "")), lid,
 					int(list.get("wins", 0)), int(list.get("losses", 0)), int(list.get("draws", 0)),
 					int(list.get("stars", 0))])
-	_ensure_unique_deck_names()
 	return {"success": true, "re_registered": re_registered, "replayed": applied, "league_result_count": league_result_count}
 
 func _is_league_bot_list_id(list_id: String) -> bool:
@@ -753,7 +752,7 @@ func _apply_result(result: Dictionary) -> void:
 				_resolve_trial(pool)
 			return
 		for list: Dictionary in lists:
-			if list["list_id"] == list_id:
+			if list["list_id"] == list_id and list.get("fingerprint", "") == _fingerprint(result):
 				_update_record(list, outcome)
 				if list_id == pool["quarantined_id"] and not challenger.is_empty():
 					challenger["trial_target_games"] = _get_played_match_count(list)

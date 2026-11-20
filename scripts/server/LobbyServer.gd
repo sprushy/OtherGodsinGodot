@@ -2796,8 +2796,17 @@ func _ensure_server_bot_deck_factory() -> void:
 	_ranked_bot_deck_pool.set_deck_auditor(Callable(server_bot_deck_factory, "audit_ranked_bot_deck"))
 
 func _refresh_ranked_bot_deck_pool() -> void:
+	var has_bots := false
+	var has_established := false
+	for pool: Dictionary in _ranked_bot_deck_pool._by_god.values():
+		for list: Dictionary in pool.get("lists", []):
+			has_bots = true
+			var lid := str(list.get("list_id", ""))
+			if lid.begins_with("volunteer_") or str(list.get("owner_name", "")).strip_edges() != "":
+				has_established = true
+	if not _pool_dirty and has_bots and has_established:
+		return
 	_pool_dirty = false
-	_pool_result_count = _count_bot_result_files()
 	_ensure_match_history_store()
 	_ensure_server_bot_deck_factory()
 	var community_bot_ids := _get_community_bot_ids()
@@ -2826,9 +2835,6 @@ func _refresh_ranked_bot_deck_pool() -> void:
 			results.append(result)
 		else:
 			results.append(result)
-	results.sort_custom(func(first: Dictionary, second: Dictionary) -> bool:
-		return float(first.get("played_unix", 0.0)) < float(second.get("played_unix", 0.0))
-	)
 	# Use rebuild_league_records() instead of refresh() so league bots keep
 	# their league_ list_ids and records. refresh() clears _by_god and replays
 	# from scratch, which would replace league_ ids with match_id-based ids.

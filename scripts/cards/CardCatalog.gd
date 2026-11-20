@@ -238,6 +238,7 @@ const CARD_SCRIPT_PATHS := [
 	"res://scripts/cards/Spells/RunicSpellbreaker.gd",
 	"res://scripts/cards/Spells/SirensSong.gd",
 	"res://scripts/cards/Spells/Snowball.gd",
+	"res://scripts/cards/Spells/TheChangelingExchange.gd",
 	"res://scripts/cards/Spells/WildMagic.gd",
 	"res://scripts/cards/Structures/AncientPyre.gd",
 	"res://scripts/cards/Structures/AnointingStatue.gd",
