@@ -398,6 +398,8 @@ var _tutorial_coach_seen_stack: bool = false
 var _seek_auto_refresh_elapsed: float = 0.0
 var _players_online_label: Label = null
 var _players_online_refresh_elapsed: float = 0.0
+var _players_online_request_pending: bool = false
+var _players_online_request_time: float = 0.0
 var _seek_list_request_pending: bool = false
 var _request_next_notices: VBoxContainer = null
 var _deck_picker_button: Button = null
@@ -499,6 +501,7 @@ func _ready() -> void:
 		leave_match_button.pressed.connect(_on_leave_match_pressed)
 	if seek_list != null and seek_list.has_signal("item_clicked"):
 		seek_list.item_clicked.connect(_on_seek_item_clicked)
+	_apply_seek_list_scrollbar_style()
 	if ready_button:
 		ready_button.pressed.connect(_on_ready_button_pressed)
 
@@ -1236,6 +1239,50 @@ func _apply_main_menu_text_sizing() -> void:
 		_account_identity_label.add_theme_font_size_override("font_size", MENU_ACCOUNT_IDENTITY_FONT_SIZE)
 	_apply_seek_action_button_sizing()
 
+func _apply_seek_list_scrollbar_style() -> void:
+	if seek_list == null or not is_instance_valid(seek_list):
+		return
+	var bar: VScrollBar = seek_list.get_v_scroll_bar()
+	if not is_instance_valid(bar):
+		return
+	# The seek list's default scrollbar is very thin, which makes it easy to
+	# miss when scrolling and accidentally click into a seek/match row. Widen
+	# the scrollbar (and its reserved gutter) so it is an easier, more reliable
+	# scroll target.
+	bar.custom_minimum_size.x = 24.0
+	bar.mouse_filter = Control.MOUSE_FILTER_STOP
+	bar.add_theme_constant_override("scroll_width", 24)
+	bar.add_theme_constant_override("scroll_border", 2)
+
+	var track := StyleBoxFlat.new()
+	track.bg_color = Color(0.035, 0.040, 0.060, 0.94)
+	track.border_color = Color(0.18, 0.20, 0.30, 0.95)
+	track.set_border_width_all(1)
+	track.set_corner_radius_all(8)
+	bar.add_theme_stylebox_override("scroll", track)
+	bar.add_theme_stylebox_override("scroll_focus", track)
+
+	var grabber := StyleBoxFlat.new()
+	grabber.bg_color = Color(0.72, 0.66, 0.40, 0.98)
+	grabber.border_color = Color(0.98, 0.88, 0.52, 1.0)
+	grabber.set_border_width_all(1)
+	grabber.set_corner_radius_all(8)
+	bar.add_theme_stylebox_override("grabber", grabber)
+
+	var grabber_highlight := StyleBoxFlat.new()
+	grabber_highlight.bg_color = Color(0.88, 0.78, 0.45, 1.0)
+	grabber_highlight.border_color = grabber.border_color
+	grabber_highlight.set_border_width_all(1)
+	grabber_highlight.set_corner_radius_all(8)
+	bar.add_theme_stylebox_override("grabber_highlight", grabber_highlight)
+
+	var grabber_pressed := StyleBoxFlat.new()
+	grabber_pressed.bg_color = Color(1.0, 0.84, 0.44, 1.0)
+	grabber_pressed.border_color = grabber.border_color
+	grabber_pressed.set_border_width_all(1)
+	grabber_pressed.set_corner_radius_all(8)
+	bar.add_theme_stylebox_override("grabber_pressed", grabber_pressed)
+
 func _apply_seek_action_button_sizing() -> void:
 	if is_instance_valid(_ladder_button) and deck_picker_option != null:
 		deck_picker_option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1611,6 +1658,13 @@ func _process(delta: float) -> void:
 			if _players_online_refresh_elapsed >= PLAYERS_ONLINE_REFRESH_INTERVAL_SECONDS:
 				_players_online_refresh_elapsed = 0.0
 				_request_players_online()
+	# Timeout fallback for servers that never answer (old release servers).
+	if _players_online_request_pending:
+		var elapsed := (Time.get_ticks_msec() / 1000.0) - _players_online_request_time
+		if elapsed >= 4.0:
+			_players_online_request_pending = false
+			if _players_online_label != null and is_instance_valid(_players_online_label):
+				_players_online_label.visible = false
 	if not _deferred_required_update.is_empty() and not _should_defer_required_update():
 		var pending_update := _deferred_required_update
 		_deferred_required_update = {}
@@ -2904,6 +2958,7 @@ func _build_players_online_controls() -> void:
 	_players_online_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_players_online_label.modulate = Color(0.72, 0.86, 0.98)
 	_players_online_label.add_theme_font_size_override("font_size", 13)
+	_players_online_label.visible = false
 	multiplayer_container.add_child(_players_online_label)
 	if seek_list != null:
 		multiplayer_container.move_child(_players_online_label, seek_list.get_index())
@@ -3768,6 +3823,7 @@ func _refresh_seek_list() -> void:
 	if seek_list.get_item_count() == 0:
 		seek_list.add_item("No open seeks or live matches right now.")
 		seek_list.set_item_disabled(0, true)
+	_apply_seek_list_scrollbar_style()
 
 ## Colors a match row with a rank outline: half one player's rank color, half
 ## the other's, so cross-rank matchups stand out while scanning the list.
@@ -3911,26 +3967,29 @@ func _queue_room_list_refresh(show_status: bool = true) -> void:
 		status_label.text = "Refreshing seeks and live matches..."
 	lobby_client.list_rooms()
 
-## Set the players-online label to a loading state once the local account is
-## signed in, so it no longer says "sign in to the lobby" while waiting for the
-## server roster (which release-build lobby servers never answer). The actual
-## roster replaces this text when PLAYERS_ONLINE arrives.
-func _update_players_online_label_loading() -> void:
+func _request_players_online() -> void:
 	if _players_online_label == null or not is_instance_valid(_players_online_label):
 		return
-	var current := _players_online_label.text.strip_edges()
-	if current == "Players online: sign in to the lobby.":
-		_players_online_label.text = "Players online: loading..."
-
-func _request_players_online() -> void:
 	if lobby_client == null or not is_instance_valid(lobby_client):
+		_players_online_label.visible = false
 		return
+	if not lobby_client.is_authenticated():
+		_players_online_label.visible = false
+		return
+	if not lobby_client.can_see_players_online:
+		_players_online_label.visible = false
+		return
+	_players_online_label.visible = true
+	_players_online_label.text = "Players online: loading..."
+	_players_online_request_pending = true
+	_players_online_request_time = Time.get_ticks_msec() / 1000.0
 	lobby_client.request_players_online()
 
 func _on_players_online_received(players: Array) -> void:
 	_render_players_online(players)
 
 func _render_players_online(players: Array) -> void:
+	_players_online_request_pending = false
 	if _players_online_label == null or not is_instance_valid(_players_online_label):
 		return
 	var names: Array[String] = []
@@ -3961,8 +4020,10 @@ func _render_players_online(players: Array) -> void:
 
 func _clear_players_online() -> void:
 	_players_online_refresh_elapsed = 0.0
+	_players_online_request_pending = false
 	if _players_online_label == null or not is_instance_valid(_players_online_label):
 		return
+	_players_online_label.visible = false
 	_players_online_label.text = "Players online: not connected."
 
 func _on_seek_item_clicked(index: int, _at_position: Vector2, _mouse_button_index: int) -> void:
@@ -9324,10 +9385,6 @@ func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, play
 	_request_bot_ladder()
 	_request_friends_state()
 	_request_players_online()
-	# The roster label starts as "sign in to the lobby"; once we're signed in,
-	# show a loading state so it no longer says "sign in" while we wait for the
-	# server roster (which release-build lobby servers never answer).
-	_update_players_online_label_loading()
 	# Proactively report whether this client can host a player-hosted match so
 	# unranked seeks can use listen-server topology when viable. Best-effort and
 	# deferred so it never blocks login or the lobby UI.
@@ -9436,10 +9493,6 @@ func _on_lobby_reconnect_succeeded(
 	_request_bot_ladder()
 	_request_friends_state()
 	_request_players_online()
-	# The roster label starts as "sign in to the lobby"; once we're signed in,
-	# show a loading state so it no longer says "sign in" while we wait for the
-	# server roster (which release-build lobby servers never answer).
-	_update_players_online_label_loading()
 	# Proactively report whether this client can host a player-hosted match so
 	# unranked seeks can use listen-server topology when viable. Best-effort and
 	# deferred so it never blocks login or the lobby UI.
@@ -11451,7 +11504,7 @@ func _request_bot_ladder(page: int = -1) -> void:
 	_bot_ladder_view.set_status("Loading ladder…", false)
 	var requested_page := _bot_ladder_view.get_current_page() if page < 0 else page
 	lobby_client.request_ladder(_bot_ladder_view.get_best_of(), requested_page, request_serial, _bot_ladder_view.get_search_query(), _bot_ladder_view.get_player_filter())
-	await get_tree().create_timer(5.0).timeout
+	await get_tree().create_timer(10.0).timeout
 	if is_instance_valid(_bot_ladder_view) and request_serial == _bot_ladder_request_serial:
 		_bot_ladder_view.set_status("The lobby did not respond. Try refreshing.", true)
 

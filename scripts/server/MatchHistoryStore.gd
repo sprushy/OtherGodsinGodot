@@ -20,6 +20,8 @@ var _bot_results: Array[Dictionary] = []
 var _sorted_ranked_ids_by_account_id: Dictionary = {}
 var _bot_match_ids_by_list_id: Dictionary = {}
 var _dedicated_result_files_loaded: Dictionary = {}
+var _player_ladder_cache: Dictionary = {}
+var _player_ladder_cache_season: int = -1
 var _loaded: bool = false
 # Per-account matchmaking state: when true, the next ranked match for an Iron
 # or Bronze player who just lost is served against a quarantined bad bot.
@@ -30,6 +32,9 @@ func _init(storage_file_name: String = DEFAULT_STORAGE_FILE_NAME, uses_dedicated
 	_storage_file_name = storage_file_name.strip_edges()
 	if _storage_file_name.is_empty():
 		_storage_file_name = DEFAULT_STORAGE_FILE_NAME
+
+func get_storage_file_name() -> String:
+	return _storage_file_name
 
 func record_completed_match(
 	match_session,
@@ -74,13 +79,24 @@ func record_completed_match(
 			entry["bot_deck_results"] = bot_results
 		if match_session.is_bot_self_play():
 			entry["bot_battle"] = bot_battle.duplicate(true)
-		var result_path := _get_dedicated_results_dir().path_join("%s.json" % match_id.sha256_text())
+		var file_name := "%s.json" % match_id.sha256_text()
+		var result_path := _get_dedicated_results_dir().path_join(file_name)
 		if FileAccess.file_exists(result_path):
 			var existing := JsonStoreScript.load_dictionary(result_path, {}, "MatchHistoryStore")
 			if not existing.is_empty():
+				_ensure_loaded()
+				_dedicated_result_files_loaded[file_name] = true
+				if not _matches_by_id.has(match_id):
+					_matches_by_id[match_id] = existing
+					_index_result(existing)
 				return {"success": true, "message": "", "entry": existing}
 		if not JsonStoreScript.save_json(result_path, entry, "MatchHistoryStore"):
 			return {"success": false, "message": "Could not save dedicated match result.", "entry": {}}
+		_ensure_loaded()
+		_dedicated_result_files_loaded[file_name] = true
+		if not _matches_by_id.has(match_id):
+			_matches_by_id[match_id] = entry
+			_index_result(entry)
 		return {"success": true, "message": "", "entry": entry}
 
 	_ensure_loaded()
@@ -267,6 +283,8 @@ func get_bot_deck_results() -> Array[Dictionary]:
 		if entry.has("bot_deck_result"):
 			var legacy: Dictionary = entry["bot_deck_result"].duplicate(true)
 			legacy["match_id"] = match_id
+			if not legacy.has("played_unix"):
+				legacy["played_unix"] = float(entry.get("played_unix", 0.0))
 			_bot_results.append(legacy)
 		for row: Dictionary in entry.get("bot_deck_results", []):
 			var result := row.duplicate(true)
@@ -274,6 +292,8 @@ func get_bot_deck_results() -> Array[Dictionary]:
 			if entry["bot_deck_results"].size() > 1:
 				result["match_id"] = "%s_%d" % [match_id, int(result["player_index"])]
 			result["bot_eliminated"] = false
+			if not result.has("played_unix"):
+				result["played_unix"] = float(entry.get("played_unix", 0.0))
 			_bot_results.append(result)
 	return _bot_results
 
@@ -375,15 +395,30 @@ func get_human_ladder(usernames: Dictionary, best_of: int) -> Array[Dictionary]:
 	_ensure_loaded()
 	_load_dedicated_results()
 	var season := RankedProgressionScript.season_for_time(Time.get_unix_time_from_system())
+	if _player_ladder_cache_season != season:
+		_player_ladder_cache.clear()
+		_player_ladder_cache_season = season
 	var players: Array[Dictionary] = []
 	for account_id in usernames:
+		var account_str := str(account_id)
+		var cached_by_bo: Dictionary = _player_ladder_cache.get(account_str, {})
+		var cached_entry = cached_by_bo.get(best_of, null)
+		if cached_entry is Dictionary:
+			var entry: Dictionary = (cached_entry as Dictionary).duplicate(true)
+			entry["name"] = usernames[account_id]
+			players.append(entry)
+			continue
 		var progress := _get_ranked_progress(account_id, best_of, season)
-		var record := _get_lifetime_ranked_stats(str(account_id))
-		players.append({"account_id": account_id, "name": usernames[account_id], "points": progress["points"],
+		var record := _get_lifetime_ranked_stats(account_str)
+		var player_entry := {"account_id": account_id, "name": usernames[account_id], "points": progress["points"],
 			"rank": progress["rank_name"], "stars": progress["stars"],
 			"wins": int(record["wins"]), "losses": int(record["losses"]), "draws": int(record["draws"]),
 			"main_gods": record["main_gods"],
-			"recent_matches": get_recent_ranked_matches_for_player(str(account_id), 10, false)})
+			"recent_matches": get_recent_ranked_matches_for_player(account_str, 10, false)}
+		if not _player_ladder_cache.has(account_str):
+			_player_ladder_cache[account_str] = {}
+		_player_ladder_cache[account_str][best_of] = player_entry.duplicate(true)
+		players.append(player_entry)
 	return players
 
 func _get_lifetime_ranked_stats(account_id: String) -> Dictionary:
@@ -576,6 +611,7 @@ func _index_result(entry: Dictionary) -> void:
 			var account_id := str(player_entry["account_id"])
 			_add_history_id(_ranked_history_ids_by_account_id, account_id, match_id)
 			_sorted_ranked_ids_by_account_id.erase(account_id)
+			_player_ladder_cache.erase(account_id)
 
 func _add_history_id(history_index: Dictionary, owner_id: String, match_id: String) -> void:
 	if owner_id.is_empty():
@@ -703,6 +739,8 @@ func _ensure_loaded() -> void:
 	_history_ids_by_profile_id = {}
 	_sorted_ranked_ids_by_account_id = {}
 	_bot_match_ids_by_list_id = {}
+	_player_ladder_cache = {}
+	_player_ladder_cache_season = -1
 	var storage_path: String = _get_storage_path()
 	if not FileAccess.file_exists(storage_path):
 		return

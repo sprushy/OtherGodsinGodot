@@ -33,6 +33,7 @@ const DEDICATED_MATCH_ASSIGNMENT_TIMEOUT_SECONDS := 90.0
 const BOT_SESSION_PREFIX := "BOT_"
 const SERVER_BOT_AUTH_MODE := "bot"
 const SERVER_BOT_TYPE_FUZZ := "practice_fuzz"
+const ADMIN_USERNAMES_ENV := "OTHERGODS_ADMIN_USERNAMES"
 const MAX_BOT_SELF_PLAY := 10
 const MAX_CLIENT_BOT_WORKERS_PER_ACCOUNT := 6
 const LEAGUE_ROUND_ROBIN_DEFAULT_MATCHES_PER_BOT := 50
@@ -125,6 +126,8 @@ var _bot_proposal_last_submit_by_account: Dictionary = {}
 # requests until something mutates bot standings or match history.
 var _ladder_cache: Array[Dictionary] = []
 var _ladder_cache_dirty: bool = true
+var _ladder_cache_last_build_msec: int = 0
+const LADDER_CACHE_MIN_REBUILD_INTERVAL_MSEC: int = 1500
 
 # Pool rebuild is expensive (replays all bot match results). Only rebuild when
 # something has actually changed since the last refresh.
@@ -140,7 +143,6 @@ const _ROOM_LIST_BROADCAST_MIN_INTERVAL_MSEC: int = 1000
 
 func _invalidate_ladder_cache() -> void:
 	_ladder_cache_dirty = true
-	_ladder_cache.clear()
 	_pool_dirty = true
 
 static func get_dedicated_bot_self_play_limit(launch_args: Dictionary) -> int:
@@ -835,6 +837,8 @@ func _complete_login_for_peer(
 		existing["auth_mode"] = auth_mode
 		existing["accepts_game_updates"] = accepts_game_updates
 		sessions_by_id[str(existing.get("session_id", ""))] = existing
+	existing["is_admin"] = _is_admin_username(username) or _is_admin_username(player_name)
+	sessions_by_id[str(existing.get("session_id", ""))] = existing
 	var session_id := str(existing.get("session_id", "")).strip_edges()
 	var room_snapshot: Dictionary = {}
 	var room_id := str(room_id_by_session.get(session_id, "")).strip_edges()
@@ -857,6 +861,7 @@ func _complete_login_for_peer(
 		"supports_bot_ladder": true,
 		"supports_ladder_pages": true,
 		"supports_ladder_filter": true,
+		"can_see_players_online": OS.is_debug_build() or Engine.is_editor_hint() or bool(existing.get("is_admin", false)),
 		"room": room_snapshot,
 		"active_match_info": active_match_info,
 	})
@@ -924,6 +929,7 @@ func _handle_reconnect_request(peer_id: int, payload: Dictionary) -> void:
 		"supports_bot_ladder": true,
 		"supports_ladder_pages": true,
 		"supports_ladder_filter": true,
+		"can_see_players_online": OS.is_debug_build() or Engine.is_editor_hint() or bool(session.get("is_admin", false)),
 		"room": room_snapshot,
 		"active_match_info": active_match_info,
 	})
@@ -962,7 +968,11 @@ func _handle_report_host_viability(peer_id: int, payload: Dictionary) -> void:
 ## Debug-only roster of signed-in accounts. Release builds silently ignore the
 ## request so a public server never tells anyone who is logged in.
 func _handle_request_players_online(peer_id: int) -> void:
-	if not (OS.is_debug_build() or Engine.is_editor_hint()):
+	var session: Dictionary = _get_session_for_peer(peer_id)
+	if session.is_empty():
+		return
+	var is_admin := bool(session.get("is_admin", false))
+	if not (OS.is_debug_build() or Engine.is_editor_hint() or is_admin):
 		return
 	var players: Array[Dictionary] = []
 	for session_id_variant in sessions_by_id.keys():
@@ -1915,33 +1925,19 @@ func _get_recent_match_activity_notifications() -> Array[Dictionary]:
 	)
 	if activities.is_empty():
 		return activities
-	var usernames: Dictionary = account_store.get_ladder_usernames()
-	var ladders := {
-		1: match_history_store.get_human_ladder(usernames, 1),
-		3: match_history_store.get_human_ladder(usernames, 3),
-	}
-	for god: Dictionary in _ranked_bot_deck_pool.get_ladder_summary()["gods"]:
-		var bots: Array = god["lists"].duplicate()
-		if not god["challenger"].is_empty():
-			bots.append(god["challenger"])
-		for bot: Dictionary in bots:
-			ladders[1].append({"name": bot["name"], "list_id": bot["list_id"], "account_id": "", "points": int(bot["stars"]),
-				"wins": int(bot.get("wins", 0)), "losses": int(bot.get("losses", 0))})
-	for best_of in [1, 3]:
-		ladders[best_of].sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-			if int(a["points"]) != int(b["points"]):
-				return int(a["points"]) > int(b["points"])
-			var a_games := int(a.get("wins", 0)) + int(a.get("losses", 0))
-			var b_games := int(b.get("wins", 0)) + int(b.get("losses", 0))
-			var a_record_score := int(a.get("wins", 0)) * b_games
-			var b_record_score := int(b.get("wins", 0)) * a_games
-			if a_record_score != b_record_score:
-				return a_record_score > b_record_score
-			return a["name"].nocasecmp_to(b["name"]) < 0
-		)
+	if _ladder_cache.is_empty() or _ladder_cache_dirty:
+		_ladder_cache = _build_full_ladder()
+		_ladder_cache_dirty = false
+		_ladder_cache_last_build_msec = Time.get_ticks_msec()
+	var ladder_bo1: Array[Dictionary] = _ladder_cache
+	var ladder_bo3: Array[Dictionary] = []
 	for activity: Dictionary in activities:
 		var best_of := int(activity.get("best_of", 1))
-		var ladder: Array = ladders.get(best_of, ladders[1])
+		var ladder: Array[Dictionary] = ladder_bo1
+		if best_of == 3:
+			if ladder_bo3.is_empty():
+				ladder_bo3 = _build_full_ladder_for_best_of(3)
+			ladder = ladder_bo3
 		var list_id := str(activity.get("winner_bot_list_id", ""))
 		var account_id := str(activity.get("winner_account_id", ""))
 		var before_points := int(activity.get("winner_before_points", -1))
@@ -1959,31 +1955,25 @@ func _get_recent_match_activity_notifications() -> Array[Dictionary]:
 				break
 		if current_place < 0 or current_place >= 100 or current_points != after_points:
 			continue
-		var ladder_before := ladder.duplicate(true)
-		for row: Dictionary in ladder_before:
-			var matches_previous_winner := str(row.get("list_id", "")) == list_id if not list_id.is_empty() \
-				else str(row.get("account_id", "")) == account_id
-			if matches_previous_winner:
-				row["points"] = before_points
-				break
-		ladder_before.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-			if int(a["points"]) != int(b["points"]):
-				return int(a["points"]) > int(b["points"])
-			var a_games := int(a.get("wins", 0)) + int(a.get("losses", 0))
-			var b_games := int(b.get("wins", 0)) + int(b.get("losses", 0))
-			var a_record_score := int(a.get("wins", 0)) * b_games
-			var b_record_score := int(b.get("wins", 0)) * a_games
-			if a_record_score != b_record_score:
-				return a_record_score > b_record_score
-			return a["name"].nocasecmp_to(b["name"]) < 0
-		)
-		var previous_place := -1
-		for index in range(ladder_before.size()):
-			var matches_previous_row := str(ladder_before[index].get("list_id", "")) == list_id if not list_id.is_empty() \
-				else str(ladder_before[index].get("account_id", "")) == account_id
-			if matches_previous_row:
-				previous_place = index
-				break
+		var previous_place := 0
+		var winner_entry: Dictionary = ladder[current_place]
+		var winner_name := str(winner_entry.get("name", ""))
+		var winner_games := int(winner_entry.get("wins", 0)) + int(winner_entry.get("losses", 0))
+		var winner_score := int(winner_entry.get("wins", 0)) * winner_games
+		for index in range(ladder.size()):
+			if index == current_place:
+				continue
+			var other: Dictionary = ladder[index]
+			var other_points := int(other.get("points", 0))
+			if other_points > before_points:
+				previous_place += 1
+			elif other_points == before_points:
+				var other_games := int(other.get("wins", 0)) + int(other.get("losses", 0))
+				var other_score := int(other.get("wins", 0)) * other_games
+				if other_score > winner_score:
+					previous_place += 1
+				elif other_score == winner_score and str(other.get("name", "")).nocasecmp_to(winner_name) < 0:
+					previous_place += 1
 		var rank_update := ""
 		if current_place < 100 and previous_place >= 100:
 			rank_update = "enters the top 100"
@@ -2079,9 +2069,11 @@ func _build_ladder_page(request: Dictionary, current_username: String = "") -> D
 	# Other best_of values are rare admin queries — always compute fresh.
 	var ladder: Array[Dictionary]
 	if best_of == 1:
-		if _ladder_cache_dirty or _ladder_cache.is_empty():
+		var now_msec := Time.get_ticks_msec()
+		if _ladder_cache.is_empty() or (_ladder_cache_dirty and now_msec - _ladder_cache_last_build_msec >= LADDER_CACHE_MIN_REBUILD_INTERVAL_MSEC):
 			_ladder_cache = _build_full_ladder()
 			_ladder_cache_dirty = false
+			_ladder_cache_last_build_msec = now_msec
 		# Deep-duplicate so per-request mutations (can_delete, filtering) don't
 		# corrupt the cache for other callers.
 		ladder = []
@@ -2816,28 +2808,30 @@ func _refresh_ranked_bot_deck_pool() -> void:
 	if not _pool_dirty:
 		return
 	_pool_dirty = false
-	# If a saved pool state exists and no new result files appeared, load it
-	# instead of replaying everything.
-	var result_count := _count_bot_result_files()
-	if FileAccess.file_exists(_pool_state_path):
+	_ensure_match_history_store()
+	_ensure_server_bot_deck_factory()
+	var bot_deck_results: Array[Dictionary] = match_history_store.get_bot_deck_results()
+	var result_count := bot_deck_results.size()
+	var last_result_id := str(bot_deck_results.back().get("match_id", "")) if not bot_deck_results.is_empty() else ""
+	var is_default_store: bool = not match_history_store.has_method("get_storage_file_name") \
+		or match_history_store.get_storage_file_name() == MatchHistoryStoreScript.DEFAULT_STORAGE_FILE_NAME
+	if is_default_store and FileAccess.file_exists(_pool_state_path):
 		var loaded := JsonStoreScript.load_dictionary(_pool_state_path, {}, "RankedBotDeckPool")
 		if not loaded.is_empty():
 			var saved_count := int(loaded.get("result_count", -1))
-			if saved_count == result_count and _ranked_bot_deck_pool.load_state(_pool_state_path):
+			var saved_last_id := str(loaded.get("last_replayed_id", ""))
+			if saved_count == result_count and saved_last_id == last_result_id and _ranked_bot_deck_pool.load_state(_pool_state_path):
 				_pool_result_count = result_count
 				return
-	_ensure_match_history_store()
-	_ensure_server_bot_deck_factory()
 	var community_bot_ids := _get_community_bot_ids()
 	if not _same_community_bot_ids(_known_community_bot_ids, community_bot_ids):
 		_ranked_bot_deck_pool.invalidate_replay()
 	_known_community_bot_ids = community_bot_ids.duplicate()
 	# Use the MatchHistoryStore cache, which already merges dedicated per-match
 	# result files via _load_dedicated_results(). This keeps the pool rebuild
-	# incremental and consistent with the injected store (e.g. tests) instead of
-	# re-scanning the default results directory on every refresh.
+	# incremental and in-memory instead of re-scanning the disk on every refresh.
 	var results: Array[Dictionary] = []
-	for raw_result in _collect_bot_deck_results_from_files():
+	for raw_result in bot_deck_results:
 		var result: Dictionary = raw_result.duplicate(true)
 		var list_id := str(result.get("list_id", "")).strip_edges()
 		# Results recorded before community bots joined the ladder stored the
@@ -2858,7 +2852,8 @@ func _refresh_ranked_bot_deck_pool() -> void:
 	# their league_ list_ids and records. refresh() clears _by_god and replays
 	# from scratch, which would replace league_ ids with match_id-based ids.
 	_ranked_bot_deck_pool.rebuild_league_records(results)
-	_ranked_bot_deck_pool.save_state(_pool_state_path, result_count)
+	if is_default_store:
+		_ranked_bot_deck_pool.save_state(_pool_state_path, result_count)
 
 func _get_community_bot_ids() -> Dictionary:
 	var ids := {}
@@ -3264,6 +3259,14 @@ func _observe_local_bot_match(session_id: String, match_id: String) -> void:
 	var bot_submission: Dictionary = (entry.get("decks_by_session", {}) as Dictionary).get(bot_session_id, {})
 	if not (bot_submission is Dictionary):
 		bot_submission = {}
+	# Build bot_player_stars as an array (human=-1, bot=stars) to match the
+	# shape CombatMockGame expects, instead of a single int.
+	var spectator_bot_stars: Array = []
+	for psid in player_session_ids:
+		if _is_server_bot_session(str(psid)):
+			spectator_bot_stars.append(int(bot_submission.get("bot_stars", 0)))
+		else:
+			spectator_bot_stars.append(-1)
 	_send_to_session(session_id, LobbyProtocolScript.MATCH_ASSIGNED, {
 		"match_id": match_id,
 		"room_id": str(entry.get("room_id", "")),
@@ -3276,7 +3279,7 @@ func _observe_local_bot_match(session_id: String, match_id: String) -> void:
 		"observer_match_token": observer_match_token,
 		"player_names": player_names,
 		"rank_badges": rank_badges,
-		"bot_player_stars": int(bot_submission.get("bot_stars", 0)),
+		"bot_player_stars": spectator_bot_stars,
 		"has_bot": true,
 		"is_bot_self_play": false,
 		"status": "active",
@@ -3679,6 +3682,16 @@ func _assign_local_bot_match(
 		return
 
 	var match_id := "match_%s" % _generate_id(8)
+	# Mirror MatchSession.get_public_rank_badges() / get_public_bot_player_stars()
+	# so the challenger's client can render the deck rank badges and names.
+	var rank_badges: Array = []
+	for player_session_id in [human_session_id, bot_session_id]:
+		var identity: Dictionary = player_identity_by_session.get(player_session_id, {})
+		rank_badges.append((identity.get("rank_badge", {}) as Dictionary).duplicate(true))
+	var bot_player_stars: Array = []
+	var bot_deck: Dictionary = player_decks_by_session.get(bot_session_id, {}) as Dictionary
+	bot_player_stars.append(-1)
+	bot_player_stars.append(int(bot_deck.get("bot_stars", 0)))
 	var match_info: Dictionary = {
 		"match_id": match_id,
 		"room_id": room.room_id,
@@ -3689,6 +3702,9 @@ func _assign_local_bot_match(
 		"bot_session_id": bot_session_id,
 		"decks_by_session": player_decks_by_session.duplicate(true),
 		"identity_by_session": player_identity_by_session.duplicate(true),
+		"rank_badges": rank_badges,
+		"bot_player_stars": bot_player_stars,
+		"has_bot": true,
 	}
 	_local_bot_matches_by_id[match_id] = {
 		"match_id": match_id,
@@ -4903,6 +4919,21 @@ func _on_match_closed(match_id: String, room_id: String, final_status: String) -
 		return
 	_close_room(room_id)
 	_broadcast_room_lists()
+
+func _get_admin_usernames() -> Array:
+	var result: Array = []
+	var env_value := OS.get_environment(ADMIN_USERNAMES_ENV).strip_edges()
+	if not env_value.is_empty():
+		for part in env_value.split(","):
+			var name := part.strip_edges().to_lower()
+			if not name.is_empty():
+				result.append(name)
+	if result.is_empty():
+		result.append("sprush")
+	return result
+
+func _is_admin_username(username: String) -> bool:
+	return username.strip_edges().to_lower() in _get_admin_usernames()
 
 func _get_server_version() -> String:
 	return AppReleaseInfoScript.get_current_version()

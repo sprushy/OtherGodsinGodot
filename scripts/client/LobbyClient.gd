@@ -88,6 +88,7 @@ var current_server_version: String = ""
 var supports_bot_ladder: bool = false
 var supports_ladder_pages: bool = false
 var supports_ladder_filter: bool = false
+var can_see_players_online: bool = false
 var current_allow_friend_observers_to_see_cards: bool = true
 var current_active_match_info: Dictionary = {}
 var current_room_snapshot: Dictionary = {}
@@ -399,11 +400,13 @@ func create_room(is_ranked: bool = true, best_of: int = 1) -> void:
 func list_rooms() -> void:
 	_send_request(LobbyProtocolScript.LIST_ROOMS)
 
-## Debug-only roster request. The lobby only answers on debug/editor builds.
+## Roster request. The lobby answers for debug/editor builds and for admin
+## accounts (can_see_players_online, set during login). Release servers
+## silently ignore it for everyone else.
 func request_players_online() -> void:
-	if not (OS.is_debug_build() or Engine.is_editor_hint()):
-		return
 	if not is_authenticated():
+		return
+	if not can_see_players_online:
 		return
 	_send_request(LobbyProtocolScript.REQUEST_PLAYERS_ONLINE)
 
@@ -716,6 +719,7 @@ func lobby_event(message: Dictionary) -> void:
 			supports_bot_ladder = bool(payload.get("supports_bot_ladder", false))
 			supports_ladder_pages = bool(payload.get("supports_ladder_pages", false))
 			supports_ladder_filter = bool(payload.get("supports_ladder_filter", false))
+			can_see_players_online = bool(payload.get("can_see_players_online", false))
 			_cancel_initial_auth_request()
 			_cancel_auth_response_timeout()
 			_finish_auto_reconnect()
@@ -741,6 +745,7 @@ func lobby_event(message: Dictionary) -> void:
 			supports_bot_ladder = bool(payload.get("supports_bot_ladder", false))
 			supports_ladder_pages = bool(payload.get("supports_ladder_pages", false))
 			supports_ladder_filter = bool(payload.get("supports_ladder_filter", false))
+			can_see_players_online = bool(payload.get("can_see_players_online", false))
 			_cancel_initial_auth_request()
 			_cancel_auth_response_timeout()
 			_finish_auto_reconnect()
@@ -1129,6 +1134,7 @@ func _clear_session_fields() -> void:
 	supports_bot_ladder = false
 	supports_ladder_pages = false
 	supports_ladder_filter = false
+	can_see_players_online = false
 	current_session_id = ""
 	current_reconnect_token = ""
 	current_profile_id = ""
