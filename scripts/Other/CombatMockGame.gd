@@ -530,6 +530,8 @@ var _pending_deucalion_friendly_targets: Array[Card] = []
 var _deucalion_panel: Control = null
 var _ascension_panel: Control = null
 var _deucalion_prompt_pending: bool = false
+var _pending_changeling_spell: TheChangelingExchange = null
+var _pending_changeling_friendly: Card = null
 var _overlay_card_selected: Callable = Callable()
 var _pending_absence_spell: Absence = null
 var _pending_absence_target: Card = null
@@ -15848,6 +15850,8 @@ func _try_activate_owned_board_spell(card: Card) -> bool:
 		_show_demiurge_prompt(card)
 	elif card is BookOfLife:
 		_show_book_of_life_prompt(card as BookOfLife)
+	elif card is TheChangelingExchange:
+		_show_changeling_prompt(card as TheChangelingExchange)
 	elif card is DeucalionsInfants:
 		_queue_deucalion_resolution(card as DeucalionsInfants)
 	elif card != null and (card is BlotSacrifice or card.card_name == "Blot Sacrifice"):
@@ -17656,6 +17660,8 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 				_show_demiurge_prompt(selected_card)
 			elif selected_card is BookOfLife:
 				_show_book_of_life_prompt(selected_card as BookOfLife)
+			elif selected_card is TheChangelingExchange:
+				_show_changeling_prompt(selected_card as TheChangelingExchange)
 			elif selected_card is DeucalionsInfants:
 				_queue_deucalion_resolution(selected_card as DeucalionsInfants)
 			elif selected_card != null and (selected_card is BlotSacrifice or selected_card.card_name == "Blot Sacrifice"):
@@ -27155,6 +27161,87 @@ func _hide_deucalion_prompt() -> void:
 	_deucalion_prompt_pending = false
 	_pending_deucalion_spell = null
 	_pending_deucalion_friendly_targets.clear()
+
+func _show_changeling_prompt(spell: TheChangelingExchange) -> void:
+	if spell == null:
+		update_ui()
+		return
+	if _reject_non_priority_action_if_blocked(_replay_card_action(_show_changeling_prompt, spell), "cast " + spell.card_name):
+		return
+	_pending_changeling_spell = spell
+	_pending_changeling_friendly = null
+	_show_changeling_friendly_selection(spell)
+
+func _show_changeling_friendly_selection(spell: TheChangelingExchange) -> void:
+	if spell == null or game_manager == null or spell.card_owner == null:
+		_hide_changeling_prompt()
+		update_ui()
+		return
+	var friendly := spell.get_friendly_targets(game_manager)
+	if friendly.is_empty():
+		_set_action_label_text(spell.card_name + " has no valid friendly creature targets.")
+		_hide_changeling_prompt()
+		update_ui()
+		return
+	var on_choose := func(chosen: Card) -> void:
+		_pending_changeling_friendly = chosen
+		_show_changeling_enemy_selection(spell)
+	var on_cancel := func() -> void:
+		_hide_changeling_prompt()
+		_set_action_label_text("Cancelled " + spell.card_name + ".")
+		update_ui()
+	_show_card_selection_overlay(
+		"The Changeling Exchange - choose your creature to give away",
+		friendly,
+		on_choose,
+		on_cancel,
+		_get_selection_cursor_mode_for_source(spell)
+	)
+
+func _show_changeling_enemy_selection(spell: TheChangelingExchange) -> void:
+	if spell == null or game_manager == null:
+		_hide_changeling_prompt()
+		update_ui()
+		return
+	var enemy := spell.get_enemy_targets(game_manager)
+	if enemy.is_empty():
+		_set_action_label_text(spell.card_name + " has no valid enemy creature targets.")
+		_hide_changeling_prompt()
+		update_ui()
+		return
+	var on_choose := func(chosen: Card) -> void:
+		_queue_changeling_spell(spell, _pending_changeling_friendly, chosen)
+	var on_cancel := func() -> void:
+		_pending_changeling_friendly = null
+		_show_changeling_friendly_selection(spell)
+	_show_card_selection_overlay(
+		"The Changeling Exchange - choose an enemy creature to take",
+		enemy,
+		on_choose,
+		on_cancel,
+		_get_selection_cursor_mode_for_source(spell)
+	)
+
+func _queue_changeling_spell(spell: TheChangelingExchange, friendly: Card, enemy: Card) -> void:
+	if spell == null or friendly == null or enemy == null:
+		_hide_changeling_prompt()
+		update_ui()
+		return
+	var spell_uid: String = spell.get("uid") if "uid" in spell else ""
+	var friendly_uid: String = friendly.get("uid") if "uid" in friendly else ""
+	var enemy_uid: String = enemy.get("uid") if "uid" in enemy else ""
+	game_input.submit_action(_add_display_zone_to_command({
+		type = "cast_spell",
+		spell_uid = spell_uid,
+		friendly_target_uid = friendly_uid,
+		enemy_target_uid = enemy_uid,
+	}))
+	_hide_changeling_prompt()
+
+func _hide_changeling_prompt() -> void:
+	_dismiss_zone_overlay()
+	_pending_changeling_spell = null
+	_pending_changeling_friendly = null
 
 func _on_deucalion_confirm_pressed() -> void:
 	var spell := _pending_deucalion_spell

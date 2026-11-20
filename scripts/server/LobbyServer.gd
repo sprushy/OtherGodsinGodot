@@ -130,6 +130,7 @@ var _ladder_cache_dirty: bool = true
 # something has actually changed since the last refresh.
 var _pool_dirty: bool = true
 var _pool_result_count: int = -1
+var _pool_state_path: String = ""
 
 # Room-list broadcast throttle — limits broadcasts to at most once per second so
 # rapid room churn (e.g. bot self-play cycling) does not flood every connected peer.
@@ -2796,17 +2797,21 @@ func _ensure_server_bot_deck_factory() -> void:
 	_ranked_bot_deck_pool.set_deck_auditor(Callable(server_bot_deck_factory, "audit_ranked_bot_deck"))
 
 func _refresh_ranked_bot_deck_pool() -> void:
-	var has_bots := false
-	var has_established := false
-	for pool: Dictionary in _ranked_bot_deck_pool._by_god.values():
-		for list: Dictionary in pool.get("lists", []):
-			has_bots = true
-			var lid := str(list.get("list_id", ""))
-			if lid.begins_with("volunteer_") or str(list.get("owner_name", "")).strip_edges() != "":
-				has_established = true
-	if not _pool_dirty and has_bots and has_established:
+	if _pool_state_path.is_empty():
+		_pool_state_path = ServerPathsScript.get_server_data_file_path("bot_pool_state.json")
+	if not _pool_dirty:
 		return
 	_pool_dirty = false
+	# If a saved pool state exists and no new result files appeared, load it
+	# instead of replaying everything.
+	var result_count := _count_bot_result_files()
+	if FileAccess.file_exists(_pool_state_path):
+		var loaded := JsonStoreScript.load_dictionary(_pool_state_path, {}, "RankedBotDeckPool")
+		if not loaded.is_empty():
+			var saved_count := int(loaded.get("result_count", -1))
+			if saved_count == result_count and _ranked_bot_deck_pool.load_state(_pool_state_path):
+				_pool_result_count = result_count
+				return
 	_ensure_match_history_store()
 	_ensure_server_bot_deck_factory()
 	var community_bot_ids := _get_community_bot_ids()
@@ -2839,6 +2844,7 @@ func _refresh_ranked_bot_deck_pool() -> void:
 	# their league_ list_ids and records. refresh() clears _by_god and replays
 	# from scratch, which would replace league_ ids with match_id-based ids.
 	_ranked_bot_deck_pool.rebuild_league_records(results)
+	_ranked_bot_deck_pool.save_state(_pool_state_path, result_count)
 
 func _get_community_bot_ids() -> Dictionary:
 	var ids := {}

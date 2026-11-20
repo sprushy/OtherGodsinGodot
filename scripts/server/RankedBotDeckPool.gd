@@ -713,6 +713,26 @@ static func can_self_play_pair(first: Dictionary, second: Dictionary) -> bool:
 static func display_god_name(god_name: String) -> String:
 	return god_name.get_slice(",", 0)
 
+func save_state(path: String, result_count: int = 0) -> bool:
+	var data := {
+		"by_god": _by_god,
+		"eliminated": _eliminated_bot_match_ids,
+		"replayed_match_count": _replayed_match_count,
+		"last_replayed_id": _last_replayed_id,
+		"result_count": result_count,
+	}
+	return JsonStoreScript.save_json(path, data, "RankedBotDeckPool")
+
+func load_state(path: String) -> bool:
+	var loaded := JsonStoreScript.load_dictionary(path, {}, "RankedBotDeckPool")
+	if loaded.is_empty() or not loaded.has("by_god"):
+		return false
+	_by_god = (loaded.get("by_god", {}) as Dictionary).duplicate(true)
+	_eliminated_bot_match_ids = (loaded.get("eliminated", {}) as Dictionary).duplicate(true)
+	_replayed_match_count = int(loaded.get("replayed_match_count", -1))
+	_last_replayed_id = str(loaded.get("last_replayed_id", ""))
+	return true
+
 static func list_capacity(god_name: String) -> int:
 	if display_god_name(god_name) == "Thor":
 		return THOR_LISTS_PER_GOD

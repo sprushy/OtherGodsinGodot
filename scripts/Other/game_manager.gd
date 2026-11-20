@@ -3712,7 +3712,14 @@ func grant_control_of_creature(creature: Card, new_controller: Player) -> bool:
 func offer_ascension(creature: Card, player: Player) -> void:
 	if creature == null or player == null:
 		return
-	ascension_offered.emit(creature, player)
+	# Under God Death, ascending to replace your God is mandatory: do it automatically
+	# so the ascension isn't stuck waiting on a choice.
+	if is_player_under_god_death(player):
+		ascend_creature(creature, player, "replace")
+		return
+	# Otherwise, ascend as an Active God automatically so bots (and humans) don't
+	# stall on a prompt they can't / don't need to answer.
+	ascend_creature(creature, player, "active")
 
 func ascend_creature(creature: Card, player: Player, mode: String = "replace") -> void:
 	if creature == null or player == null:

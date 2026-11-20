@@ -249,7 +249,7 @@ func _setup_test_board() -> void:
 	load_featured_card_test_scenario()
 
 func load_featured_card_test_scenario() -> void:
-	load_apotheosis_test_scenario()
+	load_changeling_exchange_test_scenario()
 
 func load_apotheosis_test_scenario() -> void:
 	_reset_test_match_state()
@@ -305,6 +305,54 @@ func load_apotheosis_test_scenario() -> void:
 	action_label.text = (
 		"Apotheosis Test Scenario. P1 has Enki, Fenrir, and Pai Long on the field, plus 3 Apotheosis in hand. "
 		+ "Cast Apotheosis on any of them to test ascension. P2 has Dromi and Sap hexes plus weather to test Enki's hex immunity."
+	)
+	update_ui()
+
+func load_changeling_exchange_test_scenario() -> void:
+	_reset_test_match_state()
+	_add_test_god(player1, GuanYu.new())
+	_add_test_god(player2, Thor.new())
+
+	# P1 board: a Brown Bear you control - this is the creature you will give away.
+	var friendly_bear := BrownBear.new()
+	_place_test_board_card(player1, player1.frontline_zones[0], friendly_bear, Card.CreatureMode.AGGRESSIVE)
+	# P2 board: an enemy Minotaur Footsoldier - this is the creature you will take.
+	var enemy_minotaur := MinotaurFootsoldier.new()
+	_place_test_board_card(player2, player2.frontline_zones[0], enemy_minotaur, Card.CreatureMode.AGGRESSIVE)
+
+	# P1 hand: The Changeling Exchange costs 2 mana.
+	_add_test_hand_card(player1, TheChangelingExchange.new())
+	_add_test_hand_card(player2, HeroicStand.new())
+
+	player1.spend_mana(player1.mana)
+	player1.gain_mana(2)
+	player2.spend_mana(player2.mana)
+	player2.gain_mana(8)
+	player1.followers = 100
+	player2.followers = 100
+	player1.followers_changed.emit(player1.followers)
+	player2.followers_changed.emit(player2.followers)
+	player1.has_summoned_this_turn = false
+	player2.has_summoned_this_turn = false
+
+	game_manager.current_player = player1
+	game_manager.other_player = player2
+	game_manager.feedback_viewer = player1
+	player1.is_turn_player = true
+	player2.is_turn_player = false
+	selected_card = null
+	selected_attacker = null
+	selected_interceptor = null
+	_test_turn_owner = player1
+	_test_turn_opponent = player2
+	game_manager.start_turn()
+	_open_upkeep_choice_window()
+	action_label.text = (
+		"The Changeling Exchange Test Scenario. P1 (you) controls GuanYu and a Brown Bear in frontline 1. "
+		+ "P2 controls Thor and a Minotaur Footsoldier in frontline 1. "
+		+ "You have The Changeling Exchange (2 mana) in hand. "
+		+ "Cast it: first choose your Brown Bear to give to P2, then choose P2's Minotaur Footsoldier to take. "
+		+ "Control of the two creatures swaps permanently. Verify each creature's controller changed after resolution."
 	)
 	update_ui()
 
