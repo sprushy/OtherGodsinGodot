@@ -16196,7 +16196,7 @@ func _prompt_champions_call_shelving(god: GodCard, on_complete: Callable, on_can
 
 func _show_champions_call_prompt(god: GodCard) -> void:
 	_hide_champions_call_prompt()
-	if god is Thor:
+	if god is Thor or god is GuanYu:
 		_begin_champions_call_activation(god)
 		return
 	if god == null or game_manager == null:
@@ -16317,7 +16317,7 @@ func _queue_champions_call_activation(god: GodCard, chosen_shelves: Array[Card] 
 func _begin_champions_call_activation(god: GodCard) -> void:
 	if god == null:
 		return
-	if god is Thor:
+	if god is Thor or god is GuanYu:
 		if not god.can_use_champions_call(game_manager):
 			_set_action_label_text(god.get_champions_call_failure_reason(game_manager))
 			return
@@ -16326,7 +16326,8 @@ func _begin_champions_call_activation(god: GodCard) -> void:
 		if _champions_call_hand_proxy_god_uid != god.uid or _champions_call_hand_proxy == null:
 			_champions_call_hand_proxy = god.get_champions_call_candidate(true)
 		_champions_call_hand_proxy_god_uid = god.uid
-		_set_action_label_text("Thor, Active God is ready in your hand. Drag him onto an empty friendly square, or right-click for stance options.")
+		var proxy_name := _champions_call_hand_proxy.card_name if _champions_call_hand_proxy != null else (god.card_name + ", Active God")
+		_set_action_label_text("%s is ready in your hand. Drag him onto an empty friendly square, or right-click for stance options." % proxy_name)
 		update_ui()
 		return
 	var on_confirm_shelving := func(chosen_shelves: Array[Card]) -> void:
@@ -16375,7 +16376,7 @@ func _summon_champions_call_hand_proxy(card: Card, zone: Zone, mode: String) -> 
 		_set_action_label_text("Champion's Call summons face-up. Choose aggressive or defensive stance.")
 		return
 	if zone == null or zone not in god.get_champions_call_open_zones():
-		_set_action_label_text("Drop Thor onto an empty friendly frontline or reserve square.")
+		_set_action_label_text("Drop %s onto an empty friendly frontline or reserve square." % god.card_name)
 		return
 	var god_uid := god.uid
 	var destination := _get_zone_replay_data(zone)
@@ -16390,7 +16391,7 @@ func _summon_champions_call_hand_proxy(card: Card, zone: Zone, mode: String) -> 
 			_clear_champions_call_hand_proxy()
 		update_ui()
 	var cancel_shelving := func() -> void:
-		_set_action_label_text("Champion's Call cancelled. Thor remains available in your hand.")
+		_set_action_label_text("Champion's Call cancelled. %s remains available in your hand." % god.card_name)
 		update_ui()
 	if god.get_champions_call_max_shelve_count(game_manager) == 0:
 		confirm_shelving.call([])
