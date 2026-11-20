@@ -16486,7 +16486,7 @@ func _summon_champions_call_hand_proxy(card: Card, zone: Zone, mode: String) -> 
 		_set_action_label_text("Champion's Call cancelled. %s remains available in your hand." % god.card_name)
 		update_ui()
 	if god.get_champions_call_max_shelve_count(game_manager) == 0:
-		confirm_shelving.call([])
+		confirm_shelving.call([] as Array[Card])
 	else:
 		_prompt_champions_call_shelving(god, confirm_shelving, cancel_shelving)
 

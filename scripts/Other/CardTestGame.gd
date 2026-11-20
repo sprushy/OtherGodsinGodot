@@ -2,7 +2,6 @@ extends "res://scripts/Other/CombatMockGame.gd"
 class_name CardTestGame
 
 const SharurTheFlyingMaceScript := preload("res://scripts/cards/Equipment/SharurTheFlyingMace.gd")
-const GalaTura := preload("res://scripts/cards/Creatures/GalaTura.gd")
 
 var _test_turn_owner: Player = null
 var _test_turn_opponent: Player = null
@@ -250,7 +249,7 @@ func _setup_test_board() -> void:
 	load_featured_card_test_scenario()
 
 func load_featured_card_test_scenario() -> void:
-	load_changeling_exchange_test_scenario()
+	load_gala_tura_test_scenario()
 
 func load_apotheosis_test_scenario() -> void:
 	_reset_test_match_state()

@@ -14661,16 +14661,14 @@ func _run_card_test_gala_tura_smoke() -> void:
 		_fail_smoke_if_enabled("card_test_gala_tura_missing_on_board")
 		return
 
-	if not card_test.game_manager.request_send_to_graveyard(gala_tura, destruction = true):
+	if not card_test.game_manager.request_send_to_graveyard(gala_tura, Callable(), false, true):
 		_fail_smoke_if_enabled("card_test_gala_tura_destroy_failed")
 		return
 
 	# Wait for the Water of Life destroyed trigger prompt to appear.
 	if not await _wait_for_card_test_turn2_smoke_condition(
 		func() -> bool:
-			return card_test.match_manager != null \
-				and card_test.match_manager.pending_click_selection_confirm.is_valid() \
-				and card_test.match_manager.pending_click_selection_source is GalaTura,
+			return card_test._pending_gala_tura != null,
 		240
 	):
 		_fail_smoke_if_enabled("card_test_gala_tura_prompt_timeout")
@@ -14702,6 +14700,8 @@ func _run_card_test_gala_tura_smoke() -> void:
 	}):
 		_fail_smoke_if_enabled("card_test_gala_tura_submit_failed")
 		return
+	card_test._dismiss_zone_overlay()
+	card_test._hide_gala_tura_prompt()
 
 	if not await _settle_card_test_turn2_smoke_priority(card_test, 240):
 		_fail_smoke_if_enabled("card_test_gala_tura_resolution_timeout")
