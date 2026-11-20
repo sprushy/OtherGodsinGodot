@@ -25,8 +25,46 @@ func _init() -> void:
 	art_path = ART_PATH
 	art_variants = [ART_PATH, ALT_ART_PATH]
 
+const GOD_CONSUME_MANA_COST := 5
+
 func is_immune_to_sleep() -> bool:
 	return true
+
+func can_activate(game_manager: GameManager) -> bool:
+	if not is_god:
+		return false
+	if card_owner == null:
+		return false
+	if card_owner != game_manager.current_player:
+		return false
+	if card_owner.mana < GOD_CONSUME_MANA_COST:
+		return false
+	return true
+
+func get_activation_failure_reason(game_manager: GameManager) -> String:
+	if not is_god:
+		return card_name + " cannot activate right now."
+	if card_owner == null:
+		return card_name + " cannot activate right now."
+	if card_owner != game_manager.current_player:
+		return "It is not your turn to act."
+	if card_owner.mana < GOD_CONSUME_MANA_COST:
+		return card_name + " needs " + str(GOD_CONSUME_MANA_COST) + " mana to consume."
+	return ""
+
+func activate(game_manager: GameManager, target: Card = null) -> void:
+	if not can_activate(game_manager):
+		return
+	if not card_owner.spend_mana(GOD_CONSUME_MANA_COST):
+		game_manager.note_player_feedback(card_name + " needs " + str(GOD_CONSUME_MANA_COST) + " mana to consume.")
+		return
+	var devour_target: Card = target
+	if devour_target == null:
+		var valid := get_valid_devour_targets(game_manager)
+		if not valid.is_empty():
+			devour_target = valid[0]
+	if devour_target != null:
+		resolve_devour_impact(game_manager, devour_target)
 
 func get_hand_ability_label() -> String:
 	return "Wolf Master"

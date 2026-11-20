@@ -3718,12 +3718,13 @@ func ascend_creature(creature: Card, player: Player, mode: String = "replace") -
 	if creature == null or player == null:
 		return
 	var base_key: String = creature.get_script().resource_path.get_file().get_basename()
-	var new_buffs: Array[Dictionary] = []
-	for buff in creature.active_buffs:
-		if str(buff.get("source", "")) == "Apotheosis" or str(buff.get("effect_type", "")) == "apotheosis":
-			continue
-		new_buffs.append(buff)
-	creature.active_buffs = new_buffs
+	if mode != "active":
+		var new_buffs: Array[Dictionary] = []
+		for buff in creature.active_buffs:
+			if str(buff.get("source", "")) == "Apotheosis" or str(buff.get("effect_type", "")) == "apotheosis":
+				continue
+			new_buffs.append(buff)
+		creature.active_buffs = new_buffs
 	if mode == "active":
 		if "Active God" not in creature.card_types:
 			creature.card_types.append("Active God")

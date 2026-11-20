@@ -32636,8 +32636,10 @@ func _prompt_fenris_devour(card: Card) -> void:
 		update_ui()
 		return
 	var on_choose_devour := func(target: Card) -> void:
-		if target != null and card.has_method("resolve_devour_impact"):
-			card.call("resolve_devour_impact", game_manager, target)
+		if target != null:
+			var god_uid: String = card.get("uid") if "uid" in card else ""
+			var target_uid: String = target.get("uid") if "uid" in target else ""
+			game_input.submit_action({type = "god_ability", god_uid = god_uid, target_uid = target_uid})
 		update_ui()
 	var on_cancel_devour := func() -> void:
 		_set_action_label_text("Cancelled Fenrir devour.")
