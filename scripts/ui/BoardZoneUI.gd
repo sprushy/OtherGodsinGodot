@@ -38,6 +38,8 @@ const ROBOTIC_FOOTSOLDIER_ABILITY_BADGE_TEXTURE := preload("res://images/ability
 const SEVENTH_SAGE_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/SeventhSageImbueAllyBadge.png")
 const TEZCATLIPOCA_BLASPHEMER_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/TezcatlipocaBlasphemerBloodMagicBadge.png")
 const WHITE_SERPENT_MEDICINE_BADGE_TEXTURE := preload("res://images/ability_badges/WhiteSerpentMedicineBadge.png")
+const FENRIS_DEVOUR_BADGE_TEXTURE := preload("res://images/card_art/creatures/fenrir.jpg")
+const PAI_LONG_BADGE_TEXTURE := preload("res://images/card_art/creatures/TheDragonKingEdit.png")
 const WINGED_LION_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/WingedLionFlankBadge.png")
 const ALU_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/AluStupefyBadge.png")
 const ANCIENT_PYRE_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/AncientPyreBadge.png")
@@ -2194,6 +2196,10 @@ func _get_god_custom_ability_badge_texture(card: Card) -> Texture2D:
 		return GUAN_YU_TACTICAL_BREAK_BADGE_TEXTURE
 	if card.card_name == "Guan Yu, Active God":
 		return GUAN_YU_MANOEUVRE_BADGE_TEXTURE
+	if card.card_name == "Fenrir":
+		return FENRIS_DEVOUR_BADGE_TEXTURE
+	if card.card_name == "Pai Long":
+		return PAI_LONG_BADGE_TEXTURE
 	if card.card_name == "Hermes":
 		return HERMES_ABILITY_BADGE_TEXTURE
 	if card.card_name == "Odin, the Allfather":

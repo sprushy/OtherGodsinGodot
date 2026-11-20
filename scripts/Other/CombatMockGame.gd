@@ -1,4 +1,4 @@
-extends Control
+﻿extends Control
 
 const EnHeduAnnaScript = preload("res://scripts/cards/Creatures/EnHeduAnna.gd")
 const HariiShamanScript = preload("res://scripts/cards/Creatures/HariiShaman.gd")
@@ -528,6 +528,7 @@ var _pending_book_of_life_spell: BookOfLife = null
 var _pending_deucalion_spell: DeucalionsInfants = null
 var _pending_deucalion_friendly_targets: Array[Card] = []
 var _deucalion_panel: Control = null
+var _ascension_panel: Control = null
 var _deucalion_prompt_pending: bool = false
 var _overlay_card_selected: Callable = Callable()
 var _pending_absence_spell: Absence = null
@@ -6546,7 +6547,9 @@ func start_game(
 	game_manager.board_effect_requested.connect(_on_board_effect_requested)
 	game_manager.card_effect_requested.connect(_on_card_effect_requested)
 	game_manager.field_effect_requested.connect(_on_field_effect_requested)
-	game_manager.turn_upkeep_started.connect(_on_local_turn_upkeep_started)
+	if not game_manager.ascension_offered.is_connected(_on_ascension_offered):
+		game_manager.ascension_offered.connect(_on_ascension_offered)
+		game_manager.turn_upkeep_started.connect(_on_local_turn_upkeep_started)
 
 	player1.mana_changed.connect(_on_player_mana_changed)
 	player2.mana_changed.connect(_on_player_mana_changed)
@@ -17851,6 +17854,12 @@ func _on_god_card_pressed(card: Card) -> void:
 
 func _on_god_ability_badge_clicked(card: Card) -> void:
 	if _reject_badge_click_while_locked(card, _replay_card_action(_on_god_ability_badge_clicked, card), true):
+		return
+	if card != null and card.card_name == "Fenrir":
+		_prompt_fenris_devour(card)
+		return
+	if card != null and card.card_name == "Pai Long":
+		_activate_pai_long_weather_draw(card)
 		return
 	if card == null or card.card_name != "Guan Yu":
 		_on_god_card_pressed(card)
@@ -32522,3 +32531,115 @@ func cleanup() -> void:
 	game_input = null
 	if game_manager:
 		game_manager = null
+
+func _on_ascension_offered(creature: Card, player: Player) -> void:
+	if creature == null or player == null:
+		return
+	if player != player1 and player != player2:
+		return
+	if _ascension_panel != null and is_instance_valid(_ascension_panel):
+		_ascension_panel.queue_free()
+		_ascension_panel = null
+	var panel := PanelContainer.new()
+	var vbox := VBoxContainer.new()
+	panel.add_child(vbox)
+	var title := Label.new()
+	title.text = "Ascend %s?" % creature.card_name
+	vbox.add_child(title)
+	var replace_btn := Button.new()
+	replace_btn.text = "Replace God"
+	replace_btn.pressed.connect(func() -> void:
+		game_manager.ascend_creature(creature, player, "replace")
+		_hide_ascension_prompt()
+		_last_board_player = null
+		if _player_god_zone_ui != null and is_instance_valid(_player_god_zone_ui):
+			_player_god_zone_ui._refresh_display()
+		_update_ui_immediately()
+	)
+	vbox.add_child(replace_btn)
+	var active_btn := Button.new()
+	active_btn.text = "Become Active God"
+	active_btn.pressed.connect(func() -> void:
+		game_manager.ascend_creature(creature, player, "active")
+		_hide_ascension_prompt()
+		_update_ui_immediately()
+	)
+	vbox.add_child(active_btn)
+	var cancel_btn := Button.new()
+	cancel_btn.text = "Cancel"
+	cancel_btn.pressed.connect(func() -> void:
+		_hide_ascension_prompt()
+		_update_ui_immediately()
+	)
+	vbox.add_child(cancel_btn)
+	add_child(panel)
+	_promote_transient_ui(panel)
+	_ascension_panel = panel
+	panel.anchor_left = 0.5
+	panel.anchor_right = 0.5
+	panel.anchor_top = 0.5
+	panel.anchor_bottom = 0.5
+	panel.offset_left = -180
+	panel.offset_right = 180
+	panel.offset_top = -120
+	panel.offset_bottom = 120
+	update_ui()
+
+func _hide_ascension_prompt() -> void:
+	if _ascension_panel != null and is_instance_valid(_ascension_panel):
+		_ascension_panel.queue_free()
+	_ascension_panel = null
+func _activate_pai_long_weather_draw(card: Card) -> void:
+	if game_manager == null or card.card_owner == null:
+		return
+	var weather_spell: Card = null
+	for card_in_hand in card.card_owner.hand_zone.cards:
+		if card_in_hand != null and card_in_hand.has_type("Weather"):
+			weather_spell = card_in_hand
+			break
+	if weather_spell == null:
+		_set_action_label_text("Pai Long needs a Weather spell in hand.")
+		update_ui()
+		return
+	var deck_cards: Array[Card] = card.card_owner.deck_zone.cards.duplicate()
+	if deck_cards.is_empty():
+		_set_action_label_text("Pai Long cannot draw; deck is empty.")
+		update_ui()
+		return
+	var on_choose_drawn := func(drawn_card: Card) -> void:
+		if drawn_card != null:
+			card.card_owner.move_card(weather_spell, card.card_owner.graveyard_zone)
+			card.card_owner.move_card(drawn_card, card.card_owner.hand_zone)
+			_set_action_label_text("Pai Long discarded " + weather_spell.card_name + " to add " + drawn_card.card_name + " to hand.")
+			game_manager.notify_god_power_activated(card.card_owner, card)
+		update_ui()
+	_show_card_selection_overlay(
+		"Choose a Card to Add to Hand",
+		deck_cards,
+		on_choose_drawn,
+		Callable(),
+		"",
+		"",
+		false,
+		true,
+		true
+	)
+
+func _prompt_fenris_devour(card: Card) -> void:
+	if game_manager == null:
+		return
+	var targets: Array = []
+	if card.has_method("get_valid_devour_targets"):
+		targets = card.call("get_valid_devour_targets", game_manager)
+	if targets.is_empty():
+		_set_action_label_text("Fenrir cannot devour right now.")
+		update_ui()
+		return
+	var on_choose_devour := func(target: Card) -> void:
+		if target != null and card.has_method("resolve_devour_impact"):
+			card.call("resolve_devour_impact", game_manager, target)
+		update_ui()
+	var on_cancel_devour := func() -> void:
+		_set_action_label_text("Cancelled Fenrir devour.")
+		update_ui()
+	_prompt_card_target_selection(card, targets, on_choose_devour, on_cancel_devour, "Choose a creature for Fenrir to devour")

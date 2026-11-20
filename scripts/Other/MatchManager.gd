@@ -2107,6 +2107,14 @@ func _remove_resolved_action(action: CardAction) -> void:
 func _resolve_ability(action: CardAction) -> void:
 	if action.card is HexCard:
 		var hex := action.card as HexCard
+		var general_immune_target: Card = action.target if action.target is Card else null
+		if general_immune_target == null:
+			general_immune_target = action.interceptor if action.interceptor is Card else null
+		if general_immune_target != null and game_manager._is_hex_immune(general_immune_target, hex):
+			hex.on_immune_activate(game_manager, action.attacker, general_immune_target)
+			last_resolution_text = "Hex fizzled: " + hex.card_name + " was immune to hexes."
+			_remove_resolved_action(action)
+			return
 		if hex.has_method("on_activate_action"):
 			hex.on_activate_action(game_manager, action)
 			last_resolution_text = action.resolution_text if action.resolution_text != "" else hex.card_name + " resolved!"

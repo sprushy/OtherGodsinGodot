@@ -8928,7 +8928,9 @@ func _on_card_test_pressed() -> void:
 	_match_launch_queued = false
 	_show_embedded_game("CardTest")
 	show_game()
-	var card_test: CardTestGame = get_node("GameContainer/CardTest")
+	var card_test := get_node("GameContainer/CardTest") as CardTestGame
+	if card_test == null:
+		return
 	await card_test.start_game()
 
 func _on_practice_thor_pressed() -> void:

@@ -132,6 +132,14 @@ func get_devour_target_failure_reason(target: Card) -> String:
 		]
 	return card_name + " cannot devour " + target.card_name + "."
 
+var consumed_cards: Array[Card] = []
+
+func has_sheltered_cards() -> bool:
+	return not consumed_cards.is_empty()
+
+func get_sheltered_cards_for_passive_effects() -> Array[Card]:
+	return consumed_cards.duplicate()
+
 func resolve_devour_impact(game_manager: GameManager, target: Card, continue_callback: Callable = Callable()) -> void:
 	if game_manager == null:
 		_emit_devour_result(continue_callback, card_name + " cannot devour right now.")
@@ -145,6 +153,13 @@ func resolve_devour_impact(game_manager: GameManager, target: Card, continue_cal
 		return
 	if game_manager.is_immune_to_source(target, self):
 		_emit_devour_result(continue_callback, target.get_target_log_display_name(game_manager.get_feedback_viewer()) + " is immune to " + card_name + "'s creature abilities this turn.")
+		return
+	if is_god:
+		var viewer := game_manager.get_feedback_viewer()
+		var devoured_name := target.get_target_log_display_name(viewer)
+		consumed_cards.append(target)
+		game_manager.remove_card_from_game_with_hook(target)
+		_emit_devour_result(continue_callback, "%s consumes %s under him." % [card_name, devoured_name])
 		return
 
 	var viewer := game_manager.get_feedback_viewer()
@@ -181,7 +196,7 @@ func _is_valid_devour_target(card: Card) -> bool:
 		and card.card_type == Card.CardType.CREATURE \
 		and card.current_zone != null \
 		and card.current_zone.is_board_zone() \
-		and card.get_effective_level() <= get_effective_level() - 2
+		and (is_god or card.get_effective_level() <= get_effective_level() - 2)
 
 func _get_open_summon_zones() -> Array[Zone]:
 	var open_zones: Array[Zone] = []
@@ -202,3 +217,18 @@ func _can_pay_wolf_master_cost_for(card: Card, game_manager: GameManager) -> boo
 func _emit_devour_result(callback: Callable, feedback: String) -> void:
 	if callback.is_valid():
 		callback.call(feedback)
+
+func get_hover_detail_lines(viewer: Player = null) -> Array[String]:
+	var details := super.get_hover_detail_lines(viewer)
+	if consumed_cards.is_empty():
+		return details
+	details.append("Cards underneath:")
+	for c in consumed_cards:
+		if c == null:
+			continue
+		var line := "- " + c.card_name
+		var ability_summary := c.get_inline_ability_summary()
+		if ability_summary != "":
+			line += " - " + ability_summary
+		details.append(line)
+	return details

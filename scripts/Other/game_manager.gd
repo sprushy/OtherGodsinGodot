@@ -7,6 +7,7 @@ signal doorway_choice_requested(structure: StructureCard, card: Card, combat_dea
 signal decision_requested(player: Player, type: String, data: Dictionary)
 signal turn_started(turn_number: int, player: Player)
 signal turn_ended(turn_number: int, player: Player)
+signal ascension_offered(creature: Card, player: Player)
 signal controller_turn_started(turn_number: int, player: Player)
 signal controller_turn_ended(turn_number: int, player: Player)
 signal global_turn_started(turn_number: int, player: Player)
@@ -1114,6 +1115,10 @@ func _is_hex_immune(target: Card, source: Card = null) -> bool:
 	for passive_card in target.get_controller_passive_cards():
 		if passive_card is EnkiLordOfEridu and (passive_card as EnkiLordOfEridu).protects_from_hex(target):
 			return true
+	if controller.god_zone != null:
+		for god_card in controller.god_zone.cards:
+			if god_card != null and god_card.is_god and str(god_card.card_name).strip_edges() == "Enki":
+				return true
 	return false
 
 func activate_hex(hex: HexCard, attacker: Card, defender: Card) -> bool:
@@ -3703,6 +3708,56 @@ func grant_control_of_creature(creature: Card, new_controller: Player) -> bool:
 	new_controller.move_card(creature, destination)
 	creature.reveal_from_stealth(self)
 	return true
+
+func offer_ascension(creature: Card, player: Player) -> void:
+	if creature == null or player == null:
+		return
+	ascension_offered.emit(creature, player)
+
+func ascend_creature(creature: Card, player: Player, mode: String = "replace") -> void:
+	if creature == null or player == null:
+		return
+	var base_key: String = creature.get_script().resource_path.get_file().get_basename()
+	var new_buffs: Array[Dictionary] = []
+	for buff in creature.active_buffs:
+		if str(buff.get("source", "")) == "Apotheosis" or str(buff.get("effect_type", "")) == "apotheosis":
+			continue
+		new_buffs.append(buff)
+	creature.active_buffs = new_buffs
+	if mode == "active":
+		if "Active God" not in creature.card_types:
+			creature.card_types.append("Active God")
+		creature.level = 7
+		creature.is_god = false
+		note_player_feedback("%s ascends as an Active God." % creature.card_name)
+		return
+	var god_name := creature.card_name
+	var god_ability := creature.ability_text
+	match base_key:
+		"EnkiLordOfEridu":
+			god_name = "Enki"
+			god_ability = "Your creatures are immune to hexes."
+		"Fenrir":
+			god_name = "Fenrir"
+			god_ability = "Once per turn, pay 5 mana to consume (place a physical card under him)."
+		"PaiLongAutumnKing":
+			god_name = "Pai Long"
+			god_ability = "Discard a weather spell to add any card from your deck to your hand."
+	for old_god in player.god_zone.cards.duplicate():
+		player.move_card(old_god, player.graveyard_zone)
+	if creature.current_zone != null and creature.current_zone.is_board_zone():
+		player.move_card(creature, player.god_zone)
+	creature.card_name = god_name
+	creature.ability_text = god_ability
+	creature.card_type = Card.CardType.GOD
+	creature.is_god = true
+	creature.is_power = true
+	creature.level = 7
+	creature.is_face_down = false
+	creature.is_stealth = false
+	creature.is_sleeping = false
+	creature.wake_up()
+	note_player_feedback("%s ascends to replace your God." % god_name)
 
 func _find_creature_control_destination(player: Player, zone_type: int, zone_index: int) -> Zone:
 	var preferred_rows: Array[Array] = []

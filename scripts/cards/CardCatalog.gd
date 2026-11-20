@@ -218,6 +218,7 @@ const CARD_SCRIPT_PATHS := [
 	"res://scripts/cards/Powers/Myrkwood.gd",
 	"res://scripts/cards/Spells/Absence.gd",
 	"res://scripts/cards/Spells/ApollyonsDemiurge.gd",
+	"res://scripts/cards/Spells/Apotheosis.gd",
 	"res://scripts/cards/Spells/BaneOfTheSvartalfar.gd",
 	"res://scripts/cards/Spells/BitMeseri.gd",
 	"res://scripts/cards/Spells/BlotSacrifice.gd",
