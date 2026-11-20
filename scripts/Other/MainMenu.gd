@@ -13014,6 +13014,10 @@ func _start_smoke_mode() -> void:
 		call_deferred("_run_card_test_occult_singularity_smoke")
 		return
 
+	if role == "card_test_gala_tura":
+		call_deferred("_run_card_test_gala_tura_smoke")
+		return
+
 	if role == "resume":
 		var resume_timer := get_tree().create_timer(0.5)
 		resume_timer.timeout.connect(Callable(self, "_on_resume_match_pressed"))
@@ -14615,6 +14619,106 @@ func _run_card_test_occult_singularity_smoke() -> void:
 		return
 
 	_finish_smoke_if_enabled("PASS:card_test_occult_singularity before=%d after=%d" % [magical_before, magical_after])
+
+func _run_card_test_gala_tura_smoke() -> void:
+	var card_test = _show_embedded_game("CardTest")
+	if card_test == null:
+		_fail_smoke_if_enabled("card_test_missing")
+		return
+	show_game()
+	await card_test.start_game()
+	card_test.load_gala_tura_test_scenario()
+	await get_tree().process_frame
+	await get_tree().process_frame
+
+	if not card_test.game_input.submit_action({type = "upkeep_choice", choice = "mana"}):
+		_fail_smoke_if_enabled("card_test_gala_tura_upkeep_choice_failed")
+		return
+	if not await _wait_for_card_test_turn2_smoke_condition(
+		func() -> bool:
+			return card_test.game_manager.current_player == card_test.player1 \
+				and card_test.game_manager.has_resolved_turn_upkeep(),
+		180
+	):
+		_fail_smoke_if_enabled("card_test_gala_tura_upkeep_timeout")
+		return
+	if not await _settle_card_test_turn2_smoke_priority(card_test, 240):
+		_fail_smoke_if_enabled("card_test_gala_tura_priority_timeout")
+		return
+
+	# Find Gala-Tura on P1's board and destroy it to trigger Water of Life.
+	var gala_tura: Card = null
+	for zone in card_test.player1.frontline_zones:
+		if zone == null:
+			continue
+		for card in zone.cards:
+			if card is GalaTura:
+				gala_tura = card
+				break
+		if gala_tura != null:
+			break
+	if gala_tura == null:
+		_fail_smoke_if_enabled("card_test_gala_tura_missing_on_board")
+		return
+
+	if not card_test.game_manager.request_send_to_graveyard(gala_tura, destruction = true):
+		_fail_smoke_if_enabled("card_test_gala_tura_destroy_failed")
+		return
+
+	# Wait for the Water of Life destroyed trigger prompt to appear.
+	if not await _wait_for_card_test_turn2_smoke_condition(
+		func() -> bool:
+			return card_test.match_manager != null \
+				and card_test.match_manager.pending_click_selection_confirm.is_valid() \
+				and card_test.match_manager.pending_click_selection_source is GalaTura,
+		240
+	):
+		_fail_smoke_if_enabled("card_test_gala_tura_prompt_timeout")
+		return
+
+	# Select up to 2 valid graveyard creature targets and submit.
+	var targets: Array[Card] = []
+	for card in card_test.player1.graveyard_zone.cards:
+		if card == null:
+			continue
+		if card == gala_tura or card.is_god:
+			continue
+		if card.card_type == Card.CardType.CREATURE:
+			targets.append(card)
+		if targets.size() >= 2:
+			break
+	if targets.is_empty():
+		_fail_smoke_if_enabled("card_test_gala_tura_no_targets")
+		return
+
+	var chosen_uids: Array[String] = []
+	for target in targets:
+		chosen_uids.append(target.uid)
+
+	if not card_test.game_input.submit_action({
+		type = "gala_tura_destroyed_choice",
+		source_uid = gala_tura.uid,
+		chosen_uids = chosen_uids,
+	}):
+		_fail_smoke_if_enabled("card_test_gala_tura_submit_failed")
+		return
+
+	if not await _settle_card_test_turn2_smoke_priority(card_test, 240):
+		_fail_smoke_if_enabled("card_test_gala_tura_resolution_timeout")
+		return
+
+	# Verify the chosen creatures left the graveyard (returned to deck bottom).
+	var still_in_grave := 0
+	for chosen_uid in chosen_uids:
+		for card in card_test.player1.graveyard_zone.cards:
+			if card != null and card.uid == chosen_uid:
+				still_in_grave += 1
+				break
+	if still_in_grave > 0:
+		_fail_smoke_if_enabled("card_test_gala_tura_not_returned count=%d" % still_in_grave)
+		return
+
+	_finish_smoke_if_enabled("PASS:card_test_gala_tura targets=%d" % chosen_uids.size())
 
 func _wait_for_card_test_turn2_smoke_condition(predicate: Callable, max_frames: int) -> bool:
 	for _frame in range(max_frames):

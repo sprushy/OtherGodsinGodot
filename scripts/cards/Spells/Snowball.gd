@@ -17,7 +17,7 @@ func _init() -> void:
 	targets = true
 	artist = "User provided"
 	art_path = ART_PATH
-	ability_text = "Reduce a creature's Str by 2 until the end of the turn."
+	ability_text = "Reduce a creature's Str by 2 until end of turn."
 
 func resolve(game_manager: GameManager, target = null) -> void:
 	var creature := target as Card

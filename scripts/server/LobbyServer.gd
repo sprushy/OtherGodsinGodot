@@ -2591,12 +2591,26 @@ func _find_rank_matched_bot_deck(best_of: int, account_id: String) -> Dictionary
 		force_quarantined = true
 	var unavailable := _busy_bot_list_ids()
 	var deck := _ranked_bot_deck_pool.select_deck(unavailable, _bot_deck_rng, target_stars, force_quarantined)
+	var attempt := 0
 	while not deck.is_empty():
+		attempt += 1
+		var list_id := str(deck.get("list_id", ""))
+		var deck_stars := int(deck.get("stars", 0))
+		var deck_name := str(deck.get("deck_name", ""))
 		var submission := _validate_server_bot_deck(deck)
 		if not submission.is_empty():
+			print("[BotMatchmaker] account=%s best_of=%d target_stars=%d league=%d(%s) force_quarantined=%s -> matched list_id=%s stars=%d name=%s (attempt %d)" % [
+				account_id, best_of, target_stars, league, RankedProgressionScript.LEAGUES[league] if league < RankedProgressionScript.LEAGUES.size() else "?", force_quarantined, list_id, deck_stars, deck_name, attempt
+			])
 			return submission
+		print("[BotMatchmaker] account=%s best_of=%d target_stars=%d league=%d(%s) force_quarantined=%s -> rejected list_id=%s stars=%d name=%s (attempt %d), retrying" % [
+			account_id, best_of, target_stars, league, RankedProgressionScript.LEAGUES[league] if league < RankedProgressionScript.LEAGUES.size() else "?", force_quarantined, list_id, deck_stars, deck_name, attempt
+		])
 		unavailable[deck["list_id"]] = true
 		deck = _ranked_bot_deck_pool.select_deck(unavailable, _bot_deck_rng, target_stars, force_quarantined)
+	print("[BotMatchmaker] account=%s best_of=%d target_stars=%d league=%d(%s) force_quarantined=%s -> no bot available after %d attempts" % [
+		account_id, best_of, target_stars, league, RankedProgressionScript.LEAGUES[league] if league < RankedProgressionScript.LEAGUES.size() else "?", force_quarantined, attempt
+	])
 	return {}
 
 # Seeds a bot league: builds `count_per_god` ranked-legal bot decks for every

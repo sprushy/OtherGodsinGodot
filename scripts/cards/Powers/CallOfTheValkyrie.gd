@@ -15,7 +15,7 @@ func _init() -> void:
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
 	targets = true
-	ability_text = "[b]Unlock[/b] (%d): [b]Activate[/b] - Pay %d mana to [b]Prime[/b] a Norse Warrior from your graveyard." % [UNLOCK_COST, ACTIVATION_COST]
+	ability_text = "[b]Unlock[/b] (%d): [b]Activate[/b] - Pay %d mana to [b]Prime[/b] a Norse Warrior from your grave." % [UNLOCK_COST, ACTIVATION_COST]
 	artist = "Riccardo Zoppello"
 	art_path = ART_PATH
 

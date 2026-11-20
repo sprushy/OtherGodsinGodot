@@ -2,6 +2,7 @@ extends "res://scripts/Other/CombatMockGame.gd"
 class_name CardTestGame
 
 const SharurTheFlyingMaceScript := preload("res://scripts/cards/Equipment/SharurTheFlyingMace.gd")
+const GalaTura := preload("res://scripts/cards/Creatures/GalaTura.gd")
 
 var _test_turn_owner: Player = null
 var _test_turn_opponent: Player = null
@@ -466,6 +467,54 @@ func load_card_selection_test_scenario() -> void:
 		+ "Each player has 18 Norse Warrior targets in their graveyard and 40 starting mana. "
 		+ "Choose a card and pass priority to prime it; reopen the power to test smaller fans as targets leave. "
 		+ "Open the graveyard to compare the pile viewer, including the two ineligible cards."
+	)
+	update_ui()
+
+func load_gala_tura_test_scenario() -> void:
+	_reset_test_match_state()
+	_add_test_god(player1, Odin.new())
+	_add_test_god(player2, Thor.new())
+
+	# P1 controls Gala-Tura. When it is destroyed, its Water of Life destroyed
+	# trigger offers up to 3 graveyard creatures to return to the bottom of the deck.
+	var gala_tura := GalaTura.new()
+	_place_test_board_card(player1, player1.frontline_zones[0], gala_tura, Card.CreatureMode.AGGRESSIVE)
+
+	# Valid targets: creatures in P1's graveyard (not Gala-Tura itself, not a god).
+	for _copy in range(3):
+		_add_test_graveyard_card(player1, Berserker.new())
+		_add_test_graveyard_card(player1, HariiWarrior.new())
+		_add_test_graveyard_card(player1, BrownBear.new())
+	# Ineligible targets: a non-creature and a god.
+	_add_test_graveyard_card(player1, DivineLightning.new())
+	_add_test_graveyard_card(player2, Thor.new())
+
+	player1.spend_mana(player1.mana)
+	player1.gain_mana(40)
+	player2.spend_mana(player2.mana)
+	player2.gain_mana(40)
+	player1.followers = 100
+	player2.followers = 100
+	player1.followers_changed.emit(player1.followers)
+	player2.followers_changed.emit(player2.followers)
+	player1.has_summoned_this_turn = false
+	player2.has_summoned_this_turn = false
+
+	game_manager.current_player = player1
+	game_manager.other_player = player2
+	game_manager.feedback_viewer = player1
+	player1.is_turn_player = true
+	player2.is_turn_player = false
+	_test_turn_owner = player1
+	_test_turn_opponent = player2
+	game_manager.turn_number = 1
+	game_manager.start_turn()
+	_open_upkeep_choice_window()
+	action_label.text = (
+		"Gala-Tura Water of Life Test. P1 controls Gala-Tura with graveyard creatures. "
+		+ "Choose Mana for upkeep, then destroy Gala-Tura to open the Water of Life prompt. "
+		+ "Click up to 3 graveyard creatures, then Submit (or Decline). "
+		+ "Returned creatures go to the bottom of P1's deck."
 	)
 	update_ui()
 

@@ -16,7 +16,7 @@ func _init() -> void:
 	artist = "Ricardo Zoppello"
 	art_path = ART_PATH
 	targets = true
-	ability_text = "[b]Immolate[/b] ([b]Impact[/b]): Place a [b]Destruction[/b] card that can destroy a physical card from your graveyard face-down on your field. When it is activated, you do not have to pay its cost."
+	ability_text = "[b]Immolate[/b] ([b]Impact[/b]): Place a [b]Destruction[/b] card that can destroy a physical card from your grave face-down on your field. When it is activated, you do not have to pay its cost."
 
 func on_impact(game_manager: GameManager) -> void:
 	var valid_targets := get_valid_immolate_targets(game_manager)

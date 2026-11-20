@@ -23,7 +23,7 @@ func _init() -> void:
 	culture = "Ancient"
 	# flavor_text = "Nusku's fire offers revelation now or judgment later."
 	flavor_text = ""
-	ability_text = "Core Flame ([b]Impact[/b]): You may [b]Mill[/b] 7. Add a magical card milled this way to your hand.\nCelestial Light ([b]Perish[/b]): If you declined Core Flame, [b]Convert[/b] followers equal to your graveyard size."
+	ability_text = "Core Flame ([b]Impact[/b]): You may [b]Mill[/b] 7. Add a magical card milled this way to your hand.\nCelestial Light ([b]Perish[/b]): If you declined Core Flame, [b]Convert[/b] followers equal to your grave size."
 	art_path = ART_PATH
 	name_at_bottom = true
 	artist = "Ricardo Zoppello"

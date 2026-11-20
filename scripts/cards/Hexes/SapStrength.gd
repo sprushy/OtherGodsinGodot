@@ -16,7 +16,7 @@ func _init() -> void:
 	card_types = ["Sap"]
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
-	ability_text = "Reduce a creature's Str by 10 until the end of the turn."
+	ability_text = "Reduce a creature's Str by 10 until end of turn."
 	flavor_text = ""
 	artist = "Ricardo Zoppello"
 	art_path = ART_PATH

@@ -42,6 +42,7 @@ const KEYWORD_HINTS = {
 	"Fatality": "This effect triggers when this creature is destroyed in combat.",
 	"Unlock": "This card must be unlocked before its unlocked ability can be used.",
 	"Activate": "Use this card's activated ability.",
+	"Ascend": "Raise a level 7 creature to replace your God.",
 	"Relock": "Turn an unlocked power face-down again.",
 	"Resurrect": "Return a destroyed card from the graveyard to the field.",
 	"Wake": "Remove Sleep from a creature.",

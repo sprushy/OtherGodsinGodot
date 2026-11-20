@@ -17,7 +17,7 @@ func _init() -> void:
 	flavor_text = ""
 	artist = "User provided"
 	art_path = ART_PATH
-	ability_text = "Give a creature you control +1 level, +4 Str, +4 Res, and +1 Spd."
+	ability_text = "+1 level, +4 Str, +4 Res, and +1 Spd to a creature you control. If it reaches level 7, [b]Ascend[/b] it."
 
 func get_valid_targets(game_manager: GameManager) -> Array[Card]:
 	var valid_targets: Array[Card] = []

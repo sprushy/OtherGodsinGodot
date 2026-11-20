@@ -13,7 +13,7 @@ func _init() -> void:
 	resilience = 10
 	strength = 10
 	sacrifice_cost = 0
-	ability_text = "Brewing (reveal): Unlock a Mead power, activate a Mead power, or return a Mead card from your graveyard to your hand."
+	ability_text = "Brewing (reveal): Unlock a Mead power, activate a Mead power, or return a Mead card from your grave to your hand."
 	flavor_text = ""
 	culture = "Norse"
 	artist = "Tim Nguyen"

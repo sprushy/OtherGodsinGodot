@@ -638,6 +638,12 @@ var _priority_recovery_check_scheduled: bool = false
 var _overlay_card_dismissed: Callable = Callable()
 var _card_selection_overlay_active: bool = false
 var _card_selection_overlay_background_dismiss_enabled: bool = true
+var _overlay_multi_select: bool = false
+var _overlay_max_select: int = 0
+var _overlay_selected_cards: Array[Card] = []
+var _overlay_submit_callback: Callable = Callable()
+var _overlay_card_wrappers: Array[Dictionary] = []
+var _overlay_status_label: Label = null
 var _doorway_prompt_panel: Control = null
 var _pending_doorway_structure: DoorwayToTheVoid = null
 var _pending_doorway_card: Card = null
@@ -14439,7 +14445,11 @@ func _show_card_selection_overlay(
 	reveal_hidden_cards: bool = false,
 	dismiss_on_background: bool = true,
 	enable_search: bool = false,
-	search_placeholder: String = "Card names, keywords, or tags"
+	search_placeholder: String = "Card names, keywords, or tags",
+	multi_select: bool = false,
+	max_select: int = 0,
+	submit_button_text: String = "",
+	submit_callback: Callable = Callable()
 ) -> void:
 	if cards.is_empty():
 		_set_action_label_text(title_text + ": no valid cards.")
@@ -14451,6 +14461,10 @@ func _show_card_selection_overlay(
 	_overlay_selection_cursor_mode = cursor_mode
 	_card_selection_overlay_active = true
 	_card_selection_overlay_background_dismiss_enabled = dismiss_on_background
+	_overlay_multi_select = multi_select
+	_overlay_max_select = max_select
+	_overlay_selected_cards.clear()
+	_overlay_submit_callback = submit_callback
 	_sync_sacrifice_cursor()
 
 	var overlay := Control.new()
@@ -14481,6 +14495,13 @@ func _show_card_selection_overlay(
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(title)
+
+	_overlay_status_label = Label.new()
+	_overlay_status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_overlay_status_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_overlay_status_label.visible = multi_select
+	vbox.add_child(_overlay_status_label)
+	_update_overlay_multi_select_status()
 
 	var search_edit: LineEdit = null
 	if enable_search:
@@ -14555,6 +14576,11 @@ func _show_card_selection_overlay(
 			"wrapper": wrapper,
 		})
 
+	_overlay_card_wrappers = card_wrappers.duplicate()
+	if multi_select:
+		_refresh_overlay_multi_select_visuals()
+		_update_overlay_multi_select_status()
+
 	var refresh_search_filter := func(query: String) -> void:
 		var visible_count := 0
 		for entry in card_wrappers:
@@ -14585,6 +14611,13 @@ func _show_card_selection_overlay(
 		decline_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		decline_button.pressed.connect(_on_card_selection_overlay_cancel_pressed)
 		vbox.add_child(decline_button)
+
+	if submit_button_text.strip_edges() != "" and submit_callback.is_valid() and multi_select:
+		var submit_button := Button.new()
+		submit_button.text = submit_button_text
+		submit_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		submit_button.pressed.connect(_submit_overlay_multi_select)
+		vbox.add_child(submit_button)
 
 	if dismiss_on_background:
 		overlay.gui_input.connect(_on_card_selection_overlay_background_gui_input)
@@ -14655,6 +14688,9 @@ func _on_card_selection_overlay_background_gui_input(event: InputEvent) -> void:
 func _on_card_selection_overlay_card_gui_input(event: InputEvent, overlay_card: Card, preview: Control) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 		accept_event()
+		if _overlay_multi_select:
+			_toggle_overlay_multi_select(overlay_card)
+			return
 		# Keep the selected face's geometry after the array closes, including
 		# while a network command or stack action waits to resolve.
 		if is_instance_valid(preview) and overlay_card != null:
@@ -14671,6 +14707,49 @@ func _on_card_selection_overlay_card_gui_input(event: InputEvent, overlay_card: 
 		_dismiss_zone_overlay()
 		if callback.is_valid():
 			callback.call(overlay_card)
+
+func _toggle_overlay_multi_select(card: Card) -> void:
+	if card == null:
+		return
+	if card in _overlay_selected_cards:
+		_overlay_selected_cards.erase(card)
+	else:
+		if _overlay_max_select > 0 and _overlay_selected_cards.size() >= _overlay_max_select:
+			return
+		_overlay_selected_cards.append(card)
+	_refresh_overlay_multi_select_visuals()
+	_update_overlay_multi_select_status()
+
+func _refresh_overlay_multi_select_visuals() -> void:
+	for entry in _overlay_card_wrappers:
+		var entry_card := entry.get("card") as Card
+		var wrapper := entry.get("wrapper") as Control
+		if wrapper == null:
+			continue
+		var is_selected := entry_card in _overlay_selected_cards
+		var style := StyleBoxFlat.new()
+		style.bg_color = Color(0.16, 0.18, 0.26, 0.96) if is_selected else Color(0.06, 0.06, 0.10, 0.90)
+		style.border_color = Color(0.95, 0.78, 0.28, 1.0) if is_selected else Color(0.52, 0.64, 0.92, 0.58)
+		for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+			style.set_border_width(side as Side, 2)
+		style.corner_radius_top_left = 6
+		style.corner_radius_top_right = 6
+		style.corner_radius_bottom_left = 6
+		style.corner_radius_bottom_right = 6
+		wrapper.add_theme_stylebox_override("panel", style)
+
+func _update_overlay_multi_select_status() -> void:
+	if _overlay_status_label == null or not is_instance_valid(_overlay_status_label):
+		return
+	if _overlay_max_select > 0:
+		_overlay_status_label.text = "Selected %d of up to %d." % [_overlay_selected_cards.size(), _overlay_max_select]
+	else:
+		_overlay_status_label.text = "Selected %d." % _overlay_selected_cards.size()
+
+func _submit_overlay_multi_select() -> void:
+	if _overlay_submit_callback.is_valid():
+		_overlay_submit_callback.call(_overlay_selected_cards.duplicate())
+	_dismiss_zone_overlay()
 
 func _build_selection_overlay_card_preview(card: Card, reveal_hidden_card: bool = false) -> Control:
 	if not reveal_hidden_card and _should_hide_card_in_selection_overlay(card):
@@ -14755,6 +14834,12 @@ func _dismiss_zone_overlay() -> void:
 	_card_selection_overlay_active = false
 	_card_selection_overlay_background_dismiss_enabled = true
 	_overlay_selection_cursor_mode = ""
+	_overlay_multi_select = false
+	_overlay_max_select = 0
+	_overlay_selected_cards.clear()
+	_overlay_submit_callback = Callable()
+	_overlay_card_wrappers.clear()
+	_overlay_status_label = null
 	_sync_sacrifice_cursor()
 	_sync_visual_linger_input_blocker()
 
@@ -20548,95 +20633,62 @@ func _show_gala_tura_prompt() -> void:
 		if target not in _pending_gala_tura_selected:
 			remaining_targets.append(target)
 
-	if _gala_tura_prompt_panel != null and is_instance_valid(_gala_tura_prompt_panel):
-		_gala_tura_prompt_panel.queue_free()
-	_gala_tura_prompt_panel = null
+	if remaining_targets.is_empty():
+		var no_target_text: String = card.card_name + " found no creatures to return."
+		_hide_gala_tura_prompt()
+		if _stack_resolution_paused:
+			_resume_after_deferred_resolution(no_target_text)
+		else:
+			_set_action_label_text(no_target_text)
+			update_ui()
+		return
 
-	var panel := PanelContainer.new()
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.10, 0.08, 0.12, 0.97)
-	style.border_color = Color(0.48, 0.82, 0.95, 0.95)
-	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side as Side, 2)
-	panel.add_theme_stylebox_override("panel", style)
-	panel.custom_minimum_size = Vector2(420, 0)
+	var gala_tura := card
+	var on_submit := func(chosen_cards: Array[Card]) -> void:
+		var chosen_uids: Array[String] = []
+		for chosen_card in chosen_cards:
+			if chosen_card != null:
+				chosen_uids.append(chosen_card.uid)
+		if _submit_prompt_choice_command({
+			"type": "gala_tura_destroyed_choice",
+			"source_uid": gala_tura.uid,
+			"chosen_uids": chosen_uids,
+		}):
+			_hide_gala_tura_prompt()
+			update_ui()
+			return
+		_set_action_label_text("Could not submit the match decision. Please try again.")
+		update_ui()
 
-	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 8)
-	panel.add_child(vbox)
+	var on_decline := func() -> void:
+		_hide_gala_tura_prompt()
+		if _submit_prompt_choice_command({
+			"type": "gala_tura_destroyed_choice",
+			"source_uid": gala_tura.uid,
+			"chosen_uids": [],
+		}):
+			update_ui()
+			return
+		_set_action_label_text("Could not submit the match decision. Please try again.")
+		update_ui()
 
-	var title := Label.new()
-	title.text = card.card_name
-	title.add_theme_font_size_override("font_size", 14)
-	vbox.add_child(title)
-
-	var info := Label.new()
-	info.text = "Choose up to 3 creatures from your graveyard to return to the bottom of your deck."
-	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	vbox.add_child(info)
-
-	var selected_label := Label.new()
-	if _pending_gala_tura_selected.is_empty():
-		selected_label.text = "Selected: none"
-	else:
-		var selected_names: Array[String] = []
-		for chosen_card in _pending_gala_tura_selected:
-			selected_names.append(chosen_card.card_name)
-		selected_label.text = "Selected: " + ", ".join(selected_names)
-	selected_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	vbox.add_child(selected_label)
-
-	var choices_box := VBoxContainer.new()
-	choices_box.add_theme_constant_override("separation", 4)
-	vbox.add_child(choices_box)
-
-	if _pending_gala_tura_selected.size() < 3:
-		for target in remaining_targets:
-			var add_btn := Button.new()
-			add_btn.text = "Return " + target.card_name
-			add_btn.pressed.connect(func() -> void:
-				if target in _pending_gala_tura_selected:
-					return
-				_pending_gala_tura_selected.append(target)
-				_show_gala_tura_prompt()
-			)
-			choices_box.add_child(add_btn)
-
-	if remaining_targets.is_empty() or _pending_gala_tura_selected.size() >= 3:
-		var done_label := Label.new()
-		done_label.text = "No more selections available."
-		choices_box.add_child(done_label)
-
-	var buttons := HBoxContainer.new()
-	vbox.add_child(buttons)
-
-	var done_btn := Button.new()
-	done_btn.text = "Done"
-	done_btn.pressed.connect(func() -> void:
-		_resolve_gala_tura_prompt(true)
+	_show_card_selection_overlay(
+		gala_tura.card_name + ": Water of Life",
+		remaining_targets,
+		Callable(),
+		on_decline,
+		"",
+		"Decline",
+		false,
+		true,
+		false,
+		"",
+		true,
+		GalaTura.MAX_RETURN_COUNT,
+		"Submit",
+		on_submit
 	)
-	buttons.add_child(done_btn)
-
-	var skip_btn := Button.new()
-	skip_btn.text = "Skip"
-	skip_btn.pressed.connect(func() -> void:
-		_resolve_gala_tura_prompt(false)
-	)
-	buttons.add_child(skip_btn)
-
-	add_child(panel)
-	_promote_transient_ui(panel)
-	_gala_tura_prompt_panel = panel
-	panel.anchor_left = 0.5
-	panel.anchor_right = 0.5
-	panel.anchor_top = 0.5
-	panel.anchor_bottom = 0.5
-	panel.offset_left = -220
-	panel.offset_right = 220
-	panel.offset_top = -160
-	panel.offset_bottom = 160
-
-	_set_action_label_text("%s: choose up to 3 graveyard creatures to return." % card.card_name)
+	_set_action_label_text("%s: click up to %d graveyard creatures to return, then Submit or Decline." % [gala_tura.card_name, GalaTura.MAX_RETURN_COUNT])
 	update_ui()
 
 func _sanitize_gala_tura_selection() -> void:
@@ -20653,26 +20705,6 @@ func _sanitize_gala_tura_selection() -> void:
 		if cleaned.size() >= 3:
 			break
 	_pending_gala_tura_selected = cleaned
-
-func _resolve_gala_tura_prompt(use_selection: bool) -> void:
-	var card := _pending_gala_tura
-	_sanitize_gala_tura_selection()
-	var chosen_targets: Array[Card] = _pending_gala_tura_selected.duplicate() if use_selection else []
-	var chosen_uids: Array[String] = []
-	for chosen_card in chosen_targets:
-		if chosen_card != null:
-			chosen_uids.append(chosen_card.uid)
-	if _submit_prompt_choice_command({
-		"type": "gala_tura_destroyed_choice",
-		"source_uid": card.uid if card != null else "",
-		"chosen_uids": chosen_uids,
-	}):
-		_hide_gala_tura_prompt()
-		update_ui()
-		return
-	_set_action_label_text("Could not submit the match decision. Please try again.")
-	update_ui()
-	return
 
 func _queue_kur_jara_tree_of_life_destroy_prompt(card: KurJara) -> void:
 	if card == null or game_manager == null:
@@ -32633,9 +32665,9 @@ func _on_ascension_offered(creature: Card, player: Player) -> void:
 	var title := Label.new()
 	title.text = "Ascend %s?" % creature.card_name
 	vbox.add_child(title)
-	var replace_btn := Button.new()
-	replace_btn.text = "Replace God"
-	replace_btn.pressed.connect(func() -> void:
+	var ascend_btn := Button.new()
+	ascend_btn.text = "Ascend"
+	ascend_btn.pressed.connect(func() -> void:
 		game_manager.ascend_creature(creature, player, "replace")
 		_hide_ascension_prompt()
 		_last_board_player = null
@@ -32643,22 +32675,15 @@ func _on_ascension_offered(creature: Card, player: Player) -> void:
 			_player_god_zone_ui._refresh_display()
 		_update_ui_immediately()
 	)
-	vbox.add_child(replace_btn)
-	var active_btn := Button.new()
-	active_btn.text = "Become Active God"
-	active_btn.pressed.connect(func() -> void:
+	vbox.add_child(ascend_btn)
+	var decline_btn := Button.new()
+	decline_btn.text = "Decline"
+	decline_btn.pressed.connect(func() -> void:
 		game_manager.ascend_creature(creature, player, "active")
 		_hide_ascension_prompt()
 		_update_ui_immediately()
 	)
-	vbox.add_child(active_btn)
-	var cancel_btn := Button.new()
-	cancel_btn.text = "Cancel"
-	cancel_btn.pressed.connect(func() -> void:
-		_hide_ascension_prompt()
-		_update_ui_immediately()
-	)
-	vbox.add_child(cancel_btn)
+	vbox.add_child(decline_btn)
 	add_child(panel)
 	_promote_transient_ui(panel)
 	_ascension_panel = panel

@@ -13,7 +13,7 @@ func _init() -> void:
 	speed = 1
 	resilience = 11
 	strength = 10
-	ability_text = "Mana Boon ([b]Reveal[/b]): Gain 2 mana for every face-up \"Pictish Beast\" on your field or every \"Pictish Beast\" in your graveyard."
+	ability_text = "Mana Boon ([b]Reveal[/b]): Gain 2 mana for every face-up \"Pictish Beast\" on your field or every \"Pictish Beast\" in your grave."
 	flavor_text = ""
 	culture = "Triskelion"
 	artist = "Ricardo Zoppello"

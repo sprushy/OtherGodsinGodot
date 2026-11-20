@@ -18,7 +18,7 @@ func _init() -> void:
 	resilience = 27
 	strength = 23
 	flavor_text = ""
-	ability_text = "Water of Life ([b]Passive[/b]): Creatures in your graveyard are immune to your opponent's effects. [b]Destroyed[/b]: You may return up to 3 of your other creatures from your graveyard to the bottom of your deck."
+	ability_text = "Water of Life ([b]Passive[/b]): Creatures in your grave are immune to your opponent's effects. [b]Destroyed[/b]: You may return up to 3 of your other creatures from your grave to the bottom of your deck."
 	culture = "Ancient"
 	artist = "Ricardo Zoppello"
 	art_path = "res://images/card_art/creatures/gala_tura_print.jpg"

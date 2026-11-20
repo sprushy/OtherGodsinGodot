@@ -3717,9 +3717,8 @@ func offer_ascension(creature: Card, player: Player) -> void:
 	if is_player_under_god_death(player):
 		ascend_creature(creature, player, "replace")
 		return
-	# Otherwise, ascend as an Active God automatically so bots (and humans) don't
-	# stall on a prompt they can't / don't need to answer.
-	ascend_creature(creature, player, "active")
+	# Otherwise offer the Ascend / Decline choice so the player decides.
+	ascension_offered.emit(creature, player)
 
 func ascend_creature(creature: Card, player: Player, mode: String = "replace") -> void:
 	if creature == null or player == null:
