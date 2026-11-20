@@ -89,6 +89,12 @@ func _ensure_unique_deck_names() -> void:
 		var second_deck: Dictionary = second["deck"]
 		if str(first["god_name"]) != str(second["god_name"]):
 			return str(first["god_name"]) < str(second["god_name"])
+		# Established bots (played matches or user-submitted) pick names first so
+		# new league bots get fresh names instead of stealing existing ones.
+		var first_priority := _bot_name_priority(first_deck)
+		var second_priority := _bot_name_priority(second_deck)
+		if first_priority != second_priority:
+			return first_priority > second_priority
 		var first_id := str(first_deck.get("list_id", first_deck.get("fingerprint", "")))
 		var second_id := str(second_deck.get("list_id", second_deck.get("fingerprint", "")))
 		if first_id != second_id:
@@ -100,7 +106,8 @@ func _ensure_unique_deck_names() -> void:
 	for entry: Dictionary in decks:
 		var deck: Dictionary = entry["deck"]
 		var base_name := str(deck.get("deck_name", "")).strip_edges()
-		if _is_generic_bot_name(base_name) or used_names.has(base_name.to_lower()):
+		var owner_name := str(deck.get("owner_name", "")).strip_edges()
+		if (owner_name.is_empty() and _is_generic_bot_name(base_name)) or used_names.has(base_name.to_lower()):
 			needs_name.append(entry)
 			continue
 		used_names[base_name.to_lower()] = true
@@ -110,6 +117,11 @@ func _ensure_unique_deck_names() -> void:
 		var base_name := _make_unique_bot_name(deck_god, deck, used_names)
 		deck["deck_name"] = base_name
 		used_names[base_name.to_lower()] = true
+
+func _bot_name_priority(deck: Dictionary) -> int:
+	if str(deck.get("owner_name", "")).strip_edges() != "":
+		return 1000000
+	return _get_played_match_count(deck) * 1000
 
 func _is_generic_bot_name(name: String) -> bool:
 	var normalized := name.strip_edges().to_lower()
@@ -439,6 +451,7 @@ func rebuild_league_records(results: Array[Dictionary]) -> Dictionary:
 					str(list.get("deck_name", "")), lid,
 					int(list.get("wins", 0)), int(list.get("losses", 0)), int(list.get("draws", 0)),
 					int(list.get("stars", 0))])
+	_ensure_unique_deck_names()
 	return {"success": true, "re_registered": re_registered, "replayed": applied, "league_result_count": league_result_count}
 
 func _is_league_bot_list_id(list_id: String) -> bool:
@@ -779,7 +792,7 @@ func _apply_result(result: Dictionary) -> void:
 					result["bot_eliminated"] = true
 					_retire_list(pool, list)
 				return
-		if not is_community_bot:
+		if not is_community_bot and _eliminated_bot_match_ids.has(str(result.get("match_id", ""))):
 			# A match already in flight can finish after its list was retired.
 			return
 		# A community bot's first ladder result adopts its submitting bot id, so
@@ -835,12 +848,16 @@ func _apply_result(result: Dictionary) -> void:
 			owner_name = bot_name.substr(0, separator).strip_edges()
 			bot_name = bot_name.substr(separator + 3).strip_edges()
 	var self_play_name := ""
-	if bool(result.get("is_self_play", false)) and not bot_name.is_empty():
+	# Self-play results and historical ladder results carry the bot's original
+	# display name; preserve it instead of replacing it with an autofill name.
+	if (bool(result.get("is_self_play", false)) or not list_id.is_empty()) and not bot_name.is_empty():
 		self_play_name = bot_name
 		if not self_play_name.begins_with("%s: " % display_god_name(god_name)):
 			self_play_name = "%s: %s" % [display_god_name(god_name), self_play_name]
 	var adopted_list_id := str(result["match_id"])
-	if is_community_bot and not list_id.is_empty():
+	if not list_id.is_empty():
+		# Preserve the bot's original ladder id (e.g. volunteer/league list ids)
+		# so later results resolve to the same entry instead of creating a new bot.
 		adopted_list_id = list_id
 	var new_list := {
 		"list_id": adopted_list_id,
@@ -859,7 +876,10 @@ func _apply_result(result: Dictionary) -> void:
 		"owner_name": owner_name,
 	}
 	_update_record(new_list, outcome)
-	if _should_retire_early(new_list):
+	# A historical result carrying an existing ladder id is restoring an
+	# established bot, so don't let a single early loss discard it. New
+	# challengers (no stable list id) still use the early-retirement rule.
+	if _should_retire_early(new_list) and list_id.is_empty():
 		return
 	if lists.size() < list_capacity(god_name):
 		_name_list(new_list, lists)

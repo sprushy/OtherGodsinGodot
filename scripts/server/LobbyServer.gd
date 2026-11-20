@@ -129,6 +129,7 @@ var _ladder_cache_dirty: bool = true
 # Pool rebuild is expensive (replays all bot match results). Only rebuild when
 # something has actually changed since the last refresh.
 var _pool_dirty: bool = true
+var _pool_result_count: int = -1
 
 # Room-list broadcast throttle — limits broadcasts to at most once per second so
 # rapid room churn (e.g. bot self-play cycling) does not flood every connected peer.
@@ -1358,6 +1359,22 @@ func _handle_rebuild_league_records(peer_id: int, payload: Dictionary = {}) -> v
 # Scans server_data/match_history_results/ directly and collects every
 # bot_deck_results entry. Bypasses the MatchHistoryStore cache so results are
 # found even on a fresh server instance.
+func _count_bot_result_files() -> int:
+	var count := 0
+	var results_dir := ServerPathsScript.get_server_data_file_path("match_history_results")
+	var dir := DirAccess.open(results_dir)
+	if dir != null:
+		dir.list_dir_begin()
+		var file_name := dir.get_next()
+		while not file_name.is_empty():
+			if not dir.current_is_dir() and file_name.ends_with(".json"):
+				count += 1
+			file_name = dir.get_next()
+		dir.list_dir_end()
+	if FileAccess.file_exists(ServerPathsScript.get_server_data_file_path("match_history.json")):
+		count += 1
+	return count
+
 func _collect_bot_deck_results_from_files() -> Array[Dictionary]:
 	var results: Array[Dictionary] = []
 	# Source 1: dedicated per-match result files (dedicated results mode)
@@ -1378,6 +1395,8 @@ func _collect_bot_deck_results_from_files() -> Array[Dictionary]:
 							if entry.get("bot_deck_results", []).size() > 1:
 								result["match_id"] = "%s_%d" % [result["match_id"], int(result.get("player_index", 0))]
 							result["bot_eliminated"] = false
+							if not result.has("played_unix"):
+								result["played_unix"] = float(entry.get("played_unix", 0.0))
 							results.append(result)
 			file_name = dir.get_next()
 		dir.list_dir_end()
@@ -1398,6 +1417,8 @@ func _collect_bot_deck_results_from_files() -> Array[Dictionary]:
 							if entry.get("bot_deck_results", []).size() > 1:
 								result["match_id"] = "%s_%d" % [result["match_id"], int(result.get("player_index", 0))]
 							result["bot_eliminated"] = false
+							if not result.has("played_unix"):
+								result["played_unix"] = float(entry.get("played_unix", 0.0))
 							results.append(result)
 		print("[Bot League Debug] collected %d results total (including legacy match_history.json)" % results.size())
 	else:
@@ -2775,9 +2796,16 @@ func _ensure_server_bot_deck_factory() -> void:
 	_ranked_bot_deck_pool.set_deck_auditor(Callable(server_bot_deck_factory, "audit_ranked_bot_deck"))
 
 func _refresh_ranked_bot_deck_pool() -> void:
-	if not _pool_dirty:
+	var result_count := _count_bot_result_files()
+	var has_bots := false
+	for pool: Dictionary in _ranked_bot_deck_pool._by_god.values():
+		if not pool.get("lists", []).is_empty():
+			has_bots = true
+			break
+	if not _pool_dirty and has_bots and result_count == _pool_result_count:
 		return
 	_pool_dirty = false
+	_pool_result_count = result_count
 	_ensure_match_history_store()
 	_ensure_server_bot_deck_factory()
 	var community_bot_ids := _get_community_bot_ids()
@@ -2806,6 +2834,9 @@ func _refresh_ranked_bot_deck_pool() -> void:
 			results.append(result)
 		else:
 			results.append(result)
+	results.sort_custom(func(first: Dictionary, second: Dictionary) -> bool:
+		return float(first.get("played_unix", 0.0)) < float(second.get("played_unix", 0.0))
+	)
 	# Use rebuild_league_records() instead of refresh() so league bots keep
 	# their league_ list_ids and records. refresh() clears _by_god and replays
 	# from scratch, which would replace league_ ids with match_id-based ids.
