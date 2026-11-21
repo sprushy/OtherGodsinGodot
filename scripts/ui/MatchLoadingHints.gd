@@ -29,7 +29,7 @@ const GENERAL: Array[String] = [
 	"An interceptor needs to be at least as fast as the incoming attack.",
 	"A Defensive Creature in your Frontline can intercept attacks aimed at your Reserve as well as your Followers.",
 
-	"Reach lets a Creature intercept for more rows.",
+	"Defensive Creatures can intercept attacks on targets closer to their row.",
 	"Aggressive Creatures defend with Strength. An even Strength matchup destroys both Creatures.",
 	"Defensive Creatures defend with Resilience. If the attacker's Strength equals the defender's Resilience, both survive.",
 	"If your attacker falls short of a Defensive Creature's Resilience, you lose Followers and the defender gains them.",

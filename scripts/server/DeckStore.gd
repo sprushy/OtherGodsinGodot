@@ -2,13 +2,14 @@ extends RefCounted
 class_name DeckStore
 
 const ServerPathsScript = preload("res://scripts/server/ServerPaths.gd")
+const LobbyProtocolScript = preload("res://scripts/network/LobbyProtocol.gd")
 const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
 const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 const CardArtVariantsScript = preload("res://scripts/core/CardArtVariants.gd")
 const DEFAULT_DECK_NAME := "Default Deck"
 const MAX_DECKS_PER_ACCOUNT := 64
-const MAX_DECK_NAME_LENGTH := 80
+const MAX_DECK_NAME_LENGTH := LobbyProtocolScript.ACCOUNT_DECK_NAME_MAX_LENGTH
 const MAX_CARD_ENTRIES_PER_DECK := 128
 const MAX_TOTAL_CARD_COPIES_PER_DECK := 250
 

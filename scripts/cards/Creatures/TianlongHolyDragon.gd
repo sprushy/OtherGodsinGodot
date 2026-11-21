@@ -14,14 +14,17 @@ func _init() -> void:
 	speed = 2
 	resilience = 25
 	strength = 28
-	ability_text = "[b]Heaven's Guard[/b] ([b]Passive[/b]): This card can intercept any attack on your god or your higher-level Dragons regardless of stance or speed."
+	ability_text = "[b]Heaven's Guard[/b] ([b]Passive[/b]): For your god or your higher-level Dragons, this card has [b]Reach[/b] and can intercept regardless of speed."
 	flavor_text = ""
 	culture = "Tian"
 	artist = "Ricardo Zoppello"
 	art_path = ART_PATH
 	art_variants = [ART_PATH, ALT_ART_PATH]
 
-func can_special_intercept(_game_manager: GameManager, _attacker: Card, protected_target) -> bool:
+func can_intercept_regardless_of_speed(protected_target) -> bool:
+	return has_reach(protected_target)
+
+func has_reach(protected_target) -> bool:
 	if not _heavens_guard_is_active():
 		return false
 	if _protects_controller_god(protected_target):

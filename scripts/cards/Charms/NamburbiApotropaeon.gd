@@ -12,7 +12,7 @@ func _init() -> void:
 	mana_cost = 1
 	speed = 2
 	flavor_text = ""
-	ability_text = "This turn your creatures cannot be destroyed by your opponent's cards and you do not lose followers from combat."
+	ability_text = "This turn, your creatures cannot be destroyed in combat or by your opponent's card effects, and you do not lose followers from combat."
 	artist = "Lorinda Tomko"
 	art_path = ART_PATH
 
@@ -21,7 +21,7 @@ func resolve(game_manager: GameManager, _target = null) -> void:
 		return
 	game_manager.grant_turn_destruction_ward(card_owner, self, game_manager.turn_number)
 	game_manager.grant_turn_follower_loss_prevention(card_owner, self, game_manager.turn_number)
-	game_manager.note_player_feedback("%s wards %s's creatures from opposing destruction effects this turn and prevents combat follower loss." % [
+	game_manager.note_player_feedback("%s wards %s's creatures from combat destruction and opposing destruction effects this turn and prevents combat follower loss." % [
 		card_name,
 		card_owner.player_name
 	])

@@ -711,18 +711,15 @@ static func _get_hidden_creature_cost_text(card: Card) -> String:
 static func _format_hidden_cost_amount(amount: int, singular: String, plural: String) -> String:
 	return "%d %s" % [amount, singular if amount == 1 else plural]
 
-static func extract_card_keywords(card: Card, config: Dictionary = {}) -> Array[String]:
+static func extract_card_keywords(card: Card) -> Array[String]:
 	var found: Array[String] = []
 	if card == null or card.ability_text == "":
 		return found
-	var hide_unaltered_reach := bool(config.get("hide_unaltered_reach", false))
 	var seen: Dictionary = {}
 	var regex := RegEx.new()
 	regex.compile("\\[b\\](.*?)\\[/b\\]")
 	for match in regex.search_all(card.ability_text):
 		var keyword := match.get_string(1)
-		if keyword == "Reach" and hide_unaltered_reach and not _is_card_reach_altered(card):
-			continue
 		if keyword in BaseCard.KEYWORD_HINTS and not seen.has(keyword):
 			found.append(keyword)
 			seen[keyword] = true
@@ -731,45 +728,22 @@ static func extract_card_keywords(card: Card, config: Dictionary = {}) -> Array[
 		seen["Fractions"] = true
 	return found
 
-static func extract_card_keyword_sections(card: Card, config: Dictionary = {}) -> Array[Dictionary]:
+static func extract_card_keyword_sections(card: Card) -> Array[Dictionary]:
 	var sections: Array[Dictionary] = []
-	for keyword in extract_card_keywords(card, config):
-		sections.append(build_keyword_section(card, keyword))
+	for keyword in extract_card_keywords(card):
+		sections.append(build_keyword_section(keyword))
 	return sections
 
-static func build_keyword_section(card: Card, keyword: String) -> Dictionary:
+static func build_keyword_section(keyword: String) -> Dictionary:
 	var normalized_keyword := keyword.strip_edges()
-	var title := normalized_keyword
-	var body := str(BaseCard.KEYWORD_HINTS.get(normalized_keyword, ""))
-	if normalized_keyword == "Reach":
-		var reach_value := _get_card_reach_display_value(card)
-		if reach_value > 0:
-			title = "Reach %d" % reach_value
-		body = _build_reach_keyword_hint(card, reach_value)
 	return {
-		"title": title,
-		"body": body,
+		"title": normalized_keyword,
+		"body": str(BaseCard.KEYWORD_HINTS.get(normalized_keyword, "")),
 		"title_color": Color(0.95, 0.88, 0.5),
 		"body_color": Color(0.72, 0.72, 0.72),
 	}
 
-static func get_reach_badge_data(card: Card, config: Dictionary = {}) -> Dictionary:
-	if card == null or card.card_type != Card.CardType.CREATURE:
-		return {}
-	var target_labels := _get_current_intercept_target_labels(card)
-	if target_labels.is_empty():
-		return {}
-	if bool(config.get("hide_unaltered_reach", false)) and not _is_card_reach_altered(card):
-		return {}
-	var reach_value := target_labels.size()
-	return {
-		"value": reach_value,
-		"title": "Reach %d" % reach_value,
-		"tooltip": _build_current_reach_badge_hint(card, target_labels),
-		"altered": _is_card_reach_altered(card),
-	}
-
-static func build_keywords_panel(keywords: Array[String], card: Card = null, config: Dictionary = {}) -> Control:
+static func build_keywords_panel(keywords: Array[String]) -> Control:
 	var panel := PanelContainer.new()
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.custom_minimum_size = Vector2(_KEYWORD_PANEL_WIDTH, 0.0)
@@ -795,16 +769,9 @@ static func build_keywords_panel(keywords: Array[String], card: Card = null, con
 	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.add_child(vbox)
 
-	var hide_unaltered_reach := bool(config.get("hide_unaltered_reach", false))
-	var visible_keywords: Array[String] = []
-	for keyword in keywords:
-		if keyword == "Reach" and hide_unaltered_reach and not _is_card_reach_altered(card):
-			continue
-		visible_keywords.append(keyword)
-
-	for i in visible_keywords.size():
-		var keyword := visible_keywords[i]
-		var section := build_keyword_section(card, keyword)
+	for i in keywords.size():
+		var keyword := keywords[i]
+		var section := build_keyword_section(keyword)
 		var keyword_box := VBoxContainer.new()
 		keyword_box.add_theme_constant_override("separation", 3)
 		keyword_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -826,137 +793,13 @@ static func build_keywords_panel(keywords: Array[String], card: Card = null, con
 		desc_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		keyword_box.add_child(desc_lbl)
 
-		if i < visible_keywords.size() - 1:
+		if i < keywords.size() - 1:
 			var sep := HSeparator.new()
 			sep.add_theme_color_override("color", Color(0.2, 0.25, 0.35))
 			sep.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			vbox.add_child(sep)
 
 	return panel
-
-static func _strip_simple_bbcode(text: String) -> String:
-	var stripped := " " + text + " "
-	for token in ["[b]", "[/b]", "[i]", "[/i]", "[u]", "[/u]", "\n", "\t", ",", ".", ":", ";", "!", "?", "(", ")", "[", "]"]:
-		stripped = stripped.replace(token, " ")
-	while stripped.contains("  "):
-		stripped = stripped.replace("  ", " ")
-	return stripped
-
-static func _has_printed_reach_keyword(card: Card) -> bool:
-	if card == null:
-		return false
-	return str(card.ability_text).contains("[b]Reach[/b]")
-
-static func _get_card_reach_display_value(card: Card) -> int:
-	if card == null:
-		return 0
-	var current_reach := _get_card_current_reach_value(card)
-	if current_reach > 0:
-		return current_reach
-	if not _has_printed_reach_keyword(card):
-		return 0
-	var reach_value := 0
-	var normalized := _strip_simple_bbcode(str(card.ability_text)).to_lower()
-	var regex := RegEx.new()
-	if regex.compile("\\breach\\s*\\+?([0-9]+)\\b") == OK:
-		for match in regex.search_all(normalized):
-			reach_value = maxi(reach_value, int(match.get_string(1)))
-	if regex.compile("\\+([0-9]+)\\s*reach\\b") == OK:
-		for match in regex.search_all(normalized):
-			reach_value = maxi(reach_value, int(match.get_string(1)))
-	if reach_value <= 0 and normalized.contains(" reach "):
-		reach_value = 1
-	return reach_value
-
-static func _get_card_printed_reach_value(card: Card) -> int:
-	if card == null or not _has_printed_reach_keyword(card):
-		return 0
-	var printed_reach := 0
-	var normalized := _strip_simple_bbcode(str(card.ability_text)).to_lower()
-	var regex := RegEx.new()
-	if regex.compile("\\breach\\s*\\+?([0-9]+)\\b") == OK:
-		for match in regex.search_all(normalized):
-			printed_reach = maxi(printed_reach, int(match.get_string(1)))
-	if regex.compile("\\+([0-9]+)\\s*reach\\b") == OK:
-		for match in regex.search_all(normalized):
-			printed_reach = maxi(printed_reach, int(match.get_string(1)))
-	if printed_reach <= 0 and normalized.contains(" reach "):
-		printed_reach = 1
-	return printed_reach
-
-static func _get_card_current_reach_value(card: Card) -> int:
-	if card == null or not card.has_method("get_intercept_reach_bonus"):
-		return 0
-	return maxi(0, int(card.get_intercept_reach_bonus()))
-
-static func _is_card_reach_altered(card: Card) -> bool:
-	if card == null:
-		return false
-	return _get_card_current_reach_value(card) != _get_card_printed_reach_value(card)
-
-static func _build_reach_keyword_hint(card: Card, reach_value: int) -> String:
-	var reach_prefix := "Reach %d" % reach_value if reach_value > 0 else "Reach"
-	if card == null or card.card_type != Card.CardType.CREATURE:
-		return reach_prefix + " improves interception range."
-	var target_text := _get_reach_intercept_target_text(card, reach_value)
-	if target_text == "":
-		return reach_prefix + " improves interception range. On the board, this card can intercept equal or slower speed creatures attacking protected targets within range."
-	return "This card can intercept equal or slower speed creatures attacking " + target_text + "."
-
-static func _get_reach_intercept_target_text(card: Card, reach_value: int) -> String:
-	return _join_human_list(_get_intercept_target_labels(card, reach_value))
-
-static func _get_current_intercept_target_labels(card: Card) -> Array[String]:
-	return _get_intercept_target_labels(card, _get_card_current_reach_value(card))
-
-static func _build_current_reach_badge_hint(card: Card, target_labels: Array[String]) -> String:
-	var target_text := _join_human_list(target_labels)
-	if card == null or target_text == "":
-		return "This card cannot currently intercept through normal row and stance rules."
-	return "This card can intercept equal or slower speed creatures attacking " + target_text + "."
-
-static func _get_intercept_target_labels(card: Card, reach_value: int) -> Array[String]:
-	var target_labels: Array[String] = []
-	if card == null or card.current_zone == null:
-		return target_labels
-	if card.card_type != Card.CardType.CREATURE or card.is_sleeping or card.is_paralyzed():
-		return target_labels
-	if not card.get_status_effect("cannot_intercept").is_empty():
-		return target_labels
-	var defender_depth := -1
-	match card.current_zone.zone_type:
-		Zone.ZoneType.FRONTLINE:
-			defender_depth = 0
-		Zone.ZoneType.RESERVE:
-			defender_depth = 1
-		_:
-			return target_labels
-	var minimum_distance := 1
-	if card.creature_mode == Card.CreatureMode.AGGRESSIVE:
-		minimum_distance = 2
-	minimum_distance = max(0, minimum_distance - maxi(0, reach_value))
-	for target_info in [
-		[0, "frontline creatures"],
-		[1, "reserve targets"],
-		[2, "followers"]
-	]:
-		var target_depth := int(target_info[0])
-		if target_depth < defender_depth:
-			continue
-		if target_depth - defender_depth >= minimum_distance:
-			target_labels.append(str(target_info[1]))
-	return target_labels
-
-static func _join_human_list(parts: Array[String]) -> String:
-	if parts.is_empty():
-		return ""
-	if parts.size() == 1:
-		return parts[0]
-	if parts.size() == 2:
-		return parts[0] + " and " + parts[1]
-	var last := parts[parts.size() - 1]
-	var prefix := parts.slice(0, parts.size() - 1)
-	return ", ".join(prefix) + ", and " + last
 
 static func _build_board_creature_stats_text(card: Card) -> String:
 	var stat_parts: Array[String] = []

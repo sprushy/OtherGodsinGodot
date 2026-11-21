@@ -2490,38 +2490,42 @@ func _mark_active_profile_account_decks_synced(deck_ids: Array, defer_save: bool
 		return false
 	return _local_profile_store.mark_account_decks_synced(_local_profile_id, deck_ids, defer_save)
 
-func _mirror_remote_account_deck_locally(deck: Dictionary) -> void:
-	if _local_profile_store == null or _local_profile_id.is_empty() or deck.is_empty():
-		return
-	_local_profile_store.upsert_saved_deck(_local_profile_id, deck, false)
-
 static func _merge_account_deck_catalogs(
 	remote_decks: Array[Dictionary],
 	local_decks: Array[Dictionary],
 	synced_lookup: Dictionary,
-	deleted_lookup: Dictionary
+	deleted_lookup: Dictionary,
+	pending_saves: Dictionary
 ) -> Dictionary:
 	var visible_decks: Array[Dictionary] = []
 	var remote_deck_lookup: Dictionary = {}
-	var local_migration_decks: Array[Dictionary] = []
+	var decks_to_upload: Array[Dictionary] = []
 	for remote_deck in remote_decks:
 		var remote_id := str(remote_deck.get("deck_id", "")).strip_edges()
 		if _should_ignore_account_deck_sync_update(remote_id, deleted_lookup) or remote_deck_lookup.has(remote_id):
 			continue
 		remote_deck_lookup[remote_id] = true
-		visible_decks.append(remote_deck.duplicate(true))
+		visible_decks.append(pending_saves.get(remote_id, remote_deck))
+	for pending_id in pending_saves:
+		if _should_ignore_account_deck_sync_update(pending_id, deleted_lookup):
+			continue
+		var pending_deck: Dictionary = pending_saves[pending_id]
+		decks_to_upload.append(pending_deck)
+		if not remote_deck_lookup.has(pending_id):
+			visible_decks.append(pending_deck)
 	for local_deck in local_decks:
 		var local_id := str(local_deck.get("deck_id", "")).strip_edges()
-		if _should_ignore_account_deck_sync_update(local_id, deleted_lookup) or remote_deck_lookup.has(local_id):
+		if _should_ignore_account_deck_sync_update(local_id, deleted_lookup) \
+				or remote_deck_lookup.has(local_id) or pending_saves.has(local_id):
 			continue
 		if bool(synced_lookup.get(local_id, false)):
 			continue
 		var copied_local_deck := local_deck.duplicate(true)
 		visible_decks.append(copied_local_deck)
-		local_migration_decks.append(copied_local_deck.duplicate(true))
+		decks_to_upload.append(copied_local_deck)
 	return {
 		"visible_decks": visible_decks,
-		"local_migration_decks": local_migration_decks,
+		"decks_to_upload": decks_to_upload,
 	}
 
 func _upsert_account_deck_cache(deck: Dictionary) -> void:
@@ -2959,7 +2963,7 @@ func _build_seek_tabs() -> void:
 	_seek_action_row.add_child(_host_top_50_bot_matches_button)
 	_stop_hosting_bot_matches_button = Button.new()
 	_stop_hosting_bot_matches_button.text = "Stop Hosting Bot Matches"
-	_stop_hosting_bot_matches_button.pressed.connect(_stop_local_bot_match_worker)
+	_stop_hosting_bot_matches_button.pressed.connect(_on_stop_hosting_bot_matches_pressed)
 	_seek_action_row.add_child(_stop_hosting_bot_matches_button)
 	_stop_hosting_bot_matches_button.hide()
 	_host_own_bot_button = Button.new()
@@ -3116,15 +3120,18 @@ func _request_recent_match_activity() -> void:
 func _on_host_bot_match_pressed(top_50: bool = false) -> void:
 	if top_50 and (lobby_client == null or not lobby_client.can_host_top_50_bot_matches):
 		return
-	if _bot_match_hosting_enabled and _top_50_bot_hosting == top_50:
-		_stop_local_bot_match_worker()
-		status_label.text = "Stopped hosting bot matches."
-		_refresh_seek_list()
+	if top_50 and _bot_match_hosting_enabled and _top_50_bot_hosting:
+		_on_stop_hosting_bot_matches_pressed()
 		return
 	_bot_match_hosting_enabled = true
 	_default_bot_hosting = false
 	_top_50_bot_hosting = top_50
 	_request_continuous_bot_match()
+
+func _on_stop_hosting_bot_matches_pressed() -> void:
+	_stop_local_bot_match_worker()
+	status_label.text = "Stopped hosting bot matches."
+	_refresh_seek_list()
 
 func _on_host_another_bot_match_pressed() -> void:
 	_request_local_bot_match(false)
@@ -3155,7 +3162,7 @@ func _on_status_bot_league_pressed() -> void:
 	lobby_client.request_bot_league_status()
 
 func _request_continuous_bot_match(max_slots: int = -1) -> void:
-	if not _bot_match_hosting_enabled or _has_pending_continuous_bot_match():
+	if not _bot_match_hosting_enabled or (_default_bot_hosting and _has_pending_continuous_bot_match()):
 		_update_host_bot_match_button()
 		return
 	# Fill every open hosting slot instead of maintaining a single match:
@@ -3272,6 +3279,7 @@ func _on_bot_ladder_add_deck_requested(deck: Dictionary) -> void:
 	if saved.is_empty():
 		status_label.text = "Could not save that deck."
 	else:
+		_on_local_account_deck_saved(profile_id, saved)
 		status_label.text = "Saved %s to your decks." % str(saved.get("name", deck_name))
 
 func _start_selected_bot_match() -> void:
@@ -3294,20 +3302,19 @@ func _update_host_bot_match_button() -> void:
 	if not is_instance_valid(_host_bot_match_button):
 		return
 	var signed_in := lobby_client != null and lobby_client.is_authenticated()
-	var regular_hosting := _bot_match_hosting_enabled and not _top_50_bot_hosting
+	var regular_hosting := _bot_match_hosting_enabled and not _default_bot_hosting and not _top_50_bot_hosting
 	var top_50_hosting := _bot_match_hosting_enabled and _top_50_bot_hosting
 	var capacity := _get_local_bot_match_capacity()
-	_host_bot_match_button.text = "Stop Hosting" if regular_hosting else "Host Bot Matches"
-	_host_bot_match_button.disabled = not signed_in or (not regular_hosting and capacity <= 0)
+	var local_match_count := _get_local_bot_match_count() + _pending_local_bot_match_modes.size()
+	var has_capacity := local_match_count < capacity
+	_host_bot_match_button.disabled = not signed_in or capacity <= 0 or (regular_hosting and not has_capacity)
 	if is_instance_valid(_host_top_50_bot_matches_button):
 		_host_top_50_bot_matches_button.visible = signed_in and lobby_client.can_host_top_50_bot_matches
 		_host_top_50_bot_matches_button.text = "Stop Top 50 Hosting" if top_50_hosting else "Host Top 50 Bot Matches"
 		_host_top_50_bot_matches_button.disabled = not top_50_hosting and capacity <= 0
-	var local_match_count := _get_local_bot_match_count() + _pending_local_bot_match_modes.size()
-	var has_capacity := local_match_count < capacity
 	if is_instance_valid(_stop_hosting_bot_matches_button):
-		_stop_hosting_bot_matches_button.visible = local_match_count > 0 or not _local_bot_match_submitting.is_empty()
-		_stop_hosting_bot_matches_button.disabled = local_match_count <= 0 and _local_bot_match_submitting.is_empty()
+		_stop_hosting_bot_matches_button.visible = _bot_match_hosting_enabled or local_match_count > 0 \
+			or not _local_bot_match_submitting.is_empty()
 	if is_instance_valid(_host_another_bot_match_button):
 		# Bot match hosting commands are always shown in the seek list.
 		_host_another_bot_match_button.visible = true
@@ -7798,6 +7805,7 @@ func _on_deck_builder_pressed() -> void:
 		)
 	if db.has_method("configure_friends"):
 		db.configure_friends(_get_friend_usernames())
+	db.account_deck_saved_locally.connect(_on_local_account_deck_saved)
 	if db.has_signal("account_deck_deleted_locally") and not db.account_deck_deleted_locally.is_connected(_on_deck_builder_account_deck_deleted_locally):
 		db.account_deck_deleted_locally.connect(_on_deck_builder_account_deck_deleted_locally)
 	if db.has_signal("send_deck_to_friend_requested") and not db.send_deck_to_friend_requested.is_connected(_on_deck_builder_send_deck_to_friend_requested):
@@ -8249,7 +8257,7 @@ func _get_tutorial_lessons() -> Array[Dictionary]:
 				},
 				{
 					"title": "Expect Interception",
-					"body": "Before an attack resolves, the defender may intercept. Interception depends on row, stance, Speed, target depth, Reach, statuses, engagement restrictions, and special card text.",
+					"body": "Before an attack resolves, the defender may intercept. Interception depends on row, stance, Speed, target depth, statuses, and engagement restrictions. Reach lets a Creature intercept regardless of position.",
 					"try": "Attack the enemy God only after checking which enemy Creatures can step in.",
 					"action": "practice"
 				},
@@ -11338,26 +11346,18 @@ func _on_account_deck_list_received(decks, preferred_deck_id: String = "") -> vo
 		remote_decks,
 		_get_local_saved_decks_for_active_profile(),
 		_get_synced_account_deck_lookup(),
-		deleted_lookup
+		deleted_lookup,
+		_local_profile_store.get_pending_account_deck_saves(_local_profile_id)
 	)
 	var visible_decks: Array[Dictionary] = merged_decks.get("visible_decks", [])
-	var local_migration_decks: Array[Dictionary] = merged_decks.get("local_migration_decks", [])
 	# Smoke-mode accounts are freshly registered, so their saved-deck list is empty.
 	# The lobby server rejects select_deck for account sessions that reference an
 	# unsaved deck_id, so proactively persist the smoke deck here; the room snapshot
 	# retry loop will then select it successfully once the save lands.
 	_maybe_save_smoke_account_deck(visible_decks)
 	_replace_account_decks_cache(visible_decks)
-	for local_deck in local_migration_decks:
-		if lobby_client == null:
-			break
-		lobby_client.save_account_deck(
-			str(local_deck.get("name", "Deck")),
-			local_deck.get("cards", {}),
-			str(local_deck.get("deck_id", "")),
-			local_deck.get("special_setup", {}),
-			local_deck.get("reinforcements", {})
-		)
+	for local_deck in merged_decks.get("decks_to_upload", []):
+		_upload_local_account_deck(local_deck)
 	var resolved_preferred_deck_id := preferred_deck_id.strip_edges()
 	if resolved_preferred_deck_id.is_empty():
 		resolved_preferred_deck_id = _get_server_preferred_account_deck_id()
@@ -11390,10 +11390,34 @@ func _on_account_deck_saved(deck) -> void:
 		_remove_account_deck_from_cache(saved_deck_id)
 		_refresh_open_deck_builder_saved_decks()
 		return
-	_upsert_account_deck_cache(saved_deck)
-	_mirror_remote_account_deck_locally(saved_deck)
-	_mark_active_profile_account_decks_synced([saved_deck_id])
+	# A response matching an older save can arrive while a newer one is in flight.
+	var can_confirm := lobby_client != null and not lobby_client.has_unconfirmed_account_deck_saves(saved_deck_id)
+	var store_dirty: bool = _local_profile_store.upsert_saved_decks(
+		_local_profile_id, [saved_deck], true, can_confirm
+	) > 0
+	if _mark_active_profile_account_decks_synced([saved_deck_id], true) or store_dirty:
+		_local_profile_store.flush()
+	_upsert_account_deck_cache(_local_profile_store.get_deck(_local_profile_id, saved_deck_id))
 	_refresh_open_deck_builder_saved_decks()
+
+func _on_local_account_deck_saved(profile_id: String, deck: Dictionary) -> void:
+	if profile_id != _local_profile_id:
+		return
+	if _uses_server_account_storage():
+		_upsert_account_deck_cache(deck)
+		_upload_local_account_deck(deck)
+	_refresh_open_deck_builder_saved_decks()
+
+func _upload_local_account_deck(deck: Dictionary) -> void:
+	if not _uses_server_account_storage() or not lobby_client.is_authenticated() or _account_switch_pending:
+		return
+	lobby_client.save_account_deck(
+		str(deck.get("name", "Deck")),
+		deck.get("cards", {}),
+		str(deck.get("deck_id", "")),
+		deck.get("special_setup", {}),
+		deck.get("reinforcements", {})
+	)
 
 func _on_account_deck_deleted(deck_id: String) -> void:
 	var resolved_deck_id := deck_id.strip_edges()

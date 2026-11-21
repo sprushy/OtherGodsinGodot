@@ -649,12 +649,9 @@ const KEYWORD_PANEL_GAP := 8.0
 const USER_SETTINGS_PATH := "user://settings.cfg"
 const COMBAT_SETTINGS_SECTION := "combat"
 const ALWAYS_SHOW_ABILITY_BADGES_KEY := "always_show_ability_badges"
-const HIDE_UNALTERED_REACH_TAG_KEY := "hide_unaltered_reach_tag"
 static var _zone_extent: float = BASE_ZONE_EXTENT
 static var _always_show_ability_badges: bool = false
 static var _always_show_ability_badges_loaded: bool = false
-static var _hide_unaltered_reach_tag: bool = false
-static var _hide_unaltered_reach_tag_loaded: bool = false
 static var _active_affordance_hover_owner_id: int = 0
 
 var _row_label: String = ""
@@ -686,15 +683,6 @@ static func get_always_show_ability_badges() -> bool:
 		_load_always_show_ability_badges_setting()
 	return _always_show_ability_badges
 
-static func set_hide_unaltered_reach_tag(enabled: bool) -> void:
-	_hide_unaltered_reach_tag = enabled
-	_hide_unaltered_reach_tag_loaded = true
-
-static func get_hide_unaltered_reach_tag() -> bool:
-	if not _hide_unaltered_reach_tag_loaded:
-		_load_hide_unaltered_reach_tag_setting()
-	return _hide_unaltered_reach_tag
-
 static func _load_always_show_ability_badges_setting() -> void:
 	_always_show_ability_badges_loaded = true
 	var config := ConfigFile.new()
@@ -709,21 +697,6 @@ static func _load_always_show_ability_badges_setting() -> void:
 			_always_show_ability_badges = true
 		elif text in ["false", "0", "no", "off"]:
 			_always_show_ability_badges = false
-
-static func _load_hide_unaltered_reach_tag_setting() -> void:
-	_hide_unaltered_reach_tag_loaded = true
-	var config := ConfigFile.new()
-	if config.load(USER_SETTINGS_PATH) != OK:
-		return
-	var value = config.get_value(COMBAT_SETTINGS_SECTION, HIDE_UNALTERED_REACH_TAG_KEY, _hide_unaltered_reach_tag)
-	if value is bool:
-		_hide_unaltered_reach_tag = value
-	elif value is String:
-		var text := str(value).strip_edges().to_lower()
-		if text in ["true", "1", "yes", "on"]:
-			_hide_unaltered_reach_tag = true
-		elif text in ["false", "0", "no", "off"]:
-			_hide_unaltered_reach_tag = false
 
 static func get_action_point_card_uid(card: Card) -> String:
 	if card == null:
@@ -1413,42 +1386,6 @@ func _add_overlay_stat_badge(
 	badge.offset_bottom = bottom
 	overlay.add_child(badge)
 	return badge
-
-func _get_hover_reach_badge_data(card: Card) -> Dictionary:
-	if not _hovered or card == null:
-		return {}
-	return CardDetailContentBuilderScript.get_reach_badge_data(
-		card,
-		{"hide_unaltered_reach": get_hide_unaltered_reach_tag()}
-	)
-
-func _has_hover_reach_badge(card: Card) -> bool:
-	return not _get_hover_reach_badge_data(card).is_empty()
-
-func _add_hover_reach_badge(overlay: Control, card: Card) -> bool:
-	if overlay == null or not is_instance_valid(overlay) or overlay.is_queued_for_deletion():
-		return false
-	var reach_data := _get_hover_reach_badge_data(card)
-	if reach_data.is_empty():
-		return false
-	var reach_value := int(reach_data.get("value", 0))
-	if reach_value <= 0:
-		return false
-	var badge := _make_field_stat_badge(
-		"Reach %d" % reach_value,
-		11,
-		Color(0.95, 0.88, 0.5) if bool(reach_data.get("altered", false)) else Color(0.92, 0.97, 1.0)
-	)
-	badge.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-	badge.offset_left = 66
-	badge.offset_top = -32
-	badge.offset_right = -66
-	badge.offset_bottom = -6
-	badge.name = "BoardReachBadge"
-	badge.tooltip_text = str(reach_data.get("tooltip", ""))
-	badge.mouse_filter = Control.MOUSE_FILTER_PASS
-	overlay.add_child(badge)
-	return true
 
 func _add_overlay_mana_badge(
 	overlay: Control,
@@ -5775,12 +5712,14 @@ func _refresh_display() -> void:
 		stats_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		vbox.add_child(stats_spacer)
 
+		var has_hover_stat_badge := false
 		var is_own_stealth_faceup := card.is_stealth and (card.get_controller() == board_viewer or card.is_temporarily_revealed())
 		if card.card_type == Card.CardType.CREATURE and not card.is_god and (not card.is_stealth or is_own_stealth_faceup):
 			var eff_str := card.get_effective_strength()
 			var eff_res := card.get_effective_resilience()
 			var eff_spd := card.get_effective_speed()
 			var is_def := card.creature_mode == Card.CreatureMode.DEFENSIVE
+			var side_badge_edge := 56.0 if _hovered else 66.0
 
 			var left_base := card.resilience if is_def else card.strength
 			var left_eff  := eff_res if is_def else eff_str
@@ -5796,7 +5735,7 @@ func _refresh_display() -> void:
 				Control.PRESET_BOTTOM_LEFT,
 				6,
 				-32,
-				66,
+				side_badge_edge,
 				-6,
 				left_font_color
 			)
@@ -5816,7 +5755,7 @@ func _refresh_display() -> void:
 				card_overlay,
 				"SPD:%d" % eff_spd,
 				Control.PRESET_BOTTOM_RIGHT,
-				-66,
+				-side_badge_edge,
 				-32,
 				-6,
 				-6,
@@ -5826,6 +5765,26 @@ func _refresh_display() -> void:
 			if right_badge != null and spd_breakdown != "":
 				right_badge.tooltip_text = spd_breakdown
 				right_badge.mouse_filter = Control.MOUSE_FILTER_PASS
+
+			if _hovered:
+				var hover_stat := "str" if is_def else "res"
+				var hover_value := eff_str if is_def else eff_res
+				var hover_base := card.strength if is_def else card.resilience
+				var hover_color := Color(0.92, 0.97, 1.0)
+				if hover_value > hover_base:
+					hover_color = Color(0.4, 1.0, 0.4)
+				elif hover_value < hover_base:
+					hover_color = Color(1.0, 0.35, 0.35)
+				var hover_badge := _add_overlay_stat_badge(
+					card_overlay, "%s:%d" % [hover_stat.to_upper(), hover_value],
+					Control.PRESET_BOTTOM_WIDE, side_badge_edge, -32, -side_badge_edge, -6, hover_color
+				)
+				if hover_badge != null:
+					has_hover_stat_badge = true
+					var hover_breakdown := card.get_full_stat_breakdown(hover_stat)
+					if hover_breakdown != "":
+						hover_badge.tooltip_text = hover_breakdown
+						hover_badge.mouse_filter = Control.MOUSE_FILTER_PASS
 
 		elif card.card_type == Card.CardType.STRUCTURE:
 			var eff_res_s := card.get_effective_resilience()
@@ -5877,9 +5836,8 @@ func _refresh_display() -> void:
 			muted_badge.add_child(muted_lbl)
 			card_overlay.add_child(muted_badge)
 
-		_add_hover_reach_badge(card_overlay, card)
 		_add_intercept_preview_badge(card_overlay, card)
-		_add_creature_action_symbols(card_overlay, card)
+		_add_creature_action_symbols(card_overlay, card, has_hover_stat_badge)
 		_add_stance_switch_symbol(card_overlay, card)
 		_add_follower_count_badge(card_overlay)
 		_defense_overlay = card_overlay if shows_defense_shield else null
@@ -5901,7 +5859,7 @@ func _refresh_display() -> void:
 
 	_add_move_indicator_overlay()
 
-func _add_creature_action_symbols(overlay: Control, card: Card) -> void:
+func _add_creature_action_symbols(overlay: Control, card: Card, has_hover_stat_badge: bool = false) -> void:
 	if overlay == null or card == null or card.card_type != Card.CardType.CREATURE:
 		return
 	var viewer := _get_viewer_player()
@@ -5932,7 +5890,7 @@ func _add_creature_action_symbols(overlay: Control, card: Card) -> void:
 	row.anchor_bottom = 1.0
 	row.offset_left = -total_width * 0.5
 	row.offset_right = total_width * 0.5
-	var row_bottom := -38.0 if _has_hover_reach_badge(card) else -8.0
+	var row_bottom := -38.0 if has_hover_stat_badge else -8.0
 	row.offset_top = row_bottom - icon_size
 	row.offset_bottom = row_bottom
 	row.custom_minimum_size = Vector2(total_width, icon_size)
@@ -6502,10 +6460,9 @@ func _show_ability_popup() -> void:
 
 	var keywords_panel: Control = null
 	if not is_hidden_card_shared:
-		var keyword_config := {"hide_unaltered_reach": get_hide_unaltered_reach_tag()}
-		var keywords := CardDetailContentBuilderScript.extract_card_keywords(card, keyword_config)
+		var keywords := CardDetailContentBuilderScript.extract_card_keywords(card)
 		if not keywords.is_empty():
-			keywords_panel = CardDetailContentBuilderScript.build_keywords_panel(keywords, card, keyword_config)
+			keywords_panel = CardDetailContentBuilderScript.build_keywords_panel(keywords)
 			popup_root.add_child(keywords_panel)
 
 	CardDetailContentBuilderScript.set_hover_mouse_passthrough(popup_root)

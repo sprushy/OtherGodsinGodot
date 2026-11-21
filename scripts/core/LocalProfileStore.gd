@@ -4,6 +4,7 @@ class_name LocalProfileStore
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 const DeckCatalogUtilsScript = preload("res://scripts/core/DeckCatalogUtils.gd")
 const CardArtVariantsScript = preload("res://scripts/core/CardArtVariants.gd")
+const LobbyProtocolScript = preload("res://scripts/network/LobbyProtocol.gd")
 
 const STORAGE_PATH := "user://player_profiles.json"
 const STORAGE_TEMP_PATH := "user://player_profiles.json.tmp"
@@ -245,15 +246,20 @@ func save_deck(
 	special_setup: Dictionary = {},
 	reinforcements: Dictionary = {}
 ) -> Dictionary:
-	var profile := ensure_profile(profile_id, DEFAULT_PROFILE_NAME, true)
+	_ensure_loaded()
+	var previous_data := _data.duplicate()
+	var profile := ensure_profile(profile_id, get_profile_display_name(profile_id), true, true)
 	var resolved_profile_id := str(profile.get("profile_id", "")).strip_edges()
 	var clean_name := deck_name.strip_edges()
 	if clean_name.is_empty():
 		clean_name = DEFAULT_DECK_NAME
+	var sync_to_account := not str(profile.get("account_email", "")).is_empty()
+	if sync_to_account:
+		clean_name = clean_name.left(LobbyProtocolScript.ACCOUNT_DECK_NAME_MAX_LENGTH).strip_edges()
 
 	var deck_bucket := _get_deck_bucket(resolved_profile_id, true)
 	var resolved_deck_id := deck_id.strip_edges()
-	if resolved_deck_id.is_empty():
+	if resolved_deck_id.is_empty() or resolved_deck_id in get_deleted_account_deck_ids(resolved_profile_id):
 		resolved_deck_id = _generate_id("deck_", 12)
 
 	var now_unix := int(Time.get_unix_time_from_system())
@@ -269,10 +275,14 @@ func save_deck(
 	if not deck_entry.has("created_unix"):
 		deck_entry["created_unix"] = now_unix
 	deck_entry["updated_unix"] = now_unix
+	if sync_to_account:
+		deck_entry["pending_account_sync"] = true
 	deck_bucket[resolved_deck_id] = deck_entry
 	_set_deck_bucket(resolved_profile_id, deck_bucket)
-	remember_last_selected_deck(resolved_profile_id, resolved_deck_id)
-	_save()
+	remember_last_selected_deck(resolved_profile_id, resolved_deck_id, true)
+	if not _save():
+		_data = previous_data
+		return {}
 	return deck_entry.duplicate(true)
 
 func list_decks(profile_id: String) -> Array[Dictionary]:
@@ -296,6 +306,16 @@ func get_deck(profile_id: String, deck_id: String) -> Dictionary:
 	if raw_deck is Dictionary:
 		return (raw_deck as Dictionary).duplicate(true)
 	return {}
+
+func get_pending_account_deck_saves(profile_id: String) -> Dictionary:
+	_ensure_loaded()
+	var pending_saves: Dictionary = {}
+	var deck_bucket := _get_deck_bucket(profile_id.strip_edges(), false)
+	for deck_id in deck_bucket:
+		var deck = deck_bucket[deck_id]
+		if deck is Dictionary and bool(deck.get("pending_account_sync", false)):
+			pending_saves[deck_id] = deck
+	return pending_saves
 
 func replace_decks(profile_id: String, decks: Array[Dictionary]) -> void:
 	var profile := ensure_profile(profile_id, DEFAULT_PROFILE_NAME, true)
@@ -343,12 +363,16 @@ func upsert_saved_deck(profile_id: String, saved_deck: Dictionary, make_selected
 	deck_bucket[deck_id] = normalized_deck
 	_set_deck_bucket(resolved_profile_id, deck_bucket)
 	if make_selected:
-		remember_last_selected_deck(resolved_profile_id, deck_id)
-	else:
-		_save()
+		remember_last_selected_deck(resolved_profile_id, deck_id, true)
+	_save()
 	return normalized_deck.duplicate(true)
 
-func upsert_saved_decks(profile_id: String, saved_decks: Array, defer_save: bool = false) -> int:
+func upsert_saved_decks(
+	profile_id: String,
+	saved_decks: Array,
+	defer_save: bool = false,
+	confirm_pending_save: bool = false
+) -> int:
 	# Batched mirror for account_deck_list responses: one normalize pass with
 	# per-deck change detection and a single _save(). Saving per deck made each
 	# response rewrite the whole store ~24 times (~12s with a large profile).
@@ -368,8 +392,18 @@ func upsert_saved_decks(profile_id: String, saved_decks: Array, defer_save: bool
 		if deck_id.is_empty():
 			continue
 		var existing = deck_bucket.get(deck_id)
-		if existing is Dictionary and (existing as Dictionary).hash() == normalized_deck.hash():
-			continue
+		if existing is Dictionary:
+			if bool(existing.get("pending_account_sync", false)):
+				if not confirm_pending_save:
+					continue
+				var local_deck := _normalize_saved_deck(existing)
+				if local_deck["name"] != normalized_deck["name"] \
+						or local_deck["cards"] != normalized_deck["cards"] \
+						or local_deck["reinforcements"] != normalized_deck["reinforcements"] \
+						or local_deck["special_setup"] != normalized_deck["special_setup"]:
+					continue
+			elif (existing as Dictionary).hash() == normalized_deck.hash():
+				continue
 		deck_bucket[deck_id] = normalized_deck
 		changed += 1
 	if changed > 0:
@@ -399,16 +433,19 @@ func get_last_selected_deck_id(profile_id: String) -> String:
 	_ensure_loaded()
 	return str(_get_last_selected_deck_by_profile().get(profile_id.strip_edges(), "")).strip_edges()
 
-func remember_last_selected_deck(profile_id: String, deck_id: String) -> void:
+func remember_last_selected_deck(profile_id: String, deck_id: String, defer_save: bool = false) -> void:
 	_ensure_loaded()
 	var resolved_profile_id := profile_id.strip_edges()
 	var resolved_deck_id := deck_id.strip_edges()
 	if resolved_profile_id.is_empty() or resolved_deck_id.is_empty():
 		return
 	var last_selected := _get_last_selected_deck_by_profile()
+	if str(last_selected.get(resolved_profile_id, "")) == resolved_deck_id:
+		return
 	last_selected[resolved_profile_id] = resolved_deck_id
 	_data["last_selected_deck_by_profile"] = last_selected
-	_save()
+	if not defer_save:
+		_save()
 
 func get_synced_account_deck_ids(profile_id: String) -> PackedStringArray:
 	_ensure_loaded()
@@ -807,9 +844,9 @@ func _ensure_loaded() -> void:
 
 static var _debug_save_counter: int = 0
 
-func _save(skip_backup_refresh: bool = false) -> void:
+func _save(skip_backup_refresh: bool = false) -> bool:
 	if not _ensure_storage_parent_exists(STORAGE_PATH):
-		return
+		return false
 	_sanitize_loaded_auth_state()
 	var save_started_ms := Time.get_ticks_msec()
 	var json_string := JSON.stringify(_data, "\t")
@@ -821,7 +858,7 @@ func _save(skip_backup_refresh: bool = false) -> void:
 	if not _write_storage_snapshot(STORAGE_PATH, json_string):
 		if not FileAccess.file_exists(STORAGE_PATH) and FileAccess.file_exists(STORAGE_BACKUP_PATH):
 			_copy_storage_snapshot(STORAGE_BACKUP_PATH, STORAGE_PATH)
-		return
+		return false
 	if not FileAccess.file_exists(STORAGE_BACKUP_PATH):
 		_copy_storage_snapshot(STORAGE_PATH, STORAGE_BACKUP_PATH)
 	_debug_save_counter += 1
@@ -831,6 +868,7 @@ func _save(skip_backup_refresh: bool = false) -> void:
 		Time.get_ticks_msec() - save_started_ms,
 		json_string.length() / 1024
 	])
+	return true
 
 func _read_storage_snapshot(storage_path: String, label: String) -> Dictionary:
 	if not FileAccess.file_exists(storage_path):
@@ -1601,6 +1639,10 @@ func _dedupe_exact_deck_copies(profile_id: String, decks: Array[Dictionary]) -> 
 	var deduped_decks := DeckCatalogUtilsScript.dedupe_exact_copies(decks, "", selected_deck_id)
 	if deduped_decks.size() == decks.size():
 		return deduped_decks
+	# Keep every pending save on disk, including IDs hidden as exact copies.
+	for deck in decks:
+		if bool(deck.get("pending_account_sync", false)):
+			return deduped_decks
 	_replace_decks_after_dedupe(resolved_profile_id, decks, deduped_decks)
 	return deduped_decks
 

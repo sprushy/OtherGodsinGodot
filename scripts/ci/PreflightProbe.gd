@@ -53,6 +53,7 @@ func run() -> bool:
 	_check_match_command_registry_coverage(failures)
 	_check_command_authority(failures)
 	_check_combat_rounding(failures)
+	_check_card_interception_exceptions(failures)
 	_check_target_prompt_refresh_during_submission(failures)
 	_check_network_payload_guards(failures)
 	_check_full_state_event_payload_budget(failures)
@@ -70,6 +71,8 @@ func run() -> bool:
 	_check_bot_power_followthrough(failures)
 	_check_bot_follower_valuation(failures)
 	_check_bot_summon_and_intercept(failures)
+	_check_bot_interception_forecasts(failures)
+	_check_bot_namburbi_combat_ward(failures)
 	_check_bot_speed_one_stealth(failures)
 	_check_bot_reserve_summon_threat(failures)
 	_check_bot_warding_stone_summon_forecast(failures)
@@ -1303,6 +1306,80 @@ func _check_bot_follower_valuation(failures: PackedStringArray) -> void:
 			failures.append("Bot's Mana Guard payment did not resolve as planned")
 	bot.detach()
 
+func _check_card_interception_exceptions(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	var manager := _new_fixture_match(game)
+
+	var attacker := HariiWarrior.new()
+	attacker.card_owner = opponent
+	attacker.speed = 6
+	opponent.frontline_zones[0].add_card(attacker)
+	var human := HariiWarrior.new()
+	human.card_owner = player
+	player.reserve_zones[0].add_card(human)
+	var animal := StoneMonkey.new()
+	animal.card_owner = player
+	player.frontline_zones[0].add_card(animal)
+
+	var serpent := SevenHeadedSerpent.new()
+	serpent.card_owner = player
+	serpent.creature_mode = Card.CreatureMode.DEFENSIVE
+	player.frontline_zones[1].add_card(serpent)
+	if not manager._can_intercept(serpent, attacker, human) or manager._can_intercept(serpent, attacker, animal):
+		failures.append("Seven-Headed Serpent did not ignore speed while respecting position")
+	if manager._can_intercept(attacker, serpent, opponent):
+		failures.append("An opposing creature could intercept Seven-Headed Serpent")
+
+	var urisk := UriskGrovekeepers.new()
+	urisk.card_owner = player
+	urisk.creature_mode = Card.CreatureMode.AGGRESSIVE
+	player.reserve_zones[1].add_card(urisk)
+	if not manager._can_intercept(urisk, attacker, animal) or manager._can_intercept(urisk, attacker, human):
+		failures.append("Urisk Grovekeepers did not limit its position and speed exceptions to its protected types")
+
+	var tianlong := TianlongHolyDragon.new()
+	tianlong.card_owner = player
+	tianlong.creature_mode = Card.CreatureMode.AGGRESSIVE
+	player.reserve_zones[3].add_card(tianlong)
+	var dragon := PaiLongAutumnKing.new()
+	dragon.card_owner = player
+	player.frontline_zones[4].add_card(dragon)
+	if not manager._can_intercept(tianlong, attacker, player) or not manager._can_intercept(tianlong, attacker, dragon):
+		failures.append("Tianlong could not use Reach and bypass speed for its god or higher-level Dragon")
+	if manager._can_intercept(tianlong, attacker, human):
+		failures.append("Tianlong used Reach for an unrelated creature")
+	for card: Card in [urisk, tianlong]:
+		if "Reach" not in CardDetailContentBuilder.extract_card_keywords(card):
+			failures.append("%s did not show the Reach keyword in its card details" % card.card_name)
+
+	var thor := ThorActive.new()
+	thor.card_owner = player
+	thor.creature_mode = Card.CreatureMode.AGGRESSIVE
+	player.reserve_zones[2].add_card(thor)
+	if manager._can_intercept(thor, attacker, player):
+		failures.append("Active Thor intercepted for followers from the reserve in aggressive stance")
+	player.move_card(thor, player.frontline_zones[2])
+	thor.creature_mode = Card.CreatureMode.DEFENSIVE
+	if not manager._can_intercept(thor, attacker, player) or not manager._can_intercept(thor, attacker, human):
+		failures.append("Active Thor could not intercept a faster attacker for followers or a Human in range")
+
+	var power := GiantsDisdain.new()
+	power.card_owner = player
+	power.is_face_down = false
+	player.power_zones[0].add_card(power)
+	var giant := GiantMasterArchitect.new()
+	giant.card_owner = player
+	giant.creature_mode = Card.CreatureMode.DEFENSIVE
+	player.frontline_zones[3].add_card(giant)
+	if not manager._can_intercept(giant, attacker, human) or manager._can_intercept(giant, attacker, animal):
+		failures.append("Giant's Disdain did not bypass speed alone when intercepting a non-Giant")
+	attacker.card_types.append("Giant")
+	if manager._can_intercept(giant, attacker, human):
+		failures.append("Giant's Disdain bypassed the speed of an attacking Giant")
+
 func _check_bot_summon_and_intercept(failures: PackedStringArray) -> void:
 	var game := _new_fixture_game()
 	var player := _new_fixture_player()
@@ -1342,6 +1419,171 @@ func _check_bot_summon_and_intercept(failures: PackedStringArray) -> void:
 	player.followers = 8
 	if not bot._choose_interceptor(intercept).is_empty():
 		failures.append("Bot chose a losing interception that still allowed lethal follower damage")
+	bot.detach()
+
+func _check_bot_interception_forecasts(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	opponent.mana = 10
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+
+	var threat := HariiWarrior.new()
+	threat.card_owner = opponent
+	threat.creature_mode = Card.CreatureMode.AGGRESSIVE
+	threat.speed = 6
+	threat.strength = 25
+	opponent.frontline_zones[0].add_card(threat)
+	var tianlong := TianlongHolyDragon.new()
+	tianlong.card_owner = player
+	player.hand_zone.add_card(tianlong)
+	var projected := {"summon": tianlong, "zone": player.reserve_zones[0]}
+	var danger := bot._forecast_incoming_follower_loss()
+	var with_guard := bot._forecast_incoming_follower_loss(projected)
+	projected["stealth"] = true
+	projected["defensive_summons"] = true
+	if with_guard >= danger or bot._forecast_incoming_follower_loss(projected) != danger:
+		failures.append("Bot did not account for face-up Tianlong's Reach from the aggressive reserve when projecting a summon")
+
+	var guard := CreatureCard.new()
+	guard.card_owner = player
+	guard.creature_mode = Card.CreatureMode.DEFENSIVE
+	guard.speed = 6
+	guard.resilience = 36
+	player.frontline_zones[0].add_card(guard)
+	var animal := CreatureCard.new()
+	animal.card_owner = player
+	animal.card_types.append("Animal")
+	animal.creature_mode = Card.CreatureMode.AGGRESSIVE
+	animal.strength = 5
+	player.frontline_zones[1].add_card(animal)
+	var urisk := UriskGrovekeepers.new()
+	urisk.card_owner = player
+	player.hand_zone.add_card(urisk)
+	var zone := player.reserve_zones[0]
+	if bot._estimate_defensive_summon_value(urisk, zone) <= 0 or bot._estimate_defensive_summon_value(urisk, zone, true) != 0:
+		failures.append("Bot did not value Urisk's face-up protection of a frontline Animal from the reserve")
+
+	var hidden := CreatureCard.new()
+	hidden.card_owner = opponent
+	hidden.is_face_down = true
+	hidden.is_stealth = true
+	hidden.speed = 6
+	opponent.frontline_zones[1].add_card(hidden)
+	var serpent := SevenHeadedSerpent.new()
+	serpent.card_owner = player
+	player.frontline_zones[2].add_card(serpent)
+	var serpent_attack := CardAction.new()
+	serpent_attack.type = CardAction.Type.ATTACK
+	serpent_attack.attacker = serpent
+	serpent_attack.source_player = player
+	serpent_attack.target = opponent
+	if not bot._can_attack_followers_after_modifiers(serpent, {}) \
+			or bot._score_stat_attack_line(serpent_attack, {}, [hidden], 0) != bot._score_stat_attack_line(serpent_attack, {}, [], 0):
+		failures.append("Bot still expected an interception from a hidden defender against Seven-Headed Serpent")
+	serpent.is_muted = true
+	if bot._can_attack_followers_after_modifiers(serpent, {}):
+		failures.append("Bot expected muted Seven-Headed Serpent to bypass hidden defenders")
+
+	var thor := ThorActive.new()
+	thor.card_owner = opponent
+	thor.creature_mode = Card.CreatureMode.AGGRESSIVE
+	opponent.reserve_zones[0].add_card(thor)
+	var power := GiantsDisdain.new()
+	power.card_owner = opponent
+	opponent.power_zones[0].add_card(power)
+	var giant := GiantMasterArchitect.new()
+	giant.card_owner = opponent
+	giant.creature_mode = Card.CreatureMode.DEFENSIVE
+	opponent.frontline_zones[2].add_card(giant)
+	guard.creature_mode = Card.CreatureMode.AGGRESSIVE
+	var replies: Dictionary = bot._get_attack_candidates(guard, null)[0]["replies"]
+	if thor in replies or giant in replies:
+		failures.append("Bot predicted that aggressive reserve Thor or a Giant with locked Giant's Disdain could intercept a faster attack")
+	thor.creature_mode = Card.CreatureMode.DEFENSIVE
+	power.is_face_down = false
+	replies = bot._get_attack_candidates(guard, null)[0]["replies"]
+	if thor not in replies or giant not in replies:
+		failures.append("Bot omitted Thor or a Giant with unlocked Giant's Disdain from replies to a faster attacker")
+	guard.card_types.append("Giant")
+	replies = bot._get_attack_candidates(guard, null)[0]["replies"]
+	if giant in replies:
+		failures.append("Bot expected Giant's Disdain to bypass an attacking Giant's speed")
+	bot.detach()
+
+func _check_bot_namburbi_combat_ward(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	player.mana = 10
+	opponent.mana = 10
+	player.followers_enabled = false
+	opponent.followers_enabled = false
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var ward := NamburbiApotropaeon.new()
+	ward.card_owner = player
+	player.hand_zone.add_card(ward)
+	for controller: Player in [player, opponent]:
+		for lane in range(2):
+			var creature := RoboticFootsoldier.new()
+			creature.card_owner = controller
+			creature.creature_mode = Card.CreatureMode.AGGRESSIVE
+			creature.strength = 20
+			controller.frontline_zones[lane].add_card(creature)
+	var attacks := bot._get_combat_candidates()
+	var plan := bot._plan_namburbi_ward(attacks, bot._plan_combat(attacks))
+	var command: Dictionary = plan.get("command", {})
+	if command.get("charm_uid") != ward.uid or command.get("prepared", true):
+		failures.append("Bot missed the Namburbi cast that turns two combat trades into clean kills")
+	if game.has_turn_destruction_ward(player) or game.has_turn_follower_loss_prevention(player):
+		failures.append("Bot forecasting Namburbi left its ward active in the game")
+	for card in bot._get_board_creatures(player):
+		card.strength += 1
+	attacks = bot._get_combat_candidates()
+	if not bot._plan_namburbi_ward(attacks, bot._plan_combat(attacks)).is_empty():
+		failures.append("Bot wasted Namburbi on attacks its creatures already survive")
+	for card in bot._get_board_creatures(player):
+		card.strength -= 1
+	ward.is_prepared = true
+	player.move_card(ward, player.reserve_zones[0])
+	game.prepared_charms[ward] = game.turn_number - 1
+	game.current_player = opponent
+	game.other_player = player
+	game.priority_player = player
+	var attack := CardAction.new()
+	attack.type = CardAction.Type.ATTACK
+	attack.source_player = opponent
+	attack.attacker = opponent.frontline_zones[0].cards[0]
+	attack.target = player.frontline_zones[0].cards[0]
+	game.action_stack.append(attack)
+	if bot._choose_priority_response() != ward:
+		failures.append("Bot did not use prepared Namburbi to save a creature from a combat trade")
+	attack.attack_speed_override = ward.get_effective_speed() + 1
+	if bot._choose_priority_response() == ward:
+		failures.append("Bot selected Namburbi against an attack too fast to answer")
+	attack.attack_speed_override = -1
+	var defender := attack.target as Card
+	if not bot._submit_priority_response(ward):
+		failures.append("Bot could not submit its prepared Namburbi response")
+	else:
+		for _step in range(8):
+			manager.advance_priority()
+		if ward.current_zone != player.graveyard_zone or not game.has_turn_destruction_ward(player) \
+				or defender.current_zone != player.frontline_zones[0] or attack.attacker.current_zone != opponent.graveyard_zone:
+			failures.append("Bot's Namburbi response did not turn the trade into a clean kill")
 	bot.detach()
 
 func _check_bot_speed_one_stealth(failures: PackedStringArray) -> void:

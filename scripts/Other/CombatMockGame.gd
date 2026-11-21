@@ -158,7 +158,6 @@ const USE_SPLASH_BOARD_BACKGROUND_KEY := "use_splash_board_background"
 const SHOW_FOLLOWERS_KEY := "show_followers"
 const HOVER_SHOW_CARD_OPTIONS_KEY := "hover_show_card_options"
 const ALWAYS_SHOW_ABILITY_BADGES_KEY := "always_show_ability_badges"
-const HIDE_UNALTERED_REACH_TAG_KEY := "hide_unaltered_reach_tag"
 const ADD_PRIORITY_TOGGLES_TO_ALL_CARDS_KEY := "add_priority_toggles_to_all_cards"
 const HERMES_AUTO_PASS_END_PRIORITY_KEY := "hermes_auto_pass_end_priority"
 const HERMES_AUTO_PASS_UPKEEP_PRIORITY_KEY := "hermes_auto_pass_upkeep_priority"
@@ -797,7 +796,6 @@ var _use_splash_board_background: bool = false
 var _show_followers: bool = true
 var _hover_show_card_options: bool = true
 var _always_show_ability_badges: bool = false
-var _hide_unaltered_reach_tag: bool = false
 var _add_priority_toggles_to_all_cards: bool = false
 var _hermes_auto_pass_end_priority: bool = true
 var _hermes_auto_pass_upkeep_priority: bool = true
@@ -1230,7 +1228,6 @@ func _load_user_settings() -> void:
 	_board_style = _get_saved_string_setting(COMBAT_SETTINGS_SECTION, BOARD_STYLE_KEY, BOARD_STYLE_NORMAL)
 	_hover_show_card_options = _read_config_bool(config, COMBAT_SETTINGS_SECTION, HOVER_SHOW_CARD_OPTIONS_KEY, _hover_show_card_options)
 	_always_show_ability_badges = _read_config_bool(config, COMBAT_SETTINGS_SECTION, ALWAYS_SHOW_ABILITY_BADGES_KEY, _always_show_ability_badges)
-	_hide_unaltered_reach_tag = _read_config_bool(config, COMBAT_SETTINGS_SECTION, HIDE_UNALTERED_REACH_TAG_KEY, false)
 	_add_priority_toggles_to_all_cards = _read_config_bool(config, COMBAT_SETTINGS_SECTION, ADD_PRIORITY_TOGGLES_TO_ALL_CARDS_KEY, false)
 	_all_sound_muted = _read_config_bool(config, AUDIO_SETTINGS_SECTION, ALL_SOUND_MUTED_KEY, _all_sound_muted)
 	_hermes_auto_pass_end_priority = _read_config_bool(config, GOD_SPECIFIC_SETTINGS_SECTION, HERMES_AUTO_PASS_END_PRIORITY_KEY, true)
@@ -1330,14 +1327,6 @@ func _set_always_show_ability_badges(pressed: bool) -> void:
 	_always_show_ability_badges = pressed
 	_save_combat_bool_setting(ALWAYS_SHOW_ABILITY_BADGES_KEY, pressed)
 	BoardZoneUI.set_always_show_ability_badges(pressed)
-	draw_board()
-	draw_enemy_board()
-
-func _set_hide_unaltered_reach_tag(pressed: bool) -> void:
-	_hide_unaltered_reach_tag = pressed
-	_save_combat_bool_setting(HIDE_UNALTERED_REACH_TAG_KEY, pressed)
-	BoardZoneUI.set_hide_unaltered_reach_tag(pressed)
-	_hide_hand_hover_preview()
 	draw_board()
 	draw_enemy_board()
 
@@ -1669,8 +1658,6 @@ func _get_settings_menu_value(section: String, key: String, default_value: bool)
 			return _hover_show_card_options
 		[COMBAT_SETTINGS_SECTION, ALWAYS_SHOW_ABILITY_BADGES_KEY]:
 			return _always_show_ability_badges
-		[COMBAT_SETTINGS_SECTION, HIDE_UNALTERED_REACH_TAG_KEY]:
-			return _hide_unaltered_reach_tag
 		[COMBAT_SETTINGS_SECTION, ADD_PRIORITY_TOGGLES_TO_ALL_CARDS_KEY]:
 			return _add_priority_toggles_to_all_cards
 		[GOD_SPECIFIC_SETTINGS_SECTION, HERMES_AUTO_PASS_END_PRIORITY_KEY]:
@@ -1707,8 +1694,6 @@ func _set_settings_menu_value(section: String, key: String, value: bool) -> void
 			_set_hover_show_card_options(value)
 		[COMBAT_SETTINGS_SECTION, ALWAYS_SHOW_ABILITY_BADGES_KEY]:
 			_set_always_show_ability_badges(value)
-		[COMBAT_SETTINGS_SECTION, HIDE_UNALTERED_REACH_TAG_KEY]:
-			_set_hide_unaltered_reach_tag(value)
 		[COMBAT_SETTINGS_SECTION, ADD_PRIORITY_TOGGLES_TO_ALL_CARDS_KEY]:
 			_set_add_priority_toggles_to_all_cards(value)
 		[GOD_SPECIFIC_SETTINGS_SECTION, HERMES_AUTO_PASS_END_PRIORITY_KEY]:
@@ -2711,7 +2696,6 @@ func _ready() -> void:
 	add_to_group(UIHoverSfxScript.SUPPRESS_CLICK_GROUP)
 	_load_user_settings()
 	BoardZoneUI.set_always_show_ability_badges(_always_show_ability_badges)
-	BoardZoneUI.set_hide_unaltered_reach_tag(_hide_unaltered_reach_tag)
 	_ensure_board_art_background()
 	choice_container.visible = false
 	end_turn_button.visible = false
@@ -7413,7 +7397,7 @@ func _is_attack_preview_ambiguous_stealth_interceptor(card: Card) -> bool:
 		return false
 	var attacker := _get_attack_preview_interceptor_attacker()
 	var attack_target = _get_attack_preview_target_for_interceptor_badges()
-	if not _can_attack_preview_target(attacker, attack_target):
+	if not _can_attack_preview_target(attacker, attack_target) or attacker.prevents_interception():
 		return false
 	if card == attacker:
 		return false
@@ -12019,10 +12003,7 @@ func _build_hand_info_sections(card: Card) -> Array[Dictionary]:
 			"title_color": Color(0.78, 0.9, 1.0),
 			"body_color": Color(0.82, 0.88, 0.96),
 		})
-	sections.append_array(CardDetailContentBuilderScript.extract_card_keyword_sections(
-		card,
-		{"hide_unaltered_reach": _hide_unaltered_reach_tag}
-	))
+	sections.append_array(CardDetailContentBuilderScript.extract_card_keyword_sections(card))
 	return sections
 
 func _normalize_hand_info_sections(raw_sections: Array) -> Array[Dictionary]:
@@ -23865,62 +23846,10 @@ func _creature_can_change_stance(card: Card) -> bool:
 		and not card.is_paralyzed()
 	)
 
-func _get_intercept_target_row_depth(protected_target) -> int:
-	if protected_target is Player:
-		return 2
-	if not (protected_target is Card):
-		return -1
-	var target_card := protected_target as Card
-	if target_card.card_type == Card.CardType.EQUIPMENT and target_card.equipped_on != null:
-		return _get_intercept_target_row_depth(target_card.equipped_on)
-	if target_card.current_zone == null:
-		return -1
-	match target_card.current_zone.zone_type:
-		Zone.ZoneType.FRONTLINE:
-			return 0
-		Zone.ZoneType.RESERVE:
-			return 1
-		Zone.ZoneType.GOD_SLOT:
-			return 2
-		_:
-			return -1
-
-func _get_interceptor_row_depth(defender: Card) -> int:
-	if defender == null or defender.current_zone == null:
-		return -1
-	match defender.current_zone.zone_type:
-		Zone.ZoneType.FRONTLINE:
-			return 0
-		Zone.ZoneType.RESERVE:
-			return 1
-		_:
-			return -1
-
-func _get_intercept_row_distance(defender: Card, protected_target) -> int:
-	var defender_depth := _get_interceptor_row_depth(defender)
-	var target_depth := _get_intercept_target_row_depth(protected_target)
-	if defender_depth < 0 or target_depth < 0 or target_depth < defender_depth:
-		return -1
-	return target_depth - defender_depth
-
-func _get_minimum_intercept_row_distance(defender: Card, attacker: Card, protected_target) -> int:
-	var minimum_depth := 1
-	if defender.creature_mode == Card.CreatureMode.AGGRESSIVE:
-		minimum_depth = 2
-	minimum_depth = max(0, minimum_depth - defender.get_intercept_reach_bonus(game_manager, attacker, protected_target))
-	return minimum_depth
-
 func _get_declared_attack_partner(attacker: Card) -> Card:
 	if attacker == null or not attacker.has_method("get_united_front_partner_for_attack"):
 		return null
 	return attacker.get_united_front_partner_for_attack(game_manager)
-
-func _get_declared_attack_speed(attacker: Card) -> int:
-	if attacker == null:
-		return 0
-	if attacker.has_method("get_united_front_attack_speed"):
-		return attacker.get_united_front_attack_speed(game_manager)
-	return attacker.get_effective_speed()
 
 func _can_continue_declared_attack(attacker: Card) -> bool:
 	return attacker != null \
@@ -23936,29 +23865,7 @@ func _is_real_network_host() -> bool:
 		and network_manager.get("is_server") == true
 
 func can_intercept(defender: Card, attacker: Card, protected_target) -> bool:
-	if attacker == null:
-		return false
-	if protected_target == null:
-		return false
-	if protected_target is Card and defender == protected_target:
-		return false
-	if defender.card_type != Card.CardType.CREATURE:
-		return false
-	if defender.is_sleeping:
-		return false
-	if defender.can_special_intercept(game_manager, attacker, protected_target):
-		return game_manager.can_interceptor_engage_attacker(defender, attacker)
-	var interceptor_speed := game_manager.get_interceptor_speed_against_attacker(defender, attacker, protected_target)
-	if interceptor_speed < _get_declared_attack_speed(attacker):
-		return false
-	if not game_manager.can_interceptor_engage_attacker(defender, attacker):
-		return false
-	# Aggressive-stance creatures can intercept once per turn at equal or greater speed.
-	if defender.creature_mode == Card.CreatureMode.AGGRESSIVE:
-		return _get_intercept_row_distance(defender, protected_target) >= _get_minimum_intercept_row_distance(defender, attacker, protected_target)
-	if defender.creature_mode == Card.CreatureMode.DEFENSIVE:
-		return _get_intercept_row_distance(defender, protected_target) >= _get_minimum_intercept_row_distance(defender, attacker, protected_target)
-	return false
+	return match_manager != null and match_manager._can_intercept(defender, attacker, protected_target)
 
 func check_for_possible_intercepts() -> void:
 	var possible_interceptors: Array[Card] = []
@@ -29822,10 +29729,9 @@ func _show_reinforcement_hover_popup(card: Card, viewer: Player, tile: Control) 
 	popup_root.add_child(popup)
 
 	var keywords_panel: Control = null
-	var keyword_config := {"hide_unaltered_reach": _hide_unaltered_reach_tag}
-	var keywords := CardDetailContentBuilderScript.extract_card_keywords(card, keyword_config)
+	var keywords := CardDetailContentBuilderScript.extract_card_keywords(card)
 	if not keywords.is_empty():
-		keywords_panel = CardDetailContentBuilderScript.build_keywords_panel(keywords, card, keyword_config)
+		keywords_panel = CardDetailContentBuilderScript.build_keywords_panel(keywords)
 		popup_root.add_child(keywords_panel)
 
 	_get_reinforcement_modal_parent().add_child(popup_root)

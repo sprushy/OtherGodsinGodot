@@ -68,7 +68,7 @@ const STEALTH_SUPPRESSED_KEYS := [
 	"HariiFransiscan", "HariiJarl", "HelBlarDraug", "HumbabaTheTerrible", "HyenaPack",
 	"MalinalxochitlAcolyte", "MinotaurFootsoldier", "Nagual", "NergalLion", "PaiLongAutumnKing",
 	"Pazuzu", "Pegasus", "RabidWolf", "Rabisu", "RedCap",
-	"SixthSageAnEnlilda", "StoneMonkey", "TelchineApprentice", "Thiazi",
+	"SevenHeadedSerpent", "SixthSageAnEnlilda", "StoneMonkey", "TelchineApprentice", "Thiazi",
 	"ThirdSageEnmedugga", "TianlongHolyDragon", "UriskGrovekeepers", "WhiteStag", "WolfAdolescent",
 	"WolfCub",
 ]
@@ -1233,18 +1233,23 @@ static func namburbi_saved_creature_value(bot, creature: Card) -> int:
 		return 0
 	return maxi(0, value(bot, creature) - _debilitation_discount(bot, creature))
 
-static func namburbi_response_gain(bot, action: CardAction) -> int:
-	if bot == null or action == null or action.card == null or bot.bot_player == null:
+static func namburbi_response_gain(bot, ward: NamburbiApotropaeon, action: CardAction) -> int:
+	if action == null or bot.game_manager.action_stack.any(func(pending: CardAction) -> bool:
+		return pending.card is NamburbiApotropaeon and pending.source_player == bot.bot_player
+	):
 		return 0
 	var gain := 0
+	if action.type == CardAction.Type.ATTACK and combat_visible(bot, action) \
+			and (action.united_front_partner == null or visible(bot, action.united_front_partner)):
+		var economy: Dictionary = bot._estimate_attack_economy(action, null, 0, 0)
+		var baseline: int = bot._score_attack_economy(economy)
+		var warded: Dictionary = bot._forecast_namburbi_combat(ward, action)
+		return maxi(0, bot._score_attack_economy(warded) - baseline)
 	for creature in namburbi_saved_creatures(bot, action.card, action.target as Card):
 		gain += namburbi_saved_creature_value(bot, creature)
-	if action.type == CardAction.Type.ATTACK and combat_visible(bot, action):
-		var economy: Dictionary = bot._estimate_attack_economy(action, null, 0, 0)
-		gain += bot._score_follower_loss(bot.bot_player, int(economy.get("bot_followers_lost", 0)))
 	return gain
 
-static func namburbi_preparation_score(bot) -> int:
+static func namburbi_preparation_score(bot, ward: NamburbiApotropaeon) -> int:
 	var game: GameManager = bot.game_manager
 	var opponent: Player = bot.opponent
 	if game == null or opponent == null or bot.bot_player == null:
@@ -1281,6 +1286,7 @@ static func namburbi_preparation_score(bot) -> int:
 	var gain := 0
 	for creature in saved:
 		gain += namburbi_saved_creature_value(bot, creature)
+	gain += bot._forecast_namburbi_combat_threat(ward, projected_mana, saved)
 	var follower_loss: int = bot._forecast_incoming_follower_loss()
 	if follower_loss > 0 and bot.bot_player.followers_enabled:
 		gain += int(round(float(bot._score_follower_loss(bot.bot_player, follower_loss)) * 0.5))
@@ -1352,7 +1358,7 @@ static func effect_score(bot, card: Card, target: Card = null, action: CardActio
 				return BAD
 			# A response that saves a creature has already paid for itself; the
 			# generic CARD_VALUE write-off would turn a real save into a pass.
-			return namburbi_response_gain(bot, action) - mana_penalty(bot, activation_cost(bot, card))
+			return namburbi_response_gain(bot, card as NamburbiApotropaeon, action) - mana_penalty(bot, activation_cost(bot, card))
 		"HeroicStand": gain = mana_gain_value(bot, 7)
 		"TheInferno", "TheDeluge", "Earthquake", "FiresOfJudgment", "Famine", "OccultSingularity", "FalloftheMighty", "BaneOfTheSvartalfar":
 			gain = 0
@@ -1450,7 +1456,7 @@ static func _bot_can_safely_contain(bot, enemy: Card) -> bool:
 				replacement = ally.get_self_graveyard_replacement_zone(game, true, true, false)
 			if replacement != null and ally.current_zone != null and replacement == ally.current_zone:
 				return true
-		if ally.get_effective_resilience() >= enemy.get_effective_strength():
+		if not bot._would_destroy_target_in_battle(enemy, ally):
 			return true
 	return false
 
@@ -1865,7 +1871,7 @@ static func preparation_score(bot, card: Card) -> int:
 				score = maxi(score, 1400)
 		return score
 	if id == "NamburbiApotropaeon":
-		return namburbi_preparation_score(bot)
+		return namburbi_preparation_score(bot, card as NamburbiApotropaeon)
 	if id in ["Banishment", "SpellDemolition", "Sap", "SepLemutti", "Smite", "VoidShield", "Exorcism", "Hringhorni", "HeroicStand"]:
 		return 1700 if bot._board_creature_count(bot.opponent) > 0 or bot._board_creature_count(bot.bot_player) > 0 else 0
 	if id in ["TheInferno", "TheDeluge", "Dromi", "Gleipnir"]:

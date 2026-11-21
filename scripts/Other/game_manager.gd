@@ -365,6 +365,11 @@ func has_turn_destruction_ward(player: Player) -> bool:
 	var expires_turn := int((ward_data as Dictionary).get("expires_turn", -1))
 	return expires_turn >= turn_number
 
+func is_warded_from_combat_destruction(victim: Card, killer: Card) -> bool:
+	return victim != null and victim.card_type == Card.CardType.CREATURE \
+		and has_turn_destruction_ward(victim.get_controller()) \
+		and (killer == null or not killer.can_destroy_combat_protected_creatures(victim))
+
 func get_turn_destruction_ward_activation_block_reason(source_card: Card, chosen_target = null) -> String:
 	if source_card == null:
 		return ""
@@ -2377,54 +2382,40 @@ func _can_intercept_followers(defender: Card, attacker: Card) -> bool:
 		return false
 	if not defender.get_status_effect("cannot_intercept").is_empty():
 		return false
-	if defender.can_special_intercept(self, attacker, defender.get_controller()):
-		return _can_interceptor_engage_attacker(defender, attacker)
-	var interceptor_speed := get_interceptor_speed_against_attacker(defender, attacker)
-	if interceptor_speed < attacker.get_effective_speed():
-		return false
-	if not _can_interceptor_engage_attacker(defender, attacker):
-		return false
-	if defender.current_zone == null:
-		return false
 	var row_distance := -1
-	match defender.current_zone.zone_type:
-		Zone.ZoneType.FRONTLINE:
-			row_distance = 2
-		Zone.ZoneType.RESERVE:
-			row_distance = 1
-		_:
-			return false
-	var minimum_distance := 1
-	if defender.creature_mode == Card.CreatureMode.AGGRESSIVE:
-		minimum_distance = 2
-	minimum_distance = max(0, minimum_distance - defender.get_intercept_reach_bonus(self, attacker, defender.get_controller()))
-	return row_distance >= minimum_distance
+	if defender.current_zone != null:
+		match defender.current_zone.zone_type:
+			Zone.ZoneType.FRONTLINE:
+				row_distance = 2
+			Zone.ZoneType.RESERVE:
+				row_distance = 1
+	return can_intercept_attack(
+		defender, attacker, defender.get_controller(), row_distance,
+		defender.creature_mode, attacker.get_effective_speed()
+	)
 
-func _can_interceptor_engage_attacker(interceptor: Card, attacker: Card) -> bool:
-	if interceptor == null or attacker == null:
-		return false
-	if interceptor.has_method("can_engage") and not interceptor.can_engage(attacker):
-		return false
-	if attacker.has_method("can_be_engaged_by") and not attacker.can_be_engaged_by(interceptor):
-		return false
-	return true
-
-func get_interceptor_speed_against_attacker(
-	interceptor: Card,
+func can_intercept_attack(
+	defender: Card,
 	attacker: Card,
-	protected_target = null,
+	protected_target,
+	row_distance: int,
+	mode: int,
+	attack_speed: int,
 	speed_delta: int = 0
-) -> int:
-	if interceptor == null:
-		return 0
-	var interceptor_speed := interceptor.get_effective_speed(speed_delta)
-	interceptor_speed += interceptor.get_intercept_speed_bonus_against_attacker(self, attacker, protected_target)
-	if attacker != null \
-			and interceptor.has_type("Giant") \
-			and not attacker.has_type("Giant") \
-			and _has_giants_disdain(interceptor.get_controller()):
-		interceptor_speed += 1
-	return interceptor_speed
+) -> bool:
+	if attacker.prevents_interception() or not can_interceptor_engage_attacker(defender, attacker):
+		return false
+	var minimum_distance := 2 if mode == Card.CreatureMode.AGGRESSIVE else 1
+	if row_distance < minimum_distance and not defender.has_reach(protected_target):
+		return false
+	return defender.get_effective_speed(speed_delta) >= attack_speed \
+		or defender.can_intercept_regardless_of_speed(protected_target) \
+		or _giants_disdain_applies_to_interception(defender, attacker)
+
+func _giants_disdain_applies_to_interception(interceptor: Card, attacker: Card) -> bool:
+	return interceptor.has_type("Giant") \
+		and not attacker.has_type("Giant") \
+		and _has_giants_disdain(interceptor.get_controller())
 
 func check_for_intercept(attacker: Card, defending_player: Player) -> Card:
 	print("	Checking for intercepts...")
@@ -2520,7 +2511,7 @@ func resolve_combat(attacker: Card, defender: Card, continue_callback: Callable 
 				print("	Tie! Both creatures destroyed")
 				var void_attacker := _should_class_rend(defender, attacker)
 				var void_defender := _should_class_rend(attacker, defender)
-				var simultaneous_casualties: Array[Card] = [attacker, defender]
+				var simultaneous_casualties := _get_simultaneous_combat_casualties(attacker, defender)
 				_combat_kill_routed(defender, attacker, void_attacker, simultaneous_casualties)
 				_combat_kill_routed(attacker, defender, void_defender, simultaneous_casualties)
 		else:	# Defensive stance - real RES determines kill; Giant's Disdain only reduces the opposing attack stat.
@@ -2631,7 +2622,10 @@ func resolve_united_front_combat(attacker: Card, partner: Card, defender: Card) 
 			elif defender_str_real > combined_strength:
 				var diff := _apply_combat_follower_damage(defender, attacker_controller, defender_str_real - combined_strength_for_damage, halve_follower_damage)
 				print("	United Front loses! %s loses %d followers" % [attacker_controller.player_name, diff])
-				note_player_feedback("United Front loses! Both attackers are destroyed.")
+				if is_warded_from_combat_destruction(primary, defender) or is_warded_from_combat_destruction(support, defender):
+					note_player_feedback("United Front loses the clash.")
+				else:
+					note_player_feedback("United Front loses! Both attackers are destroyed.")
 				_combat_kill(defender, primary)
 				_combat_kill(defender, support)
 			else:
@@ -2639,7 +2633,7 @@ func resolve_united_front_combat(attacker: Card, partner: Card, defender: Card) 
 				var void_primary := _should_class_rend(defender, primary)
 				var void_support := _should_class_rend(defender, support)
 				var void_defender := _should_class_rend(primary, defender)
-				var simultaneous_casualties: Array[Card] = [primary, support, defender]
+				var simultaneous_casualties := _get_simultaneous_combat_casualties(primary, defender, support)
 				_combat_kill_routed(defender, primary, void_primary, simultaneous_casualties)
 				_combat_kill_routed(defender, support, void_support, simultaneous_casualties)
 				_combat_kill_routed(primary, defender, void_defender, simultaneous_casualties)
@@ -2770,7 +2764,7 @@ func resolve_combat_with_continuation(
 					print("	" + attacker.card_name + " destroyed! " + attacker_controller.player_name + " loses " + str(diff) + " followers")
 					return _combat_kill_deferred(defender, attacker, finish)
 				print("	Tie! Both creatures destroyed")
-				var simultaneous_casualties: Array[Card] = [attacker, defender]
+				var simultaneous_casualties := _get_simultaneous_combat_casualties(attacker, defender)
 				return _combat_kill_sequence_deferred([
 					{"killer": defender, "victim": attacker, "do_void": _should_class_rend(defender, attacker), "suppress_ally_kill_sources": simultaneous_casualties},
 					{"killer": attacker, "victim": defender, "do_void": _should_class_rend(attacker, defender), "suppress_ally_kill_sources": simultaneous_casualties},
@@ -2955,6 +2949,10 @@ func _combat_kill_routed_deferred(
 	continue_callback: Callable = Callable(),
 	suppress_ally_kill_sources: Array = []
 ) -> bool:
+	if _prevent_warded_combat_destruction(killer, victim):
+		if continue_callback.is_valid():
+			continue_callback.call()
+		return true
 	_expect_match_destruction(victim, killer, true)
 	var killer_controller := killer.get_controller() if killer != null else null
 	var victim_controller := victim.get_controller()
@@ -3514,6 +3512,8 @@ func _should_class_rend(killer: Card, victim: Card) -> bool:
 
 # Executes a combat kill with a pre-determined void flag (avoids mid-sequence zone-state drift).
 func _combat_kill_routed(killer: Card, victim: Card, do_void: bool, suppress_ally_kill_sources: Array = []) -> void:
+	if _prevent_warded_combat_destruction(killer, victim):
+		return
 	_expect_match_destruction(victim, killer, true)
 	var killer_controller := killer.get_controller() if killer != null else null
 	var victim_controller := victim.get_controller()
@@ -3783,6 +3783,22 @@ func _find_creature_control_destination(player: Player, zone_type: int, zone_ind
 # Routes a combat kill, auto-detecting Class Rend. Use _combat_kill_routed for ties.
 func _combat_kill(killer: Card, victim: Card) -> void:
 	_combat_kill_routed(killer, victim, _should_class_rend(killer, victim))
+
+func _prevent_warded_combat_destruction(killer: Card, victim: Card) -> bool:
+	if not is_warded_from_combat_destruction(victim, killer):
+		return false
+	note_player_feedback("%s's ward protects it from being destroyed in combat." % victim.card_name)
+	return true
+
+func _get_simultaneous_combat_casualties(attacker: Card, defender: Card, support: Card = null) -> Array[Card]:
+	var casualties: Array[Card] = []
+	if not is_warded_from_combat_destruction(attacker, defender):
+		casualties.append(attacker)
+	if support != null and not is_warded_from_combat_destruction(support, defender):
+		casualties.append(support)
+	if not is_warded_from_combat_destruction(defender, attacker):
+		casualties.append(defender)
+	return casualties
 
 func _expect_match_destruction(victim: Card, source: Card, replace: bool = false) -> void:
 	var revealed_source := false

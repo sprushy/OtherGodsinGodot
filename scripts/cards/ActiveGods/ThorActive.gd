@@ -18,7 +18,7 @@ func _init() -> void:
 	culture = "Norse"
 	# flavor_text = "Thor steps onto the field and the human warbands rally around him."
 	flavor_text = ""
-	ability_text = "[b]Patron's Hand[/b] ([b]Passive[/b]): Can intercept any attack on your followers or Human creatures regardless of position or speed. Other friendly Warriors on the field gain +5 STR and +5 RES. Follower damage inflicted by this card is halved."
+	ability_text = "[b]Patron's Hand[/b] ([b]Passive[/b]): Can intercept for your followers or Human creatures regardless of speed. Other friendly Warriors on the field gain +5 STR and +5 RES. Follower damage inflicted by this card is halved."
 	art_path = ART_PATH
 	name_at_bottom = true
 	artist = "Ricarrdo Zoppello"
@@ -82,7 +82,7 @@ func _get_passive_cleanup_zones(player: Player) -> Array[Zone]:
 	zones.append_array(player.reserve_zones)
 	return zones
 
-func can_special_intercept(_game_manager: GameManager, _attacker: Card, protected_target) -> bool:
+func can_intercept_regardless_of_speed(protected_target) -> bool:
 	if abilities_suppressed():
 		return false
 	if current_zone == null or not current_zone.is_board_zone():

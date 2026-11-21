@@ -293,7 +293,7 @@ Legal targets usually include:
 - Enemy Structures.
 - The enemy God, which means damage to Followers.
 
-Reserve Creatures are protected from many direct melee attacks. Use lane position, Reach, abilities, or effects to get around defensive setups.
+Reserve Creatures are protected from many direct melee attacks. Use lane position, abilities, or effects to get around defensive setups.
 
 ## 18. United Front Attacks
 
@@ -313,20 +313,19 @@ Be careful: committing multiple attackers can leave fewer Creatures ready to def
 
 Before an attack resolves, the defending player may be able to intercept. An intercepting Creature steps in and becomes the defender.
 
-Interception depends on protected target depth, interceptor row, stance, Speed, statuses, Reach, engagement restrictions, and card-specific special intercept hooks.
+Interception depends on protected target depth, interceptor row, stance, Speed, statuses, engagement restrictions, and card abilities.
 
 Core interception rules:
 
 - Sleeping Creatures and Creatures with cannot-intercept statuses cannot intercept.
-- The interceptor must be at least as fast as the declared attack, after intercept Speed bonuses.
+- The interceptor must be at least as fast as the declared attack unless an ability lets it ignore Speed.
 - The interceptor must be able to engage the attacker. Incorporeal and similar restrictions still apply.
 - Aggressive interceptors require a deeper protected target than Defensive interceptors.
 - Frontline Aggressive Creatures can normally intercept attacks aimed at Followers or the God.
 - Frontline Defensive Creatures can normally intercept attacks aimed at the Reserve, Followers, or the God.
 - Reserve Defensive Creatures can normally intercept attacks aimed at Followers or the God.
-- Reserve Aggressive Creatures normally need Reach or a special effect to intercept.
-- Reach lowers the required protected-target depth.
-- Special intercept abilities can override normal row, stance, and Speed limits.
+- Reserve Aggressive Creatures can intercept only with Reach.
+- Reach lets a Creature ignore the interceptor's row, stance, and target depth when intercepting for targets covered by its ability.
 
 Interception is how defensive boards keep Followers alive.
 
@@ -447,7 +446,6 @@ Cards explain their own rules text, and keyword hints appear in card detail view
 - Immortal: cannot be destroyed.
 - Sleep: the Creature cannot take actions or intercept.
 - Mute: suppresses abilities; muted Powers cannot be unlocked or activated.
-- Reach: improves interception range.
 - Passive: always active while the card remains in play.
 - Impact: triggers when the card enters the field from your hand.
 - Universal Impact: also triggers when entering from other zones.
@@ -460,6 +458,7 @@ Cards explain their own rules text, and keyword hints appear in card detail view
 - Mill: put cards from the top of a deck into the Graveyard.
 - Search: look through your deck for a card, then shuffle.
 - Dodge: cannot be attacked by lower-speed Creatures.
+- **Reach** lets a Creature intercept regardless of position.
 - Incorporeal: has special engagement restrictions.
 - Slay and Fatality are combat-destruction triggers.
 - Slain means a card was destroyed in combat and sent to the Graveyard. Combat destruction also includes cards sent to the Abyss by effects such as Asag's Class Rend.

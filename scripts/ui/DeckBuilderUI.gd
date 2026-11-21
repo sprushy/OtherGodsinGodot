@@ -16,6 +16,7 @@ const UIHoverSfxScript = preload("res://scripts/core/UIHoverSfx.gd")
 const MANA_ORB_TEXTURE := preload("res://images/ui/ManaOrb.png")
 
 signal back_pressed
+signal account_deck_saved_locally(profile_id: String, deck: Dictionary)
 signal account_deck_deleted_locally(deck_id: String)
 signal send_deck_to_friend_requested(friend_username: String, deck: Dictionary)
 
@@ -146,7 +147,6 @@ var _local_profile_store = null
 var _active_profile_id: String = ""
 var _active_player_name: String = "Player"
 var _selected_saved_deck_id: String = ""
-var _pending_remote_saved_deck_id: String = ""
 var _online_lobby_client = null
 var _remote_account_decks_cache: Array[Dictionary] = []
 var _use_remote_account_decks: bool = false
@@ -160,7 +160,6 @@ var _tiamat_slots: Array = [[], [], []]
 var _art_variant_selections: Dictionary = {}
 var _preview_card_name: String = ""
 var _tiamat_assignment_slot_index: int = -1
-var _deck_id_rng := RandomNumberGenerator.new()
 var _deck_undo_history: Array[Dictionary] = []
 var _collection_card_roots: Dictionary = {}
 var _selected_collection_card_name: String = ""
@@ -226,7 +225,6 @@ func _apply_hover_to_all_buttons(node: Control) -> void:
 func _ready() -> void:
 	add_to_group(UIHoverSfxScript.SUPPRESS_ALL_GROUP)
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_deck_id_rng.randomize()
 	resized.connect(_queue_responsive_layout_refresh)
 	_all_cards = _make_all_cards()
 	_rebuild_filtered_cards_cache()
@@ -301,13 +299,11 @@ func configure_account_decks(decks: Array, use_remote: bool = false, preferred_d
 	visible_decks = DeckCatalogUtilsScript.dedupe_exact_copies(
 		visible_decks,
 		preferred_deck_id,
-		_pending_remote_saved_deck_id if not _pending_remote_saved_deck_id.is_empty() else _selected_saved_deck_id
+		_selected_saved_deck_id
 	)
 	for entry in visible_decks:
 		_remote_account_decks_cache.append(entry.duplicate(true))
 	_use_remote_account_decks = use_remote
-	if not _use_remote_account_decks:
-		_pending_remote_saved_deck_id = ""
 	_remote_preferred_deck_id = clean_preferred
 	if is_inside_tree():
 		_load_profile_decks()
@@ -977,12 +973,8 @@ func _save_and_exit() -> void:
 	if _deck.is_empty():
 		_set_status_flash("Nothing to save. Discard the empty deck or keep editing.")
 		return
-	if _uses_remote_account_decks() and not _can_sync_account_decks():
-		_set_status_flash("Connect to the lobby to save account decks.")
-		return
-	_save_profile_deck()
-	_mark_current_deck_saved()
-	back_pressed.emit()
+	if _save_profile_deck():
+		back_pressed.emit()
 
 func _build_import_deck_dialog() -> void:
 	if _import_deck_dialog != null and is_instance_valid(_import_deck_dialog):
@@ -2981,7 +2973,6 @@ func _make_deck_undo_state() -> Dictionary:
 		"art_variant_selections": _art_variant_selections.duplicate(true),
 		"deck_name": _deck_name_edit.text if _deck_name_edit != null else "",
 		"selected_saved_deck_id": _selected_saved_deck_id,
-		"pending_remote_saved_deck_id": _pending_remote_saved_deck_id,
 	}
 
 func _deck_undo_states_equal(a: Dictionary, b: Dictionary) -> bool:
@@ -2992,7 +2983,6 @@ func _deck_undo_states_equal(a: Dictionary, b: Dictionary) -> bool:
 		and a.get("art_variant_selections", {}) == b.get("art_variant_selections", {})
 		and str(a.get("deck_name", "")) == str(b.get("deck_name", ""))
 		and str(a.get("selected_saved_deck_id", "")) == str(b.get("selected_saved_deck_id", ""))
-		and str(a.get("pending_remote_saved_deck_id", "")) == str(b.get("pending_remote_saved_deck_id", ""))
 	)
 
 func _make_saved_deck_state() -> Dictionary:
@@ -3026,7 +3016,6 @@ func _restore_deck_undo_state(state: Dictionary) -> void:
 	_tiamat_slots = (state.get("tiamat_slots", []) as Array).duplicate(true)
 	_art_variant_selections = (state.get("art_variant_selections", {}) as Dictionary).duplicate(true)
 	_selected_saved_deck_id = str(state.get("selected_saved_deck_id", "")).strip_edges()
-	_pending_remote_saved_deck_id = str(state.get("pending_remote_saved_deck_id", "")).strip_edges()
 	if _deck_name_edit != null:
 		_deck_name_edit.text = str(state.get("deck_name", LocalProfileStoreScript.DEFAULT_DECK_NAME))
 	_select_saved_deck(_selected_saved_deck_id)
@@ -3260,37 +3249,12 @@ func _save_deck() -> void:
 		print("DeckBuilder: save failed.")
 
 # ── validation ─────────────────────────────────────────────────────
-func _save_profile_deck() -> void:
+func _save_profile_deck() -> bool:
 	if _deck.is_empty():
 		_set_status_flash("Nothing to save.")
-		return
+		return false
 	var deck_name := _deck_name_edit.text if _deck_name_edit != null else ""
-	if _uses_remote_account_decks():
-		if not _can_sync_account_decks():
-			_set_status_flash("Connect to the lobby to save account decks.")
-			return
-		var resolved_name := deck_name.strip_edges()
-		if resolved_name.is_empty():
-			resolved_name = LocalProfileStoreScript.DEFAULT_DECK_NAME
-		if _deck_name_edit != null:
-			_deck_name_edit.text = resolved_name
-		if _selected_saved_deck_id.is_empty():
-			_selected_saved_deck_id = _generate_saved_deck_id()
-		_pending_remote_saved_deck_id = _selected_saved_deck_id
-		_online_lobby_client.save_account_deck(
-			resolved_name,
-			_deck,
-			_selected_saved_deck_id,
-			_get_deck_special_setup(),
-			_reinforcements
-		)
-		_mark_current_deck_saved()
-		_set_status_flash("Saving deck for %s..." % _active_player_name)
-		return
 	_ensure_local_profile_store()
-	if _local_profile_store == null:
-		print("DeckBuilder: local profile store unavailable.")
-		return
 	var saved_deck: Dictionary = _local_profile_store.save_deck(
 		_active_profile_id,
 		deck_name,
@@ -3299,13 +3263,23 @@ func _save_profile_deck() -> void:
 		_get_deck_special_setup(),
 		_reinforcements
 	)
-	_pending_remote_saved_deck_id = ""
+	if saved_deck.is_empty():
+		_set_status_flash("Could not save the deck on this device.")
+		return false
 	_selected_saved_deck_id = str(saved_deck.get("deck_id", _selected_saved_deck_id)).strip_edges()
 	if _deck_name_edit != null:
 		_deck_name_edit.text = str(saved_deck.get("name", _deck_name_edit.text))
-	_load_profile_decks()
 	_mark_current_deck_saved()
-	_set_status_flash("Deck saved for %s." % _active_player_name)
+	_finish_local_deck_save(saved_deck, "Deck saved for %s." % _active_player_name)
+	return true
+
+func _finish_local_deck_save(saved_deck: Dictionary, message: String) -> void:
+	if bool(saved_deck.get("pending_account_sync", false)):
+		if not _can_sync_account_decks():
+			message += " It will sync when you reconnect."
+		account_deck_saved_locally.emit(_active_profile_id, saved_deck)
+	_load_profile_decks()
+	_set_status_flash(message)
 
 func _export_current_deck() -> void:
 	if _deck.is_empty():
@@ -3702,56 +3676,26 @@ func _resolve_card_template_for_share(card_name: String) -> Card:
 	return null
 
 func _import_shared_deck(shared_deck: Dictionary) -> void:
-	var imported_deck := shared_deck.duplicate(true)
-	imported_deck["deck_id"] = _generate_saved_deck_id()
-	var deck_name := str(imported_deck.get("name", "Imported Deck")).strip_edges()
+	var deck_name := str(shared_deck.get("name", "Imported Deck")).strip_edges()
 	if deck_name.is_empty():
 		deck_name = "Imported Deck"
-	imported_deck["name"] = deck_name
 	_push_current_deck_undo_state()
 
-	if _uses_remote_account_decks():
-		_selected_saved_deck_id = str(imported_deck.get("deck_id", "")).strip_edges()
-		if _can_sync_account_decks():
-			_pending_remote_saved_deck_id = _selected_saved_deck_id
-			_remote_account_decks_cache.append(imported_deck.duplicate(true))
-			_online_lobby_client.save_account_deck(
-				deck_name,
-				imported_deck.get("cards", {}),
-				_selected_saved_deck_id,
-				imported_deck.get("special_setup", {}),
-				imported_deck.get("reinforcements", {})
-			)
-			_apply_saved_deck(imported_deck)
-			_pending_remote_saved_deck_id = _selected_saved_deck_id
-			_set_collection_mode(COLLECTION_MODE_SAVED_DECKS, false)
-			_set_status_flash("Imported %s and started saving it." % deck_name)
-			return
-		_pending_remote_saved_deck_id = ""
-		_apply_saved_deck(imported_deck)
-		_set_collection_mode(COLLECTION_MODE_CARDS, false)
-		_set_status_flash("Imported %s. Connect to the lobby to save it to your account." % deck_name)
-		return
-
 	_ensure_local_profile_store()
-	if _local_profile_store == null:
-		_apply_saved_deck(imported_deck)
-		_set_status_flash("Imported %s." % deck_name)
-		return
 	var saved_deck: Dictionary = _local_profile_store.save_deck(
 		_active_profile_id,
 		deck_name,
-		imported_deck.get("cards", {}),
-		str(imported_deck.get("deck_id", "")),
-		imported_deck.get("special_setup", {}),
-		imported_deck.get("reinforcements", {})
+		shared_deck.get("cards", {}),
+		"",
+		shared_deck.get("special_setup", {}),
+		shared_deck.get("reinforcements", {})
 	)
-	_selected_saved_deck_id = str(saved_deck.get("deck_id", "")).strip_edges()
-	_pending_remote_saved_deck_id = ""
-	_load_profile_decks()
+	if saved_deck.is_empty():
+		_set_status_flash("Could not save the imported deck on this device.")
+		return
 	_apply_saved_deck(saved_deck)
+	_finish_local_deck_save(saved_deck, "Imported %s." % str(saved_deck.get("name", deck_name)))
 	_set_collection_mode(COLLECTION_MODE_SAVED_DECKS, false)
-	_set_status_flash("Imported %s." % deck_name)
 
 func _load_selected_deck() -> void:
 	if _selected_saved_deck_id.is_empty():
@@ -3791,8 +3735,6 @@ func _delete_saved_deck(deck_id: String) -> void:
 	if deleted_deck_id.is_empty():
 		return
 	var deleted_selected_deck := deleted_deck_id == _selected_saved_deck_id
-	if deleted_deck_id == _pending_remote_saved_deck_id:
-		_pending_remote_saved_deck_id = ""
 	if _uses_remote_account_decks():
 		var should_request_remote_delete := _is_synced_account_deck_id(deleted_deck_id)
 		if should_request_remote_delete and not _can_sync_account_decks():
@@ -3828,38 +3770,20 @@ func _copy_saved_deck(deck_id: String) -> void:
 	if source_deck.is_empty():
 		return
 	var copied_deck_name := _make_copied_deck_name(str(source_deck.get("name", LocalProfileStoreScript.DEFAULT_DECK_NAME)))
-	var copied_deck_id := _generate_saved_deck_id()
-	if _uses_remote_account_decks():
-		if not _can_sync_account_decks():
-			_set_status_flash("Connect to the lobby to copy account decks.")
-			return
-		_selected_saved_deck_id = copied_deck_id
-		_pending_remote_saved_deck_id = copied_deck_id
-		_online_lobby_client.save_account_deck(
-			copied_deck_name,
-			source_deck.get("cards", {}),
-			copied_deck_id,
-			source_deck.get("special_setup", {}),
-			source_deck.get("reinforcements", {})
-		)
-		_set_status_flash("Copying saved deck...")
-		return
 	_ensure_local_profile_store()
-	if _local_profile_store == null:
-		return
 	var copied_deck: Dictionary = _local_profile_store.save_deck(
 		_active_profile_id,
 		copied_deck_name,
 		source_deck.get("cards", {}),
-		copied_deck_id,
+		"",
 		source_deck.get("special_setup", {}),
 		source_deck.get("reinforcements", {})
 	)
-	_selected_saved_deck_id = str(copied_deck.get("deck_id", copied_deck_id)).strip_edges()
-	_pending_remote_saved_deck_id = ""
-	_load_profile_decks()
+	if copied_deck.is_empty():
+		_set_status_flash("Could not save the copy on this device.")
+		return
 	_apply_saved_deck(copied_deck)
-	_set_status_flash("Saved deck copied.")
+	_finish_local_deck_save(copied_deck, "Saved deck copied.")
 
 func _make_copied_deck_name(source_name: String) -> String:
 	var resolved_name := source_name.strip_edges()
@@ -3928,7 +3852,6 @@ func _remove_remote_account_deck_from_cache(deck_id: String) -> void:
 
 func _new_deck() -> void:
 	_push_current_deck_undo_state()
-	_pending_remote_saved_deck_id = ""
 	_selected_saved_deck_id = ""
 	_deck.clear()
 	_reinforcements.clear()
@@ -3993,9 +3916,6 @@ func _get_saved_deck_by_id(deck_id: String) -> Dictionary:
 
 func _get_last_selected_saved_deck_id() -> String:
 	if _uses_remote_account_decks():
-		var pending_deck_id := _pending_remote_saved_deck_id.strip_edges()
-		if not pending_deck_id.is_empty():
-			return pending_deck_id
 		var resolved_selected_deck_id := _selected_saved_deck_id.strip_edges()
 		if not resolved_selected_deck_id.is_empty():
 			for saved_deck in _remote_account_decks_cache:
@@ -4038,22 +3958,21 @@ func _load_profile_decks() -> void:
 	_saved_decks_option.add_item("Saved Decks")
 	_saved_decks_option.set_item_metadata(0, "")
 	var decks: Array[Dictionary] = _get_saved_decks()
-	if not _pending_remote_saved_deck_id.is_empty():
-		for deck in decks:
-			if str(deck.get("deck_id", "")).strip_edges() == _pending_remote_saved_deck_id:
-				_pending_remote_saved_deck_id = ""
-				break
 	for deck in decks:
 		var saved_deck_name := str(deck.get("name", "Deck"))
 		_saved_decks_option.add_item(saved_deck_name)
 		_saved_decks_option.set_item_metadata(_saved_decks_option.get_item_count() - 1, str(deck.get("deck_id", "")))
 
-	var preferred_deck_id := _get_last_selected_saved_deck_id()
-	if preferred_deck_id.is_empty() and not decks.is_empty():
-		preferred_deck_id = str(decks[0].get("deck_id", "")).strip_edges()
+	# A catalog refresh during reconnect must keep the open deck's identity.
+	var preferred_deck_id := _selected_saved_deck_id
+	var should_load_deck := _deck.is_empty() and (_saved_deck_state.is_empty() or not _has_unsaved_deck_changes())
+	if should_load_deck:
+		preferred_deck_id = _get_last_selected_saved_deck_id()
+		if preferred_deck_id.is_empty() and not decks.is_empty():
+			preferred_deck_id = str(decks[0].get("deck_id", "")).strip_edges()
 	_select_saved_deck(preferred_deck_id)
 	_refresh_saved_deck_gallery(decks)
-	if not preferred_deck_id.is_empty() and _deck.is_empty():
+	if not preferred_deck_id.is_empty() and should_load_deck:
 		var saved_deck: Dictionary = _get_saved_deck_by_id(preferred_deck_id)
 		if not saved_deck.is_empty():
 			_apply_saved_deck(saved_deck)
@@ -4089,7 +4008,6 @@ func _select_saved_deck(deck_id: String) -> void:
 
 func _apply_saved_deck(saved_deck: Dictionary) -> void:
 	_selected_saved_deck_id = str(saved_deck.get("deck_id", _selected_saved_deck_id)).strip_edges()
-	_pending_remote_saved_deck_id = ""
 	if _deck_name_edit != null:
 		_deck_name_edit.text = str(saved_deck.get("name", LocalProfileStoreScript.DEFAULT_DECK_NAME))
 	_deck = {}
@@ -5218,23 +5136,6 @@ func _refresh_saved_decks_view_button() -> void:
 		_card_view_label.text = "Deck Size:" if saved_decks_mode else "Card View:"
 	if _card_overlays_toggle != null:
 		_card_overlays_toggle.visible = not saved_decks_mode
-
-func _generate_saved_deck_id() -> String:
-	var existing_deck_ids: Dictionary = {}
-	for saved_deck in _get_saved_decks():
-		var deck_id := str(saved_deck.get("deck_id", "")).strip_edges()
-		if not deck_id.is_empty():
-			existing_deck_ids[deck_id] = true
-	if not _pending_remote_saved_deck_id.is_empty():
-		existing_deck_ids[_pending_remote_saved_deck_id] = true
-	for _attempt in range(32):
-		var candidate := "deck_%d%06d" % [
-			int(Time.get_unix_time_from_system()),
-			_deck_id_rng.randi_range(0, 999999),
-		]
-		if not existing_deck_ids.has(candidate):
-			return candidate
-	return "deck_%d" % int(Time.get_ticks_usec())
 
 func _max_copies(card: Card) -> int:
 	if card.is_god:       return 1

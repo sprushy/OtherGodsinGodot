@@ -103,6 +103,7 @@ var multiplayer_mount_path: NodePath = NodePath("")
 var use_default_multiplayer: bool = false
 var network_manager: Node = null
 var _is_authenticated: bool = false
+var _account_deck_save_requests: Dictionary = {}
 
 var _pending_account_email: String = ""
 var _pending_account_username: String = ""
@@ -157,6 +158,7 @@ func connect_to_server(
 	_ignore_network_events = false
 	_reconnect_fallback_attempted = false
 	_is_authenticated = false
+	_account_deck_save_requests.clear()
 	current_session_id = ""
 	current_reconnect_token = ""
 	current_profile_id = ""
@@ -346,6 +348,7 @@ func disconnect_from_server() -> void:
 	_cancel_auto_reconnect()
 	_transport_connected_signal_received = false
 	_is_authenticated = false
+	_account_deck_save_requests.clear()
 	current_session_id = ""
 	current_reconnect_token = ""
 	current_profile_id = ""
@@ -518,13 +521,21 @@ func save_account_deck(
 	special_setup: Dictionary = {},
 	reinforcements: Dictionary = {}
 ) -> void:
+	if not is_authenticated():
+		return
+	var resolved_deck_id := deck_id.strip_edges()
+	if not resolved_deck_id.is_empty():
+		_account_deck_save_requests[resolved_deck_id] = int(_account_deck_save_requests.get(resolved_deck_id, 0)) + 1
 	_send_request(LobbyProtocolScript.SAVE_ACCOUNT_DECK, {
 		"deck_name": deck_name.strip_edges(),
-		"deck_id": deck_id.strip_edges(),
+		"deck_id": resolved_deck_id,
 		"cards": cards.duplicate(true),
 		"reinforcements": reinforcements.duplicate(true),
 		"special_setup": special_setup.duplicate(true),
 	})
+
+func has_unconfirmed_account_deck_saves(deck_id: String) -> bool:
+	return _account_deck_save_requests.has(deck_id)
 
 func delete_account_deck(deck_id: String) -> void:
 	_send_request(LobbyProtocolScript.DELETE_ACCOUNT_DECK, {
@@ -878,7 +889,14 @@ func lobby_event(message: Dictionary) -> void:
 			current_preferred_account_deck_id = str(payload.get("preferred_deck_id", current_preferred_account_deck_id)).strip_edges()
 			account_deck_list_received.emit(payload.get("decks", []), current_preferred_account_deck_id)
 		LobbyProtocolScript.ACCOUNT_DECK_SAVED:
-			account_deck_saved.emit(payload.get("deck", {}))
+			var saved_deck: Dictionary = payload.get("deck", {})
+			var saved_deck_id := str(saved_deck.get("deck_id", "")).strip_edges()
+			var remaining_saves := int(_account_deck_save_requests.get(saved_deck_id, 0)) - 1
+			if remaining_saves > 0:
+				_account_deck_save_requests[saved_deck_id] = remaining_saves
+			else:
+				_account_deck_save_requests.erase(saved_deck_id)
+			account_deck_saved.emit(saved_deck)
 		LobbyProtocolScript.ACCOUNT_DECK_DELETED:
 			account_deck_deleted.emit(str(payload.get("deck_id", "")))
 		LobbyProtocolScript.PROFILE_SUMMARY:

@@ -89,6 +89,7 @@ const LOBBY_RECONNECT_OK := "lobby_reconnect_ok"
 const ACCOUNT_DECK_LIST := "account_deck_list"
 const ACCOUNT_DECK_SAVED := "account_deck_saved"
 const ACCOUNT_DECK_DELETED := "account_deck_deleted"
+const ACCOUNT_DECK_NAME_MAX_LENGTH := 80
 const PROFILE_SUMMARY := "profile_summary"
 const RANK_BADGE_RESULT := "rank_badge_result"
 const BOT_LADDER := "bot_ladder"

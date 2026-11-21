@@ -1235,6 +1235,12 @@ func _preview_board_creature(card: Card, zone: Zone) -> Card:
 	form.incorporeal = card.incorporeal
 	return form
 
+func _preview_summoned_creature(card: Card, zone: Zone, stealth: bool) -> Card:
+	var form := _preview_board_creature(card, zone)
+	form.is_stealth = stealth
+	form.is_face_down = stealth
+	return form
+
 func _shift_stat_changes(card: Card, form: Card) -> Vector3i:
 	return Vector3i(form.get_effective_strength() - card.get_effective_strength(),
 		form.get_effective_resilience() - card.get_effective_resilience(),
@@ -2113,10 +2119,8 @@ func _estimate_projected_summon_casualty_cost(
 ) -> int:
 	if creature == null or zone == null or not zone.is_board_zone():
 		return 0
-	var target := _preview_board_creature(creature, zone)
+	var target := _preview_summoned_creature(creature, zone, stealth)
 	target.uid = creature.uid
-	target.is_stealth = stealth
-	target.is_face_down = stealth
 	target.creature_mode = Card.CreatureMode.DEFENSIVE if defensive else Card.CreatureMode.AGGRESSIVE
 	var greatest_loss := 0
 	for attacker in _get_creature_attackers_next_turn(target, removed):
@@ -2131,7 +2135,7 @@ func _estimate_projected_summon_casualty_cost(
 		if replaces_god:
 			loss += _combat_god_death_cost(bot_player, removed + result["casualties"], int(result["bot_followers_lost"]), true)
 		for interceptor in match_manager._get_possible_interceptors(attacker, target):
-			if interceptor in removed or _status_persists_to_next_turn(interceptor, "cannot_intercept", removed):
+			if interceptor == creature or interceptor in removed or _status_persists_to_next_turn(interceptor, "cannot_intercept", removed):
 				continue
 			action.interceptor = interceptor
 			loss = mini(loss, _score_projected_summon_attack_loss(_estimate_raw_attack_economy(action, stats)))
@@ -2552,6 +2556,16 @@ func _estimate_defensive_summon_value(card: Card, zone: Zone, stealth: bool = fa
 		return 0
 	if _status_persists_to_next_turn(card, "cannot_intercept"):
 		return 0
+	var interceptor := card
+	if card.current_zone == null or not card.current_zone.is_board_zone():
+		interceptor = _preview_summoned_creature(card, zone, stealth)
+	var targets: Array = [bot_player]
+	for target in _get_board_creatures(bot_player):
+		if target == card or target in removed:
+			continue
+		if interceptor.has_reach(target) or interceptor.can_intercept_regardless_of_speed(target):
+			targets.append(target)
+	var speed_delta: int = stats.get(card, Vector3i.ZERO).z
 	var best_gain := 0
 	for attacker in _get_board_creatures(opponent):
 		if attacker in removed or not CardStrategy.visible(self, attacker) or attacker.current_zone.zone_type != Zone.ZoneType.FRONTLINE \
@@ -2559,8 +2573,6 @@ func _estimate_defensive_summon_value(card: Card, zone: Zone, stealth: bool = fa
 				or attacker.has_status_effect("cannot_attack") \
 				or not game_manager.can_cards_engage_each_other(card, attacker) \
 				or not game_manager.can_interceptor_engage_attacker(card, attacker):
-			continue
-		if game_manager.is_followers_attack_blocked_by_active_structure(attacker, bot_player, []):
 			continue
 		var projected_speed := attacker.get_effective_speed() + _opponent_hermes_speed_gain(attacker)
 		var partner := match_manager._get_declared_attack_partner(attacker)
@@ -2570,24 +2582,31 @@ func _estimate_defensive_summon_value(card: Card, zone: Zone, stealth: bool = fa
 			if not CardStrategy.visible(self, partner):
 				continue
 			projected_speed = mini(projected_speed, partner.get_effective_speed() + _opponent_hermes_speed_gain(partner))
-		var speed_delta := -1 if stealth and not card.is_stealth else 0
-		if not match_manager._can_intercept(card, attacker, bot_player, card, speed_delta, projected_speed, zone, Card.CreatureMode.DEFENSIVE):
-			continue
 		var action := CardAction.new()
 		action.type = CardAction.Type.ATTACK
 		action.attacker = attacker
 		action.united_front_partner = partner
-		action.target = bot_player
-		var best_existing_score := _score_attack_economy(_estimate_attack_economy(action, null, 0, 0))
-		for existing in match_manager._get_possible_interceptors(attacker, bot_player):
-			if existing in removed:
+		var allies := [partner] if partner != null else []
+		for target in targets:
+			if not match_manager._can_intercept(interceptor, attacker, target, interceptor, speed_delta, projected_speed, zone, Card.CreatureMode.DEFENSIVE):
 				continue
-			action.interceptor = existing
-			best_existing_score = maxi(best_existing_score, _score_attack_economy(_estimate_attack_economy(action, null, 0, 0)))
-		action.interceptor = card
-		var result := _estimate_projected_attack_economy(action, stats, true, Card.CreatureMode.DEFENSIVE, stealth)
-		var candidate_score := _score_attack_economy(result)
-		best_gain = maxi(best_gain, candidate_score - best_existing_score)
+			if target is Player:
+				if game_manager.is_followers_attack_blocked_by_active_structure(attacker, bot_player, allies):
+					continue
+			elif not game_manager.can_cards_engage_each_other(attacker, target, false) \
+					or game_manager.is_attack_blocked_by_active_structure(attacker, target, allies):
+				continue
+			action.target = target
+			action.interceptor = null
+			var best_existing_score := _score_attack_economy(_estimate_projected_attack_economy(action, stats))
+			for existing in match_manager._get_possible_interceptors(attacker, target, projected_speed):
+				if existing == card or existing in removed:
+					continue
+				action.interceptor = existing
+				best_existing_score = maxi(best_existing_score, _score_attack_economy(_estimate_projected_attack_economy(action, stats)))
+			action.interceptor = card
+			var result := _estimate_projected_attack_economy(action, stats, true, Card.CreatureMode.DEFENSIVE, stealth)
+			best_gain = maxi(best_gain, _score_attack_economy(result) - best_existing_score)
 	return best_gain
 
 func _is_enemy_creature_answer(card: Card, target: Card, score: int) -> bool:
@@ -2634,10 +2653,7 @@ func _try_cast_divine_lightning() -> bool:
 
 func _get_best_strategy_action(attacks: Array[Dictionary], attack: Dictionary, danger: int = -1, removals: Array[Dictionary] = []) -> Dictionary:
 	var best_plan: Dictionary = {}
-	# Cast Namburbi before declaring attacks when known response cards would
-	# destroy the attackers or drain followers. Its ward lasts this turn, so the
-	# generic action scorer (which has no action to respond to) cannot see it.
-	var ward_plan := _plan_namburbi_ward(attacks)
+	var ward_plan := _plan_namburbi_ward(attacks, attack)
 	if _is_better_strategy_plan(ward_plan, best_plan):
 		best_plan = ward_plan
 	var cards: Array = bot_player.hand_zone.cards.duplicate()
@@ -5081,8 +5097,10 @@ func _forecast_incoming_follower_loss(change: Dictionary = {}, this_turn: bool =
 		stats[shifting] = _shift_stat_changes(shifting, shifted_form)
 	if summon != null:
 		summons[summon] = summon_zone
+	var summoned_forms := {}
 	for recruit: Card in summons:
 		defenders.append(recruit)
+		summoned_forms[recruit] = _preview_summoned_creature(recruit, summons[recruit], summon_stealth and recruit == summon)
 	var structures := game_manager._get_active_structures()
 	for card in defenders:
 		if card not in removed:
@@ -5153,9 +5171,8 @@ func _forecast_incoming_follower_loss(change: Dictionary = {}, this_turn: bool =
 					mode = Card.CreatureMode.DEFENSIVE if defensive_summons else Card.CreatureMode.AGGRESSIVE
 				var target_zone := destination if target == moved else summons.get(target) as Zone
 				var projected_stealth := summon_stealth and interceptor == summon
-				var speed_delta := -1 if projected_stealth and not interceptor.is_stealth else 0
-				var intercept_form := shifted_form if interceptor == shifting else interceptor
-				var legal := match_manager._can_intercept(intercept_form, attacker, target_form, intercept_form, speed_delta, speed, projected_zone, mode, target_zone)
+				var intercept_form: Card = summoned_forms.get(interceptor, shifted_form if interceptor == shifting else interceptor)
+				var legal := match_manager._can_intercept(intercept_form, attacker, target_form, null, 0, speed, projected_zone, mode, target_zone)
 				if not legal:
 					continue
 				action.interceptor = interceptor
@@ -5332,9 +5349,10 @@ func _get_attack_candidates(attacker: Card, partner: Card, projected_summon: boo
 				var result := _estimate_known_attack_response(response, action, attacker)
 				if not result.is_empty():
 					replies[response] = result
-		for hidden in _get_board_creatures(opponent):
-			if not CardStrategy.visible(self, hidden) and not hidden.has_status_effect("cannot_intercept") and not hidden.is_sleeping:
-				replies[hidden] = {}
+		if not attacker_form.prevents_interception():
+			for hidden in _get_board_creatures(opponent):
+				if not CardStrategy.visible(self, hidden) and not hidden.has_status_effect("cannot_intercept") and not hidden.is_sleeping:
+					replies[hidden] = {}
 		candidates.append({
 			"attacker": attacker, "partner": partner, "target": target, "base": base, "replies": replies,
 			"barriers": barriers,
@@ -5376,7 +5394,7 @@ func _estimate_known_attack_response(response: Card, action: CardAction, origina
 		"spent_hex": response,
 	}
 	if response is ObsidianReflection:
-		var reversed_damage := _get_direct_follower_damage(action.attacker)
+		var reversed_damage := _get_direct_follower_damage(action.attacker) if game_manager.can_player_lose_followers_now(bot_player) else 0
 		result["bot_followers_lost"] = reversed_damage
 		result["opponent_followers_lost"] = 0
 	elif response is VoidShield or response is Smite:
@@ -5408,64 +5426,86 @@ func _estimate_known_attack_response(response: Card, action: CardAction, origina
 	result["hex_trade_credit"] = _known_hex_trade_credit(response, result["casualties"], mana_left, [attacker])
 	return result
 
-func _find_namburbi_ward_card() -> Card:
+func _find_namburbi_ward_card(triggering_attack: CardAction = null) -> NamburbiApotropaeon:
 	if game_manager == null or bot_player == null:
 		return null
-	# A prepared copy is already paid for and can cover this turn without
-	# spending the hand copy, so prefer it when both are available.
+	if game_manager.has_turn_destruction_ward(bot_player) and game_manager.has_turn_follower_loss_prevention(bot_player):
+		return null
 	for card in game_manager.get_field_cards(bot_player):
-		if card is NamburbiApotropaeon and card.is_prepared and card.can_activate_prepared(game_manager):
+		if card is NamburbiApotropaeon and card.can_activate_prepared(game_manager, triggering_attack):
 			return card
+	if triggering_attack != null:
+		# This lookup is used while deciding whether to intercept on the enemy turn.
+		return null
 	for card in bot_player.hand_zone.cards:
 		if card is NamburbiApotropaeon and card.can_activate_from_hand(game_manager) \
 				and game_manager.can_play_card(bot_player, card, null):
 			return card
 	return null
 
-func _namburbi_attack_response_gain(attack: Dictionary) -> int:
-	var replies: Dictionary = attack.get("replies", {})
+func _forecast_with_namburbi_ward(ward: NamburbiApotropaeon, forecast: Callable) -> Dictionary:
+	# Run the same synchronous forecast used after the cast, then restore both effects.
+	var previous_ward: Variant = game_manager.turn_destruction_wards.get(bot_player)
+	var previous_prevention: Variant = game_manager.turn_follower_loss_preventions.get(bot_player)
+	game_manager.grant_turn_destruction_ward(bot_player, ward)
+	game_manager.grant_turn_follower_loss_prevention(bot_player, ward)
+	var result: Dictionary = forecast.call()
+	if previous_ward == null:
+		game_manager.turn_destruction_wards.erase(bot_player)
+	else:
+		game_manager.turn_destruction_wards[bot_player] = previous_ward
+	if previous_prevention == null:
+		game_manager.turn_follower_loss_preventions.erase(bot_player)
+	else:
+		game_manager.turn_follower_loss_preventions[bot_player] = previous_prevention
+	return result
+
+func _forecast_namburbi_combat(ward: NamburbiApotropaeon, action: CardAction) -> Dictionary:
+	return _forecast_with_namburbi_ward(ward, func() -> Dictionary:
+		return _estimate_attack_economy(action, null, 0, 0)
+	)
+
+func _forecast_namburbi_combat_threat(ward: NamburbiApotropaeon, enemy_mana: int, already_counted: Array[Card]) -> int:
 	var best := 0
-	for raw_response in replies.keys():
-		var response := raw_response as Card
-		if response == null:
+	var defenders := _get_board_creatures(bot_player)
+	var action := CardAction.new()
+	action.type = CardAction.Type.ATTACK
+	for attacker in _get_board_creatures(opponent):
+		if attacker.current_zone not in opponent.frontline_zones or not CardStrategy.visible(self, attacker) \
+				or attacker.creature_mode != Card.CreatureMode.AGGRESSIVE \
+				or _status_persists_to_next_turn(attacker, "sleep") or _status_persists_to_next_turn(attacker, "cannot_attack") \
+				or game_manager.get_creature_action_mana_cost(attacker, "attack") > enemy_mana:
 			continue
-		var raw_result = replies[raw_response]
-		if not (raw_result is Dictionary):
+		action.attacker = attacker
+		if not ward.can_respond_to_action(action, game_manager):
 			continue
-		var result: Dictionary = raw_result
-		if result.is_empty():
-			continue
-		var saved := 0
-		if response is Smite or response is TheInferno or response is DivineLightning:
-			for raw_casualty in result.get("casualties", []):
-				var casualty := raw_casualty as Card
-				if casualty != null and casualty.get_controller() == bot_player:
-					saved += CardStrategy.value(self, casualty)
-		elif response is ObsidianReflection:
-			saved += _score_follower_loss(bot_player, int(result.get("bot_followers_lost", 0)))
-		best = maxi(best, saved)
+		for defender in defenders:
+			if defender in already_counted or attacker.can_destroy_combat_protected_creatures(defender) \
+					or not game_manager.can_cards_engage_each_other(attacker, defender):
+				continue
+			action.target = defender
+			if defender in _estimate_raw_attack_economy(action, {})["casualties"]:
+				best = maxi(best, CardStrategy.namburbi_saved_creature_value(self, defender))
 	return best
 
-func _plan_namburbi_ward(attacks: Array[Dictionary]) -> Dictionary:
-	if attacks.is_empty() or game_manager == null or bot_player == null:
-		return {}
-	if game_manager.has_turn_destruction_ward(bot_player) and game_manager.has_turn_follower_loss_prevention(bot_player):
+func _plan_namburbi_ward(attacks: Array[Dictionary], baseline: Dictionary) -> Dictionary:
+	if attacks.is_empty():
 		return {}
 	var ward := _find_namburbi_ward_card()
 	if ward == null:
 		return {}
-	var best_saved := 0
-	for attack in attacks:
-		best_saved = maxi(best_saved, _namburbi_attack_response_gain(attack))
-	if best_saved <= 0:
-		return {}
 	var cost := CardStrategy.activation_cost(self, ward)
-	var score := best_saved - CardStrategy.CARD_VALUE - CardStrategy.mana_penalty(self, cost)
-	if score <= 0:
+	var attack_mana := bot_player.mana - cost
+	var warded_line := _forecast_with_namburbi_ward(ward, func() -> Dictionary:
+		return _plan_combat(_get_combat_candidates(attack_mana), [], null, 0, null, attack_mana)
+	)
+	var lethal := bool(warded_line.get("lethal", false)) and not bool(baseline.get("lethal", false))
+	var combat_score := int(warded_line.get("score", 0))
+	var score := combat_score - int(baseline.get("score", 0)) - CardStrategy.CARD_VALUE - CardStrategy.mana_penalty(self, cost)
+	if not lethal and score <= 0:
 		return {}
 	return {
-		"score": score,
-		"combined_setup": true,
+		"score": score, "combat_score": combat_score, "lethal": lethal,
 		"command": {"type": "cast_charm", "charm_uid": ward.uid, "target_uid": "", "prepared": ward.is_prepared},
 	}
 
@@ -5825,27 +5865,43 @@ func _choose_interceptor(data: Dictionary) -> String:
 		return ""
 	var action := CardAction.new()
 	action.type = CardAction.Type.ATTACK
+	action.source_player = opponent
 	action.attacker = attacker
 	action.target = target if target != null else (bot_player as Variant)
 	action.united_front_partner = match_manager._get_declared_attack_partner(attacker)
+	action.attack_speed_override = match_manager._get_declared_attack_speed(attacker)
 	if action.united_front_partner != null and not CardStrategy.visible(self, action.united_front_partner):
 		return ""
+	var ward := _find_namburbi_ward_card(action)
+	var ward_cost := CardStrategy.CARD_VALUE + CardStrategy.mana_penalty(self, CardStrategy.activation_cost(self, ward)) if ward != null else 0
 	var best := ""
-	var unblocked := _estimate_attack_economy(action, null, 0, 0)
-	var best_survives := not bool(unblocked["opponent_wins"])
-	var best_score := _score_attack_economy(unblocked) + 200
+	var unblocked := _score_interception(action, ward, ward_cost)
+	var best_survives := bool(unblocked["survives"])
+	var best_score := int(unblocked["score"]) + 200
 	for uid in data.get("interceptor_uids", []):
 		action.interceptor = game_manager.get_card_by_uid(str(uid))
 		if action.interceptor == null:
 			continue
-		var blocked := _estimate_attack_economy(action, null, 0, 0)
-		var survives := not bool(blocked["opponent_wins"])
-		var score := _score_attack_economy(blocked)
+		var blocked := _score_interception(action, ward, ward_cost)
+		var survives := bool(blocked["survives"])
+		var score := int(blocked["score"])
 		if (survives and not best_survives) or (survives == best_survives and score > best_score):
 			best_survives = survives
 			best_score = score
 			best = str(uid)
 	return best
+
+func _score_interception(action: CardAction, ward: NamburbiApotropaeon, ward_cost: int) -> Dictionary:
+	var outcome := _estimate_attack_economy(action, null, 0, 0)
+	var score := _score_attack_economy(outcome)
+	var survives := not bool(outcome["opponent_wins"])
+	if ward != null:
+		var warded := _forecast_namburbi_combat(ward, action)
+		var warded_score := _score_attack_economy(warded) - ward_cost
+		var warded_survives := not bool(warded["opponent_wins"])
+		if (warded_survives and not survives) or (warded_survives == survives and warded_score > score):
+			return {"survives": warded_survives, "score": warded_score}
+	return {"survives": survives, "score": score}
 
 func _try_advance_from_reserve() -> bool:
 	if game_manager.turn_number <= 1 or game_manager.attack_restrictions.has(bot_player):
@@ -5925,13 +5981,10 @@ func _score_creature_move(card: Card, zone: Zone) -> int:
 		# and forth for net gain.
 		@warning_ignore("integer_division")
 		score += card.get_effective_strength() * RESERVE_PLACEMENT_STR_VALUE / 4
-	# Interception coverage changes for defensive creatures.
-	if card.creature_mode == Card.CreatureMode.DEFENSIVE:
+	# Compare coverage against other interceptors from both rows.
+	if card.creature_mode == Card.CreatureMode.DEFENSIVE and from_frontline != to_frontline:
 		@warning_ignore("integer_division")
-		score += _estimate_defensive_summon_value(card, zone) / 2
-		if from_frontline:
-			@warning_ignore("integer_division")
-			score -= _estimate_defensive_summon_value(card, card.current_zone) / 2
+		score += (_estimate_defensive_summon_value(card, zone) - _estimate_defensive_summon_value(card, card.current_zone)) / 2
 	# Shelter value: projected combat loss the move avoids. A reserve lane
 	# protected by a frontline palisade intercepts for the moved creature.
 	if not to_frontline:
@@ -6456,7 +6509,7 @@ func _should_summon_creature_stealthily(card: Card, zone: Zone, mode: Card.Creat
 		return true
 	for enemy in _get_board_creatures(opponent):
 		if enemy == null or not CardStrategy.visible(self, enemy) or enemy.is_sleeping \
-				or enemy.has_status_effect("cannot_attack"):
+				or enemy.has_status_effect("cannot_attack") or enemy.prevents_interception():
 			continue
 		var enemy_speed := enemy.get_effective_speed() + _opponent_hermes_speed_gain(enemy)
 		if enemy_speed <= stealth_speed or enemy_speed > face_up_speed:
@@ -6847,6 +6900,8 @@ func _defender_has_ferocious_defence(target: Card, opposing_strength: int) -> bo
 func _would_destroy_target_in_battle(attacker: Card, target: Card) -> bool:
 	if attacker == null or target == null:
 		return false
+	if game_manager.is_warded_from_combat_destruction(target, attacker):
+		return false
 	if _is_stone_monkey(target) and not attacker.can_destroy_combat_protected_creatures(target):
 		return false
 	if target.is_petrified() or target.card_type == Card.CardType.STRUCTURE:
@@ -6858,6 +6913,8 @@ func _would_destroy_target_in_battle(attacker: Card, target: Card) -> bool:
 func _would_attacker_survive_battle(attacker: Card, target: Card) -> bool:
 	if attacker == null or target == null:
 		return false
+	if game_manager.is_warded_from_combat_destruction(attacker, target):
+		return true
 	if target.is_petrified() or target.card_type == Card.CardType.STRUCTURE:
 		return true
 	if target.creature_mode == Card.CreatureMode.AGGRESSIVE:
@@ -7154,6 +7211,8 @@ func _score_stat_attack_line(action: CardAction, stats: Dictionary, interceptors
 	var perspective := 1 if action.source_player == bot_player else -1
 	var score := perspective * _score_attack_economy(_estimate_projected_attack_economy(action, stats))
 	var attacker := action.attacker
+	if attacker.prevents_interception():
+		return score
 	var attack_speed := attacker.get_effective_speed(stats.get(attacker, Vector3i.ZERO).z)
 	var partner := action.united_front_partner
 	if partner != null:
@@ -7177,6 +7236,8 @@ func _score_stat_attack_line(action: CardAction, stats: Dictionary, interceptors
 func _can_attack_followers_after_modifiers(attacker: Card, stats: Dictionary) -> bool:
 	if game_manager.is_followers_attack_blocked_by_active_structure(attacker, opponent, []):
 		return false
+	if attacker.prevents_interception():
+		return true
 	var attack_speed := attacker.get_effective_speed(stats.get(attacker, Vector3i.ZERO).z)
 	var partner := match_manager._get_declared_attack_partner(attacker)
 	if partner != null:
@@ -8637,7 +8698,7 @@ func _estimate_raw_attack_economy(action: CardAction, stats: Dictionary, project
 	return result
 
 func _add_combat_casualty(result: Dictionary, killer: Card, victim: Card, her_attack: bool = false) -> void:
-	if victim == null or CardStrategy.destruction_guard(victim):
+	if victim == null or CardStrategy.destruction_guard(victim) or game_manager.is_warded_from_combat_destruction(victim, killer):
 		return
 	if not killer.can_destroy_combat_protected_creatures(victim):
 		var replacement: Zone = victim.get_self_graveyard_replacement_zone(game_manager, true, true, false) if victim is BaseCard else null

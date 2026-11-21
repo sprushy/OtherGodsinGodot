@@ -3144,14 +3144,6 @@ func _get_intercept_row_distance(defender: Card, protected_target, projected_def
 		return -1
 	return target_depth - defender_depth
 
-func _get_minimum_intercept_row_distance(defender: Card, attacker: Card, protected_target, projected_mode: int = -1) -> int:
-	var minimum_depth := 1
-	var mode := int(defender.creature_mode) if projected_mode < 0 else projected_mode
-	if mode == Card.CreatureMode.AGGRESSIVE:
-		minimum_depth = 2
-	minimum_depth = max(0, minimum_depth - defender.get_intercept_reach_bonus(game_manager, attacker, protected_target))
-	return minimum_depth
-
 func _get_declared_attack_partner(attacker: Card) -> Card:
 	if attacker == null or not attacker.has_method("get_united_front_partner_for_attack"):
 		return null
@@ -3173,18 +3165,15 @@ func _can_intercept(defender: Card, attacker: Card, protected_target, modified_c
 		return false
 	if defender.is_sleeping and not projected_awake:
 		return false
-	if defender.can_special_intercept(game_manager, attacker, protected_target):
-		return game_manager.can_interceptor_engage_attacker(defender, attacker)
-	var interceptor_speed := game_manager.get_interceptor_speed_against_attacker(defender, attacker, protected_target, speed_delta if defender == modified_card else 0)
 	var attack_speed := projected_attack_speed if projected_attack_speed >= 0 else _get_declared_attack_speed(attacker)
 	if projected_attack_speed < 0 and attacker == modified_card and _get_declared_attack_partner(attacker) == null:
 		attack_speed = attacker.get_effective_speed(speed_delta)
-	if interceptor_speed < attack_speed:
-		return false
-	if not game_manager.can_interceptor_engage_attacker(defender, attacker):
-		return false
-	var minimum_distance := _get_minimum_intercept_row_distance(defender, attacker, protected_target, projected_mode)
-	return _get_intercept_row_distance(defender, protected_target, projected_defender_zone, projected_target_zone) >= minimum_distance
+	var row_distance := _get_intercept_row_distance(defender, protected_target, projected_defender_zone, projected_target_zone)
+	var mode := int(defender.creature_mode) if projected_mode < 0 else projected_mode
+	return game_manager.can_intercept_attack(
+		defender, attacker, protected_target, row_distance, mode, attack_speed,
+		speed_delta if defender == modified_card else 0
+	)
 
 func _get_possible_interceptors(attacker: Card, protected_target, projected_attack_speed: int = -1) -> Array[Card]:
 	var possible_interceptors: Array[Card] = []

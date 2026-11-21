@@ -28,7 +28,6 @@ const USE_SPLASH_BOARD_BACKGROUND_KEY := "use_splash_board_background"
 const SHOW_FOLLOWERS_KEY := "show_followers"
 const HOVER_SHOW_CARD_OPTIONS_KEY := "hover_show_card_options"
 const ALWAYS_SHOW_ABILITY_BADGES_KEY := "always_show_ability_badges"
-const HIDE_UNALTERED_REACH_TAG_KEY := "hide_unaltered_reach_tag"
 const ADD_PRIORITY_TOGGLES_TO_ALL_CARDS_KEY := "add_priority_toggles_to_all_cards"
 const HERMES_AUTO_PASS_END_PRIORITY_KEY := "hermes_auto_pass_end_priority"
 const HERMES_AUTO_PASS_UPKEEP_PRIORITY_KEY := "hermes_auto_pass_upkeep_priority"
@@ -104,7 +103,6 @@ static func build_general_tab(get_value: Callable, set_value: Callable, created_
 	_add_setting_toggle(settings, "Show followers", COMBAT_SETTINGS_SECTION, SHOW_FOLLOWERS_KEY, true, get_value, set_value, created_toggles)
 	_add_setting_toggle(settings, "Hover show card options", COMBAT_SETTINGS_SECTION, HOVER_SHOW_CARD_OPTIONS_KEY, true, get_value, set_value, created_toggles)
 	_add_setting_toggle(settings, "Always show ability badges", COMBAT_SETTINGS_SECTION, ALWAYS_SHOW_ABILITY_BADGES_KEY, false, get_value, set_value, created_toggles)
-	_add_setting_toggle(settings, "Hide Reach tag unless altered", COMBAT_SETTINGS_SECTION, HIDE_UNALTERED_REACH_TAG_KEY, false, get_value, set_value, created_toggles)
 
 	settings.add_child(_make_section_label("Priority"))
 	_add_setting_toggle(settings, "Add priority toggles to every card", COMBAT_SETTINGS_SECTION, ADD_PRIORITY_TOGGLES_TO_ALL_CARDS_KEY, false, get_value, set_value, created_toggles)

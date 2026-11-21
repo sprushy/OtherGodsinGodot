@@ -1526,30 +1526,13 @@ func remove_status_effects_with_flag(flag_name: String) -> void:
 	if active_statuses.size() != previous_status_count:
 		_emit_visual_state_changed()
 
-func get_intercept_reach_bonus(
-	_game_manager: GameManager = null,
-	_attacker: Card = null,
-	_protected_target = null
-) -> int:
-	if card_type != CardType.CREATURE or ability_text == "":
-		return 0
-	var normalized := " " + ability_text.to_lower() + " "
-	for token in ["[b]", "[/b]", "\n", "\t", ",", ".", ":", ";", "!", "?", "(", ")", "[", "]"]:
-		normalized = normalized.replace(token, " ")
-	if normalized.contains(" reach +1 "):
-		return 1
-	if normalized.contains(" reach "):
-		return 1
-	return 0
+func prevents_interception() -> bool:
+	return false
 
-func get_intercept_speed_bonus_against_attacker(
-	_game_manager: GameManager,
-	_attacker: Card,
-	_protected_target = null
-) -> int:
-	return 0
+func can_intercept_regardless_of_speed(_protected_target) -> bool:
+	return false
 
-func can_special_intercept(_game_manager: GameManager, _attacker: Card, _protected_target) -> bool:
+func has_reach(_protected_target) -> bool:
 	return false
 
 func halves_follower_damage_inflicted() -> bool:
