@@ -61,7 +61,43 @@ Expected:
 - Joiner sees the same room membership.
 - Both windows transition into `CombatMockGame`.
 
+## Client-Hosted Bot Match Spectator Smoke
+
+Use this for rated bot challenges hosted on a player's machine. The automated
+`scripts/ci/websocket_transport_test.gd` covers the local rendezvous, but only a
+real two-window/two-network test proves the public UDP path.
+
+### Setup
+
+- Use the public lobby, or two clients on different networks when possible.
+- Confirm inbound UDP `22346-22355` is open in both Lightsail and Windows Firewall.
+- Confirm the server log shows `punch reflector listening on port ...`.
+- Ideally disable UPnP on the host so the punch fallback is actually exercised.
+
+### Steps
+
+1. In the host window, start a rated bot challenge from the lobby.
+2. Wait for the challenge row to change from `Not watchable` to `Click to Watch`.
+3. In the spectator window, open `View Bot Matches` and select that row.
+4. Confirm the loading overlay resolves into the match and that `full_state` arrives.
+5. Let the host or spectator reconnect once, then confirm the watch link survives.
+6. Check the host and spectator traces for the rendezvous sequence:
+   - `punch bounce kind=host ...`
+   - `relay spectator punch target for match ...`
+   - `punch bounce kind=client ...`
+   - `spectator punch begin ...`
+   - `Spectator rendezvous: host reply=true, remapped port=...`
+   - `punch local port bind failed ...` or `punch local port remapped ...` if the primed spectator port was not reusable.
+
+### Pass Criteria
+
+- The host advertises a watchable endpoint without UPnP.
+- The spectator authenticates, receives `full_state`, and sees the correct hand visibility.
+- Reconnect keeps the same punched local port and original host endpoint.
+- No `not accepting spectators right now` error appears while the host match is live.
+
 ## Current Known Risk
 
 - The automated cross-process smoke harness still runs into Godot editor-script RPC scene-tree limitations.
 - That means the best proof right now is a real two-window menu test, not the editor-script harness.
+- Hole punching remains best-effort; symmetric NAT/CGNAT needs a relay fallback, which is not implemented yet.

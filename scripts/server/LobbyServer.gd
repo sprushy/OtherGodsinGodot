@@ -52,7 +52,10 @@ const BOT_SELF_PLAY_BLOCK_LOG_INTERVAL_SECONDS := 60.0
 const LOCAL_BOT_MATCH_RESULT_TIMEOUT_SECONDS := 3 * 60 * 60
 ## How long the lobby waits for a client-hosted match's host to acknowledge a
 ## spectator approval before telling the spectator the match is not watchable.
-const MATCH_SPECTATOR_ACK_TIMEOUT_SECONDS := 5.0
+# A client host can receive the approval before its match session exists and
+# queue token registration until launch. Five seconds was too short for that
+# handoff and caused spectators to be rejected after the host was ready.
+const MATCH_SPECTATOR_ACK_TIMEOUT_SECONDS := 20.0
 # Hole punching: a single reflector socket next to the lobby keeps zero-session
 # UDP bounce records; the fallback port scan covers crowded deployments.
 const PUNCH_REFLECTOR_PORT_ATTEMPTS := 10
@@ -3368,8 +3371,17 @@ func _observe_local_bot_match(session_id: String, match_id: String) -> void:
 		_send_error_to_session(session_id, "That match is no longer available.")
 		return
 	var entry: Dictionary = entry_variant
+	var via_punch := bool(entry.get("spectate_via_punch", false))
 	var spectate_ip := str(entry.get("spectate_ip", "")).strip_edges()
 	var spectate_port := int(entry.get("spectate_port", 0))
+	# Keepalive bounces can update the host's public mapping after it first
+	# advertised the room. Refresh before rejecting an empty stored endpoint so
+	# a late bounce can still make this room watchable.
+	if via_punch:
+		var host_bounce := _get_punch_bounce("host:%s" % match_id, PUNCH_DISCOVERY_BOUNCE_TTL_SECONDS)
+		if not host_bounce.is_empty():
+			spectate_ip = PunchReflectorScript.normalize_ip(str(host_bounce.get("ip", spectate_ip)))
+			spectate_port = int(host_bounce.get("port", spectate_port))
 	if spectate_ip.is_empty() or spectate_port <= 0:
 		_send_error_to_session(session_id, "That bot challenge can't be watched live from the host's network.")
 		return
@@ -3398,15 +3410,6 @@ func _observe_local_bot_match(session_id: String, match_id: String) -> void:
 	if not approved:
 		_send_error_to_session(session_id, "That bot challenge is not accepting spectators right now.")
 		return
-
-	var via_punch := bool(entry.get("spectate_via_punch", false))
-	if via_punch:
-		# Keepalive bounces can update the host's public mapping after it
-		# first advertised this match.
-		var host_bounce := _get_punch_bounce("host:%s" % match_id, PUNCH_DISCOVERY_BOUNCE_TTL_SECONDS)
-		if not host_bounce.is_empty():
-			spectate_ip = str(host_bounce.get("ip", spectate_ip))
-			spectate_port = int(host_bounce.get("port", spectate_port))
 
 	var identities: Dictionary = entry.get("identity_by_session", {})
 	if not (identities is Dictionary):
@@ -3486,10 +3489,23 @@ func _push_spectator_approval_to_host(
 	_spectator_acks_by_key.erase(ack_key)
 	return false
 
-func _handle_match_spectator_ack(_peer_id: int, payload: Dictionary) -> void:
+func _handle_match_spectator_ack(peer_id: int, payload: Dictionary) -> void:
+	var session: Dictionary = _get_session_for_peer(peer_id)
+	if session.is_empty():
+		return
+	var session_id := str(session.get("session_id", ""))
 	var match_id := str(payload.get("match_id", "")).strip_edges()
 	var observer_session_id := str(payload.get("observer_session_id", "")).strip_edges()
 	if match_id.is_empty() or observer_session_id.is_empty():
+		return
+	var entry_variant = _local_bot_matches_by_id.get(match_id, null)
+	if entry_variant == null or not (entry_variant is Dictionary):
+		return
+	var entry: Dictionary = entry_variant
+	if str(entry.get("human_session_id", "")) != session_id:
+		return
+	var spectator_tokens = entry.get("spectator_match_tokens_by_session", {})
+	if not (spectator_tokens is Dictionary) or not (spectator_tokens as Dictionary).has(observer_session_id):
 		return
 	_spectator_acks_by_key["%s|%s" % [match_id, observer_session_id]] = true
 
@@ -3516,7 +3532,7 @@ func _handle_local_bot_match_spectate_info(peer_id: int, payload: Dictionary) ->
 		# endpoint (if any) this match already advertised.
 		var bounce := _get_punch_bounce("host:%s" % match_id, PUNCH_DISCOVERY_BOUNCE_TTL_SECONDS)
 		if not bounce.is_empty():
-			spectate_ip = str(bounce.get("ip", ""))
+			spectate_ip = PunchReflectorScript.normalize_ip(str(bounce.get("ip", "")))
 			spectate_port = int(bounce.get("port", 0))
 			viable = spectate_port > 0 and not spectate_ip.is_empty()
 			punched = viable
@@ -3553,7 +3569,7 @@ func _handle_local_bot_match_punch_ready(peer_id: int, payload: Dictionary) -> v
 	var bounce := _get_punch_bounce("client:%s:%s" % [match_id, session_id], PUNCH_CLIENT_BOUNCE_TTL_SECONDS)
 	if bounce.is_empty():
 		return
-	var punch_ip := str(bounce.get("ip", ""))
+	var punch_ip := PunchReflectorScript.normalize_ip(str(bounce.get("ip", "")))
 	var punch_port := int(bounce.get("port", 0))
 	if punch_ip.is_empty() or punch_port <= 0:
 		return

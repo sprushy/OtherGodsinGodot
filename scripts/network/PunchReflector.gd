@@ -45,6 +45,15 @@ static func make_host_punch(match_id: String, observer_token: String) -> PackedB
 		"proof": proof,
 	}).to_utf8_buffer()
 
+## Windows/dual-stack sockets can report IPv4 senders as ::ffff:a.b.c.d. Keep
+## the registry and every downstream endpoint plain IPv4 so ENet socket_send
+## and create_client never receive an address form they may reject.
+static func normalize_ip(address: String) -> String:
+	var resolved := address.strip_edges()
+	if resolved.begins_with("::ffff:"):
+		return resolved.trim_prefix("::ffff:")
+	return resolved
+
 ## Open the UDP route before ENet starts its handshake. The temporary socket
 ## hands its local port to ENet even if the host's punch is delayed.
 static func prime_spectator_socket(
@@ -58,7 +67,7 @@ static func prime_spectator_socket(
 		return {}
 	var local_port := socket.get_local_port()
 	var punch := make_marker(PUNCH_KIND_PACKET, "")
-	var advertised_ip := host_ip.trim_prefix("::ffff:")
+	var advertised_ip := normalize_ip(host_ip)
 	for _attempt in range(SPECTATOR_PRIME_ATTEMPTS):
 		if socket.set_dest_address(host_ip, host_port) == OK:
 			socket.put_packet(punch)
@@ -72,7 +81,7 @@ static func prime_spectator_socket(
 		for _packet_index in range(mini(socket.get_available_packet_count(), 16)):
 			var reply := socket.get_packet()
 			var reply_port := socket.get_packet_port()
-			if socket.get_packet_ip().trim_prefix("::ffff:") != advertised_ip or reply_port <= 0:
+			if normalize_ip(socket.get_packet_ip()) != advertised_ip or reply_port <= 0:
 				continue
 			# A legacy host can confirm the advertised endpoint. A verified
 			# reply can also teach us the port the host's router used toward us.
@@ -133,7 +142,7 @@ func _process(_delta: float) -> void:
 			# Never parse strangers' traffic beyond the marker check.
 			continue
 		var bounce := {
-			"ip": _udp.get_packet_ip(),
+			"ip": normalize_ip(_udp.get_packet_ip()),
 			"port": _udp.get_packet_port(),
 			"msec": Time.get_ticks_msec(),
 		}

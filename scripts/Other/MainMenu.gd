@@ -9972,8 +9972,11 @@ func _poll_local_bot_spectate_probe() -> void:
 				lobby_client.submit_local_bot_match_spectate_info(probe_match_id, true, reachable_ip, reachable_port)
 			else:
 				# No UPnP mapping: try NAT hole punching through the lobby's
-				# reflector before giving up the spectate offer entirely.
-				_start_local_bot_spectate_punch(probe_match_id)
+				# reflector before giving up the spectate offer entirely. An
+				# approval may have started punch fallback already; do not reset
+				# its submission state here.
+				if _local_bot_spectate_punch.is_empty():
+					_start_local_bot_spectate_punch(probe_match_id)
 	_poll_local_bot_spectate_punch()
 	_poll_match_punch_watch()
 
@@ -9988,7 +9991,10 @@ func _ensure_local_bot_spectate_punch_submission(match_id: String) -> void:
 		return
 	if int(lobby_client.current_punch_reflector_port) <= 0 or _current_lobby_ip.strip_edges().is_empty():
 		return
-	if not _local_bot_spectate_punch.is_empty() or _local_bot_spectate_probe_thread != null:
+	# The UPnP probe can still be running when an approval arrives. Start punch
+	# fallback now if the reflector is known; if UPnP wins later, its endpoint
+	# report supersedes this one.
+	if not _local_bot_spectate_punch.is_empty():
 		return
 	var mock_game := get_node_or_null("GameContainer/MockGame")
 	if mock_game == null or mock_game.network_manager == null:
@@ -10040,15 +10046,19 @@ func _poll_local_bot_spectate_punch() -> void:
 			SPECTATE_PUNCH_KEEPALIVE_INTERVAL_MSEC if submitted else SPECTATE_PUNCH_BOUNCE_INTERVAL_MSEC
 		)
 		mock_game.network_manager.send_punch_bounce(reflector_host, reflector_port, match_id, PunchReflectorScript.BOUNCE_KIND_HOST)
-	if submitted:
+	# Keep re-advertising at the keepalive cadence. The server only merges a
+	# via-punch report while a fresh host bounce is on record, so six quick
+	# attempts can all land before the first UDP bounce arrives.
+	var was_submitted := submitted
+	if was_submitted and now_msec < int(_local_bot_spectate_punch.get("next_submit_msec", 0)):
 		return
 	if now_msec >= int(_local_bot_spectate_punch.get("next_submit_msec", 0)):
-		_local_bot_spectate_punch["next_submit_msec"] = now_msec + SPECTATE_PUNCH_SUBMIT_INTERVAL_MSEC
+		_local_bot_spectate_punch["next_submit_msec"] = now_msec + (
+			SPECTATE_PUNCH_KEEPALIVE_INTERVAL_MSEC if was_submitted else SPECTATE_PUNCH_SUBMIT_INTERVAL_MSEC
+		)
 		var attempts := int(_local_bot_spectate_punch.get("submit_attempts", 0)) + 1
 		_local_bot_spectate_punch["submit_attempts"] = attempts
-		# The server merges these only once a fresh host bounce is on record,
-		# so a handful of repeats ride out any first lost UDP packet.
-		_local_bot_spectate_punch["submitted"] = attempts >= SPECTATE_PUNCH_SUBMIT_ATTEMPTS
+		_local_bot_spectate_punch["submitted"] = was_submitted or attempts >= SPECTATE_PUNCH_SUBMIT_ATTEMPTS
 		lobby_client.submit_local_bot_match_spectate_info(match_id, true, "", 0, true)
 
 func _get_punch_reflector_host() -> String:
@@ -10102,11 +10112,14 @@ func _prime_match_punch_socket(host_ip: String, host_port: int, observer_token: 
 	)
 
 func _on_match_spectator_punch_relayed(match_id: String) -> void:
-	if (
-		_match_punch_watch.get("match_id") == match_id
-		and _match_loading_overlay != null and _match_loading_overlay.visible
-		and not bool(_match_punch_watch.get("host_replied", false))
-	):
+	if _match_punch_watch.get("match_id") != match_id:
+		return
+	# The lobby now has a fresh spectator endpoint. Use it immediately instead
+	# of waiting for the next cadence tick; a late relay used to be only a hint.
+	_match_punch_watch["next_bounce_msec"] = 0
+	_match_punch_watch["next_report_msec"] = 0
+	if (_match_loading_overlay != null and _match_loading_overlay.visible
+			and not bool(_match_punch_watch.get("host_replied", false))):
 		_match_loading_hint_label.text = "The lobby received your UDP signal. Waiting for a direct reply from the host…"
 
 func _poll_match_punch_watch() -> void:
@@ -10175,7 +10188,8 @@ func _on_match_spectator_punch_requested(match_id: String, observer_session_id: 
 	if observer_token.is_empty():
 		return
 	var punch := PunchReflectorScript.make_host_punch(match_id, observer_token)
-	var punch_err: Error = network_manager.begin_spectator_punch(observer_session_id, punch_ip, punch_port, punch)
+	var resolved_punch_ip := PunchReflectorScript.normalize_ip(punch_ip)
+	var punch_err: Error = network_manager.begin_spectator_punch(observer_session_id, resolved_punch_ip, punch_port, punch)
 	if punch_err != OK:
 		_write_smoke_trace("spectator_punch_start_failed match=%s error=%d" % [match_id, int(punch_err)])
 

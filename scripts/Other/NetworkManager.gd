@@ -196,17 +196,21 @@ func create_client(address: String = "127.0.0.1", port: int = 12345, punch_local
 	var err := enet_peer.create_client(address, port, 0, 0, 0, punch_local_port)
 	if err != OK and punch_local_port > 0:
 		# The probe's port may have been taken before ENet could bind it.
+		_trace("punch local port bind failed requested=%d error=%d; retrying with ephemeral port" % [punch_local_port, int(err)])
 		err = enet_peer.create_client(address, port)
 	if err == OK:
 		if punch_local_port > 0:
-			_client_punch_local_port = enet_peer.get_host().get_local_port()
+			var bound_port := enet_peer.get_host().get_local_port()
+			if bound_port != punch_local_port:
+				_trace("punch local port remapped requested=%d actual=%d" % [punch_local_port, bound_port])
+			_client_punch_local_port = bound_port
 		api.multiplayer_peer = peer
 		is_server = false
 		print("Client connecting to ", address, ":", port)
 		_trace("client connecting to %s:%d path=%s" % [address, port, str(get_path())])
 	else:
 		last_server_error = err
-		_trace("client connect failed to %s:%d error=%d" % [address, port, err])
+		_trace("client connect failed to %s:%d error=%d punch_local_port=%d" % [address, port, err, punch_local_port])
 	return err
 
 ## Client-side WebSocket transport for restrictive networks. The URL must
@@ -362,6 +366,11 @@ func send_punch_bounce(reflector_ip: String, reflector_port: int, match_id: Stri
 		return ERR_UNAVAILABLE
 	if reflector_ip.strip_edges().is_empty() or reflector_port <= 0 or match_id.strip_edges().is_empty():
 		return ERR_INVALID_PARAMETER
+	_trace("punch bounce kind=%s match=%s observer=%s reflector=%s:%d" % [
+		bounce_kind, match_id, observer_session_id, reflector_ip.strip_edges(), reflector_port,
+	])
+	# ENetConnection.socket_send returns void in Godot 4.7, so trace the attempt
+	# instead of trying to assign a nonexistent Error result.
 	enet_connection.socket_send(
 		reflector_ip.strip_edges(),
 		reflector_port,
@@ -386,6 +395,7 @@ func begin_spectator_punch(observer_session_id: String, target_ip: String, targe
 		"packet": punch,
 		"expires_msec": Time.get_ticks_msec() + int(PUNCH_TARGET_TTL_SECONDS * 1000.0),
 	}
+	_trace("spectator punch begin observer=%s target=%s:%d" % [punch_id, target_ip.strip_edges(), target_port])
 	enet_connection.socket_send(target_ip.strip_edges(), target_port, punch)
 	return OK
 
@@ -420,6 +430,9 @@ func _process(delta: float) -> void:
 		if Time.get_ticks_msec() > int((target as Dictionary).get("expires_msec", 0)):
 			expired_ids.append(punch_id)
 			continue
+		_trace("spectator punch send observer=%s target=%s:%d" % [
+			punch_id, str((target as Dictionary).get("ip", "")), int((target as Dictionary).get("port", 0)),
+		])
 		enet_connection.socket_send(
 			str((target as Dictionary).get("ip", "")),
 			int((target as Dictionary).get("port", 0)),

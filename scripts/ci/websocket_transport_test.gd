@@ -51,6 +51,7 @@ func _initialize() -> void:
 
 func _run() -> void:
 	_check_lobby_endpoint_configuration()
+	_check_punch_endpoint_normalization()
 	await _check_stale_client_disconnect_events()
 	await _check_direct_spectator_punch()
 	await _check_failed_lobby_transport_cleanup()
@@ -183,6 +184,11 @@ func _check_lobby_endpoint_configuration() -> void:
 	OS.set_environment(EndpointsScript.PUBLIC_URL_ENV, previous_url_env)
 	OS.set_environment(LobbyClientScript.TRANSPORT_OVERRIDE_ENV, previous_transport_env)
 	lobby.free()
+
+func _check_punch_endpoint_normalization() -> void:
+	_check(PunchReflectorScript.normalize_ip("::ffff:127.0.0.1") == "127.0.0.1", "normalize IPv4-mapped reflector endpoint")
+	_check(PunchReflectorScript.normalize_ip(" 127.0.0.2 ") == "127.0.0.2", "trim reflector endpoint")
+	_check(PunchReflectorScript.normalize_ip("2001:db8::1") == "2001:db8::1", "leave non-mapped endpoints intact")
 
 func _check_stale_client_disconnect_events() -> void:
 	var network := _network_node("CanceledTransport")
