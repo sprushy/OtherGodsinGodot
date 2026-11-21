@@ -3371,6 +3371,10 @@ func _observe_local_bot_match(session_id: String, match_id: String) -> void:
 		_send_error_to_session(session_id, "That match is no longer available.")
 		return
 	var entry: Dictionary = entry_variant
+	_spectate_breadcrumb("observe_requested", {
+		"observer": session_id, "match": match_id,
+		"host": str(entry.get("human_session_id", "")),
+	})
 	var via_punch := bool(entry.get("spectate_via_punch", false))
 	var spectate_ip := str(entry.get("spectate_ip", "")).strip_edges()
 	var spectate_port := int(entry.get("spectate_port", 0))
@@ -3404,12 +3408,29 @@ func _observe_local_bot_match(session_id: String, match_id: String) -> void:
 	spectator_tokens[session_id] = observer_match_token
 	entry["spectator_match_tokens_by_session"] = spectator_tokens
 	_punch_ready_last_msec_by_key.erase("%s|%s" % [match_id, session_id])
+	_spectate_breadcrumb("host_approval_requested", {
+		"observer": session_id, "match": match_id, "host": human_session_id,
+	})
 
 	var approved := await _push_spectator_approval_to_host(
 		match_id, human_session_id, session_id, observer_match_token, visible_player_indices)
+	_spectate_breadcrumb("host_approval_result", {
+		"observer": session_id, "match": match_id, "approved": str(approved),
+	})
 	if not approved:
 		_send_error_to_session(session_id, "That bot challenge is not accepting spectators right now.")
 		return
+	# Arm the public UDP relay for cross-NAT spectators. The reflector only
+	# forwards packets for sessions the lobby approved, and only between the
+	# exact endpoints that already bounced from each side's match socket.
+	var via_relay := via_punch and punch_reflector != null and _punch_reflector_port > 0
+	if via_relay and punch_reflector.has_method("enable_relay_session"):
+		punch_reflector.enable_relay_session(match_id, session_id)
+	_spectate_breadcrumb("relay_session_armed", {
+		"observer": session_id, "match": match_id,
+		"via_punch": str(via_punch), "via_relay": str(via_relay),
+		"endpoint": "%s:%d" % [spectate_ip, spectate_port],
+	})
 
 	var identities: Dictionary = entry.get("identity_by_session", {})
 	if not (identities is Dictionary):
@@ -3455,8 +3476,17 @@ func _observe_local_bot_match(session_id: String, match_id: String) -> void:
 		"waiting_for_reconnect": false,
 		"spectate_via_punch": via_punch,
 		"punch_reflector_port": _punch_reflector_port,
+		"spectate_relay_port": _punch_reflector_port if via_relay else 0,
+		"spectate_via_relay": via_relay,
 	})
-	_trace("observer %s joined local bot match %s" % [session_id, match_id])
+	_spectate_breadcrumb("assignment_sent", {
+		"observer": session_id, "match": match_id,
+		"endpoint": "%s:%d" % [spectate_ip, spectate_port],
+		"via_punch": str(via_punch), "via_relay": str(via_relay),
+	})
+	_trace("observer %s joined local bot match %s via_punch=%s via_relay=%s" % [
+		session_id, match_id, str(via_punch), str(via_relay),
+	])
 
 ## Push a spectator's credentials to a client-hosted match's host and wait for
 ## its acknowledgement so the spectator never dials an unprepared host.
@@ -3573,13 +3603,23 @@ func _handle_local_bot_match_punch_ready(peer_id: int, payload: Dictionary) -> v
 	var spectator_tokens = entry.get("spectator_match_tokens_by_session", {})
 	if not (spectator_tokens is Dictionary) or not (spectator_tokens as Dictionary).has(session_id):
 		return
+	_spectate_breadcrumb("punch_ready_received", {"observer": session_id, "match": match_id})
 	var bounce := _get_punch_bounce("client:%s:%s" % [match_id, session_id], PUNCH_CLIENT_BOUNCE_TTL_SECONDS)
 	if bounce.is_empty():
+		_spectate_breadcrumb("punch_ready_missing_bounce", {"observer": session_id, "match": match_id})
 		return
 	var punch_ip := PunchReflectorScript.normalize_ip(str(bounce.get("ip", "")))
 	var punch_port := int(bounce.get("port", 0))
 	if punch_ip.is_empty() or punch_port <= 0:
 		return
+	# Refresh the relay with the spectator's current endpoint on every report,
+	# including throttled ones, so retries do not forward to a stale NAT port.
+	if punch_reflector.has_method("enable_relay_session"):
+		punch_reflector.enable_relay_session(match_id, session_id)
+	_spectate_breadcrumb("spectator_endpoint_resolved", {
+		"observer": session_id, "match": match_id,
+		"endpoint": "%s:%d" % [punch_ip, punch_port],
+	})
 	var rate_key := "%s|%s" % [match_id, session_id]
 	var now_msec := Time.get_ticks_msec()
 	if _punch_ready_last_msec_by_key.size() > 256:
@@ -3600,9 +3640,17 @@ func _handle_local_bot_match_punch_ready(peer_id: int, payload: Dictionary) -> v
 		"punch_ip": punch_ip,
 		"punch_port": punch_port,
 	})
+	_spectate_breadcrumb("host_punch_relayed", {
+		"observer": session_id, "match": match_id,
+		"host": str(entry.get("human_session_id", "")),
+		"endpoint": "%s:%d" % [punch_ip, punch_port], "first": str(first_relay),
+	})
 	if first_relay:
 		_send_to_session(session_id, LobbyProtocolScript.MATCH_SPECTATOR_PUNCH_RELAYED, {"match_id": match_id})
-	_trace("relay spectator punch target for match %s observer %s" % [match_id, session_id])
+	_trace("relay spectator punch target for match %s observer %s via_relay=%s" % [
+		match_id, session_id,
+		str(punch_reflector != null and punch_reflector.has_method("enable_relay_session")),
+	])
 
 func _get_punch_bounce(key: String, max_age_seconds: float) -> Dictionary:
 	if punch_reflector == null:
@@ -5123,6 +5171,15 @@ func _is_admin_username(username: String) -> bool:
 
 func _get_server_version() -> String:
 	return AppReleaseInfoScript.get_current_version()
+
+## Always-on connection breadcrumb for the spectator rendezvous. Unlike the
+## optional network trace, this print is meant to be visible on a public server
+## console so host and spectator logs can be compared line for line.
+func _spectate_breadcrumb(stage: String, details: Dictionary = {}) -> void:
+	var line := "Spectate breadcrumb role=lobby stage=%s t=%d" % [stage, Time.get_ticks_msec()]
+	for key in details.keys():
+		line += " %s=%s" % [str(key), str(details[key])]
+	print(line)
 
 func _trace(message: String) -> void:
 	if not trace_network and trace_file_path.is_empty():

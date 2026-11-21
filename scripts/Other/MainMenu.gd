@@ -9855,6 +9855,10 @@ func _on_local_bot_match_confirmed(success: bool, ranked_result: Dictionary, _me
 	_maybe_request_profile_summary()
 
 func _on_match_spectator_approved(match_id: String, observer_session_id: String, observer_match_token: String, visible_player_indices: Array) -> void:
+	_spectate_breadcrumb("host", "approval_received", {
+		"observer": observer_session_id, "match": match_id,
+		"token": "set" if not observer_match_token.is_empty() else "missing",
+	})
 	_ensure_local_bot_spectate_punch_submission(match_id)
 	if _try_apply_match_spectator(match_id, observer_session_id, observer_match_token, visible_player_indices):
 		return
@@ -9882,6 +9886,7 @@ func _try_apply_match_spectator(match_id: String, observer_session_id: String, o
 		if _local_bot_spectate_punch.get("match_id") == match_id:
 			_local_bot_spectate_punch["next_bounce_msec"] = 0
 			_poll_local_bot_spectate_punch()
+		_spectate_breadcrumb("host", "approval_acked", {"observer": observer_session_id, "match": match_id})
 		lobby_client.ack_match_spectator(match_id, observer_session_id)
 	return true
 
@@ -9918,6 +9923,9 @@ func _begin_local_bot_spectate_advertising(local_match_info: Dictionary, mock_ga
 	if bound_port <= 0:
 		# Binding failed; the match stays private (no spectate offer).
 		return
+	_spectate_breadcrumb("host", "spectate_advertising_started", {
+		"match": match_id, "port": bound_port, "local_lobby": str(_is_local_lobby_host),
+	})
 	if _is_local_lobby_host:
 		# This client spawned the lobby, so spectators sit on this machine or
 		# LAN. Advertise the LAN address directly: no UPnP mapping is needed,
@@ -10041,6 +10049,10 @@ func _ensure_local_bot_spectate_punch_submission(match_id: String) -> void:
 func _start_local_bot_spectate_punch(match_id: String) -> void:
 	if match_id.is_empty():
 		return
+	_spectate_breadcrumb("host", "punch_advertising_started", {
+		"match": match_id,
+		"reflector_port": lobby_client.current_punch_reflector_port if lobby_client != null else 0,
+	})
 	_local_bot_spectate_punch = {
 		"match_id": match_id,
 		"client_id": lobby_client.get_instance_id() if lobby_client != null else 0,
@@ -10049,6 +10061,8 @@ func _start_local_bot_spectate_punch(match_id: String) -> void:
 		"next_submit_msec": Time.get_ticks_msec() + 600,
 		"submit_attempts": 0,
 		"submitted": false,
+		"traced_bounce": false,
+		"traced_submit": false,
 	}
 
 func _poll_local_bot_spectate_punch() -> void:
@@ -10077,6 +10091,11 @@ func _poll_local_bot_spectate_punch() -> void:
 			SPECTATE_PUNCH_KEEPALIVE_INTERVAL_MSEC if submitted else SPECTATE_PUNCH_BOUNCE_INTERVAL_MSEC
 		)
 		mock_game.network_manager.send_punch_bounce(reflector_host, reflector_port, match_id, PunchReflectorScript.BOUNCE_KIND_HOST)
+		if not bool(_local_bot_spectate_punch.get("traced_bounce", false)):
+			_local_bot_spectate_punch["traced_bounce"] = true
+			_spectate_breadcrumb("host", "bounce_sent", {
+				"match": match_id, "reflector": "%s:%d" % [reflector_host, reflector_port],
+			})
 	# Keep re-advertising at the keepalive cadence. The server only merges a
 	# via-punch report while a fresh host bounce is on record, so six quick
 	# attempts can all land before the first UDP bounce arrives.
@@ -10091,6 +10110,9 @@ func _poll_local_bot_spectate_punch() -> void:
 		_local_bot_spectate_punch["submit_attempts"] = attempts
 		_local_bot_spectate_punch["submitted"] = was_submitted or attempts >= SPECTATE_PUNCH_SUBMIT_ATTEMPTS
 		lobby_client.submit_local_bot_match_spectate_info(match_id, true, "", 0, true, _get_spectate_lan_ip())
+		if not bool(_local_bot_spectate_punch.get("traced_submit", false)):
+			_local_bot_spectate_punch["traced_submit"] = true
+			_spectate_breadcrumb("host", "endpoint_submitted_via_punch", {"match": match_id, "attempt": attempts})
 
 func _get_punch_reflector_host() -> String:
 	var address := _current_lobby_ip.strip_edges()
@@ -10114,20 +10136,39 @@ func _arrange_match_punch_watch(match_info: Dictionary) -> void:
 	var match_id := str(match_info.get("match_id", "")).strip_edges()
 	if match_id.is_empty() or observer_session_id.is_empty():
 		return
+	var relay_port := int(match_info.get("spectate_relay_port", 0))
+	var via_relay := bool(match_info.get("spectate_via_relay", false)) and relay_port > 0
 	_match_punch_watch = {
 		"match_id": match_id,
 		"reflector_port": reflector_port,
+		"relay_port": relay_port if via_relay else 0,
+		"via_relay": via_relay,
 		"observer_session_id": observer_session_id,
 		"peer_instance": 0,
 		"next_bounce_msec": 0,
 		"next_report_msec": 0,
+		"traced_bounce": false,
+		"traced_report": false,
 	}
+	_spectate_breadcrumb("spectator", "rendezvous_armed", {
+		"observer": observer_session_id, "match": match_id,
+		"reflector_port": reflector_port, "relay_port": int(_match_punch_watch["relay_port"]),
+	})
 
 func _prime_match_punch_socket(host_ip: String, host_port: int, observer_token: String) -> Dictionary:
 	if not _has_active_lobby_connection():
+		_spectate_breadcrumb("spectator", "prime_skipped", {"reason": "lobby_disconnected"})
 		return {}
 	var match_id := str(_match_punch_watch["match_id"])
 	var observer_id := str(_match_punch_watch["observer_session_id"])
+	var relay_port := int(_match_punch_watch.get("relay_port", 0))
+	var relay_ip := _get_punch_reflector_host() if relay_port > 0 else ""
+	_spectate_breadcrumb("spectator", "prime_started", {
+		"observer": observer_id, "match": match_id,
+		"host": "%s:%d" % [host_ip, host_port],
+		"token": "set" if not observer_token.is_empty() else "missing",
+		"relay": "%s:%d" % [relay_ip, relay_port] if relay_port > 0 else "none",
+	})
 	var report_ready := func() -> bool:
 		if not _has_active_lobby_connection() or lobby_client.current_session_id != observer_id:
 			return false
@@ -10136,22 +10177,38 @@ func _prime_match_punch_socket(host_ip: String, host_port: int, observer_token: 
 	var host_punch := PackedByteArray()
 	if not observer_token.is_empty():
 		host_punch = PunchReflectorScript.make_host_punch(match_id, observer_token)
-	return await PunchReflectorScript.prime_spectator_socket(
+	var route: Dictionary = await PunchReflectorScript.prime_spectator_socket(
 		get_tree(), host_ip, host_port, _get_punch_reflector_host(), int(_match_punch_watch["reflector_port"]),
 		PunchReflectorScript.make_marker(PunchReflectorScript.BOUNCE_KIND_CLIENT, match_id, observer_id),
-		host_punch, report_ready
+		host_punch, report_ready, relay_ip, relay_port
 	)
+	_spectate_breadcrumb("spectator", "prime_finished", {
+		"observer": observer_id, "match": match_id,
+		"local_port": int(route.get("local_port", 0)),
+		"host_replied": str(bool(route.get("host_replied", false))),
+		"via_relay": str(bool(route.get("via_relay", false))),
+		"connect": "%s:%d" % [str(route.get("connect_ip", "")), int(route.get("connect_port", 0))],
+	})
+	return route
 
 func _on_match_spectator_punch_relayed(match_id: String) -> void:
 	if _match_punch_watch.get("match_id") != match_id:
 		return
+	_spectate_breadcrumb("spectator", "lobby_punched_our_endpoint", {
+		"observer": str(_match_punch_watch.get("observer_session_id", "")),
+		"match": match_id,
+	})
 	# The lobby now has a fresh spectator endpoint. Use it immediately instead
 	# of waiting for the next cadence tick; a late relay used to be only a hint.
 	_match_punch_watch["next_bounce_msec"] = 0
 	_match_punch_watch["next_report_msec"] = 0
 	if (_match_loading_overlay != null and _match_loading_overlay.visible
 			and not bool(_match_punch_watch.get("host_replied", false))):
-		_match_loading_hint_label.text = "The lobby received your UDP signal. Waiting for a direct reply from the host…"
+		_match_loading_hint_label.text = (
+			"The lobby received your UDP signal. Connecting through the lobby relay if the host cannot reach you directly…"
+			if bool(_match_punch_watch.get("via_relay", false))
+			else "The lobby received your UDP signal. Waiting for a direct reply from the host…"
+		)
 
 func _poll_match_punch_watch() -> void:
 	if _match_punch_watch.is_empty():
@@ -10190,11 +10247,38 @@ func _poll_match_punch_watch() -> void:
 		_get_punch_reflector_host(), reflector_port, match_id, PunchReflectorScript.BOUNCE_KIND_CLIENT, observer_session_id)
 	if bounce_err != OK:
 		_match_punch_watch["next_bounce_msec"] = now_msec + MATCH_PUNCH_WATCH_BOUNCE_INTERVAL_MSEC
+		_spectate_breadcrumb("spectator", "bounce_failed", {
+			"observer": observer_session_id, "match": match_id, "error": int(bounce_err),
+		})
 		return
+	if not bool(_match_punch_watch.get("traced_bounce", false)):
+		_match_punch_watch["traced_bounce"] = true
+		_spectate_breadcrumb("spectator", "bounce_sent", {
+			"observer": observer_session_id, "match": match_id,
+			"reflector_port": reflector_port, "peer": int(enet_peer.get_instance_id()),
+		})
 	if observer_session_id.is_empty() or now_msec < int(_match_punch_watch.get("next_report_msec", 0)):
 		return
 	_match_punch_watch["next_report_msec"] = now_msec + MATCH_PUNCH_WATCH_REPORT_INTERVAL_MSEC
 	lobby_client.submit_match_spectator_punch_ready(match_id, observer_session_id)
+	if not bool(_match_punch_watch.get("traced_report", false)):
+		_match_punch_watch["traced_report"] = true
+		_spectate_breadcrumb("spectator", "punch_ready_reported", {
+			"observer": observer_session_id, "match": match_id,
+		})
+
+## Single, greppable breadcrumb format for the whole spectate connection path.
+## Both console windows can be searched for `Spectate breadcrumb` to compare the
+## same observer/match across client, host, and lobby steps.
+func _spectate_breadcrumb(role: String, stage: String, details: Dictionary = {}) -> void:
+	var fields := details.duplicate()
+	if fields.is_empty() and not _match_punch_watch.is_empty():
+		fields["observer"] = str(_match_punch_watch.get("observer_session_id", ""))
+		fields["match"] = str(_match_punch_watch.get("match_id", ""))
+	var line := "Spectate breadcrumb role=%s stage=%s" % [role, stage]
+	for key in fields.keys():
+		line += " %s=%s" % [str(key), str(fields[key])]
+	print(line)
 
 func _trace_spectator_punch_once(observer_id: String, detail: String) -> void:
 	var key := "%s|%s" % [observer_id, detail]
@@ -10202,6 +10286,7 @@ func _trace_spectator_punch_once(observer_id: String, detail: String) -> void:
 		return
 	_spectator_punch_skip_printed[key] = true
 	print("Spectator punch observer=%s: %s" % [observer_id, detail])
+	_spectate_breadcrumb("host", "punch_result", {"observer": observer_id, "detail": detail})
 
 ## A spectator approved for this client-hosted bot challenge bounced the
 ## lobby's punch reflector; punch its endpoint from the match server socket so
@@ -10274,6 +10359,23 @@ func _on_remote_match_assigned(match_info: Dictionary) -> void:
 		return
 	var match_ip := str(match_info.get("server_ip", _current_lobby_ip))
 	var resolved_match_ip := _resolve_spectate_server_ip(match_info, match_ip)
+	if bool(match_info.get("observer_mode", false)):
+		print("Spectate endpoint observer=%s public=%s lan=%s selected=%s" % [
+			str(match_info.get("observer_session_id", "")),
+			match_ip,
+			PunchReflectorScript.normalize_ip(str(match_info.get("spectate_lan_ip", ""))),
+			resolved_match_ip,
+		])
+		_spectate_breadcrumb("spectator", "assignment_received", {
+			"observer": str(match_info.get("observer_session_id", "")),
+			"match": str(match_info.get("match_id", "")),
+			"public": match_ip,
+			"selected": resolved_match_ip,
+			"lan": PunchReflectorScript.normalize_ip(str(match_info.get("spectate_lan_ip", ""))),
+			"via_punch": str(bool(match_info.get("spectate_via_punch", false))),
+			"via_relay": str(bool(match_info.get("spectate_via_relay", false))),
+			"reflector_port": int(match_info.get("punch_reflector_port", 0)),
+		})
 	if resolved_match_ip != match_ip:
 		match_ip = resolved_match_ip
 		match_info["server_ip"] = match_ip
@@ -10325,12 +10427,37 @@ func _launch_assigned_match(
 		match_info["spectator_punch_local_port"] = int(punch.get("local_port", 0))
 		var host_port := int(punch.get("host_port", match_port))
 		var host_replied := bool(punch.get("host_replied", false))
+		var via_relay := bool(punch.get("via_relay", false))
+		var connect_ip := str(punch.get("connect_ip", server_ip))
+		var connect_port := int(punch.get("connect_port", host_port))
 		_match_punch_watch["host_replied"] = host_replied
-		print("Spectator rendezvous: host reply=%s, remapped port=%s" % [host_replied, host_port != match_port])
-		match_port = host_port
+		_match_punch_watch["via_relay"] = via_relay
+		print("Spectator rendezvous: host reply=%s, remapped port=%s, relay=%s" % [
+			host_replied, host_port != match_port, via_relay,
+		])
+		_spectate_breadcrumb("spectator", "dial_endpoint_selected", {
+			"observer": str(_match_punch_watch.get("observer_session_id", "")),
+			"match": str(_match_punch_watch.get("match_id", "")),
+			"local_port": int(punch.get("local_port", 0)),
+			"direct_host": "%s:%d" % [server_ip, match_port],
+			"connect": "%s:%d" % [connect_ip, connect_port],
+			"host_replied": str(host_replied),
+			"via_relay": str(via_relay),
+		})
+		server_ip = connect_ip
+		match_port = connect_port
+		if via_relay and is_instance_valid(_match_loading_hint_label):
+			_match_loading_hint_label.text = "Connecting through the lobby relay…"
 	elif not _uses_dedicated_match_server(match_info) \
 			and str(match_info.get("server_mode", "")) != MatchSessionScript.SERVER_MODE_PLAYER_HOST:
 		await get_tree().create_timer(0.4).timeout
+	if is_observing:
+		_spectate_breadcrumb("spectator", "enet_dial_started", {
+			"observer": str(match_info.get("observer_session_id", "")),
+			"match": str(match_info.get("match_id", "")),
+			"connect": "%s:%d" % [server_ip, match_port],
+			"punch_local_port": int(match_info.get("spectator_punch_local_port", 0)),
+		})
 	await get_node("GameContainer/MockGame").start_game(false, true, server_ip, match_port, match_info)
 	show_game()
 	if is_observing:

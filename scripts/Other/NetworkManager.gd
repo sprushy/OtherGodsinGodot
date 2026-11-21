@@ -82,6 +82,12 @@ var _websocket_mount: Node = null
 var _punch_targets: Dictionary = {}
 var _punch_elapsed: float = 0.0
 
+func _spectate_breadcrumb(stage: String, details: Dictionary = {}) -> void:
+	var line := "Spectate breadcrumb role=transport stage=%s" % stage
+	for key in details.keys():
+		line += " %s=%s" % [str(key), str(details[key])]
+	print(line)
+
 ## Maps player_index (0/1) to their ENet peer_id.
 ## Player 0 = host (peer_id 1), Player 1 = first remote client.
 var player_peer_ids: Dictionary = {}
@@ -204,6 +210,10 @@ func create_client(address: String = "127.0.0.1", port: int = 12345, punch_local
 			if bound_port != punch_local_port:
 				_trace("punch local port remapped requested=%d actual=%d" % [punch_local_port, bound_port])
 			_client_punch_local_port = bound_port
+			_spectate_breadcrumb("enet_client_bound", {
+				"requested_port": punch_local_port, "actual_port": bound_port,
+				"destination": "%s:%d" % [address, port],
+			})
 		api.multiplayer_peer = peer
 		is_server = false
 		print("Client connecting to ", address, ":", port)
@@ -211,6 +221,10 @@ func create_client(address: String = "127.0.0.1", port: int = 12345, punch_local
 	else:
 		last_server_error = err
 		_trace("client connect failed to %s:%d error=%d punch_local_port=%d" % [address, port, err, punch_local_port])
+		if punch_local_port > 0:
+			_spectate_breadcrumb("enet_client_create_failed", {
+				"destination": "%s:%d" % [address, port], "error": int(err),
+			})
 	return err
 
 ## Client-side WebSocket transport for restrictive networks. The URL must
@@ -396,6 +410,9 @@ func begin_spectator_punch(observer_session_id: String, target_ip: String, targe
 		"expires_msec": Time.get_ticks_msec() + int(PUNCH_TARGET_TTL_SECONDS * 1000.0),
 	}
 	_trace("spectator punch begin observer=%s target=%s:%d" % [punch_id, target_ip.strip_edges(), target_port])
+	_spectate_breadcrumb("host_punch_started", {
+		"observer": punch_id, "target": "%s:%d" % [target_ip.strip_edges(), target_port],
+	})
 	enet_connection.socket_send(target_ip.strip_edges(), target_port, punch)
 	return OK
 

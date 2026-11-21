@@ -84,25 +84,33 @@ real two-window/two-network test proves the public UDP path.
 3. In the spectator window, open `View Bot Matches` and select that row.
 4. Confirm the loading overlay resolves into the match and that `full_state` arrives.
 5. Let the host or spectator reconnect once, then confirm the watch link survives.
-6. Check the host and spectator traces for the rendezvous sequence:
-   - `punch bounce kind=host ...`
-   - `relay spectator punch target for match ...`
-   - `punch bounce kind=client ...`
-   - `spectator punch begin ...`
-   - `Spectator rendezvous: host reply=true, remapped port=...`
-   - `Spectator punch observer=...: punching ...` on the host
-   - `Spectator punch observer=...: skipped: ...` if the host rejected the relay
-   - `punch local port bind failed ...` or `punch local port remapped ...` if the primed spectator port was not reusable.
+6. Check the host, spectator, and lobby-server consoles for the shared breadcrumb
+   prefix `Spectate breadcrumb`. Search that exact string in each console window;
+   the `observer` and `match` fields let you line the three logs up:
+   - Host: `approval_received`, `bounce_sent`, `endpoint_submitted_via_punch`, `punch_result`
+   - Lobby: `observe_requested`, `host_approval_requested`, `assignment_sent`,
+     `punch_ready_received`, `spectator_endpoint_resolved`, `host_punch_relayed`
+   - Spectator: `assignment_received`, `rendezvous_armed`, `bounce_sent`,
+     `punch_ready_reported`, `prime_finished`, `dial_endpoint_selected`,
+     `enet_dial_started`, `enet_connected`, `join_request_sent`, `join_approved`
+   - If direct punching fails, expect `prime_finished via_relay=true`, then
+     `Spectate breadcrumb role=reflector stage=relay_ready ...` on the lobby and
+     normal ENet/join breadcrumbs on both ends.
+   - Legacy single-line checks still present: `Spectator rendezvous: ...`,
+     `Spectator punch observer=...: punching ...`, and
+     `Spectator punch observer=...: skipped: ...` on the host.
 
 ### Pass Criteria
 
 - The host advertises a watchable endpoint without UPnP.
 - The spectator authenticates, receives `full_state`, and sees the correct hand visibility.
-- Reconnect keeps the same punched local port and original host endpoint.
+- Reconnect keeps the same punched local port and either the original direct
+  endpoint or the lobby relay endpoint.
 - No `not accepting spectators right now` error appears while the host match is live.
 
 ## Current Known Risk
 
 - The automated cross-process smoke harness still runs into Godot editor-script RPC scene-tree limitations.
 - That means the best proof right now is a real two-window menu test, not the editor-script harness.
-- Hole punching remains best-effort; symmetric NAT/CGNAT needs a relay fallback, which is not implemented yet.
+- Hole punching remains best-effort; symmetric NAT/CGNAT now falls back to the
+  public UDP relay on the lobby reflector, which adds bandwidth and latency.

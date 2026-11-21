@@ -249,7 +249,55 @@ func _setup_test_board() -> void:
 	load_featured_card_test_scenario()
 
 func load_featured_card_test_scenario() -> void:
-	load_gala_tura_test_scenario()
+	load_gullinbursti_defensive_test_scenario()
+
+func load_gullinbursti_defensive_test_scenario() -> void:
+	_reset_test_match_state()
+	_add_test_god(player1, Odin.new())
+	_add_test_god(player2, Thor.new())
+
+	# Defensive Gullinbursti on both sides.
+	_place_test_board_card(player1, player1.frontline_zones[0], Gullinbursti.new(), Card.CreatureMode.DEFENSIVE)
+	_place_test_board_card(player2, player2.frontline_zones[0], Gullinbursti.new(), Card.CreatureMode.DEFENSIVE)
+
+	# Enkidus in hand for both players.
+	_add_test_hand_card(player1, Enkidu.new())
+	_add_test_hand_card(player1, Enkidu.new())
+	_add_test_hand_card(player2, Enkidu.new())
+	_add_test_hand_card(player2, Enkidu.new())
+
+	_add_test_deck_card(player1, BrownBear.new())
+	_add_test_deck_card(player2, BrownBear.new())
+
+	player1.spend_mana(player1.mana)
+	player1.gain_mana(12)
+	player2.spend_mana(player2.mana)
+	player2.gain_mana(12)
+	player1.followers = 100
+	player2.followers = 100
+	player1.followers_changed.emit(player1.followers)
+	player2.followers_changed.emit(player2.followers)
+	player1.has_summoned_this_turn = false
+	player2.has_summoned_this_turn = false
+
+	game_manager.current_player = player1
+	game_manager.other_player = player2
+	game_manager.feedback_viewer = player1
+	player1.is_turn_player = true
+	player2.is_turn_player = false
+	selected_card = null
+	selected_attacker = null
+	selected_interceptor = null
+	_test_turn_owner = player1
+	_test_turn_opponent = player2
+	game_manager.turn_number = 1
+	game_manager.start_turn()
+	_open_upkeep_choice_window()
+	action_label.text = (
+		"Gullinbursti Defensive Test Scenario. Each side has a defensive Gullinbursti on the frontline. "
+		+ "Both players have Enkidus in hand. Choose Mana first, then play Enkidu or attack with the Gullinbursti."
+	)
+	update_ui()
 
 func load_apotheosis_test_scenario() -> void:
 	_reset_test_match_state()

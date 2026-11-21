@@ -149,11 +149,13 @@ func requires_match_auth() -> bool:
 	return str(_match_info.get("match_token", "")).strip_edges() != ""
 
 func _on_connected_to_server() -> void:
+	_spectate_breadcrumb("enet_connected", {"server": "%s:%d" % [_server_ip, _server_port]})
 	_cancel_connect_attempt_timeout()
 	_is_retrying_initial_connect = false
 	_submit_match_join_request()
 
 func _on_match_join_approved(match_info: Dictionary) -> void:
+	_spectate_breadcrumb("join_approved", {"server": "%s:%d" % [_server_ip, _server_port]})
 	_cancel_connect_attempt_timeout()
 	_cancel_join_response_timeout()
 	_reconnect_attempt_serial += 1
@@ -177,6 +179,7 @@ func _on_match_join_approved(match_info: Dictionary) -> void:
 	game_event_received.emit("match_join_ok", match_info)
 
 func _on_match_join_denied(reason: String) -> void:
+	_spectate_breadcrumb("join_denied", {"reason": reason})
 	_cancel_connect_attempt_timeout()
 	_cancel_join_response_timeout()
 	_reconnect_attempt_serial += 1
@@ -193,6 +196,7 @@ func _on_match_join_denied(reason: String) -> void:
 	game_event_received.emit("match_join_denied", {"reason": reason})
 
 func _on_server_disconnected() -> void:
+	_spectate_breadcrumb("server_disconnected", {})
 	_cancel_connect_attempt_timeout()
 	_cancel_join_response_timeout()
 	_match_join_requested = false
@@ -205,6 +209,7 @@ func _on_server_disconnected() -> void:
 	_emit_permanent_connection_loss("Disconnected from the match server.")
 
 func _on_connection_failed() -> void:
+	_spectate_breadcrumb("enet_connection_failed", {})
 	_handle_connection_failure("Could not connect to the match server.", "Reconnect attempt failed.")
 
 func _on_connect_attempt_timeout() -> void:
@@ -215,6 +220,7 @@ func _on_connect_attempt_timeout() -> void:
 		var multiplayer_peer = multiplayer_api.multiplayer_peer
 		if multiplayer_peer != null and multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED:
 			return
+	_spectate_breadcrumb("enet_connect_timeout", {"server": "%s:%d" % [_server_ip, _server_port]})
 	network_manager.disconnect_client()
 	_handle_connection_failure(
 		"Connection attempt to the match server timed out.",
@@ -249,6 +255,17 @@ func _emit_permanent_connection_loss(reason: String) -> void:
 	server_disconnected.emit()
 	game_event_received.emit("match_connection_lost", {"reason": reason})
 	game_event_received.emit("server_disconnected", {})
+
+func _spectate_breadcrumb(stage: String, details: Dictionary = {}) -> void:
+	if not bool(_match_info.get("observer_mode", false)):
+		return
+	var fields := details.duplicate()
+	fields["observer"] = str(_match_info.get("observer_session_id", ""))
+	fields["match"] = str(_match_info.get("match_id", ""))
+	var line := "Spectate breadcrumb role=match-client stage=%s" % stage
+	for key in fields.keys():
+		line += " %s=%s" % [str(key), str(fields[key])]
+	print(line)
 
 func _now_unix() -> float:
 	return Time.get_unix_time_from_system()
@@ -312,6 +329,7 @@ func _perform_reconnect(expected_serial: int) -> void:
 	if _match_completed or network_manager == null:
 		_is_reconnecting = false
 		return
+	_spectate_breadcrumb("retry_dial", {"server": "%s:%d" % [_server_ip, _server_port], "mode": "reconnect"})
 	var reconnect_err: Error = network_manager.reconnect_client(_server_ip, _server_port)
 	if reconnect_err == OK:
 		_arm_connect_attempt_timeout()
@@ -353,6 +371,7 @@ func _perform_initial_connect_retry(expected_serial: int) -> void:
 	if _match_completed or network_manager == null:
 		_is_retrying_initial_connect = false
 		return
+	_spectate_breadcrumb("retry_dial", {"server": "%s:%d" % [_server_ip, _server_port], "mode": "initial"})
 	var reconnect_err: Error = network_manager.reconnect_client(_server_ip, _server_port)
 	if reconnect_err == OK:
 		_arm_connect_attempt_timeout()
@@ -367,6 +386,10 @@ func _submit_match_join_request() -> void:
 	if not requires_match_auth() or network_manager == null or _match_join_requested:
 		return
 	_match_join_requested = true
+	_spectate_breadcrumb("join_request_sent", {
+		"server": "%s:%d" % [_server_ip, _server_port],
+		"token": "set" if not str(_match_info.get("observer_match_token", "")).is_empty() else "missing",
+	})
 	_arm_join_response_timeout()
 	network_manager.submit_match_join({
 		"match_id": str(_match_info.get("match_id", "")),

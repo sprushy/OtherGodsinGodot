@@ -54,6 +54,7 @@ func _run() -> void:
 	_check_punch_endpoint_normalization()
 	await _check_stale_client_disconnect_events()
 	await _check_direct_spectator_punch()
+	await _check_udp_relay()
 	await _check_failed_lobby_transport_cleanup()
 	await _check_lobby_auth_rejection_cleanup()
 	_check_detached_lobby_transport()
@@ -283,6 +284,57 @@ func _check_direct_spectator_punch() -> void:
 	host.disconnect_client()
 	spectator.get_parent().queue_free()
 	host.get_parent().queue_free()
+	reflector.queue_free()
+	await process_frame
+
+func _check_udp_relay() -> void:
+	var reflector := PunchReflectorScript.new()
+	root.add_child(reflector)
+	var probe := PacketPeerUDP.new()
+	if probe.bind(0) != OK:
+		_check(false, "allocate relay reflector port")
+		reflector.queue_free()
+		return
+	var relay_port := probe.get_local_port()
+	probe.close()
+	if not reflector.setup(relay_port):
+		_check(false, "bind relay reflector")
+		reflector.queue_free()
+		return
+	var host_socket := PacketPeerUDP.new()
+	var client_socket := PacketPeerUDP.new()
+	if host_socket.bind(0) != OK or client_socket.bind(0) != OK:
+		_check(false, "bind relay test sockets")
+		host_socket.close()
+		client_socket.close()
+		reflector.shutdown()
+		reflector.queue_free()
+		return
+	host_socket.set_dest_address("127.0.0.1", relay_port)
+	host_socket.put_packet(PunchReflectorScript.make_marker(PunchReflectorScript.BOUNCE_KIND_HOST, "relay-match"))
+	client_socket.set_dest_address("127.0.0.1", relay_port)
+	client_socket.put_packet(PunchReflectorScript.make_marker(
+		PunchReflectorScript.BOUNCE_KIND_CLIENT, "relay-match", "relay-observer"))
+	await _wait_for(func() -> bool:
+		return not reflector.get_bounce("host:relay-match", 2.0).is_empty() \
+			and not reflector.get_bounce("client:relay-match:relay-observer", 2.0).is_empty())
+	_check(reflector.enable_relay_session("relay-match", "relay-observer"), "enable UDP relay session")
+	await process_frame
+	client_socket.set_dest_address("127.0.0.1", relay_port)
+	client_socket.put_packet("client-enet".to_utf8_buffer())
+	await _wait_for(func() -> bool: return host_socket.get_available_packet_count() > 0)
+	_check(host_socket.get_available_packet_count() > 0, "relay forwards spectator traffic to host")
+	if host_socket.get_available_packet_count() > 0:
+		_check(host_socket.get_packet().get_string_from_utf8() == "client-enet", "relayed spectator payload is unchanged")
+	host_socket.set_dest_address("127.0.0.1", relay_port)
+	host_socket.put_packet("host-enet".to_utf8_buffer())
+	await _wait_for(func() -> bool: return client_socket.get_available_packet_count() > 0)
+	_check(client_socket.get_available_packet_count() > 0, "relay forwards host traffic to spectator")
+	if client_socket.get_available_packet_count() > 0:
+		_check(client_socket.get_packet().get_string_from_utf8() == "host-enet", "relayed host payload is unchanged")
+	host_socket.close()
+	client_socket.close()
+	reflector.shutdown()
 	reflector.queue_free()
 	await process_frame
 
