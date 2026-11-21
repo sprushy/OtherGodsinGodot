@@ -3376,8 +3376,11 @@ func _observe_local_bot_match(session_id: String, match_id: String) -> void:
 		"host": str(entry.get("human_session_id", "")),
 	})
 	var via_punch := bool(entry.get("spectate_via_punch", false))
+	var relay_enabled := bool(entry.get("spectate_relay_enabled", false))
 	var spectate_ip := str(entry.get("spectate_ip", "")).strip_edges()
 	var spectate_port := int(entry.get("spectate_port", 0))
+	var lan_ip := PunchReflectorScript.normalize_ip(str(entry.get("spectate_lan_ip", "")))
+	var lan_port := int(entry.get("spectate_lan_port", 0))
 	# Keepalive bounces can update the host's public mapping after it first
 	# advertised the room. Refresh before rejecting an empty stored endpoint so
 	# a late bounce can still make this room watchable.
@@ -3423,13 +3426,15 @@ func _observe_local_bot_match(session_id: String, match_id: String) -> void:
 	# Arm the public UDP relay for cross-NAT spectators. The reflector only
 	# forwards packets for sessions the lobby approved, and only between the
 	# exact endpoints that already bounced from each side's match socket.
-	var via_relay := via_punch and punch_reflector != null and _punch_reflector_port > 0
+	var via_relay := (via_punch or relay_enabled) and punch_reflector != null and _punch_reflector_port > 0
 	if via_relay and punch_reflector.has_method("enable_relay_session"):
 		punch_reflector.enable_relay_session(match_id, session_id)
 	_spectate_breadcrumb("relay_session_armed", {
 		"observer": session_id, "match": match_id,
-		"via_punch": str(via_punch), "via_relay": str(via_relay),
-		"endpoint": "%s:%d" % [spectate_ip, spectate_port],
+		"via_punch": str(via_punch), "relay_enabled": str(relay_enabled),
+		"via_relay": str(via_relay),
+		"public": "%s:%d" % [spectate_ip, spectate_port],
+		"lan": "%s:%d" % [lan_ip, lan_port],
 	})
 
 	var identities: Dictionary = entry.get("identity_by_session", {})
@@ -3456,7 +3461,8 @@ func _observe_local_bot_match(session_id: String, match_id: String) -> void:
 		"match_id": match_id,
 		"room_id": str(entry.get("room_id", "")),
 		"server_ip": spectate_ip,
-		"spectate_lan_ip": str(entry.get("spectate_lan_ip", "")),
+		"spectate_lan_ip": lan_ip,
+		"spectate_lan_port": lan_port,
 		"match_port": spectate_port,
 		"match_websocket_url": "",
 		"player_index": -1,
@@ -3475,14 +3481,17 @@ func _observe_local_bot_match(session_id: String, match_id: String) -> void:
 		"reconnect_window_seconds": 0,
 		"waiting_for_reconnect": false,
 		"spectate_via_punch": via_punch,
+		"spectate_relay_enabled": relay_enabled,
 		"punch_reflector_port": _punch_reflector_port,
 		"spectate_relay_port": _punch_reflector_port if via_relay else 0,
 		"spectate_via_relay": via_relay,
 	})
 	_spectate_breadcrumb("assignment_sent", {
 		"observer": session_id, "match": match_id,
-		"endpoint": "%s:%d" % [spectate_ip, spectate_port],
-		"via_punch": str(via_punch), "via_relay": str(via_relay),
+		"public": "%s:%d" % [spectate_ip, spectate_port],
+		"lan": "%s:%d" % [lan_ip, lan_port],
+		"via_punch": str(via_punch), "relay_enabled": str(relay_enabled),
+		"via_relay": str(via_relay),
 	})
 	_trace("observer %s joined local bot match %s via_punch=%s via_relay=%s" % [
 		session_id, match_id, str(via_punch), str(via_relay),
@@ -3557,10 +3566,14 @@ func _handle_local_bot_match_spectate_info(peer_id: int, payload: Dictionary) ->
 	var spectate_port := int(payload.get("spectate_port", 0))
 	var punched := false
 	var lan_ip := PunchReflectorScript.normalize_ip(str(payload.get("lan_ip", "")))
+	var lan_port := int(payload.get("lan_port", 0))
+	var relay_enabled := bool(payload.get("relay_enabled", false))
 	if not lan_ip.is_empty() \
 			and not PunchReflectorScript.is_private_ipv4(lan_ip) \
 			and not PunchReflectorScript.is_loopback_ipv4(lan_ip):
 		lan_ip = ""
+	if lan_port <= 0 or lan_port > 65535:
+		lan_port = 0
 	if bool(payload.get("via_punch", false)):
 		# Hole-punch fallback: the host bounced our reflector through the exact
 		# socket its ENet spectate server listens on, so the recorded bounce is
@@ -3583,6 +3596,14 @@ func _handle_local_bot_match_spectate_info(peer_id: int, payload: Dictionary) ->
 	entry["spectate_ip"] = spectate_ip if viable else ""
 	entry["spectate_port"] = spectate_port if viable else 0
 	entry["spectate_lan_ip"] = lan_ip if viable else ""
+	entry["spectate_lan_port"] = lan_port if viable and not lan_ip.is_empty() else 0
+	entry["spectate_relay_enabled"] = relay_enabled if viable else false
+	_spectate_breadcrumb("host_endpoint_recorded", {
+		"match": match_id, "host": session_id,
+		"public": "%s:%d" % [spectate_ip, spectate_port],
+		"lan": "%s:%d" % [entry["spectate_lan_ip"], int(entry["spectate_lan_port"])],
+		"via_punch": str(punched), "relay_enabled": str(relay_enabled),
+	})
 	var room_id := str(entry.get("room_id", ""))
 	if viable and not room_id.is_empty() and rooms_by_id.has(room_id):
 		_emit_room_updates(rooms_by_id[room_id])
@@ -3657,6 +3678,26 @@ func _get_punch_bounce(key: String, max_age_seconds: float) -> Dictionary:
 		return {}
 	var bounce: Dictionary = punch_reflector.get_bounce(key, max_age_seconds)
 	return bounce if bounce is Dictionary else {}
+
+## Tear down relay sessions and punch throttles as soon as a client-hosted bot
+## match is settled, abandoned, or expired instead of waiting for the reflector
+## TTL to expire them.
+func _cleanup_local_bot_spectate_state(match_id: String, entry: Dictionary) -> void:
+	if match_id.is_empty():
+		return
+	if punch_reflector != null and punch_reflector.has_method("disable_relay_session"):
+		var spectator_tokens = entry.get("spectator_match_tokens_by_session", {})
+		if spectator_tokens is Dictionary:
+			for observer_variant in (spectator_tokens as Dictionary).keys():
+				punch_reflector.disable_relay_session(match_id, str(observer_variant))
+	var stale_keys: Array[String] = []
+	for key_variant in _punch_ready_last_msec_by_key.keys():
+		var key := str(key_variant)
+		if key.begins_with(match_id + "|"):
+			stale_keys.append(key)
+	for key in stale_keys:
+		_punch_ready_last_msec_by_key.erase(key)
+	_spectate_breadcrumb("relay_sessions_disabled", {"match": match_id})
 
 func _generate_spectator_token() -> String:
 	var crypto := Crypto.new()
@@ -3953,6 +3994,9 @@ func _assign_local_bot_match(
 		"reported": false,
 		"spectate_ip": "",
 		"spectate_port": 0,
+		"spectate_lan_ip": "",
+		"spectate_lan_port": 0,
+		"spectate_relay_enabled": false,
 	}
 	room.status = LobbyRoomScript.STATUS_IN_MATCH
 	room.assigned_match_id = match_id
@@ -4032,6 +4076,7 @@ func _handle_local_bot_match_result(peer_id: int, payload: Dictionary) -> void:
 			var loser_rank_name := str(loser_progress.get("rank_name", ""))
 			if loser_rank_name.begins_with("Iron") or loser_rank_name.begins_with("Bronze"):
 				match_history_store.set_serve_quarantined_next(loser_account_id, true)
+	_cleanup_local_bot_spectate_state(match_id, entry)
 	_local_bot_matches_by_id.erase(match_id)
 	var room_id := str(entry.get("room_id", ""))
 	if not room_id.is_empty() and rooms_by_id.has(room_id):
@@ -4066,6 +4111,7 @@ func _expire_stale_local_bot_matches() -> void:
 			expired_ids.append(match_id)
 	for match_id in expired_ids:
 		var entry: Dictionary = _local_bot_matches_by_id[match_id]
+		_cleanup_local_bot_spectate_state(match_id, entry)
 		_local_bot_matches_by_id.erase(match_id)
 		var room_id := str(entry.get("room_id", ""))
 		if not room_id.is_empty() and rooms_by_id.has(room_id):
@@ -4809,6 +4855,9 @@ func _close_room(room_id: String, message: String = "") -> void:
 		affected_sessions.append(session_id)
 	var room_match_id := str(room.assigned_match_id).strip_edges()
 	if not room_match_id.is_empty():
+		var local_bot_entry = _local_bot_matches_by_id.get(room_match_id, null)
+		if local_bot_entry is Dictionary:
+			_cleanup_local_bot_spectate_state(room_match_id, local_bot_entry)
 		_local_bot_matches_by_id.erase(room_match_id)
 	rooms_by_id.erase(room_id)
 	for session_id in affected_sessions:

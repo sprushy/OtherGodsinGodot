@@ -54,7 +54,11 @@ func _run() -> void:
 	_check_punch_endpoint_normalization()
 	await _check_stale_client_disconnect_events()
 	await _check_direct_spectator_punch()
+	await _check_verified_punch_from_alternate_ip()
 	await _check_udp_relay()
+	await _check_relay_cleanup_on_match_end()
+	_check_spectate_endpoint_selection()
+	_check_spectate_relay_fallback_selection()
 	await _check_failed_lobby_transport_cleanup()
 	await _check_lobby_auth_rejection_cleanup()
 	_check_detached_lobby_transport()
@@ -287,6 +291,48 @@ func _check_direct_spectator_punch() -> void:
 	reflector.queue_free()
 	await process_frame
 
+## A verified host punch carries the observer token, so a multi-WAN or CGNAT
+## host may legitimately answer from a different public IP than the advertised
+## one. The spectator must accept that proof and dial the IP that answered, while
+## still rejecting unsigned punches from unexpected sources.
+func _check_verified_punch_from_alternate_ip() -> void:
+	var listener := PacketPeerUDP.new()
+	if listener.bind(0, "127.0.0.1") != OK:
+		_check(false, "bind punch listener")
+		return
+	var alternate := PacketPeerUDP.new()
+	if alternate.bind(0, "127.0.0.2") != OK:
+		listener.close()
+		alternate.close()
+		# Windows and most Unix hosts route all of 127/8 to loopback; skip when
+		# this sandbox cannot source from 127.0.0.2 instead of failing the suite.
+		print("websocket_transport_test: skipped alternate-IP punch (127.0.0.2 unavailable)")
+		return
+	var host_punch := PunchReflectorScript.make_host_punch("alternate-match", "token")
+	var unsigned := PunchReflectorScript.make_marker(PunchReflectorScript.PUNCH_KIND_PACKET, "")
+	var marker := PunchReflectorScript.make_marker(PunchReflectorScript.BOUNCE_KIND_CLIENT, "alternate-match", "observer")
+	var reply_from_alternate := func(reply: PackedByteArray) -> Callable:
+		return func() -> bool:
+			for _packet_index in range(mini(listener.get_available_packet_count(), 16)):
+				listener.get_packet()
+				alternate.set_dest_address(listener.get_packet_ip(), listener.get_packet_port())
+				alternate.put_packet(reply)
+				return true
+			return true
+	var verified_route := await PunchReflectorScript.prime_spectator_socket(
+		self, "127.0.0.1", listener.get_local_port(), "127.0.0.1", listener.get_local_port(),
+		marker, host_punch, reply_from_alternate.call(host_punch)
+	)
+	_check(bool(verified_route.get("host_replied", false)), "verified host punch completes the rendezvous")
+	_check(str(verified_route.get("connect_ip", "")) == "127.0.0.2", "verified punch dials the reply IP, not the advertised one")
+	var unsigned_route := await PunchReflectorScript.prime_spectator_socket(
+		self, "127.0.0.1", listener.get_local_port(), "127.0.0.1", listener.get_local_port(),
+		marker, host_punch, reply_from_alternate.call(unsigned)
+	)
+	_check(not bool(unsigned_route.get("host_replied", false)), "unsigned punch from another IP is rejected")
+	listener.close()
+	alternate.close()
+
 func _check_udp_relay() -> void:
 	var reflector := PunchReflectorScript.new()
 	root.add_child(reflector)
@@ -337,6 +383,98 @@ func _check_udp_relay() -> void:
 	reflector.shutdown()
 	reflector.queue_free()
 	await process_frame
+
+## Relay sessions and punch throttles used to linger until the reflector TTL
+## expired. They should be dropped as soon as a client-hosted bot match settles.
+func _check_relay_cleanup_on_match_end() -> void:
+	var reflector := PunchReflectorScript.new()
+	root.add_child(reflector)
+	var probe := PacketPeerUDP.new()
+	if probe.bind(0) != OK:
+		_check(false, "allocate cleanup reflector port")
+		reflector.queue_free()
+		return
+	var port := probe.get_local_port()
+	probe.close()
+	if not reflector.setup(port):
+		_check(false, "bind cleanup reflector")
+		reflector.queue_free()
+		return
+	_check(reflector.enable_relay_session("cleanup-match", "observer"), "enable relay session before cleanup")
+	var lobby := LobbyServerScript.new()
+	lobby.punch_reflector = reflector
+	lobby._punch_ready_last_msec_by_key["cleanup-match|observer"] = Time.get_ticks_msec()
+	lobby._punch_ready_last_msec_by_key["other-match|observer"] = Time.get_ticks_msec()
+	lobby._cleanup_local_bot_spectate_state("cleanup-match", {
+		"spectator_match_tokens_by_session": {"observer": "token"},
+	})
+	_check(not reflector._relay_sessions.has("cleanup-match|observer"), "match cleanup disables its relay sessions")
+	_check(not lobby._punch_ready_last_msec_by_key.has("cleanup-match|observer"), "match cleanup clears its punch throttles")
+	_check(lobby._punch_ready_last_msec_by_key.has("other-match|observer"), "match cleanup leaves other matches alone")
+	lobby.free()
+	reflector.shutdown()
+	reflector.queue_free()
+	await process_frame
+
+## Public lobbies must never treat a host's RFC1918 hint as reachable. Only a
+## local/private lobby may prefer the host's real listener port.
+func _check_spectate_endpoint_selection() -> void:
+	var menu := MainMenuScript.new()
+	menu._is_local_lobby_host = false
+	menu._current_lobby_ip = "lobby.example.com"
+	var public_result: Dictionary = menu._resolve_spectate_server_endpoint({
+		"observer_mode": true,
+		"spectate_lan_ip": "192.168.1.2",
+		"spectate_lan_port": 33872,
+	}, "203.0.113.7", 41000)
+	_check(str(public_result.get("ip", "")) == "203.0.113.7" \
+		and int(public_result.get("port", 0)) == 41000 \
+		and not bool(public_result.get("private_selected", false)),
+		"public lobby ignores a private spectate hint")
+	menu._is_local_lobby_host = true
+	var lan_result: Dictionary = menu._resolve_spectate_server_endpoint({
+		"observer_mode": true,
+		"spectate_lan_ip": "127.0.0.1",
+		"spectate_lan_port": 33872,
+	}, "203.0.113.7", 41000)
+	_check(str(lan_result.get("ip", "")) == "127.0.0.1" \
+		and int(lan_result.get("port", 0)) == 33872 \
+		and bool(lan_result.get("private_selected", false)),
+		"local lobby prefers the host listener port")
+	var missing_port: Dictionary = menu._resolve_spectate_server_endpoint({
+		"observer_mode": true,
+		"spectate_lan_ip": "127.0.0.1",
+	}, "203.0.113.7", 41000)
+	_check(not bool(missing_port.get("private_selected", false)) \
+		and int(missing_port.get("port", 0)) == 41000,
+		"private hint without a listener port falls back to the advertised endpoint")
+	menu.free()
+
+## Direct-first spectators dial the advertised endpoint and only move to the
+## relay after that dial fails. Punch-assigned spectators already dial a
+## relay-ready endpoint, so their target must not change.
+func _check_spectate_relay_fallback_selection() -> void:
+	var direct_client := MatchClientScript.new(null, null, false, false, {
+		"observer_mode": true,
+		"match_id": "fallback-match",
+		"observer_session_id": "observer",
+		"spectate_relay_ip": "203.0.113.9",
+		"spectate_relay_port": 22346,
+	}, "198.51.100.7", 33872)
+	_check(direct_client._maybe_switch_spectate_retry_to_relay("initial"), "direct-first spectator retries through the relay")
+	_check(direct_client._server_ip == "203.0.113.9" and direct_client._server_port == 22346, "relay fallback retries the reflector endpoint")
+	_check(not direct_client._maybe_switch_spectate_retry_to_relay("initial"), "relay fallback is attempted once")
+	var punch_client := MatchClientScript.new(null, null, false, false, {
+		"observer_mode": true,
+		"match_id": "fallback-match",
+		"observer_session_id": "observer",
+		"spectate_via_punch": true,
+		"spectate_relay_ip": "203.0.113.9",
+		"spectate_relay_port": 22346,
+	}, "198.51.100.7", 33872)
+	_check(not punch_client._maybe_switch_spectate_retry_to_relay("initial") \
+		and punch_client._server_ip == "198.51.100.7",
+		"punch assignments keep their relay-ready endpoint")
 
 func _check_failed_lobby_transport_cleanup() -> void:
 	# Exercise the menu's cleanup from a real refused WebSocket connection.

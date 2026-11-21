@@ -262,7 +262,7 @@ func _spectate_breadcrumb(stage: String, details: Dictionary = {}) -> void:
 	var fields := details.duplicate()
 	fields["observer"] = str(_match_info.get("observer_session_id", ""))
 	fields["match"] = str(_match_info.get("match_id", ""))
-	var line := "Spectate breadcrumb role=match-client stage=%s" % stage
+	var line := "Spectate breadcrumb role=match-client stage=%s t=%d" % [stage, Time.get_ticks_msec()]
 	for key in fields.keys():
 		line += " %s=%s" % [str(key), str(fields[key])]
 	print(line)
@@ -329,6 +329,7 @@ func _perform_reconnect(expected_serial: int) -> void:
 	if _match_completed or network_manager == null:
 		_is_reconnecting = false
 		return
+	_maybe_switch_spectate_retry_to_relay("reconnect")
 	_spectate_breadcrumb("retry_dial", {"server": "%s:%d" % [_server_ip, _server_port], "mode": "reconnect"})
 	var reconnect_err: Error = network_manager.reconnect_client(_server_ip, _server_port)
 	if reconnect_err == OK:
@@ -371,6 +372,7 @@ func _perform_initial_connect_retry(expected_serial: int) -> void:
 	if _match_completed or network_manager == null:
 		_is_retrying_initial_connect = false
 		return
+	_maybe_switch_spectate_retry_to_relay("initial")
 	_spectate_breadcrumb("retry_dial", {"server": "%s:%d" % [_server_ip, _server_port], "mode": "initial"})
 	var reconnect_err: Error = network_manager.reconnect_client(_server_ip, _server_port)
 	if reconnect_err == OK:
@@ -381,6 +383,34 @@ func _perform_initial_connect_retry(expected_serial: int) -> void:
 		"Could not connect to the match server.",
 		"Reconnect attempt failed."
 	)
+
+## Direct-first spectators (a host whose UPnP mapping worked) dial the
+## advertised endpoint immediately. If that path never comes up, switch the next
+## retry to the lobby's UDP relay, which already learned both public endpoints
+## from the rendezvous bounces. Punch-assigned spectators are already dialing a
+## relay-ready endpoint, so they are left alone.
+func _maybe_switch_spectate_retry_to_relay(mode: String) -> bool:
+	if not bool(_match_info.get("observer_mode", false)):
+		return false
+	if bool(_match_info.get("spectate_via_punch", false)):
+		return false
+	if bool(_match_info.get("spectate_relay_dial", false)):
+		return false
+	var relay_ip := str(_match_info.get("spectate_relay_ip", "")).strip_edges()
+	var relay_port := int(_match_info.get("spectate_relay_port", 0))
+	if relay_ip.is_empty() or relay_port <= 0 or relay_port > 65535:
+		return false
+	if relay_ip == _server_ip and relay_port == _server_port:
+		return false
+	_server_ip = relay_ip
+	_server_port = relay_port
+	_match_info["spectate_relay_dial"] = true
+	_match_info["server_ip"] = relay_ip
+	_match_info["match_port"] = relay_port
+	_spectate_breadcrumb("relay_fallback_dial", {
+		"mode": mode, "connect": "%s:%d" % [relay_ip, relay_port],
+	})
+	return true
 
 func _submit_match_join_request() -> void:
 	if not requires_match_auth() or network_manager == null or _match_join_requested:
@@ -425,7 +455,8 @@ func _arm_connect_timeout_if_connecting() -> void:
 
 func _get_connect_attempt_timeout_seconds() -> float:
 	if bool(_match_info.get("observer_mode", false)) \
-			and bool(_match_info.get("spectate_via_punch", false)):
+			and (bool(_match_info.get("spectate_via_punch", false))
+				or bool(_match_info.get("spectate_relay_dial", false))):
 		return PUNCH_SPECTATE_CONNECT_ATTEMPT_TIMEOUT_SECONDS
 	return CONNECT_ATTEMPT_TIMEOUT_SECONDS
 

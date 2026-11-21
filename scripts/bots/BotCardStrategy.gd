@@ -1245,7 +1245,8 @@ static func namburbi_response_gain(bot, ward: NamburbiApotropaeon, action: CardA
 		var baseline: int = bot._score_attack_economy(economy)
 		var warded: Dictionary = bot._forecast_namburbi_combat(ward, action)
 		return maxi(0, bot._score_attack_economy(warded) - baseline)
-	for creature in namburbi_saved_creatures(bot, action.card, action.target as Card):
+	var target: Card = action.target if action.target is Card else null
+	for creature in namburbi_saved_creatures(bot, action.card, target):
 		gain += namburbi_saved_creature_value(bot, creature)
 	return gain
 

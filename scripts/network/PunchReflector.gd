@@ -139,11 +139,24 @@ static func prime_spectator_socket(
 		for _packet_index in range(mini(socket.get_available_packet_count(), 16)):
 			var reply := socket.get_packet()
 			var reply_port := socket.get_packet_port()
-			if normalize_ip(socket.get_packet_ip()) != advertised_ip or reply_port <= 0:
+			var reply_ip := normalize_ip(socket.get_packet_ip())
+			if reply_ip.is_empty() or reply_port <= 0:
 				continue
-			# A legacy host can confirm the advertised endpoint. A verified
-			# reply can also teach us the port the host's router used toward us.
-			if (not host_punch.is_empty() and reply == host_punch) or (reply == punch and reply_port == host_port):
+			# A verified host punch proves the sender holds the observer token.
+			# Accept it even if the host's NAT replies from a different public IP,
+			# and dial the endpoint that actually answered us.
+			if not host_punch.is_empty() and reply == host_punch:
+				socket.close()
+				return {
+					"local_port": local_port,
+					"host_port": reply_port,
+					"host_replied": true,
+					"connect_ip": reply_ip,
+					"connect_port": reply_port,
+					"via_relay": false,
+				}
+			# Legacy hosts only confirm the advertised endpoint.
+			if reply_ip == advertised_ip and reply == punch and reply_port == host_port:
 				socket.close()
 				return {
 					"local_port": local_port,
@@ -261,7 +274,8 @@ func _check_relay_ready(key: String, session: Dictionary) -> void:
 	if int(host.get("port", 0)) <= 0 or int(client.get("port", 0)) <= 0:
 		return
 	_relay_ready_printed[key] = true
-	print("Spectate breadcrumb role=reflector stage=relay_ready match=%s observer=%s host=%s:%d spectator=%s:%d" % [
+	print("Spectate breadcrumb role=reflector stage=relay_ready t=%d match=%s observer=%s host=%s:%d spectator=%s:%d" % [
+		Time.get_ticks_msec(),
 		str(session.get("match_id", "")),
 		str(session.get("observer", "")),
 		str(host.get("ip", "")), int(host.get("port", 0)),

@@ -83,7 +83,7 @@ var _punch_targets: Dictionary = {}
 var _punch_elapsed: float = 0.0
 
 func _spectate_breadcrumb(stage: String, details: Dictionary = {}) -> void:
-	var line := "Spectate breadcrumb role=transport stage=%s" % stage
+	var line := "Spectate breadcrumb role=transport stage=%s t=%d" % [stage, Time.get_ticks_msec()]
 	for key in details.keys():
 		line += " %s=%s" % [str(key), str(details[key])]
 	print(line)
