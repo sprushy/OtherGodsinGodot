@@ -29,7 +29,18 @@ func protects_from_hex(target: Card) -> bool:
 	)
 
 func hex_protection_is_suppressed_raw() -> bool:
-	if is_enslaved() or is_muted:
+	# This helper is called while Card is filtering effective statuses. Calling
+	# is_enslaved() here would call has_status_effect(), which re-enters that
+	# same filter and recurses through Enki's own immunity check.
+	var controller := get_controller()
+	var enslaved_raw := controller != null \
+		and card_owner != null \
+		and controller != card_owner
+	if enslaved_raw:
+		for status in active_statuses:
+			if status.get("name", "") == "enslaved":
+				return true
+	if is_muted:
 		return true
 	for status in active_statuses:
 		if status.get("name", "") == "petrified":
