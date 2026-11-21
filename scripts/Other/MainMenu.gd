@@ -160,6 +160,7 @@ var _bot_match_live: Array = []
 var _seek_action_row: HBoxContainer
 var _bot_league_section: VBoxContainer
 var _ladder_button: Button
+var _quarantined_bots_button: Button
 var _host_bot_match_button: Button
 var _host_top_50_bot_matches_button: Button
 var _host_another_bot_match_button: Button
@@ -212,6 +213,8 @@ var _pending_join_room_id: String = ""
 var _pending_rejoin_room_id: String = ""
 var _manual_rejoin_room_id: String = ""
 var _pending_observe_room_id: String = ""
+var _observe_room_in_flight: String = ""
+var _observe_auth_retry_used: bool = false
 var _pending_seek_switch_join_room_id: String = ""
 var _pending_rematch_room_id: String = ""
 var _pending_rematch_ready_submitted: bool = false
@@ -1301,6 +1304,8 @@ func _apply_seek_action_button_sizing() -> void:
 			deck_picker_option.custom_minimum_size.x,
 			maxf(36.0, deck_picker_option.get_combined_minimum_size().y)
 		)
+	if is_instance_valid(_quarantined_bots_button):
+		_quarantined_bots_button.custom_minimum_size.y = _ladder_button.custom_minimum_size.y
 	if not is_instance_valid(_seek_action_row):
 		return
 	_seek_action_row.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
@@ -2920,13 +2925,22 @@ func _build_seek_tabs() -> void:
 	_seek_action_row.add_theme_constant_override("separation", 8)
 	multiplayer_container.add_child(_seek_action_row)
 	multiplayer_container.move_child(_seek_action_row, seek_list.get_index() + 1)
+	var ladder_row := HBoxContainer.new()
+	ladder_row.add_theme_constant_override("separation", 8)
+	multiplayer_container.add_child(ladder_row)
+	if ip_line_edit != null:
+		multiplayer_container.move_child(ladder_row, ip_line_edit.get_index())
 	_ladder_button = Button.new()
 	_ladder_button.text = "Ladder"
 	_ladder_button.pressed.connect(_open_bot_ladder)
 	_ladder_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	multiplayer_container.add_child(_ladder_button)
-	if ip_line_edit != null:
-		multiplayer_container.move_child(_ladder_button, ip_line_edit.get_index())
+	ladder_row.add_child(_ladder_button)
+	_quarantined_bots_button = Button.new()
+	_quarantined_bots_button.text = "Quarantined Bots"
+	_quarantined_bots_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_quarantined_bots_button.pressed.connect(_open_bot_ladder.bind(true))
+	ladder_row.add_child(_quarantined_bots_button)
+	_update_quarantined_bots_button()
 	# Bot match hosting commands live in the seek list itself now (no separate
 	# "View Bot Matches" tab). Bot matches are listed alongside player seeks,
 	# with player matches sorted first.
@@ -4308,6 +4322,8 @@ func _on_observe_match_requested(room_id: String, has_bot: bool) -> void:
 	_pending_join_room_id = ""
 	_pending_rejoin_room_id = ""
 	_pending_observe_room_id = room_id.strip_edges().to_upper()
+	_observe_room_in_flight = ""
+	_observe_auth_retry_used = false
 	_pending_seek_switch_join_room_id = ""
 	_pending_local_lobby_launch_on_connect_failure = false
 	room_code_line_edit.text = room_id.strip_edges().to_upper()
@@ -4508,6 +4524,7 @@ func _run_pending_multiplayer_action() -> void:
 	if not _pending_observe_room_id.is_empty():
 		var observe_room_id := _pending_observe_room_id
 		_pending_observe_room_id = ""
+		_observe_room_in_flight = observe_room_id
 		status_label.text = "Observing match %s..." % observe_room_id
 		lobby_client.observe_room(observe_room_id)
 		return
@@ -9372,6 +9389,7 @@ func _release_player_host_port_mapping() -> void:
 	HostReachabilityProbeScript.remove_mapping(port_to_release)
 
 func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, player_name: String) -> void:
+	_update_quarantined_bots_button()
 	if _startup_autologin_in_progress and not _is_multiplayer_screen_active() and _smoke_config.is_empty():
 		_cancel_lobby_sign_in_watchdog()
 		_startup_autologin_in_progress = false
@@ -9483,6 +9501,7 @@ func _on_lobby_reconnect_succeeded(
 	room: Dictionary,
 	active_match_info: Dictionary
 ) -> void:
+	_update_quarantined_bots_button()
 	if _startup_autologin_in_progress and not _is_multiplayer_screen_active() and _smoke_config.is_empty():
 		_cancel_lobby_sign_in_watchdog()
 		_startup_autologin_in_progress = false
@@ -10147,6 +10166,7 @@ func _on_remote_match_assigned(match_info: Dictionary) -> void:
 	var is_manual_rejoin_assignment := _is_manual_rejoin_assignment(match_info)
 	if _match_launch_queued and not is_manual_rejoin_assignment:
 		return
+	_observe_room_in_flight = ""
 	_manual_rejoin_room_id = ""
 	_pending_rematch_room_id = ""
 	_pending_rematch_ready_submitted = false
@@ -10440,6 +10460,16 @@ func _uses_dedicated_match_server(match_info: Dictionary) -> bool:
 func _on_lobby_room_error(message: String) -> void:
 	_finish_match_loading()
 	_write_smoke_trace("lobby_room_error %s" % message)
+	if not _observe_room_in_flight.is_empty() and message == LobbyProtocolScript.OBSERVE_ROOM_AUTH_ERROR:
+		var rejected_room_id := _observe_room_in_flight
+		_observe_room_in_flight = ""
+		if not _observe_auth_retry_used and lobby_client != null:
+			_observe_auth_retry_used = true
+			_pending_observe_room_id = rejected_room_id
+			if lobby_client.restore_lobby_session():
+				return
+			_pending_observe_room_id = ""
+		_show_lobby_notice(message)
 	if _maybe_handle_legacy_seek_switch_error(message):
 		return
 	_pending_seek_switch_join_room_id = ""
@@ -10529,6 +10559,7 @@ func _on_lobby_connection_failed(message: String) -> void:
 	_fail_smoke_if_enabled("CONNECTION_FAILED:%s" % message)
 
 func _on_lobby_disconnected() -> void:
+	_update_quarantined_bots_button()
 	_stop_local_bot_match_worker()
 	_finish_match_loading()
 	_close_rank_badge_picker()
@@ -10569,6 +10600,7 @@ func _is_lobby_auto_reconnecting() -> bool:
 		and lobby_client.is_auto_reconnecting()
 
 func _on_lobby_auto_reconnect_started(attempt: int, max_attempts: int) -> void:
+	_update_quarantined_bots_button()
 	_write_smoke_trace("lobby_auto_reconnect_started %d/%d" % [attempt, max_attempts])
 	_refresh_ranked_ladder()
 	_request_bot_ladder()
@@ -10795,6 +10827,7 @@ func _clear_pending_new_seek_actions(preserve_manual_rejoin: bool = false) -> vo
 	if not preserve_manual_rejoin:
 		_manual_rejoin_room_id = ""
 	_pending_observe_room_id = ""
+	_observe_room_in_flight = ""
 	_pending_seek_switch_join_room_id = ""
 	_pending_local_lobby_launch_on_connect_failure = false
 
@@ -10894,6 +10927,7 @@ func _cleanup_lobby(clear_session: bool) -> void:
 	_refresh_multiplayer_action_state()
 
 func _cleanup_lobby_client() -> void:
+	_observe_room_in_flight = ""
 	_close_rank_badge_picker()
 	_pending_background_lobby_auth_completion = Callable()
 	_cancel_lobby_sign_in_watchdog()
@@ -11581,11 +11615,21 @@ func _on_ladder_lobby_visibility_changed() -> void:
 		if is_instance_valid(_recent_activity_timer):
 			_recent_activity_timer.start()
 
-func _open_bot_ladder() -> void:
+func _can_view_quarantined_bots() -> bool:
+	return _has_active_lobby_connection() and lobby_client.can_view_quarantined_bots
+
+func _update_quarantined_bots_button() -> void:
+	if is_instance_valid(_quarantined_bots_button):
+		_quarantined_bots_button.visible = _can_view_quarantined_bots()
+
+func _open_bot_ladder(quarantined_only: bool = false) -> void:
 	if not multiplayer_container.is_visible_in_tree() or is_instance_valid(_bot_ladder_view):
+		return
+	if quarantined_only and not _can_view_quarantined_bots():
 		return
 	_hide_multiplayer_deck_popup()
 	_bot_ladder_view = BotLadderViewScript.new()
+	_bot_ladder_view.quarantined_only = quarantined_only
 	_bot_ladder_view.close_requested.connect(_close_bot_ladder)
 	_bot_ladder_view.refresh_requested.connect(_request_bot_ladder)
 	if not lobby_client.bot_deleted.is_connected(_on_bot_deleted):
@@ -11606,6 +11650,10 @@ func _request_bot_ladder(page: int = -1) -> void:
 		_bot_ladder_view.set_paging_supported(false)
 		_bot_ladder_view.set_status("Sign in to the lobby to see the ladder.", false, true)
 		return
+	var quarantined_only := _bot_ladder_view.quarantined_only
+	if quarantined_only and not _can_view_quarantined_bots():
+		_close_bot_ladder()
+		return
 	if not lobby_client.supports_bot_ladder:
 		_bot_ladder_view.set_paging_supported(false)
 		_bot_ladder_view.set_status("Update the lobby server to view ranked standings.", false, true)
@@ -11613,9 +11661,12 @@ func _request_bot_ladder(page: int = -1) -> void:
 	_bot_ladder_view.set_paging_supported(lobby_client.supports_ladder_pages)
 	_bot_ladder_view.set_filter_supported(lobby_client.supports_ladder_filter)
 	var request_serial := _bot_ladder_request_serial
-	_bot_ladder_view.set_status("Loading ladder…", false)
+	_bot_ladder_view.set_status("Loading quarantined bots…" if quarantined_only else "Loading ladder…", false)
 	var requested_page := _bot_ladder_view.get_current_page() if page < 0 else page
-	lobby_client.request_ladder(_bot_ladder_view.get_best_of(), requested_page, request_serial, _bot_ladder_view.get_search_query(), _bot_ladder_view.get_player_filter())
+	lobby_client.request_ladder(
+		_bot_ladder_view.get_best_of(), requested_page, request_serial,
+		_bot_ladder_view.get_search_query(), _bot_ladder_view.get_player_filter(), quarantined_only
+	)
 	await get_tree().create_timer(10.0).timeout
 	if is_instance_valid(_bot_ladder_view) and request_serial == _bot_ladder_request_serial:
 		_bot_ladder_view.set_status("The lobby did not respond. Try refreshing.", true)
@@ -11634,8 +11685,8 @@ func _on_bot_ladder_received(summary: Dictionary) -> void:
 	_bot_ladder_view.show_summary(summary)
 
 func _request_bot_deck(list_id: String) -> void:
-	if _has_active_lobby_connection():
-		lobby_client.request_bot_deck(list_id)
+	if is_instance_valid(_bot_ladder_view) and _has_active_lobby_connection():
+		lobby_client.request_bot_deck(list_id, _bot_ladder_view.quarantined_only)
 
 func _on_bot_deck_received(list_id: String, deck: Dictionary) -> void:
 	if is_instance_valid(_bot_ladder_view) and _has_active_lobby_connection():
@@ -11645,11 +11696,12 @@ func _close_bot_ladder() -> void:
 	if not is_instance_valid(_bot_ladder_view):
 		return
 	_bot_ladder_request_serial += 1
+	var return_button := _quarantined_bots_button if _bot_ladder_view.quarantined_only else _ladder_button
 	_bot_ladder_view.hide()
 	_bot_ladder_view.queue_free()
 	_bot_ladder_view = null
-	if is_instance_valid(_ladder_button) and _ladder_button.is_visible_in_tree():
-		_ladder_button.grab_focus()
+	if is_instance_valid(return_button) and return_button.is_visible_in_tree():
+		return_button.grab_focus()
 
 func _build_account_identity_controls() -> void:
 	if menu_container == null:

@@ -91,6 +91,7 @@ var supports_ladder_pages: bool = false
 var supports_ladder_filter: bool = false
 var can_see_players_online: bool = false
 var can_host_top_50_bot_matches: bool = false
+var can_view_quarantined_bots: bool = false
 var current_allow_friend_observers_to_see_cards: bool = true
 var current_active_match_info: Dictionary = {}
 var current_room_snapshot: Dictionary = {}
@@ -390,6 +391,13 @@ func is_authenticated() -> bool:
 		and is_transport_connected() \
 		and not current_session_id.strip_edges().is_empty()
 
+func restore_lobby_session() -> bool:
+	if not is_authenticated() or current_reconnect_token.strip_edges().is_empty():
+		return false
+	network_manager.disconnect_client()
+	_on_server_disconnected()
+	return true
+
 func create_room(is_ranked: bool = true, best_of: int = 1) -> void:
 	var normalized_best_of := 3 if best_of == 3 else 1
 	var match_format := "bo%d_%s" % [normalized_best_of, "rated" if is_ranked else "unrated"]
@@ -542,21 +550,27 @@ func set_rank_badge(best_of: int, league: int, portrait: Dictionary) -> void:
 	_send_request(LobbyProtocolScript.SET_RANK_BADGE, {"best_of": best_of, "league": league, "portrait": portrait})
 
 func request_ladder(best_of: int, page: int, request_id: int, search_query: String = "",
-		player_type: String = LobbyProtocolScript.LADDER_FILTER_EVERYONE) -> void:
-	if not is_authenticated():
+		player_type: String = LobbyProtocolScript.LADDER_FILTER_EVERYONE, quarantined_only: bool = false) -> void:
+	if not is_authenticated() or (quarantined_only and not can_view_quarantined_bots):
 		return
 	if supports_ladder_pages:
-		_send_request(LobbyProtocolScript.REQUEST_BOT_LADDER, {
+		var payload := {
 			"best_of": best_of, "page": page, "request_id": request_id,
 			"search_query": search_query.strip_edges().substr(0, 64),
 			"player_type": player_type,
-		})
+		}
+		if quarantined_only:
+			payload["quarantined_only"] = true
+		_send_request(LobbyProtocolScript.REQUEST_BOT_LADDER, payload)
 	elif supports_bot_ladder:
 		_send_request(LobbyProtocolScript.REQUEST_BOT_LADDER)
 
-func request_bot_deck(list_id: String) -> void:
-	if is_authenticated() and supports_bot_ladder:
-		_send_request(LobbyProtocolScript.REQUEST_BOT_DECK, {"list_id": list_id})
+func request_bot_deck(list_id: String, quarantined_only: bool = false) -> void:
+	if is_authenticated() and supports_bot_ladder and (not quarantined_only or can_view_quarantined_bots):
+		var payload := {"list_id": list_id}
+		if quarantined_only:
+			payload["quarantined_only"] = true
+		_send_request(LobbyProtocolScript.REQUEST_BOT_DECK, payload)
 
 func request_bot_match_history(before_match_id: String = "") -> void:
 	if is_authenticated() and supports_bot_ladder:
@@ -726,6 +740,7 @@ func lobby_event(message: Dictionary) -> void:
 			supports_ladder_filter = bool(payload.get("supports_ladder_filter", false))
 			can_see_players_online = bool(payload.get("can_see_players_online", false))
 			can_host_top_50_bot_matches = bool(payload.get("can_host_top_50_bot_matches", false))
+			can_view_quarantined_bots = bool(payload.get("can_view_quarantined_bots", false))
 			_cancel_initial_auth_request()
 			_cancel_auth_response_timeout()
 			_finish_auto_reconnect()
@@ -753,6 +768,7 @@ func lobby_event(message: Dictionary) -> void:
 			supports_ladder_filter = bool(payload.get("supports_ladder_filter", false))
 			can_see_players_online = bool(payload.get("can_see_players_online", false))
 			can_host_top_50_bot_matches = bool(payload.get("can_host_top_50_bot_matches", false))
+			can_view_quarantined_bots = bool(payload.get("can_view_quarantined_bots", false))
 			_cancel_initial_auth_request()
 			_cancel_auth_response_timeout()
 			_finish_auto_reconnect()
@@ -796,6 +812,8 @@ func lobby_event(message: Dictionary) -> void:
 		LobbyProtocolScript.ROOM_ERROR:
 			var error_message := str(payload.get("message", "Unknown lobby error."))
 			if not _is_authenticated:
+				if not is_transport_connected():
+					return
 				_cancel_initial_auth_request()
 				_cancel_auth_response_timeout()
 				# A server restart loses its in-memory sessions. Try account
@@ -1148,6 +1166,7 @@ func _clear_session_fields() -> void:
 	supports_ladder_filter = false
 	can_see_players_online = false
 	can_host_top_50_bot_matches = false
+	can_view_quarantined_bots = false
 	current_session_id = ""
 	current_reconnect_token = ""
 	current_profile_id = ""

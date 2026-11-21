@@ -758,6 +758,7 @@ func _ensure_loaded() -> void:
 	_bot_match_ids_by_list_id = {}
 	_player_ladder_cache = {}
 	_player_ladder_cache_season = -1
+	_load_serve_quarantined()
 	var storage_path: String = _get_storage_path()
 	if not FileAccess.file_exists(storage_path):
 		return
@@ -770,7 +771,6 @@ func _ensure_loaded() -> void:
 		_matches_by_id = (stored_matches as Dictionary).duplicate(true)
 	if stored_history_ids is Dictionary:
 		_history_ids_by_profile_id = (stored_history_ids as Dictionary).duplicate(true)
-	_load_serve_quarantined()
 
 func _serve_quarantined_path() -> String:
 	return ServerPathsScript.get_server_data_file_path(SERVE_QUARANTINED_STORAGE_FILE)
@@ -792,21 +792,16 @@ func _save_serve_quarantined() -> void:
 func set_serve_quarantined_next(account_id: String, value: bool) -> void:
 	if account_id.is_empty():
 		return
+	_ensure_loaded()
 	if value:
 		_serve_quarantined_next[account_id] = true
 	else:
 		_serve_quarantined_next.erase(account_id)
 	_save_serve_quarantined()
 
-# Returns whether the account is due a quarantined bad bot next, then clears the
-# flag so it is served at most once per loss.
-func take_serve_quarantined_next(account_id: String) -> bool:
-	if account_id.is_empty():
-		return false
-	var due := bool(_serve_quarantined_next.get(account_id, false))
-	_serve_quarantined_next.erase(account_id)
-	_save_serve_quarantined()
-	return due
+func should_serve_quarantined_next(account_id: String) -> bool:
+	_ensure_loaded()
+	return bool(_serve_quarantined_next.get(account_id, false))
 
 func _save() -> bool:
 	var storage_path: String = _get_storage_path()

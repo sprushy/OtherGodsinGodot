@@ -24,6 +24,7 @@ const LIST_ROOMS := "list_rooms"
 const JOIN_ROOM := "join_room"
 const REJOIN_ROOM := "rejoin_room"
 const OBSERVE_ROOM := "observe_room"
+const OBSERVE_ROOM_AUTH_ERROR := "Join the lobby before observing a match."
 const REQUEST_NEXT := "request_next"
 const LEAVE_ROOM := "leave_room"
 const SET_READY := "set_ready"
@@ -260,6 +261,9 @@ static func validate_request(message: Dictionary) -> String:
 		LIST_ROOMS, LEAVE_ROOM, REQUEST_ACCOUNT_DECKS, REQUEST_PROFILE_SUMMARY, REQUEST_FRIENDS, REQUEST_PLAYERS_ONLINE:
 			pass
 		REQUEST_BOT_LADDER:
+			var quarantined_only = payload.get("quarantined_only", false)
+			if not quarantined_only is bool or (quarantined_only and not payload.has("request_id")):
+				return "Invalid quarantined bot list request."
 			if payload.has("request_id"):
 				var request_id = payload["request_id"]
 				var page = payload.get("page")
@@ -275,6 +279,8 @@ static func validate_request(message: Dictionary) -> String:
 			var list_id = payload.get("list_id", "")
 			if not list_id is String or list_id.is_empty() or list_id.length() > 64:
 				return "Invalid bot list id."
+			if not payload.get("quarantined_only", false) is bool:
+				return "Invalid quarantined bot deck request."
 		REQUEST_BOT_MATCH_HISTORY:
 			var cursor = payload.get("before_match_id", "")
 			if not cursor is String or cursor.length() > 64:

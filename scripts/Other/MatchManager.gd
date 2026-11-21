@@ -6844,6 +6844,20 @@ func _process_command_impl(command: Dictionary) -> bool:
 					or not wm_zone.cards.is_empty():
 				move_failed.emit("wolf_master_summon: invalid zone")
 				return false
+			var wm_sacrifices: Array[Card] = []
+			if command.has("sacrifice_uids"):
+				var wm_sacrifice_uids: Variant = command["sacrifice_uids"]
+				if not wm_sacrifice_uids is Array or wm_sacrifice_uids.size() != wm_lupine.sacrifice_cost:
+					move_failed.emit("%s requires exactly %d summon sacrifice(s)." % [wm_lupine.card_name, wm_lupine.sacrifice_cost])
+					return false
+				wm_sacrifices = _resolve_cards_by_uids(wm_sacrifice_uids)
+				if wm_sacrifices.size() != wm_lupine.sacrifice_cost or not _cards_have_unique_uids(wm_sacrifices):
+					move_failed.emit("%s requires exactly %d unique summon sacrifice(s)." % [wm_lupine.card_name, wm_lupine.sacrifice_cost])
+					return false
+				for sacrifice in wm_sacrifices:
+					if not _can_use_creature_for_summon_sacrifice(sacrifice, acting_player):
+						move_failed.emit("Selected summon sacrifice is invalid for " + wm_lupine.card_name + ".")
+						return false
 			var wm_mode_str: String = command.get("mode", "aggressive")
 			var wm_mode: Card.CreatureMode = Card.CreatureMode.DEFENSIVE
 			if wm_mode_str == "aggressive":
@@ -6852,11 +6866,16 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if not wm_fenrir.perform_wolf_master_shuffle():
 				move_failed.emit("Wolf Master shuffle failed.")
 				return false
-			if not game_manager.summon_creature_by_effect(
+			if not wm_sacrifices.is_empty():
+				wm_lupine.set_pending_chosen_sacrifices(wm_sacrifices)
+			var wm_summoned := game_manager.summon_creature_by_effect(
 				game_manager.current_player, wm_lupine, wm_zone,
 				wm_mode, wm_stealth, wm_stealth,
 				wm_fenrir_card, true, true
-			):
+			)
+			if not wm_sacrifices.is_empty():
+				wm_lupine.clear_pending_chosen_sacrifices()
+			if not wm_summoned:
 				move_failed.emit("Wolf Master: summon failed for " + wm_lupine.card_name)
 				return false
 			move_validated.emit(command)

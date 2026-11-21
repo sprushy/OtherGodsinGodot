@@ -407,7 +407,7 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 		LobbyProtocolScript.OBSERVE_ROOM:
 			var observe_session: Dictionary = _get_session_for_peer(peer_id)
 			if observe_session.is_empty():
-				_send_error_to_peer(peer_id, "Join the lobby before observing a match.")
+				_send_error_to_peer(peer_id, LobbyProtocolScript.OBSERVE_ROOM_AUTH_ERROR)
 				return
 			_observe_room_for_session(str(observe_session.get("session_id", "")), str(payload.get("room_id", "")))
 		LobbyProtocolScript.REQUEST_NEXT:
@@ -863,7 +863,8 @@ func _complete_login_for_peer(
 		"supports_ladder_pages": true,
 		"supports_ladder_filter": true,
 		"can_see_players_online": OS.is_debug_build() or Engine.is_editor_hint() or bool(existing.get("is_admin", false)),
-		"can_host_top_50_bot_matches": _can_host_top_50_bot_matches(existing),
+		"can_host_top_50_bot_matches": _is_admin_account(existing),
+		"can_view_quarantined_bots": _is_admin_account(existing),
 		"room": room_snapshot,
 		"active_match_info": active_match_info,
 	})
@@ -932,7 +933,8 @@ func _handle_reconnect_request(peer_id: int, payload: Dictionary) -> void:
 		"supports_ladder_pages": true,
 		"supports_ladder_filter": true,
 		"can_see_players_online": OS.is_debug_build() or Engine.is_editor_hint() or bool(session.get("is_admin", false)),
-		"can_host_top_50_bot_matches": _can_host_top_50_bot_matches(session),
+		"can_host_top_50_bot_matches": _is_admin_account(session),
+		"can_view_quarantined_bots": _is_admin_account(session),
 		"room": room_snapshot,
 		"active_match_info": active_match_info,
 	})
@@ -1173,7 +1175,7 @@ func _handle_set_rank_badge(peer_id: int, payload: Dictionary) -> void:
 	if success:
 		_handle_request_profile_summary(peer_id)
 
-func _can_host_top_50_bot_matches(session: Dictionary) -> bool:
+func _is_admin_account(session: Dictionary) -> bool:
 	return bool(session.get("is_admin", false)) and not str(session.get("account_id", "")).is_empty()
 
 func _handle_request_bot_work(peer_id: int, payload: Dictionary = {}) -> void:
@@ -1181,7 +1183,7 @@ func _handle_request_bot_work(peer_id: int, payload: Dictionary = {}) -> void:
 	if session.is_empty() or str(session.get("account_id", "")).is_empty():
 		return
 	var top_50 := bool(payload.get("top_50", false))
-	if top_50 and not _can_host_top_50_bot_matches(session):
+	if top_50 and not _is_admin_account(session):
 		_send_to_peer(peer_id, LobbyProtocolScript.BOT_WORK_RESULT, {
 			"job_id": "", "success": false, "message": "Only admins can host top 50 bot matches.",
 		})
@@ -2061,12 +2063,16 @@ func _handle_request_bot_ladder(peer_id: int, message_type: String, payload: Dic
 	if str(session.get("account_id", "")).is_empty():
 		_send_error_to_peer(peer_id, "Sign in to view the ladder.")
 		return
+	var quarantined_only := bool(payload.get("quarantined_only", false))
+	if quarantined_only and not _is_admin_account(session):
+		_send_error_to_peer(peer_id, "Only admins can view quarantined bots.")
+		return
 	_ensure_match_history_store()
 	if message_type == LobbyProtocolScript.REQUEST_BOT_DECK:
 		_refresh_ranked_bot_deck_pool()
 		var list_id: String = payload["list_id"]
 		_ensure_server_bot_deck_factory()
-		var deck_details := _ranked_bot_deck_pool.get_deck_details(list_id)
+		var deck_details := _ranked_bot_deck_pool.get_deck_details(list_id, quarantined_only)
 		var completed_deck: Dictionary = server_bot_deck_factory.complete_ranked_power_slots(deck_details)
 		if not completed_deck.is_empty():
 			completed_deck.merge({
@@ -2081,8 +2087,7 @@ func _handle_request_bot_ladder(peer_id: int, message_type: String, payload: Dic
 			"deck": deck_details,
 		})
 		return
-	var session_for_ladder := _get_session_for_peer(peer_id)
-	var ladder_username := str(session_for_ladder.get("username", "")).strip_edges()
+	var ladder_username := str(session.get("username", "")).strip_edges()
 	_send_to_peer(peer_id, LobbyProtocolScript.BOT_LADDER, _build_ladder_page(payload, ladder_username))
 
 func _get_cached_ladder() -> Array[Dictionary]:
@@ -2107,11 +2112,14 @@ func _get_top_50_bot_list_ids() -> Dictionary:
 
 func _build_ladder_page(request: Dictionary, current_username: String = "") -> Dictionary:
 	var is_paged := request.has("request_id")
+	var quarantined_only := bool(request.get("quarantined_only", false))
 	var best_of := int(request.get("best_of", 1)) if is_paged else 1
 	# For best_of == 1 (the default ladder), use the cached full ladder.
 	# Other best_of values are rare admin queries — always compute fresh.
 	var ladder: Array[Dictionary]
-	if best_of == 1:
+	if quarantined_only:
+		ladder = _build_quarantined_bot_ladder()
+	elif best_of == 1:
 		# Deep-duplicate so per-request mutations (can_delete, filtering) don't
 		# corrupt the cache for other callers.
 		ladder = []
@@ -2123,8 +2131,9 @@ func _build_ladder_page(request: Dictionary, current_username: String = "") -> D
 	var trimmed_username := current_username.strip_edges()
 	for row in ladder:
 		var bot_owner := str(row.get("owner_name", "")).strip_edges()
-		row["can_delete"] = (not bot_owner.is_empty() and bot_owner == trimmed_username)
-	var player_type := str(request.get("player_type", LobbyProtocolScript.LADDER_FILTER_EVERYONE))
+		row["can_delete"] = not quarantined_only and not bot_owner.is_empty() and bot_owner == trimmed_username
+	var player_type := LobbyProtocolScript.LADDER_FILTER_BOTS if quarantined_only \
+		else str(request.get("player_type", LobbyProtocolScript.LADDER_FILTER_EVERYONE))
 	if player_type == LobbyProtocolScript.LADDER_FILTER_PLAYERS or player_type == LobbyProtocolScript.LADDER_FILTER_BOTS:
 		# Filter before paging so one type's standings compact into consecutive
 		# pages while rows keep their overall ladder positions.
@@ -2156,6 +2165,18 @@ func _build_ladder_page(request: Dictionary, current_username: String = "") -> D
 		"last_page": last_page,
 	}
 
+func _build_quarantined_bot_ladder() -> Array[Dictionary]:
+	_refresh_ranked_bot_deck_pool()
+	var ladder: Array[Dictionary] = []
+	for bot in _ranked_bot_deck_pool.get_quarantined_ladder_summary():
+		var row := _build_bot_ladder_row(bot, str(bot["god_name"]))
+		row["quarantine_status"] = bot["quarantine_status"]
+		ladder.append(row)
+	ladder.sort_custom(_is_higher_ladder_row)
+	for index in range(ladder.size()):
+		ladder[index]["ladder_position"] = index + 1
+	return ladder
+
 # Expensive: builds the full sorted ladder with humans + bots for best_of=1.
 # Called only when the cache is dirty.
 func _build_full_ladder() -> Array[Dictionary]:
@@ -2185,37 +2206,8 @@ func _build_full_ladder_for_best_of(best_of: int) -> Array[Dictionary]:
 					seen_owner_fps[owner_key] = true
 				if not bot_id_str.is_empty():
 					seen_bot_ids[bot_id_str] = true
-				var rank := RankedProgressionScript.summarize_bot_stars(int(bot["stars"]))
-				ladder.append({
-					"name": bot["name"],
-					"list_id": bot_id_str,
-					"points": bot["stars"],
-					"rank": rank["name"],
-					"league": int(rank["league"]),
-					"stars": rank["stars"],
-					"is_bot": true,
-					"owner_name": bot_owner_name,
-					"can_delete": false,
-					"wins": int(bot.get("wins", 0)),
-					"losses": int(bot.get("losses", 0)),
-					"draws": int(bot.get("draws", 0)),
-					"main_gods": [str(god.get("god_name", ""))],
-				})
-	ladder.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-		if int(a["points"]) != int(b["points"]):
-			return int(a["points"]) > int(b["points"])
-		var a_wins := int(a.get("wins", 0))
-		var b_wins := int(b.get("wins", 0))
-		var a_losses := int(a.get("losses", 0))
-		var b_losses := int(b.get("losses", 0))
-		var a_games := a_wins + a_losses
-		var b_games := b_wins + b_losses
-		var a_record_score := a_wins * b_games
-		var b_record_score := b_wins * a_games
-		if a_record_score != b_record_score:
-			return a_record_score > b_record_score
-		return a["name"].nocasecmp_to(b["name"]) < 0
-	)
+				ladder.append(_build_bot_ladder_row(bot, str(god.get("god_name", ""))))
+	ladder.sort_custom(_is_higher_ladder_row)
 	var unique_ladder: Array[Dictionary] = []
 	var seen_display_names: Dictionary = {}
 	for row in ladder:
@@ -2230,13 +2222,44 @@ func _build_full_ladder_for_best_of(best_of: int) -> Array[Dictionary]:
 		ladder[index]["ladder_position"] = index + 1
 	return ladder
 
+func _build_bot_ladder_row(bot: Dictionary, god_name: String) -> Dictionary:
+	var rank := RankedProgressionScript.summarize_bot_stars(int(bot["stars"]))
+	return {
+		"name": bot["name"],
+		"list_id": str(bot.get("list_id", "")).strip_edges(),
+		"points": bot["stars"],
+		"rank": rank["name"],
+		"league": int(rank["league"]),
+		"stars": rank["stars"],
+		"is_bot": true,
+		"owner_name": str(bot.get("owner_name", "")).strip_edges(),
+		"can_delete": false,
+		"wins": int(bot.get("wins", 0)),
+		"losses": int(bot.get("losses", 0)),
+		"draws": int(bot.get("draws", 0)),
+		"main_gods": [god_name],
+	}
+
+func _is_higher_ladder_row(a: Dictionary, b: Dictionary) -> bool:
+	if int(a["points"]) != int(b["points"]):
+		return int(a["points"]) > int(b["points"])
+	var a_wins := int(a.get("wins", 0))
+	var b_wins := int(b.get("wins", 0))
+	var a_games := a_wins + int(a.get("losses", 0))
+	var b_games := b_wins + int(b.get("losses", 0))
+	var a_record_score := a_wins * b_games
+	var b_record_score := b_wins * a_games
+	if a_record_score != b_record_score:
+		return a_record_score > b_record_score
+	return a["name"].nocasecmp_to(b["name"]) < 0
+
 func _decorate_ladder_rows(rows: Array[Dictionary]) -> void:
 	for row in rows:
 		if bool(row.get("is_bot", false)):
 			var list_id := str(row.get("list_id", ""))
 			if not row.has("portrait"):
 				var league := int(row.get("league", 0))
-				var bot_deck := _ranked_bot_deck_pool.get_deck_details(list_id)
+				var bot_deck := _ranked_bot_deck_pool.get_deck_details(list_id, row.has("quarantine_status"))
 				row["portrait"] = RankBadgeCatalog.portrait_from_deck(
 					league,
 					bot_deck.get("cards", {}),
@@ -2636,7 +2659,7 @@ func _match_server_bot_to_player(room: LobbyRoom) -> bool:
 	var opponent_id := room.members[1]
 	var account_id := str(sessions_by_id.get(opponent_id, {}).get("account_id", ""))
 	if not account_id.is_empty():
-		var matched := _find_rank_matched_bot_deck(room.best_of, account_id)
+		var matched := _find_rank_matched_bot_deck(room.best_of, account_id, room.is_ranked)
 		if not matched.is_empty():
 			_apply_server_bot_deck(room, matched)
 			return true
@@ -2649,20 +2672,17 @@ func _match_server_bot_to_player(room: LobbyRoom) -> bool:
 	_apply_server_bot_deck(room, fresh)
 	return true
 
-func _find_rank_matched_bot_deck(best_of: int, account_id: String) -> Dictionary:
+func _find_rank_matched_bot_deck(best_of: int, account_id: String, is_ranked: bool = true) -> Dictionary:
 	_ensure_match_history_store()
 	_refresh_ranked_bot_deck_pool()
 	var progress: Dictionary = match_history_store.get_current_ranked_progress(account_id, best_of)
 	var target_stars := int(progress.get("points", 0))
 	var rank := RankedProgressionScript.summarize_bot_stars(target_stars)
 	var league := int(rank["league"])
-	var stars := int(rank["stars"])
-	# Iron V always faces a quarantined bad bot.
-	var force_quarantined := (league == 0 and stars <= 2)
-	# An Iron or Bronze player who lost their last game faces a quarantined bad
-	# bot on the very next match, exactly once per loss.
-	if not force_quarantined and match_history_store.take_serve_quarantined_next(account_id):
-		force_quarantined = true
+	var post_loss: bool = is_ranked and league <= 1 and match_history_store.should_serve_quarantined_next(account_id)
+	# Iron V always uses this pool in ranked bot challenges. Other Iron and
+	# Bronze divisions use it once after a qualifying loss.
+	var force_quarantined: bool = is_ranked and (rank["name"] == "Iron V" or post_loss)
 	var unavailable := _busy_bot_list_ids()
 	var deck := _ranked_bot_deck_pool.select_deck(unavailable, _bot_deck_rng, target_stars, force_quarantined)
 	var attempt := 0
@@ -2673,6 +2693,8 @@ func _find_rank_matched_bot_deck(best_of: int, account_id: String) -> Dictionary
 		var deck_name := str(deck.get("deck_name", ""))
 		var submission := _validate_server_bot_deck(deck)
 		if not submission.is_empty():
+			if post_loss:
+				match_history_store.set_serve_quarantined_next(account_id, false)
 			print("[BotMatchmaker] account=%s best_of=%d target_stars=%d league=%d(%s) force_quarantined=%s -> matched list_id=%s stars=%d name=%s (attempt %d)" % [
 				account_id, best_of, target_stars, league, RankedProgressionScript.LEAGUES[league] if league < RankedProgressionScript.LEAGUES.size() else "?", force_quarantined, list_id, deck_stars, deck_name, attempt
 			])
@@ -3932,8 +3954,7 @@ func _handle_local_bot_match_result(peer_id: int, payload: Dictionary) -> void:
 	_invalidate_ladder_cache()
 	# If a human Iron/Bronze challenger lost, serve them a quarantined bad bot on
 	# their next ranked match, exactly once per loss.
-	var human_lost := winner_index != 0
-	if human_lost:
+	if match_session.is_ranked and winner_index == 1:
 		var loser_account_id := str(session.get("account_id", "")).strip_edges()
 		if not loser_account_id.is_empty():
 			var loser_progress: Dictionary = match_history_store.get_current_ranked_progress(loser_account_id, int(match_session.series_best_of))

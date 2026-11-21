@@ -27,7 +27,7 @@ var _fixture_players: Array[Player] = []
 var _fixture_matches: Array[MatchManager] = []
 var _fixture_bots: Array[PracticeFuzzPlayerBot] = []
 
-class RequestNextLobby extends LobbyServerScript:
+class RecordingLobby extends LobbyServerScript:
 	var events: Array[Dictionary] = []
 
 	func _send_to_peer(peer_id: int, message_type: String, payload: Dictionary) -> void:
@@ -71,7 +71,9 @@ func run() -> bool:
 	_check_bot_speed_one_stealth(failures)
 	_check_bot_reserve_summon_threat(failures)
 	_check_bot_fenrir_summon(failures)
+	_check_bot_wolf_master(failures)
 	_check_bot_main_phase_combat_order(failures)
+	_check_bot_aurboda_pierce(failures)
 	_check_bot_tablet_of_life_payoff(failures)
 	_check_bot_removal_opens_attacks(failures)
 	_check_bot_paired_removals(failures)
@@ -1428,6 +1430,131 @@ func _check_bot_fenrir_summon(failures: PackedStringArray) -> void:
 		if prey.current_zone != opponent.graveyard_zone or fenrir.get_effective_strength() != 35 \
 				or fenrir.get_effective_resilience() != 53 or not bool(attack.get("lethal", false)):
 			failures.append("Fenrir's resolved Devour did not produce the projected lethal attack")
+	bot.detach()
+
+func _check_bot_wolf_master(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 1
+	game._upkeep_resolved_turn = game.turn_number
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var fenrir := Fenrir.new()
+	fenrir.card_owner = player
+	player.hand_zone.add_card(fenrir)
+	var hand_creature := CreatureCard.new()
+	hand_creature.card_owner = player
+	hand_creature.strength = 60
+	player.hand_zone.add_card(hand_creature)
+	var rabid_wolf := RabidWolf.new()
+	rabid_wolf.card_owner = player
+	player.deck_zone.add_card(rabid_wolf)
+	var skoll := Skoll.new()
+	skoll.card_owner = player
+	player.deck_zone.add_card(skoll)
+	var plan := bot._plan_creature_summon()
+	if plan.get("command", {}).get("card_uid") != hand_creature.uid:
+		failures.append("Bot chose Wolf Master over a stronger summon in hand")
+	hand_creature.strength = 1
+	plan = bot._plan_creature_summon()
+	if plan.get("command", {}).get("lupine_uid") != rabid_wolf.uid:
+		failures.append("Bot did not choose an affordable Wolf Master summon over a weaker hand summon")
+	var valuable_body := CreatureCard.new()
+	valuable_body.card_owner = player
+	valuable_body.strength = 40
+	valuable_body.level = fenrir.level
+	player.frontline_zones[0].add_card(valuable_body)
+	var fodder := CreatureCard.new()
+	fodder.card_owner = player
+	fodder.level = fenrir.level
+	player.reserve_zones[0].add_card(fodder)
+	plan = bot._plan_creature_summon()
+	var command: Dictionary = plan.get("command", {})
+	if command.get("type") != "wolf_master_summon" or command.get("lupine_uid") != skoll.uid \
+			or command.get("sacrifice_uids", []) != [fodder.uid]:
+		failures.append("Bot did not value Skoll with the cheaper Wolf Master sacrifice")
+	elif not bot._submit_strategy_plan(plan) or not skoll.current_zone.is_board_zone() \
+			or fenrir.current_zone != player.deck_zone or fodder.current_zone != player.graveyard_zone \
+			or valuable_body.current_zone != player.frontline_zones[0] or not player.has_summoned_this_turn:
+		failures.append("Wolf Master did not resolve with the planned recruit, sacrifice, and normal summon")
+	bot.detach()
+
+func _check_bot_aurboda_pierce(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var aurboda := Aurboda.new()
+	aurboda.card_owner = opponent
+	aurboda.creature_mode = Card.CreatureMode.AGGRESSIVE
+	opponent.frontline_zones[0].add_card(aurboda)
+	var attacker := CreatureCard.new()
+	attacker.card_owner = player
+	attacker.strength = aurboda.strength
+	attacker.speed = aurboda.speed
+	attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
+	player.frontline_zones[0].add_card(attacker)
+	player.guard = 10
+	for followers in [6, 7, 8]:
+		player.followers = followers
+		var trades := bot._get_attack_candidates(attacker, null).filter(func(candidate: Dictionary) -> bool:
+			return candidate["target"] == aurboda
+		)
+		if trades.is_empty():
+			failures.append("Aurboda trade fixture did not produce a legal attack")
+			break
+		var result: Dictionary = trades[0]["base"]
+		var converted := mini(followers, 7)
+		if result["bot_followers_lost"] != converted or result.get("opponent_followers_gained") != converted \
+				or result["bot_guard_spent"] != 0 or result["opponent_wins"] != (followers <= 7):
+			failures.append("Bot misforecast Aurboda's Pierce in a trade at %d followers" % followers)
+		if followers <= 7 and (not bot._plan_combat(trades).is_empty() or not bot._get_best_standard_attack([attacker], [aurboda]).is_empty()):
+			failures.append("Bot planned a lethal trade into Aurboda at %d followers" % followers)
+		if followers == 8:
+			var later := bot._project_attack(trades[0], [], null, null, -1, {
+				"bot_followers": 6, "opponent_followers": opponent.followers,
+				"bot_guard": player.guard, "opponent_guard": opponent.guard,
+			})
+			if later.is_empty() or later["bot_followers_lost"] != 6 \
+					or later.get("opponent_followers_gained") != 6 or not later["opponent_wins"]:
+				failures.append("Bot did not recap Pierce against the followers remaining later in the combat line")
+	var action := CardAction.new()
+	action.type = CardAction.Type.ATTACK
+	action.attacker = attacker
+	action.target = aurboda
+	player.guard = 0
+	attacker.strength -= 1
+	var loss := bot._estimate_attack_economy(action, null, 0, 0)
+	if loss["bot_followers_lost"] != 8 or not loss["opponent_wins"]:
+		failures.append("Bot missed lethal from combining combat damage with Aurboda's Pierce")
+	aurboda.is_muted = true
+	if bot._estimate_attack_economy(action, null, 0, 0)["bot_followers_lost"] != 1:
+		failures.append("Bot forecast Pierce from a muted Aurboda")
+	bot.detach()
+	aurboda.is_muted = false
+	player.followers = 6
+	attacker.strength = aurboda.strength
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 1), 1)
+	action.attacker = aurboda
+	action.target = attacker
+	var win := bot._estimate_attack_economy(action, null, 0, 0)
+	if win["opponent_followers_lost"] != 6 or win.get("bot_followers_gained") != 6 or not win["bot_wins"]:
+		failures.append("Bot missed lethal from its own Aurboda's Pierce")
+	game.grant_turn_follower_loss_prevention(player)
+	if bot._estimate_attack_economy(action, null, 0, 0)["opponent_followers_lost"] != 0:
+		failures.append("Bot forecast Pierce through follower-loss prevention")
 	bot.detach()
 
 func _check_bot_main_phase_combat_order(failures: PackedStringArray) -> void:
@@ -3226,7 +3353,7 @@ func _check_standing_bot_seeks(failures: PackedStringArray) -> void:
 	lobby.free()
 
 func _check_request_next(failures: PackedStringArray) -> void:
-	var lobby := RequestNextLobby.new()
+	var lobby := RecordingLobby.new()
 	var supervisor := MatchSupervisorScript.new()
 	lobby.match_supervisor = supervisor
 	var target: Dictionary = lobby._create_session("Playing", 2, false, "", "target_account")
@@ -3304,7 +3431,7 @@ func _check_ladder_pages(failures: PackedStringArray) -> void:
 		return
 	var store := BadgeTestAccountStore.new()
 	store.storage_path = account_path
-	var lobby := LobbyServerScript.new()
+	var lobby := RecordingLobby.new()
 	lobby.account_store = store
 	var storage_file := "preflight_ladder_history_%d.json" % OS.get_process_id()
 	var history := MatchHistoryStoreScript.new(storage_file, true)
@@ -3380,6 +3507,40 @@ func _check_ladder_pages(failures: PackedStringArray) -> void:
 	var legacy_summary := lobby._build_ladder_page({})
 	if legacy_summary["ladder"].size() != 100:
 		failures.append("Legacy ladder response did not cap standings at the top 100")
+	var pool := lobby._ranked_bot_deck_pool
+	var held_id := pool.register_league_list("Thor", {
+		"deck_name": "Thor: Held Bot", "cards": {"Thor": 1}, "reinforcements": {}, "special_setup": {},
+	}, "held_bot")
+	var thor_pool: Dictionary = pool._by_god["Thor"]
+	pool._retire_list(thor_pool, pool._find_list_by_id(thor_pool, held_id))
+	lobby.session_id_by_peer[2] = "ladder_account"
+	lobby.sessions_by_id["ladder_account"] = {"account_id": "account_0", "username": "Player 000"}
+	var quarantine_ladder := LobbyProtocolScript.make_message(LobbyProtocolScript.REQUEST_BOT_LADDER, {
+		"best_of": 1, "page": 0, "request_id": 101, "search_query": "held", "quarantined_only": true,
+	})
+	var quarantine_deck := LobbyProtocolScript.make_message(LobbyProtocolScript.REQUEST_BOT_DECK, {
+		"list_id": held_id, "quarantined_only": true,
+	})
+	lobby._handle_request(2, quarantine_ladder)
+	lobby._handle_request(2, quarantine_deck)
+	if lobby.events.size() != 2 or lobby.events[0]["type"] != LobbyProtocolScript.ROOM_ERROR \
+			or lobby.events[1]["type"] != LobbyProtocolScript.ROOM_ERROR:
+		failures.append("The quarantined bot view allowed a non-admin to request its list or decks")
+	lobby.events.clear()
+	lobby.sessions_by_id["ladder_account"]["is_admin"] = true
+	lobby._handle_request(2, quarantine_ladder)
+	lobby._handle_request(2, quarantine_deck)
+	lobby._handle_request(2, LobbyProtocolScript.make_message(LobbyProtocolScript.REQUEST_BOT_DECK, {"list_id": held_id}))
+	if lobby.events.size() != 3 or lobby.events[0]["type"] != LobbyProtocolScript.BOT_LADDER \
+			or lobby.events[1]["type"] != LobbyProtocolScript.BOT_DECK or lobby.events[2]["type"] != LobbyProtocolScript.BOT_DECK:
+		failures.append("The admin quarantined bot view did not return ladder and deck responses")
+	else:
+		var held_rows: Array = lobby.events[0]["payload"]["ladder"]
+		if held_rows.size() != 1 or held_rows[0]["list_id"] != held_id \
+				or held_rows[0]["quarantine_status"] != "Matchmaking pool":
+			failures.append("The quarantined bot ladder did not show the retired matchmaking bot alone")
+		if lobby.events[1]["payload"]["deck"].is_empty() or not lobby.events[2]["payload"]["deck"].is_empty():
+			failures.append("A retired bot deck was unavailable to the admin view or accessible through the normal ladder")
 	network.free()
 	lobby.free()
 	DirAccess.remove_absolute(account_path)
@@ -3431,24 +3592,36 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 	var lobby := LobbyServerScript.new()
 	lobby.match_history_store = reader
 	var seek := lobby._create_server_bot_seek(true)
+	var pool_for_seek := lobby._ranked_bot_deck_pool
+	var held_id := pool_for_seek.register_league_list("Thor", {
+		"deck_name": "Thor: Held Test Bot", "cards": _known_good_deck_counts(),
+		"reinforcements": {}, "special_setup": {},
+	}, "held_test_bot")
+	var thor_pool: Dictionary = pool_for_seek._by_god["Thor"]
+	pool_for_seek._retire_list(thor_pool, pool_for_seek._find_list_by_id(thor_pool, held_id))
 	lobby.sessions_by_id["human"] = {"account_id": "human_account", "connected": true}
 	lobby._join_room_for_session("human", seek.room_id)
 	var matched_before := lobby._match_server_bot_to_player(seek)
 	var before_win := seek.get_deck_submission(seek.host_session_id)
-	var human_win := MatchSessionScript.new("human_win", "preflight_room", "127.0.0.1", 12345, ["human", "opponent"], {}, {
-		"human": {"account_id": "human_account"},
-		"opponent": {"account_id": "opponent_account"},
-	})
-	writer.record_completed_match(human_win, 0, 1, "Thor", "Odin")
+	var human_win_ids: Array[String] = []
+	for index in range(3):
+		var match_id := "human_win_%d" % index
+		human_win_ids.append(match_id)
+		var human_win := MatchSessionScript.new(match_id, "preflight_room", "127.0.0.1", 12345, ["human", "opponent"], {}, {
+			"human": {"account_id": "human_account"},
+			"opponent": {"account_id": "opponent_account"},
+		})
+		writer.record_completed_match(human_win, 0, 1, "Thor", "Odin")
 	var matched_after := lobby._match_server_bot_to_player(seek)
 	var after_win := seek.get_deck_submission(seek.host_session_id)
-	var before_bot_rank := RankedProgressionScript.summarize_bot_stars(int(before_win.get("bot_stars", -1)))
-	var after_bot_rank := RankedProgressionScript.summarize_bot_stars(int(after_win.get("bot_stars", -1)))
-	if not matched_before or not matched_after \
-			or absi(int(before_bot_rank["league"])) > 1 \
-			or after_win.get("bot_list_id") != "bot_win" \
-			or absi(int(after_bot_rank["league"]) - int(RankedProgressionScript.summarize_bot_stars(1)["league"])) > 1:
-		failures.append("Bot challenge did not select an available deck inside the player's league band")
+	if not matched_before or before_win.get("bot_list_id") != held_id \
+			or not matched_after or after_win.get("bot_list_id") != "bot_win":
+		failures.append("Iron V did not use the quarantine pool or Iron IV failed to resume regular matchmaking")
+	reader.set_serve_quarantined_next("human_account", true)
+	if lobby._find_rank_matched_bot_deck(1, "human_account", false).get("bot_list_id") != "bot_win" \
+			or lobby._find_rank_matched_bot_deck(1, "human_account").get("bot_list_id") != held_id \
+			or lobby._find_rank_matched_bot_deck(1, "human_account").get("bot_list_id") != "bot_win":
+		failures.append("Post-loss quarantine did not apply once to the next ranked bot challenge")
 	lobby.free()
 	var self_play := MatchSessionScript.new("bot_self_play", "preflight_room", "127.0.0.1", 12345, ["BOT_A", "BOT_B"], {
 		"BOT_A": {"bot_god_name": "Thor", "bot_list_id": "bot_win", "bot_stars": 1, "cards": {"Thor": 1, "Berserker": 3}},
@@ -3524,7 +3697,8 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 		failures.append("Restricted bot self-play replaced a busy eligible bot with an ineligible first bot")
 	var result_dir := ServerPathsScript.get_server_data_file_path(storage_file).get_basename() + "_results"
 	DirAccess.remove_absolute(result_dir.path_join("%s.json" % session.match_id.sha256_text()))
-	DirAccess.remove_absolute(result_dir.path_join("%s.json" % human_win.match_id.sha256_text()))
+	for match_id in human_win_ids:
+		DirAccess.remove_absolute(result_dir.path_join("%s.json" % match_id.sha256_text()))
 	DirAccess.remove_absolute(result_dir.path_join("%s.json" % self_play.match_id.sha256_text()))
 	DirAccess.remove_absolute(result_dir)
 

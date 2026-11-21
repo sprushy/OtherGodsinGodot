@@ -373,6 +373,24 @@ func get_ladder_summary() -> Dictionary:
 		gods.append({"god_name": god_name, "lists": lists, "challenger": trial})
 	return {"gods": gods, "list_capacity": LISTS_PER_GOD}
 
+func get_quarantined_ladder_summary() -> Array[Dictionary]:
+	var entries: Array[Dictionary] = []
+	for god_name in _by_god:
+		var pool: Dictionary = _by_god[god_name]
+		var held_by_id := {}
+		for list: Dictionary in pool.get("quarantined_lists", []):
+			held_by_id[list["list_id"]] = list
+		var lists_by_id := held_by_id.duplicate()
+		for list: Dictionary in pool["lists"]:
+			if _is_quarantined_list(pool, list["list_id"]):
+				lists_by_id[list["list_id"]] = list
+		for list_id in lists_by_id:
+			var entry := _summarize_list(lists_by_id[list_id])
+			entry["god_name"] = god_name
+			entry["quarantine_status"] = "Matchmaking pool" if held_by_id.has(list_id) else "Challenger trial"
+			entries.append(entry)
+	return entries
+
 func set_league_mode(enabled: bool) -> void:
 	_league_mode = bool(enabled)
 	if not _league_mode:
@@ -806,16 +824,20 @@ func _summarize_list(list: Dictionary) -> Dictionary:
 		"draws": list["draws"],
 	}
 
-func get_deck_details(list_id: String) -> Dictionary:
+func get_deck_details(list_id: String, quarantined_only: bool = false) -> Dictionary:
 	if list_id.is_empty():
 		return {}
 	for pool: Dictionary in _by_god.values():
 		var challenger: Dictionary = pool["challenger"]
-		if challenger.get("list_id", "") == list_id:
+		if not quarantined_only and challenger.get("list_id", "") == list_id:
 			return _deck_details(challenger)
 		for list: Dictionary in pool["lists"]:
-			if list["list_id"] == list_id:
+			if list["list_id"] == list_id and (not quarantined_only or _is_quarantined_list(pool, list_id)):
 				return _deck_details(list)
+		if quarantined_only:
+			for list: Dictionary in pool.get("quarantined_lists", []):
+				if list["list_id"] == list_id:
+					return _deck_details(list)
 	return {}
 
 func _deck_details(list: Dictionary) -> Dictionary:

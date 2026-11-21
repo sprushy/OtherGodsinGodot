@@ -31,6 +31,12 @@ class DeferredUpdateMenu extends MainMenuScript:
 	func _write_update_log(_message: String) -> void:
 		pass
 
+class ObserveRecoveryMenu extends MainMenuScript:
+	var notices: Array[String] = []
+
+	func _show_lobby_notice(message: String) -> void:
+		notices.append(message)
+
 var _failures: PackedStringArray = []
 var _clients: Array[Node] = []
 var _approvals: Dictionary = {}
@@ -52,6 +58,7 @@ func _run() -> void:
 	_check_detached_lobby_transport()
 	_check_local_match_transport_cleanup()
 	_check_lobby_restart_recovery()
+	_check_observe_session_recovery()
 	await _check_practice_lobby_suspension()
 	_check_update_deferral()
 	if not _failures.is_empty():
@@ -361,6 +368,45 @@ func _check_lobby_restart_recovery() -> void:
 	_check(lobby._auto_reconnect_attempt == attempts_before + 1, "one transport failure schedules only one retry")
 	lobby.disconnect_from_server()
 	lobby.free()
+
+func _check_observe_session_recovery() -> void:
+	var lobby := RecoveryLobbyClient.new()
+	root.add_child(lobby)
+	lobby._last_server_address = "wss://game.example.com/lobby"
+	lobby.current_session_id = "watcher"
+	lobby.current_reconnect_token = "saved-token"
+	lobby._is_authenticated = true
+	lobby._transport_connected_signal_received = true
+	var menu := ObserveRecoveryMenu.new()
+	menu.status_label = Label.new()
+	menu.lobby_client = lobby
+	menu._pending_observe_room_id = "ROOM1"
+	lobby.room_error.connect(menu._on_lobby_room_error)
+	lobby.reconnect_succeeded.connect(func(_id: String, _token: String, _name: String, _room: Dictionary, _match: Dictionary) -> void:
+		menu._run_pending_multiplayer_action()
+	)
+	menu._run_pending_multiplayer_action()
+	var rejection := LobbyProtocolScript.make_message(LobbyProtocolScript.ROOM_ERROR, {
+		"message": LobbyProtocolScript.OBSERVE_ROOM_AUTH_ERROR,
+	})
+	lobby.lobby_event(rejection)
+	_check(lobby.is_auto_reconnecting() and not lobby.is_authenticated(), "observe rejection restores the stale lobby session")
+	_check(menu._pending_observe_room_id == "ROOM1", "recovery remembers the selected room")
+	lobby._perform_auto_reconnect(lobby._auto_reconnect_serial)
+	lobby._transport_connected_signal_received = true
+	lobby._send_initial_auth_request()
+	_check(lobby.requests[-1].type == LobbyProtocolScript.REQUEST_RECONNECT_LOBBY, "observe recovery uses the saved session credentials")
+	lobby.lobby_event(LobbyProtocolScript.make_message(LobbyProtocolScript.LOBBY_RECONNECT_OK, {
+		"session_id": "watcher", "reconnect_token": "saved-token", "room": {},
+	}))
+	_check(lobby.requests[-1].type == LobbyProtocolScript.OBSERVE_ROOM and lobby.requests[-1].payload.room_id == "ROOM1", "recovery retries the same watch request")
+	lobby.lobby_event(rejection)
+	_check(not lobby.is_auto_reconnecting() and menu._pending_observe_room_id.is_empty(), "a second rejection ends the retry")
+	_check(menu.notices == [LobbyProtocolScript.OBSERVE_ROOM_AUTH_ERROR], "a second rejection stays visible in a notice")
+	lobby.disconnect_from_server()
+	lobby.free()
+	menu.status_label.free()
+	menu.free()
 
 func _check_practice_lobby_suspension() -> void:
 	var menu := MainMenuScript.new()

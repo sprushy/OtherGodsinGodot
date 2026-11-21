@@ -31,6 +31,8 @@ const TYPE_SECTION_NAMES := {
 	8: "— Other —",
 }
 
+var quarantined_only := false
+
 var _panel: PanelContainer
 var _refresh_button: Button
 var _close_button: Button
@@ -93,7 +95,7 @@ func _ready() -> void:
 	header.add_theme_constant_override("separation", 8)
 	body.add_child(header)
 	var title := Label.new()
-	title.text = "Ranked Ladder"
+	title.text = "Quarantined Bots" if quarantined_only else "Ranked Ladder"
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	title.add_theme_font_override("font", TITLE_FONT)
 	title.add_theme_font_size_override("font_size", 32)
@@ -112,7 +114,7 @@ func _ready() -> void:
 	)
 	header.add_child(_format)
 	_refresh_button = _add_button(header, "Refresh", refresh_requested.emit)
-	_back_button = _add_button(header, "Back to ladder", close_deck)
+	_back_button = _add_button(header, "Back to list" if quarantined_only else "Back to ladder", close_deck)
 	_back_button.hide()
 	_view_deck_button = _add_button(header, "View bot deck", _request_selected_deck)
 	_view_deck_button.hide()
@@ -134,7 +136,7 @@ func _ready() -> void:
 	_filter_bar.add_theme_constant_override("separation", 8)
 	body.add_child(_filter_bar)
 	_search = LineEdit.new()
-	_search.placeholder_text = "Search the whole ladder"
+	_search.placeholder_text = "Search quarantined bots" if quarantined_only else "Search the whole ladder"
 	_search.max_length = 64
 	_search.clear_button_enabled = true
 	_search.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -151,6 +153,7 @@ func _ready() -> void:
 	_player_filter.add_item("Bots", 2)
 	_player_filter.item_selected.connect(func(_index: int) -> void: _on_player_filter_selected())
 	_filter_bar.add_child(_player_filter)
+	_player_filter.visible = not quarantined_only
 
 	_table = Tree.new()
 	_table.columns = 7
@@ -162,7 +165,7 @@ func _ready() -> void:
 	_table.set_column_title(3, "Main God")
 	_table.set_column_title(4, "Stars")
 	_table.set_column_title(5, "Tier")
-	_table.set_column_title(6, "Player type")
+	_table.set_column_title(6, "Status" if quarantined_only else "Player type")
 	_table.set_column_expand(0, false)
 	_table.set_column_expand(1, true)
 	_table.set_column_custom_minimum_width(0, 54)
@@ -173,7 +176,7 @@ func _ready() -> void:
 	_table.set_column_custom_minimum_width(3, 210)
 	_table.set_column_custom_minimum_width(4, 78)
 	_table.set_column_custom_minimum_width(5, 145)
-	_table.set_column_custom_minimum_width(6, 105)
+	_table.set_column_custom_minimum_width(6, 165 if quarantined_only else 105)
 	_table.add_theme_constant_override("item_height", 38)
 	_table.add_theme_font_size_override("font_size", 18)
 	_table.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -226,7 +229,7 @@ func set_status(message: String, can_refresh: bool, clear_table: bool = false) -
 
 func set_paging_supported(supported: bool) -> void:
 	_paging_supported = supported
-	_format.visible = supported and _selected_entry.is_empty()
+	_format.visible = supported and not quarantined_only and _selected_entry.is_empty()
 	if not supported:
 		_format.select(0)
 		_current_page = 0
@@ -275,15 +278,20 @@ func show_summary(summary: Dictionary) -> void:
 	var has_bot := entries.any(func(entry: Dictionary) -> bool: return bool(entry.get("is_bot", false)))
 	var message := ""
 	if entries.is_empty():
-		var has_narrowing := not get_search_query().is_empty() \
-			or get_player_filter() != LobbyProtocolScript.LADDER_FILTER_EVERYONE
-		message = "No matching ladder entries." if has_narrowing else "No ladder entries yet."
+		message = _empty_ladder_message()
 	elif not _paging_supported:
 		message = "Best-of-one ladder. Select a bot to see its deck." if has_bot else "Best-of-one ladder."
 	elif has_bot:
 		message = "Select a bot to see its deck."
 	set_status(message, true)
 	_render_ladder_rows()
+
+func _empty_ladder_message() -> String:
+	if quarantined_only:
+		return "No matching quarantined bots." if not get_search_query().is_empty() else "No bots are quarantined."
+	var has_narrowing := not get_search_query().is_empty() \
+		or get_player_filter() != LobbyProtocolScript.LADDER_FILTER_EVERYONE
+	return "No matching ladder entries." if has_narrowing else "No ladder entries yet."
 
 func _render_ladder_rows() -> void:
 	_clear_ladder_rows()
@@ -326,16 +334,17 @@ func _render_ladder_rows() -> void:
 			row.set_icon(3, _get_god_icon(main_god_names))
 		row.set_text(4, "%d ★" % int(entry["stars"]))
 		row.set_text(5, rank_name)
-		row.set_text(6, "Bot" if is_bot else "Player")
+		if quarantined_only:
+			row.set_text(6, str(entry.get("quarantine_status", "")))
+		else:
+			row.set_text(6, "Bot" if is_bot else "Player")
 		visible_count += 1
 		if is_bot:
 			row.set_metadata(1, str(entry["list_id"]))
 			row.set_custom_color(1, GOLD)
 			has_visible_bot = true
 	if _ladder_entries.is_empty():
-		var has_narrowing := not get_search_query().is_empty() \
-			or get_player_filter() != LobbyProtocolScript.LADDER_FILTER_EVERYONE
-		_status.text = "No matching ladder entries." if has_narrowing else "No ladder entries yet."
+		_status.text = _empty_ladder_message()
 	elif visible_count == 0:
 		_status.text = "No matching entries on this page."
 	elif not has_visible_bot and _status_message.begins_with("Select a bot"):
@@ -510,8 +519,7 @@ func show_deck(list_id: String, deck: Dictionary) -> void:
 	_deck_contents.clear()
 	_view_deck_button.hide()
 	_delete_button.hide()
-	_add_deck_button.hide()
-	_add_deck_button.show()
+	_add_deck_button.visible = not quarantined_only
 	_deck_contents.push_color(GOLD)
 	_deck_contents.add_text(str(deck["name"]) + "\n\n")
 	_deck_contents.pop()
@@ -643,7 +651,7 @@ func close_deck() -> bool:
 	_add_deck_button.hide()
 	_status.visible = not _status.text.is_empty()
 	_refresh_button.show()
-	_format.visible = _paging_supported
+	_format.visible = _paging_supported and not quarantined_only
 	_filter_bar.show()
 	_pagination.visible = _last_page > 0
 	_table.deselect_all()
@@ -668,7 +676,9 @@ func _set_ladder_focus_order() -> void:
 		controls.append(_refresh_button)
 	controls.append(_close_button)
 	if _filter_bar.visible:
-		controls.append_array([_search, _player_filter])
+		controls.append(_search)
+		if _player_filter.visible:
+			controls.append(_player_filter)
 	controls.append(_table)
 	if _pagination.visible:
 		for button in [_previous_page, _next_page]:
