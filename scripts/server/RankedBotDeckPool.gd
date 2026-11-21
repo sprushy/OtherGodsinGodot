@@ -285,8 +285,17 @@ func _ensure_unique_deck_names() -> void:
 		if not list_id.is_empty():
 			_assigned_names_by_list_id[list_id] = base_name
 
-	# Pass 4: Assign unique names only to bots that actually need one
-	# (transitioning from "Challenger" or resolving an exact duplicate).
+	# Replace saved numeric fallback names after reserving established names.
+	for entry: Dictionary in decks:
+		var deck: Dictionary = entry["deck"]
+		if not str(deck.get("owner_name", "")).strip_edges().is_empty():
+			continue
+		var god := display_god_name(str(entry["god_name"]))
+		var name := str(deck.get("deck_name", "")).strip_edges()
+		if _is_numbered_fallback_name(name, god) and entry not in needs_name:
+			needs_name.append(entry)
+
+	# Pass 4: Assign unique names to the bots that need one.
 	for entry: Dictionary in needs_name:
 		var deck: Dictionary = entry["deck"]
 		var list_id := str(deck.get("list_id", "")).strip_edges()
@@ -306,6 +315,22 @@ func _is_generic_bot_name(name: String) -> bool:
 	var normalized := name.strip_edges().to_lower()
 	return normalized.is_empty() or normalized.contains("challenger") or normalized.contains("autofill") or normalized.contains("autofill bot")
 
+func _is_numbered_fallback_name(name: String, god_name: String) -> bool:
+	var prefix := "%s: " % god_name
+	if not name.begins_with(prefix):
+		return false
+	var separator := name.rfind(" ")
+	if separator < prefix.length():
+		return false
+	var suffix := name.substr(separator + 1)
+	if not suffix.is_valid_int():
+		return false
+	var number := suffix.to_int()
+	if number < 2 or number >= 100 or suffix != str(number):
+		return false
+	var names: Array = NAME_POOLS.get(god_name, DEFAULT_NAMES)
+	return name.substr(prefix.length(), separator - prefix.length()) in names
+
 func _make_unique_bot_name(god_name: String, deck: Dictionary, used_names: Dictionary) -> String:
 	var names: Array = NAME_POOLS.get(god_name, DEFAULT_NAMES)
 	var candidate := ""
@@ -314,8 +339,8 @@ func _make_unique_bot_name(god_name: String, deck: Dictionary, used_names: Dicti
 		if not used_names.has(candidate.to_lower()):
 			return candidate
 	for name_part in names:
-		for suffix in range(2, 100):
-			candidate = "%s: %s %d" % [god_name, str(name_part), suffix]
+		for epithet in NAME_EPITHETS:
+			candidate = "%s: %s %s" % [god_name, str(name_part), str(epithet)]
 			if not used_names.has(candidate.to_lower()):
 				return candidate
 	var identity := str(deck.get("list_id", deck.get("fingerprint", "bot"))).sha256_text().substr(0, 8)
@@ -881,8 +906,10 @@ func _find_list_by_id(pool: Dictionary, list_id: String) -> Dictionary:
 			return pending
 	return {}
 
-func select_self_play_pair(busy_list_ids: Dictionary, rng: RandomNumberGenerator) -> Array[Dictionary]:
+## With a first-bot restriction, a single returned deck needs a fresh opponent.
+func select_self_play_pair(busy_list_ids: Dictionary, rng: RandomNumberGenerator, first_list_ids: Dictionary = {}) -> Array[Dictionary]:
 	var available: Array[Dictionary] = []
+	var eligible_first: Array[Dictionary] = []
 	for pool: Dictionary in _by_god.values():
 		var lists: Array = pool["lists"].duplicate()
 		if not pool["challenger"].is_empty():
@@ -890,14 +917,23 @@ func select_self_play_pair(busy_list_ids: Dictionary, rng: RandomNumberGenerator
 		for list: Dictionary in lists:
 			if not _is_quarantined_list(pool, list["list_id"]) and not busy_list_ids.has(list["list_id"]):
 				available.append(list)
+				if first_list_ids.has(list["list_id"]):
+					eligible_first.append(list)
+	var restrict_first := not first_list_ids.is_empty()
+	if restrict_first and eligible_first.is_empty():
+		return []
 	var pairs_by_gap: Dictionary = {}
 	var trials_by_gap: Dictionary = {}
 	for i in available.size():
+		var first := available[i]
+		var first_id := str(first["list_id"])
+		var first_eligible := first_list_ids.has(first_id)
 		for j in range(i + 1, available.size()):
-			var first := available[i]
 			var second := available[j]
-			var first_id := str(first.get("list_id", ""))
-			if not first_id.is_empty() and first_id == str(second.get("list_id", "")):
+			var second_id := str(second["list_id"])
+			if not first_id.is_empty() and first_id == second_id:
+				continue
+			if restrict_first and not first_eligible and not first_list_ids.has(second_id):
 				continue
 			var gap := absi(_league_for_stars(int(first["stars"])) - _league_for_stars(int(second["stars"])))
 			var pair := [first, second]
@@ -911,8 +947,6 @@ func select_self_play_pair(busy_list_ids: Dictionary, rng: RandomNumberGenerator
 			selected_gaps.append(gap)
 	if selected_gaps.is_empty() and not pairs_by_gap.is_empty():
 		selected_gaps.append(_closest_gap(pairs_by_gap))
-	if selected_gaps.is_empty():
-		return []
 	var candidates: Array = []
 	var trials: Array = []
 	for gap in selected_gaps:
@@ -920,6 +954,8 @@ func select_self_play_pair(busy_list_ids: Dictionary, rng: RandomNumberGenerator
 		if trials_by_gap.has(gap):
 			trials.append_array(trials_by_gap[gap])
 	if candidates.is_empty() or (trials.is_empty() and rng.randf() < EXPLORATION_CHANCE):
+		if restrict_first:
+			return [eligible_first[rng.randi_range(0, eligible_first.size() - 1)].duplicate(true)]
 		return []
 	var total_weight := 0.0
 	var pair_weights: Array[float] = []
@@ -938,7 +974,9 @@ func select_self_play_pair(busy_list_ids: Dictionary, rng: RandomNumberGenerator
 			break
 	var selected: Array[Dictionary] = []
 	selected.assign(selected_pair.duplicate(true))
-	if rng.randi_range(0, 1) == 1:
+	if restrict_first and not first_list_ids.has(selected[0]["list_id"]):
+		selected.reverse()
+	elif (not restrict_first or first_list_ids.has(selected[1]["list_id"])) and rng.randi_range(0, 1) == 1:
 		selected.reverse()
 	return selected
 

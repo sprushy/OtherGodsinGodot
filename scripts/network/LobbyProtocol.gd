@@ -81,6 +81,7 @@ const MATCH_SPECTATOR_APPROVED := "match_spectator_approved"
 const MATCH_SPECTATOR_ACK := "match_spectator_ack"
 const LOCAL_BOT_MATCH_PUNCH_READY := "local_bot_match_punch_ready"
 const MATCH_SPECTATOR_PUNCH := "match_spectator_punch"
+const MATCH_SPECTATOR_PUNCH_RELAYED := "match_spectator_punch_relayed"
 const REQUEST_NEXT_RECEIVED := "request_next_received"
 const REQUEST_NEXT_RESULT := "request_next_result"
 const LOBBY_RECONNECT_OK := "lobby_reconnect_ok"
@@ -285,6 +286,9 @@ static func validate_request(message: Dictionary) -> String:
 			var excluded_list_ids = payload.get("excluded_list_ids", [])
 			if not excluded_list_ids is Array or excluded_list_ids.size() > 10:
 				return "Invalid bot gauntlet exclusions."
+			var top_50 = payload.get("top_50", false)
+			if not top_50 is bool or (top_50 and not bot_id.is_empty()):
+				return "Invalid top 50 bot match request."
 		SEED_BOT_LEAGUE, FINALIZE_BOT_LEAGUE:
 			if payload.has("count_per_god"):
 				var count := int(payload.get("count_per_god", 10))

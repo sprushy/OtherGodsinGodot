@@ -161,6 +161,7 @@ var _seek_action_row: HBoxContainer
 var _bot_league_section: VBoxContainer
 var _ladder_button: Button
 var _host_bot_match_button: Button
+var _host_top_50_bot_matches_button: Button
 var _host_another_bot_match_button: Button
 var _stop_hosting_bot_matches_button: Button
 var _host_own_bot_button: Button
@@ -182,6 +183,7 @@ var _my_bot_dialog: AcceptDialog
 var _my_bot_option: OptionButton
 var _choose_bot_gauntlet := false
 var _bot_match_hosting_enabled := false
+var _top_50_bot_hosting := false
 # True while the default "host one bot match on sign in" mode is active. It
 # keeps exactly one bot match running and recurs when it finishes, but gives way
 # whenever the player needs the space to play or spectate.
@@ -702,7 +704,7 @@ func _build_match_loading_overlay() -> void:
 	content.add_child(bot_hint)
 	var lobby_button := Button.new()
 	lobby_button.text = "Show lobby"
-	lobby_button.pressed.connect(_finish_match_loading)
+	lobby_button.pressed.connect(_on_match_loading_lobby_pressed)
 	content.add_child(lobby_button)
 	_match_loading_overlay = overlay
 	_match_loading_hint_label = hint
@@ -716,8 +718,16 @@ func _begin_match_loading(has_bot: bool = false, can_show_lobby: bool = false) -
 		_match_loading_hint_label.text = _next_match_loading_hint()
 	_match_loading_bar.indeterminate = true
 	_match_loading_bot_hint_label.visible = has_bot
+	_match_loading_lobby_button.text = "Show lobby"
 	_match_loading_lobby_button.visible = can_show_lobby
 	_match_loading_overlay.show()
+
+func _on_match_loading_lobby_pressed() -> void:
+	var game := _get_active_embedded_game()
+	if game_container.visible and game != null and bool(game.get("_is_observer_mode")):
+		_restore_lobby_after_match_connection_lost("Stopped observing.")
+		return
+	_finish_match_loading()
 
 func _next_match_loading_hint() -> String:
 	var force_phone_controls := _get_saved_bool_setting(
@@ -2928,6 +2938,11 @@ func _build_seek_tabs() -> void:
 	_host_bot_match_button.text = "Host Bot Matches"
 	_host_bot_match_button.pressed.connect(_on_host_bot_match_pressed)
 	_seek_action_row.add_child(_host_bot_match_button)
+	_host_top_50_bot_matches_button = Button.new()
+	_host_top_50_bot_matches_button.text = "Host Top 50 Bot Matches"
+	_host_top_50_bot_matches_button.pressed.connect(_on_host_bot_match_pressed.bind(true))
+	_host_top_50_bot_matches_button.hide()
+	_seek_action_row.add_child(_host_top_50_bot_matches_button)
 	_stop_hosting_bot_matches_button = Button.new()
 	_stop_hosting_bot_matches_button.text = "Stop Hosting Bot Matches"
 	_stop_hosting_bot_matches_button.pressed.connect(_stop_local_bot_match_worker)
@@ -3084,13 +3099,17 @@ func _request_recent_match_activity() -> void:
 		return
 	lobby_client.request_bot_match_history()
 
-func _on_host_bot_match_pressed() -> void:
-	if _bot_match_hosting_enabled:
+func _on_host_bot_match_pressed(top_50: bool = false) -> void:
+	if top_50 and (lobby_client == null or not lobby_client.can_host_top_50_bot_matches):
+		return
+	if _bot_match_hosting_enabled and _top_50_bot_hosting == top_50:
 		_stop_local_bot_match_worker()
 		status_label.text = "Stopped hosting bot matches."
 		_refresh_seek_list()
 		return
 	_bot_match_hosting_enabled = true
+	_default_bot_hosting = false
+	_top_50_bot_hosting = top_50
 	_request_continuous_bot_match()
 
 func _on_host_another_bot_match_pressed() -> void:
@@ -3172,7 +3191,7 @@ func _request_local_bot_match(continuous: bool, bot_id: String = "") -> void:
 	_update_host_bot_match_button()
 	status_label.text = "Requesting a bot match for this computer..."
 	var excluded: Array = _host_bot_gauntlet_opponents.keys() if not _host_bot_gauntlet_id.is_empty() else []
-	lobby_client.request_bot_work(bot_id, excluded)
+	lobby_client.request_bot_work(bot_id, excluded, continuous and _top_50_bot_hosting)
 
 func _open_my_bot_picker(for_gauntlet: bool = false) -> void:
 	_choose_bot_gauntlet = for_gauntlet
@@ -3260,11 +3279,18 @@ func _start_selected_bot_match() -> void:
 func _update_host_bot_match_button() -> void:
 	if not is_instance_valid(_host_bot_match_button):
 		return
-	_host_bot_match_button.text = "Stop Hosting" if _bot_match_hosting_enabled else "Host Bot Matches"
-	_host_bot_match_button.disabled = lobby_client == null or not lobby_client.is_authenticated() \
-		or (not _bot_match_hosting_enabled and _get_local_bot_match_capacity() <= 0)
+	var signed_in := lobby_client != null and lobby_client.is_authenticated()
+	var regular_hosting := _bot_match_hosting_enabled and not _top_50_bot_hosting
+	var top_50_hosting := _bot_match_hosting_enabled and _top_50_bot_hosting
+	var capacity := _get_local_bot_match_capacity()
+	_host_bot_match_button.text = "Stop Hosting" if regular_hosting else "Host Bot Matches"
+	_host_bot_match_button.disabled = not signed_in or (not regular_hosting and capacity <= 0)
+	if is_instance_valid(_host_top_50_bot_matches_button):
+		_host_top_50_bot_matches_button.visible = signed_in and lobby_client.can_host_top_50_bot_matches
+		_host_top_50_bot_matches_button.text = "Stop Top 50 Hosting" if top_50_hosting else "Host Top 50 Bot Matches"
+		_host_top_50_bot_matches_button.disabled = not top_50_hosting and capacity <= 0
 	var local_match_count := _get_local_bot_match_count() + _pending_local_bot_match_modes.size()
-	var has_capacity := local_match_count < _get_local_bot_match_capacity()
+	var has_capacity := local_match_count < capacity
 	if is_instance_valid(_stop_hosting_bot_matches_button):
 		_stop_hosting_bot_matches_button.visible = local_match_count > 0 or not _local_bot_match_submitting.is_empty()
 		_stop_hosting_bot_matches_button.disabled = local_match_count <= 0 and _local_bot_match_submitting.is_empty()
@@ -3643,6 +3669,7 @@ func _on_dump_bot_deck_results_result_received(result: Dictionary) -> void:
 func _stop_local_bot_match_worker() -> void:
 	_bot_match_hosting_enabled = false
 	_default_bot_hosting = false
+	_top_50_bot_hosting = false
 	_watch_next_local_bot_match_pending = false
 	if is_instance_valid(_bot_match_retry_timer):
 		_bot_match_retry_timer.stop()
@@ -3680,6 +3707,7 @@ func _maybe_start_default_bot_hosting() -> void:
 	if _has_pending_new_seek_action() or not _get_saved_active_match().is_empty():
 		return
 	_default_bot_hosting = true
+	_top_50_bot_hosting = false
 	_bot_match_hosting_enabled = true
 	# Host exactly one match at a time by default; it recurs when it finishes.
 	_request_continuous_bot_match(1)
@@ -9226,6 +9254,8 @@ func _bind_lobby_client_signals() -> void:
 		lobby_client.match_spectator_approved.connect(_on_match_spectator_approved)
 	if lobby_client.has_signal("match_spectator_punch_requested") and not lobby_client.match_spectator_punch_requested.is_connected(_on_match_spectator_punch_requested):
 		lobby_client.match_spectator_punch_requested.connect(_on_match_spectator_punch_requested)
+	if not lobby_client.match_spectator_punch_relayed.is_connected(_on_match_spectator_punch_relayed):
+		lobby_client.match_spectator_punch_relayed.connect(_on_match_spectator_punch_relayed)
 	if lobby_client.has_signal("match_host_viability_requested") and not lobby_client.match_host_viability_requested.is_connected(_on_match_host_viability_requested):
 		lobby_client.match_host_viability_requested.connect(_on_match_host_viability_requested)
 	if not lobby_client.account_deck_list_received.is_connected(_on_account_deck_list_received):
@@ -9472,6 +9502,7 @@ func _on_lobby_reconnect_succeeded(
 	_lobby_auto_reconnect_was_active = false
 	if _retry_account_switch_if_identity_mismatch(player_name):
 		return
+	_update_host_bot_match_button()
 	_cancel_lobby_sign_in_watchdog()
 	var finish_startup_loading_after_auth := _startup_autologin_in_progress
 	_startup_autologin_in_progress = false
@@ -10004,9 +10035,9 @@ func _arrange_match_punch_watch(match_info: Dictionary) -> void:
 		"next_report_msec": 0,
 	}
 
-func _prime_match_punch_socket(host_ip: String, host_port: int) -> int:
+func _prime_match_punch_socket(host_ip: String, host_port: int, observer_token: String) -> Dictionary:
 	if not _has_active_lobby_connection():
-		return 0
+		return {}
 	var match_id := str(_match_punch_watch["match_id"])
 	var observer_id := str(_match_punch_watch["observer_session_id"])
 	var report_ready := func() -> bool:
@@ -10014,10 +10045,22 @@ func _prime_match_punch_socket(host_ip: String, host_port: int) -> int:
 			return false
 		lobby_client.submit_match_spectator_punch_ready(match_id, observer_id)
 		return true
+	var host_punch := PackedByteArray()
+	if not observer_token.is_empty():
+		host_punch = PunchReflectorScript.make_host_punch(match_id, observer_token)
 	return await PunchReflectorScript.prime_spectator_socket(
 		get_tree(), host_ip, host_port, _get_punch_reflector_host(), int(_match_punch_watch["reflector_port"]),
-		PunchReflectorScript.make_marker(PunchReflectorScript.BOUNCE_KIND_CLIENT, match_id, observer_id), report_ready
+		PunchReflectorScript.make_marker(PunchReflectorScript.BOUNCE_KIND_CLIENT, match_id, observer_id),
+		host_punch, report_ready
 	)
+
+func _on_match_spectator_punch_relayed(match_id: String) -> void:
+	if (
+		_match_punch_watch.get("match_id") == match_id
+		and _match_loading_overlay != null and _match_loading_overlay.visible
+		and not bool(_match_punch_watch.get("host_replied", false))
+	):
+		_match_loading_hint_label.text = "The lobby received your UDP signal. Waiting for a direct reply from the host…"
 
 func _poll_match_punch_watch() -> void:
 	if _match_punch_watch.is_empty():
@@ -10078,7 +10121,14 @@ func _on_match_spectator_punch_requested(match_id: String, observer_session_id: 
 	if int(network_manager.get("last_bound_port")) <= 0:
 		# Spectate listener never bound (in-process fallback); nothing to punch.
 		return
-	var punch_err: Error = network_manager.begin_spectator_punch(observer_session_id, punch_ip, punch_port)
+	var host = mock_game.get("headless_match_host")
+	if host == null or host.match_session == null:
+		return
+	var observer_token: String = host.match_session.get_spectator_match_token(observer_session_id)
+	if observer_token.is_empty():
+		return
+	var punch := PunchReflectorScript.make_host_punch(match_id, observer_token)
+	var punch_err: Error = network_manager.begin_spectator_punch(observer_session_id, punch_ip, punch_port, punch)
 	if punch_err != OK:
 		_write_smoke_trace("spectator_punch_start_failed match=%s error=%d" % [match_id, int(punch_err)])
 
@@ -10133,6 +10183,9 @@ func _launch_assigned_match(
 	server_match_session = null
 ) -> void:
 	_begin_match_loading(_match_has_bot(match_info))
+	var is_observing := bool(match_info.get("observer_mode", false))
+	if is_observing:
+		_match_loading_hint_label.text = "Opening a direct connection to the host…"
 	await get_tree().process_frame
 	await get_tree().process_frame
 	_show_embedded_game("MockGame")
@@ -10150,12 +10203,21 @@ func _launch_assigned_match(
 	# dedicated matches are likewise assigned only after the server is ready.
 	# Keep the short grace period only for the unverified in-process handoff.
 	if not _match_punch_watch.is_empty() and match_info.get("match_id") == _match_punch_watch["match_id"]:
-		match_info["spectator_punch_local_port"] = await _prime_match_punch_socket(server_ip, match_port)
+		var punch := await _prime_match_punch_socket(server_ip, match_port, str(match_info.get("observer_match_token", "")))
+		match_info["spectator_punch_local_port"] = int(punch.get("local_port", 0))
+		var host_port := int(punch.get("host_port", match_port))
+		var host_replied := bool(punch.get("host_replied", false))
+		_match_punch_watch["host_replied"] = host_replied
+		print("Spectator rendezvous: host reply=%s, remapped port=%s" % [host_replied, host_port != match_port])
+		match_port = host_port
 	elif not _uses_dedicated_match_server(match_info) \
 			and str(match_info.get("server_mode", "")) != MatchSessionScript.SERVER_MODE_PLAYER_HOST:
 		await get_tree().create_timer(0.4).timeout
 	await get_node("GameContainer/MockGame").start_game(false, true, server_ip, match_port, match_info)
 	show_game()
+	if is_observing:
+		_match_loading_lobby_button.text = "Back to lobby"
+		_match_loading_lobby_button.show()
 	if _hunting_tactics_smoke_active:
 		await _drive_hunting_tactics_smoke(false)
 		return

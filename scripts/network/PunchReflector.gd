@@ -34,19 +34,31 @@ static func make_marker(bounce_kind: String, match_id: String, observer_session_
 		marker["observer"] = observer_session_id.strip_edges()
 	return JSON.stringify(marker).to_utf8_buffer()
 
+static func make_host_punch(match_id: String, observer_token: String) -> PackedByteArray:
+	# The watcher already has the token from the lobby. Put only a proof on the
+	# wire so a punch from a remapped port does not disclose the join credential.
+	var proof := ("othergods:spectator-punch:%s:%s" % [match_id, observer_token]).sha256_text()
+	return JSON.stringify({
+		PUNCH_MARKER_KEY: true,
+		"kind": PUNCH_KIND_PACKET,
+		"match_id": match_id,
+		"proof": proof,
+	}).to_utf8_buffer()
+
 ## Open the UDP route before ENet starts its handshake. The temporary socket
 ## hands its local port to ENet even if the host's punch is delayed.
 static func prime_spectator_socket(
 	tree: SceneTree, host_ip: String, host_port: int, reflector_host: String, reflector_port: int,
-	marker: PackedByteArray, report_ready: Callable
-) -> int:
+	marker: PackedByteArray, host_punch: PackedByteArray, report_ready: Callable
+) -> Dictionary:
 	if host_ip.is_empty() or host_port <= 0:
-		return 0
+		return {}
 	var socket := PacketPeerUDP.new()
 	if socket.bind(0) != OK:
-		return 0
+		return {}
 	var local_port := socket.get_local_port()
 	var punch := make_marker(PUNCH_KIND_PACKET, "")
+	var advertised_ip := host_ip.trim_prefix("::ffff:")
 	for _attempt in range(SPECTATOR_PRIME_ATTEMPTS):
 		if socket.set_dest_address(host_ip, host_port) == OK:
 			socket.put_packet(punch)
@@ -57,16 +69,18 @@ static func prime_spectator_socket(
 		if not report_ready.call():
 			break
 		await tree.create_timer(0.35, true, false, true).timeout
-		var got_host_punch := false
 		for _packet_index in range(mini(socket.get_available_packet_count(), 16)):
-			if socket.get_packet() == punch and socket.get_packet_port() == host_port \
-					and socket.get_packet_ip().trim_prefix("::ffff:") == host_ip.trim_prefix("::ffff:"):
-				got_host_punch = true
-				break
-		if got_host_punch:
-			break
+			var reply := socket.get_packet()
+			var reply_port := socket.get_packet_port()
+			if socket.get_packet_ip().trim_prefix("::ffff:") != advertised_ip or reply_port <= 0:
+				continue
+			# A legacy host can confirm the advertised endpoint. A verified
+			# reply can also teach us the port the host's router used toward us.
+			if (not host_punch.is_empty() and reply == host_punch) or (reply == punch and reply_port == host_port):
+				socket.close()
+				return {"local_port": local_port, "host_port": reply_port, "host_replied": true}
 	socket.close()
-	return local_port
+	return {"local_port": local_port, "host_port": host_port, "host_replied": false}
 
 static func is_punch_marker(marker) -> bool:
 	return (marker is Dictionary) and bool((marker as Dictionary).get(PUNCH_MARKER_KEY, false))

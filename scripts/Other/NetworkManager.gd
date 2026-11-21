@@ -373,9 +373,9 @@ func send_punch_bounce(reflector_ip: String, reflector_port: int, match_id: Stri
 ## spectator's ENet connect packets arrive (restricted-cone routers drop
 ## unsolicited UDP from unknown endpoints). Punches repeat at a low rate until
 ## expiry; re-calling with the same observer refreshes endpoint and timer.
-func begin_spectator_punch(observer_session_id: String, target_ip: String, target_port: int) -> Error:
+func begin_spectator_punch(observer_session_id: String, target_ip: String, target_port: int, punch: PackedByteArray) -> Error:
 	var punch_id := observer_session_id.strip_edges()
-	if punch_id.is_empty() or target_ip.strip_edges().is_empty() or target_port <= 0:
+	if punch_id.is_empty() or target_ip.strip_edges().is_empty() or target_port <= 0 or punch.is_empty():
 		return ERR_INVALID_PARAMETER
 	var enet_connection := _get_bound_enet_connection()
 	if not is_server or enet_connection == null:
@@ -383,9 +383,10 @@ func begin_spectator_punch(observer_session_id: String, target_ip: String, targe
 	_punch_targets[punch_id] = {
 		"ip": target_ip.strip_edges(),
 		"port": target_port,
+		"packet": punch,
 		"expires_msec": Time.get_ticks_msec() + int(PUNCH_TARGET_TTL_SECONDS * 1000.0),
 	}
-	enet_connection.socket_send(target_ip.strip_edges(), target_port, PunchReflectorScript.make_marker(PunchReflectorScript.PUNCH_KIND_PACKET, ""))
+	enet_connection.socket_send(target_ip.strip_edges(), target_port, punch)
 	return OK
 
 func clear_spectator_punch() -> void:
@@ -422,7 +423,7 @@ func _process(delta: float) -> void:
 		enet_connection.socket_send(
 			str((target as Dictionary).get("ip", "")),
 			int((target as Dictionary).get("port", 0)),
-			PunchReflectorScript.make_marker(PunchReflectorScript.PUNCH_KIND_PACKET, "")
+			(target as Dictionary)["packet"]
 		)
 	for punch_id in expired_ids:
 		_punch_targets.erase(punch_id)

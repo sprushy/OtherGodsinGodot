@@ -565,6 +565,7 @@ var _queued_muninn_prime_prompt_targets: Dictionary = {}
 var _queued_muninn_prime_prompt_keys: Dictionary = {}
 var _active_muninn_prime_prompt_key: String = ""
 var _handled_raven_prime_prompt_keys: Dictionary = {}
+var _raven_prime_overlay: Control = null
 var _pending_oracles_sight_prompts: Array[OraclesSight] = []
 var _active_oracles_sight_prompt: OraclesSight = null
 var _queued_oracles_sight_prompt_targets: Dictionary = {}
@@ -7979,6 +7980,7 @@ func _on_match_targeting_started(_source: Card, _target_type: String) -> void:
 func _on_match_targeting_ended() -> void:
 	_hide_devour_cancel_prompt()
 	_sync_sacrifice_cursor()
+	update_ui()
 
 func _apply_board_horizontal_offset() -> void:
 	if enemy_board_container != null:
@@ -14826,6 +14828,7 @@ func _dismiss_zone_overlay() -> void:
 	if _zone_overlay and is_instance_valid(_zone_overlay):
 		_zone_overlay.queue_free()
 	_zone_overlay = null
+	_raven_prime_overlay = null
 	_deck_overlay_zone = null
 	_deck_overlay_cards.clear()
 	_deck_overlay_title = null
@@ -14854,7 +14857,7 @@ func _has_raven_prime_prompt_state() -> bool:
 		or not _pending_muninn_prime_prompts.is_empty()
 
 func _restore_active_raven_prime_prompt_overlay() -> void:
-	if _is_card_selection_overlay_visible():
+	if _is_card_selection_overlay_visible() and _zone_overlay == _raven_prime_overlay:
 		return
 	var restored := false
 	if _active_huginn_prime_prompt != null:
@@ -15652,6 +15655,9 @@ func _ensure_pending_reveal_click_selection() -> bool:
 		if not (entry_value is Dictionary):
 			continue
 		var entry: Dictionary = entry_value
+		var prompt_player := entry.get("player") as Player
+		if prompt_player == null or not _is_player_local(prompt_player):
+			continue
 		var interaction_type := str(entry.get("type", ""))
 		var data: Dictionary = entry.get("data", {})
 		var card := game_manager.get_card_by_uid(str(data.get("source_uid", "")))
@@ -20140,6 +20146,7 @@ func _show_next_huginn_perish_prime_prompt() -> void:
 			false
 		)
 		_set_action_label_text(card.card_name + ": choose a Hex to prime.")
+		_raven_prime_overlay = _zone_overlay
 		update_ui()
 		return
 
@@ -20236,6 +20243,7 @@ func _show_next_muninn_perish_prime_prompt() -> void:
 			false
 		)
 		_set_action_label_text(card.card_name + ": choose a Charm to prime.")
+		_raven_prime_overlay = _zone_overlay
 		update_ui()
 		return
 

@@ -467,10 +467,13 @@ func _get_current_resolving_action() -> CardAction:
 func _emit_ui_interaction_for_player(player: Player, type: String, data: Dictionary) -> void:
 	if game_manager == null or player == null:
 		return
+	_prune_stale_ui_interactions_for_current_turn()
 	if type == "intercept" and _has_duplicate_pending_ui_interaction(player, type, data):
 		return
 	if not _pending_ui_interactions.is_empty() or not _queued_ui_interactions.is_empty():
 		_queue_ui_interaction(player, type, data)
+		if _pending_ui_interactions.is_empty():
+			call_deferred("_release_next_queued_ui_interaction")
 		return
 	_emit_ui_interaction_now(player, type, data)
 
@@ -709,6 +712,9 @@ func _validate_pending_ui_interaction_for_command(command: Dictionary) -> Dictio
 		if not blocking_interaction.is_empty() \
 				and not _command_can_bypass_pending_ui_interaction(command_type):
 			result["error"] = "Resolve the pending %s choice before continuing." % str(blocking_interaction.get("type", "card"))
+			# Pruning a stale prompt can leave a queued choice with nothing to release it.
+			if _pending_ui_interactions.is_empty():
+				call_deferred("_release_next_queued_ui_interaction")
 		return result
 	var prompt_idx := _find_pending_ui_interaction_index(command, expected_type)
 	if prompt_idx < 0:
@@ -1520,7 +1526,7 @@ func _finalize_resolved_action(action: CardAction) -> void:
 	if game_manager != null:
 		game_manager.prune_stale_stack_actions()
 	action_resolved.emit(action)
-	if _pending_ui_interactions.is_empty() and not _queued_ui_interactions.is_empty():
+	if not _queued_ui_interactions.is_empty():
 		_release_next_queued_ui_interaction()
 	_continue_authoritative_stack_after_resolution()
 	if action != null and action.type == CardAction.Type.ATTACK:
@@ -1733,6 +1739,9 @@ func _has_pending_reveal_target_ui_interaction() -> bool:
 func get_pending_reveal_target_ui_interactions() -> Array[Dictionary]:
 	var interactions: Array[Dictionary] = []
 	for entry in _pending_ui_interactions:
+		# A synchronous state refresh can run before the submitted choice is consumed.
+		if int(entry.get("prompt_id", -1)) == _active_command_pending_prompt_id:
+			continue
 		var interaction_type := str(entry.get("type", ""))
 		if not _is_reveal_interaction_type(interaction_type):
 			continue
@@ -1742,13 +1751,16 @@ func get_pending_reveal_target_ui_interactions() -> Array[Dictionary]:
 func get_pending_state_refresh_ui_interactions() -> Array[Dictionary]:
 	var interactions: Array[Dictionary] = []
 	for entry in _pending_ui_interactions:
+		var prompt_id := int(entry.get("prompt_id", -1))
+		if prompt_id == _active_command_pending_prompt_id:
+			continue
 		var interaction_type := str(entry.get("type", ""))
 		var interaction_data: Dictionary = entry.get("data", {})
 		if not _is_state_refresh_ui_interaction(interaction_type, interaction_data):
 			continue
 		var serialized_entry := entry.duplicate(true)
 		var serialized_data := interaction_data.duplicate(true)
-		serialized_data["_prompt_id"] = int(entry.get("prompt_id", -1))
+		serialized_data["_prompt_id"] = prompt_id
 		serialized_entry["data"] = serialized_data
 		interactions.append(serialized_entry)
 	return interactions

@@ -6573,6 +6573,8 @@ func _get_best_stealth_attack(attackers: Array[Card], opposing_creatures: Array[
 func _get_best_safe_followers_attack(attackers: Array[Card]) -> Dictionary:
 	if opponent == null or game_manager == null or match_manager == null:
 		return {}
+	if not game_manager.can_player_lose_followers_now(opponent):
+		return {}
 	var best_attacker: Card = null
 	var best_score := -1000000
 	for attacker in attackers:

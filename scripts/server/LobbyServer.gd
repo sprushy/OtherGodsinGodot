@@ -128,6 +128,7 @@ var _ladder_cache: Array[Dictionary] = []
 var _ladder_cache_dirty: bool = true
 var _ladder_cache_last_build_msec: int = 0
 const LADDER_CACHE_MIN_REBUILD_INTERVAL_MSEC: int = 1500
+const TOP_BOT_HOSTING_LIMIT := 50
 
 # Pool rebuild is expensive (replays all bot match results). Only rebuild when
 # something has actually changed since the last refresh.
@@ -862,6 +863,7 @@ func _complete_login_for_peer(
 		"supports_ladder_pages": true,
 		"supports_ladder_filter": true,
 		"can_see_players_online": OS.is_debug_build() or Engine.is_editor_hint() or bool(existing.get("is_admin", false)),
+		"can_host_top_50_bot_matches": _can_host_top_50_bot_matches(existing),
 		"room": room_snapshot,
 		"active_match_info": active_match_info,
 	})
@@ -930,6 +932,7 @@ func _handle_reconnect_request(peer_id: int, payload: Dictionary) -> void:
 		"supports_ladder_pages": true,
 		"supports_ladder_filter": true,
 		"can_see_players_online": OS.is_debug_build() or Engine.is_editor_hint() or bool(session.get("is_admin", false)),
+		"can_host_top_50_bot_matches": _can_host_top_50_bot_matches(session),
 		"room": room_snapshot,
 		"active_match_info": active_match_info,
 	})
@@ -1170,9 +1173,18 @@ func _handle_set_rank_badge(peer_id: int, payload: Dictionary) -> void:
 	if success:
 		_handle_request_profile_summary(peer_id)
 
+func _can_host_top_50_bot_matches(session: Dictionary) -> bool:
+	return bool(session.get("is_admin", false)) and not str(session.get("account_id", "")).is_empty()
+
 func _handle_request_bot_work(peer_id: int, payload: Dictionary = {}) -> void:
 	var session := _get_session_for_peer(peer_id)
 	if session.is_empty() or str(session.get("account_id", "")).is_empty():
+		return
+	var top_50 := bool(payload.get("top_50", false))
+	if top_50 and not _can_host_top_50_bot_matches(session):
+		_send_to_peer(peer_id, LobbyProtocolScript.BOT_WORK_RESULT, {
+			"job_id": "", "success": false, "message": "Only admins can host top 50 bot matches.",
+		})
 		return
 	var busy := {}
 	var excluded_list_ids: Array = payload.get("excluded_list_ids", [])
@@ -1194,7 +1206,7 @@ func _handle_request_bot_work(peer_id: int, payload: Dictionary = {}) -> void:
 		return
 	# Serve pending league round-robin pairings first so volunteers play the
 	# scheduled tournament matches instead of random self-play pairs.
-	if not _pending_league_pairings.is_empty():
+	if not top_50 and not _pending_league_pairings.is_empty():
 		var pairing: Dictionary = _pending_league_pairings.pop_front()
 		var candidate_a := _validate_server_bot_deck(pairing["deck_a"])
 		var candidate_b := _validate_server_bot_deck(pairing["deck_b"])
@@ -1241,18 +1253,24 @@ func _handle_request_bot_work(peer_id: int, payload: Dictionary = {}) -> void:
 		var available := _ranked_bot_deck_pool.select_deck(busy, _bot_deck_rng, 0)
 		deck_b = _validate_server_bot_deck(available) if not available.is_empty() else _build_fresh_bot_deck_submission()
 	else:
-		var pair := _ranked_bot_deck_pool.select_self_play_pair(busy, _bot_deck_rng)
-		if pair.size() == 2:
+		var top_list_ids := _get_top_50_bot_list_ids() if top_50 else {}
+		var pair: Array[Dictionary] = []
+		if not top_50 or not top_list_ids.is_empty():
+			pair = _ranked_bot_deck_pool.select_self_play_pair(busy, _bot_deck_rng, top_list_ids)
+		if not pair.is_empty():
 			deck_a = _validate_server_bot_deck(pair[0])
-			deck_b = _validate_server_bot_deck(pair[1])
-		else:
+		elif not top_50:
 			deck_a = _build_fresh_bot_deck_submission()
+		if pair.size() == 2:
+			deck_b = _validate_server_bot_deck(pair[1])
+		elif not top_50 or not deck_a.is_empty():
 			deck_b = _build_fresh_bot_deck_submission({str(deck_a.get("god_name", "")): 1})
 	if deck_a.is_empty() or deck_b.is_empty():
 		_send_to_peer(peer_id, LobbyProtocolScript.BOT_WORK_RESULT, {
 			"job_id": "",
 			"success": false,
-			"message": "No bot match is available for this computer right now.",
+			"message": "No top 50 bot match is available right now." if top_50 \
+				else "No bot match is available for this computer right now.",
 		})
 		return
 	for deck in [deck_a, deck_b]:
@@ -1934,12 +1952,7 @@ func _get_recent_match_activity_notifications() -> Array[Dictionary]:
 	)
 	if activities.is_empty():
 		return activities
-	var now_msec := Time.get_ticks_msec()
-	if _ladder_cache.is_empty() or (_ladder_cache_dirty and now_msec - _ladder_cache_last_build_msec >= LADDER_CACHE_MIN_REBUILD_INTERVAL_MSEC):
-		_ladder_cache = _build_full_ladder()
-		_ladder_cache_dirty = false
-		_ladder_cache_last_build_msec = now_msec
-	var ladder_bo1: Array[Dictionary] = _ladder_cache
+	var ladder_bo1 := _get_cached_ladder()
 	var ladder_bo3: Array[Dictionary] = []
 	for activity: Dictionary in activities:
 		var best_of := int(activity.get("best_of", 1))
@@ -2072,6 +2085,26 @@ func _handle_request_bot_ladder(peer_id: int, message_type: String, payload: Dic
 	var ladder_username := str(session_for_ladder.get("username", "")).strip_edges()
 	_send_to_peer(peer_id, LobbyProtocolScript.BOT_LADDER, _build_ladder_page(payload, ladder_username))
 
+func _get_cached_ladder() -> Array[Dictionary]:
+	var now_msec := Time.get_ticks_msec()
+	if _ladder_cache.is_empty() or (_ladder_cache_dirty and now_msec - _ladder_cache_last_build_msec >= LADDER_CACHE_MIN_REBUILD_INTERVAL_MSEC):
+		_ladder_cache = _build_full_ladder()
+		_ladder_cache_dirty = false
+		_ladder_cache_last_build_msec = now_msec
+	return _ladder_cache
+
+func _get_top_50_bot_list_ids() -> Dictionary:
+	var list_ids := {}
+	for row in _get_cached_ladder():
+		if not bool(row.get("is_bot", false)):
+			continue
+		var list_id := str(row.get("list_id", ""))
+		if not list_id.is_empty():
+			list_ids[list_id] = true
+		if list_ids.size() == TOP_BOT_HOSTING_LIMIT:
+			break
+	return list_ids
+
 func _build_ladder_page(request: Dictionary, current_username: String = "") -> Dictionary:
 	var is_paged := request.has("request_id")
 	var best_of := int(request.get("best_of", 1)) if is_paged else 1
@@ -2079,15 +2112,10 @@ func _build_ladder_page(request: Dictionary, current_username: String = "") -> D
 	# Other best_of values are rare admin queries — always compute fresh.
 	var ladder: Array[Dictionary]
 	if best_of == 1:
-		var now_msec := Time.get_ticks_msec()
-		if _ladder_cache.is_empty() or (_ladder_cache_dirty and now_msec - _ladder_cache_last_build_msec >= LADDER_CACHE_MIN_REBUILD_INTERVAL_MSEC):
-			_ladder_cache = _build_full_ladder()
-			_ladder_cache_dirty = false
-			_ladder_cache_last_build_msec = now_msec
 		# Deep-duplicate so per-request mutations (can_delete, filtering) don't
 		# corrupt the cache for other callers.
 		ladder = []
-		for row in _ladder_cache:
+		for row in _get_cached_ladder():
 			ladder.append(row.duplicate(true))
 	else:
 		ladder = _build_full_ladder_for_best_of(best_of)
@@ -3341,6 +3369,7 @@ func _observe_local_bot_match(session_id: String, match_id: String) -> void:
 		spectator_tokens = {}
 	spectator_tokens[session_id] = observer_match_token
 	entry["spectator_match_tokens_by_session"] = spectator_tokens
+	_punch_ready_last_msec_by_key.erase("%s|%s" % [match_id, session_id])
 
 	var approved := await _push_spectator_approval_to_host(
 		match_id, human_session_id, session_id, observer_match_token, visible_player_indices)
@@ -3518,6 +3547,7 @@ func _handle_local_bot_match_punch_ready(peer_id: int, payload: Dictionary) -> v
 	if now_msec - int(_punch_ready_last_msec_by_key.get(rate_key, -LOCAL_BOT_MATCH_PUNCH_RELAY_INTERVAL_MSEC)) \
 			< LOCAL_BOT_MATCH_PUNCH_RELAY_INTERVAL_MSEC:
 		return
+	var first_relay := not _punch_ready_last_msec_by_key.has(rate_key)
 	_punch_ready_last_msec_by_key[rate_key] = now_msec
 	_send_to_session(str(entry.get("human_session_id", "")), LobbyProtocolScript.MATCH_SPECTATOR_PUNCH, {
 		"match_id": match_id,
@@ -3525,6 +3555,8 @@ func _handle_local_bot_match_punch_ready(peer_id: int, payload: Dictionary) -> v
 		"punch_ip": punch_ip,
 		"punch_port": punch_port,
 	})
+	if first_relay:
+		_send_to_session(session_id, LobbyProtocolScript.MATCH_SPECTATOR_PUNCH_RELAYED, {"match_id": match_id})
 	_trace("relay spectator punch target for match %s observer %s" % [match_id, session_id])
 
 func _get_punch_bounce(key: String, max_age_seconds: float) -> Dictionary:

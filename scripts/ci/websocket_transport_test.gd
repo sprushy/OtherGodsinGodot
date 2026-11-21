@@ -4,6 +4,7 @@ const NetworkScript = preload("res://scripts/Other/NetworkManager.gd")
 const SessionScript = preload("res://scripts/server/MatchSession.gd")
 const EndpointsScript = preload("res://scripts/network/WebSocketEndpoints.gd")
 const LobbyClientScript = preload("res://scripts/client/LobbyClient.gd")
+const MatchClientScript = preload("res://scripts/client/MatchClient.gd")
 const MatchHostScript = preload("res://scripts/server/HeadlessMatchHost.gd")
 const MatchSupervisorScript = preload("res://scripts/server/MatchSupervisor.gd")
 const LobbyServerScript = preload("res://scripts/server/LobbyServer.gd")
@@ -217,27 +218,49 @@ func _check_direct_spectator_punch() -> void:
 		host.get_parent().queue_free()
 		reflector.queue_free()
 		return
+	var session := SessionScript.new("direct-match", "room", "127.0.0.2", reflector_port, ["human", "bot"])
+	session.set_spectator_visible_player_indices("observer", [])
+	var token := session.get_spectator_match_token("observer")
+	var host_punch := PunchReflectorScript.make_host_punch("direct-match", token)
+	var unsigned_sender := PacketPeerUDP.new()
+	var unsigned_punch := PunchReflectorScript.make_marker(PunchReflectorScript.PUNCH_KIND_PACKET, "")
 	var reported_ports: Array[int] = []
 	var report_ready := func() -> bool:
 		var bounce := reflector.get_bounce("client:direct-match:observer", 2.0)
 		if not bounce.is_empty():
 			reported_ports.append(int(bounce["port"]))
-			_check(host.begin_spectator_punch("observer", str(bounce["ip"]), int(bounce["port"])) == OK, "host punches the reported endpoint")
+			unsigned_sender.set_dest_address(str(bounce["ip"]), int(bounce["port"]))
+			unsigned_sender.put_packet(unsigned_punch)
+			_check(host.begin_spectator_punch("observer", str(bounce["ip"]), int(bounce["port"]), host_punch) == OK, "host punches the reported endpoint")
 		return true
 	var marker := PunchReflectorScript.make_marker(PunchReflectorScript.BOUNCE_KIND_CLIENT, "direct-match", "observer")
-	var local_port := await PunchReflectorScript.prime_spectator_socket(
-		self, "127.0.0.1", host_port, "127.0.0.1", reflector_port, marker, report_ready
+	# The reflector advertises one port, but the host replies from another.
+	var route := await PunchReflectorScript.prime_spectator_socket(
+		self, "127.0.0.1", reflector_port, "127.0.0.1", reflector_port, marker, host_punch, report_ready
 	)
+	unsigned_sender.close()
+	var local_port := int(route.get("local_port", 0))
 	_check(local_port > 0 and reported_ports == [local_port], "host punch completes rendezvous before the ENet dial")
+	_check(route.get("host_port") == host_port, "verified reply selects the remapped host port and ignores unsigned alternates")
+	host.match_join_requested.connect(func(request: Dictionary, sender: Dictionary) -> void:
+		var peer_id := int(sender["peer_id"])
+		if session.authenticate_spectator(str(request.get("observer_session_id")), str(request.get("observer_match_token")), peer_id):
+			host.approve_match_join(peer_id, -1, session.to_spectator_match_info("observer"))
+	)
 	var spectator := _network_node("DirectSpectatorClient")
-	_check(spectator.create_match_client("127.0.0.1", host_port, "", false, local_port) == OK, "start direct spectator client")
-	await _wait_for(func() -> bool: return spectator.peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED)
-	_check(spectator.peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED, "spectator connects directly")
+	var dial_port := int(route.get("host_port", reflector_port))
+	_check(spectator.create_match_client("127.0.0.1", dial_port, "", false, local_port) == OK, "start direct spectator client")
+	var client := MatchClientScript.new(null, spectator, true, true, session.to_spectator_match_info("observer"), "127.0.0.1", dial_port)
+	var approvals: Array[Dictionary] = []
+	spectator.match_join_approved.connect(func(info: Dictionary) -> void: approvals.append(info))
+	await _wait_for(func() -> bool: return approvals.size() == 1)
+	_check(approvals.size() == 1, "spectator connects and authenticates directly")
 	_check(spectator.peer.get_host().get_local_port() == local_port, "ENet uses the port registered by the reflector")
-	_check(spectator.reconnect_client("127.0.0.1", host_port) == OK, "retry direct spectator connection")
-	await _wait_for(func() -> bool: return spectator.peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED)
-	_check(spectator.peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED, "spectator reconnects directly")
+	_check(spectator.reconnect_client(client._server_ip, client._server_port) == OK, "retry direct spectator connection")
+	await _wait_for(func() -> bool: return approvals.size() == 2)
+	_check(approvals.size() == 2, "spectator reconnects at the discovered endpoint")
 	_check(spectator.peer.get_host().get_local_port() == local_port, "spectator retries keep the punched port")
+	client.shutdown()
 	spectator.disconnect_client()
 	host.disconnect_client()
 	spectator.get_parent().queue_free()

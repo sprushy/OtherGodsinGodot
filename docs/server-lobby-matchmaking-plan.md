@@ -624,11 +624,14 @@ the port.
   - After the spectator is assigned, the lobby relays its recorded bounce to
     the host as `MATCH_SPECTATOR_PUNCH` (rate-limited to 1/s), and the host
     punches that endpoint from its ENet socket for ~60 s (re-punched on every
-    spectator reconnect report).
+    spectator reconnect report). The lobby confirms when it first forwards
+    the spectator's endpoint.
 - **Dial**: the spectator connects as a normal ENet client to the advertised
-  public endpoint. If the punch is delayed, the client still starts ENet
-  after a short wait. Retries keep the same local port when available, bounce
-  the reflector again, and report readiness from the active socket.
+  public endpoint or uses a different port if the host proves it owns that
+  route with the observer's match credential. If the punch is delayed, the
+  client still starts ENet after a short wait. Retries keep the same local
+  port when available, bounce the reflector again, and report readiness from
+  the active socket.
 - Punching is best-effort: symmetric/port-preserving NATs on either side can
   still deny it, in which case the room stays unwatchable and the UPnP/LAN
   paths remain the reliable options. The reflector prunes old bounces and the

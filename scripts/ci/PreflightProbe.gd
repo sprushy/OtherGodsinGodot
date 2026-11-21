@@ -52,6 +52,7 @@ func run() -> bool:
 	_check_deck_validator(failures)
 	_check_match_command_registry_coverage(failures)
 	_check_command_authority(failures)
+	_check_target_prompt_refresh_during_submission(failures)
 	_check_network_payload_guards(failures)
 	_check_full_state_event_payload_budget(failures)
 	_check_game_state_privacy(failures)
@@ -393,6 +394,41 @@ func _check_command_authority(failures: PackedStringArray) -> void:
 		failures.append("authorized player could not select attacker: %s" % match_manager.last_move_failed_reason)
 	elif match_manager.selected_attacker != attacker:
 		failures.append("authorized attacker selection did not stick")
+
+func _check_target_prompt_refresh_during_submission(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	var manager := _new_fixture_match(game)
+	var lailoken := Lailoken.new()
+	lailoken.card_owner = player
+	player.frontline_zones[0].add_card(lailoken)
+	var target := SpellCard.new()
+	var other_target := SpellCard.new()
+	for spell in [target, other_target]:
+		spell.card_name = "Prepared Spell"
+		spell.card_owner = opponent
+		spell.is_prepared = true
+	opponent.frontline_zones[0].add_card(target)
+	opponent.frontline_zones[1].add_card(other_target)
+	manager._record_pending_ui_interaction(player, "lailoken_reveal", {"source_uid": lailoken.uid})
+	var prompts_during_refresh: Array[int] = []
+	manager.move_validated.connect(func(_move: Dictionary) -> void:
+		prompts_during_refresh.append(manager.get_pending_reveal_target_ui_interactions().size())
+		prompts_during_refresh.append(manager.get_pending_state_refresh_ui_interactions().size())
+	, CONNECT_ONE_SHOT)
+	var submitted := manager.process_command({
+		"type": "lailoken_reveal_choice", "source_uid": lailoken.uid, "target_uid": target.uid,
+	})
+	if not submitted or target.current_zone != opponent.graveyard_zone \
+			or manager.get_pending_ui_interaction_count() != 0 \
+			or other_target not in lailoken.get_valid_targets(game):
+		failures.append("Lailoken's target choice failed to resolve with another valid target still in play")
+	if prompts_during_refresh != [0, 0]:
+		failures.append("Submitting Lailoken's target choice re-exposed the answered prompt during state refresh")
 
 func _check_network_payload_guards(failures: PackedStringArray) -> void:
 	var network_manager = NetworkManagerScript.new()
@@ -3473,6 +3509,19 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 			break
 	if closest_pair.size() != 2:
 		failures.append("Bot self-play pairing did not fall back to the closest available gap")
+	var restricted_first := {"band_b": true}
+	var restricted_pair_found := false
+	for i in range(60):
+		var restricted_pair := band_pair_pool.select_self_play_pair({}, band_pair_rng, restricted_first)
+		if restricted_pair.is_empty() or restricted_pair[0].get("list_id") != "band_b":
+			failures.append("Restricted bot self-play did not put an eligible bot in the first seat")
+			break
+		if restricted_pair.size() == 2 and restricted_pair[1].get("list_id") == "band_a":
+			restricted_pair_found = true
+	if not restricted_pair_found:
+		failures.append("Restricted bot self-play did not pair with a bot outside the first-seat restriction")
+	if not band_pair_pool.select_self_play_pair({"band_b": true}, band_pair_rng, restricted_first).is_empty():
+		failures.append("Restricted bot self-play replaced a busy eligible bot with an ineligible first bot")
 	var result_dir := ServerPathsScript.get_server_data_file_path(storage_file).get_basename() + "_results"
 	DirAccess.remove_absolute(result_dir.path_join("%s.json" % session.match_id.sha256_text()))
 	DirAccess.remove_absolute(result_dir.path_join("%s.json" % human_win.match_id.sha256_text()))

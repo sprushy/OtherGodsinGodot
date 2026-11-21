@@ -42,6 +42,7 @@ signal local_bot_match_assigned(match_info: Dictionary)
 signal local_bot_match_confirmed(success: bool, ranked_result: Dictionary, message: String)
 signal match_spectator_approved(match_id: String, observer_session_id: String, observer_match_token: String, visible_player_indices: Array)
 signal match_spectator_punch_requested(match_id: String, observer_session_id: String, punch_ip: String, punch_port: int)
+signal match_spectator_punch_relayed(match_id: String)
 signal request_next_received(requester_name: String)
 signal request_next_result(message: String)
 signal account_deck_list_received(decks: Array, preferred_deck_id: String)
@@ -89,6 +90,7 @@ var supports_bot_ladder: bool = false
 var supports_ladder_pages: bool = false
 var supports_ladder_filter: bool = false
 var can_see_players_online: bool = false
+var can_host_top_50_bot_matches: bool = false
 var current_allow_friend_observers_to_see_cards: bool = true
 var current_active_match_info: Dictionary = {}
 var current_room_snapshot: Dictionary = {}
@@ -560,9 +562,12 @@ func request_bot_match_history(before_match_id: String = "") -> void:
 	if is_authenticated() and supports_bot_ladder:
 		_send_request(LobbyProtocolScript.REQUEST_BOT_MATCH_HISTORY, {"before_match_id": before_match_id})
 
-func request_bot_work(bot_id: String = "", excluded_list_ids: Array = []) -> void:
+func request_bot_work(bot_id: String = "", excluded_list_ids: Array = [], top_50: bool = false) -> void:
 	if is_authenticated():
-		_send_request(LobbyProtocolScript.REQUEST_BOT_WORK, {"bot_id": bot_id, "excluded_list_ids": excluded_list_ids})
+		var payload := {"bot_id": bot_id, "excluded_list_ids": excluded_list_ids}
+		if top_50:
+			payload["top_50"] = true
+		_send_request(LobbyProtocolScript.REQUEST_BOT_WORK, payload)
 
 func request_seed_bot_league(count_per_god: int = 10) -> void:
 	if is_authenticated():
@@ -720,6 +725,7 @@ func lobby_event(message: Dictionary) -> void:
 			supports_ladder_pages = bool(payload.get("supports_ladder_pages", false))
 			supports_ladder_filter = bool(payload.get("supports_ladder_filter", false))
 			can_see_players_online = bool(payload.get("can_see_players_online", false))
+			can_host_top_50_bot_matches = bool(payload.get("can_host_top_50_bot_matches", false))
 			_cancel_initial_auth_request()
 			_cancel_auth_response_timeout()
 			_finish_auto_reconnect()
@@ -746,6 +752,7 @@ func lobby_event(message: Dictionary) -> void:
 			supports_ladder_pages = bool(payload.get("supports_ladder_pages", false))
 			supports_ladder_filter = bool(payload.get("supports_ladder_filter", false))
 			can_see_players_online = bool(payload.get("can_see_players_online", false))
+			can_host_top_50_bot_matches = bool(payload.get("can_host_top_50_bot_matches", false))
 			_cancel_initial_auth_request()
 			_cancel_auth_response_timeout()
 			_finish_auto_reconnect()
@@ -832,6 +839,9 @@ func lobby_event(message: Dictionary) -> void:
 					str(payload.get("observer_match_token", "")).strip_edges(),
 					payload.get("visible_player_indices", []) if payload.get("visible_player_indices", []) is Array else []
 				)
+		LobbyProtocolScript.MATCH_SPECTATOR_PUNCH_RELAYED:
+			if is_authenticated():
+				match_spectator_punch_relayed.emit(str(payload.get("match_id", "")))
 		LobbyProtocolScript.MATCH_SPECTATOR_PUNCH:
 			if is_authenticated():
 				match_spectator_punch_requested.emit(
@@ -1137,6 +1147,7 @@ func _clear_session_fields() -> void:
 	supports_ladder_pages = false
 	supports_ladder_filter = false
 	can_see_players_online = false
+	can_host_top_50_bot_matches = false
 	current_session_id = ""
 	current_reconnect_token = ""
 	current_profile_id = ""

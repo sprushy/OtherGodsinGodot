@@ -165,10 +165,13 @@ func _on_match_join_approved(match_info: Dictionary) -> void:
 	_has_authenticated_match = true
 	_reconnect_backoff_index = 0
 	_reconnect_deadline_unix = 0.0
-	if str(match_info.get("server_ip", "")).strip_edges() != "":
-		_server_ip = str(match_info.get("server_ip", _server_ip))
-	if int(match_info.get("match_port", 0)) > 0:
-		_server_port = int(match_info.get("match_port", _server_port))
+	# A client-hosted bot reports its local address here. Spectators reconnect
+	# using the endpoint that carried their original join request.
+	if not bool(_match_info.get("observer_mode", false)):
+		if str(match_info.get("server_ip", "")).strip_edges() != "":
+			_server_ip = str(match_info.get("server_ip", _server_ip))
+		if int(match_info.get("match_port", 0)) > 0:
+			_server_port = int(match_info.get("match_port", _server_port))
 	if was_reconnecting:
 		game_event_received.emit("match_reconnect_ok", match_info)
 	game_event_received.emit("match_join_ok", match_info)
