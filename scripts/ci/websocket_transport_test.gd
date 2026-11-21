@@ -189,6 +189,11 @@ func _check_punch_endpoint_normalization() -> void:
 	_check(PunchReflectorScript.normalize_ip("::ffff:127.0.0.1") == "127.0.0.1", "normalize IPv4-mapped reflector endpoint")
 	_check(PunchReflectorScript.normalize_ip(" 127.0.0.2 ") == "127.0.0.2", "trim reflector endpoint")
 	_check(PunchReflectorScript.normalize_ip("2001:db8::1") == "2001:db8::1", "leave non-mapped endpoints intact")
+	_check(PunchReflectorScript.is_loopback_ipv4("127.0.0.1"), "recognize loopback spectate endpoint")
+	_check(PunchReflectorScript.is_private_ipv4("192.168.1.5"), "recognize private spectate endpoint")
+	_check(PunchReflectorScript.is_same_private_subnet("192.168.1.5", "192.168.1.9"), "same LAN uses private endpoint")
+	_check(not PunchReflectorScript.is_same_private_subnet("192.168.1.5", "192.168.2.9"), "different LAN keeps public endpoint")
+	_check(PunchReflectorScript.is_same_private_subnet("10.0.0.5", "10.4.5.9"), "10.x private range uses private endpoint")
 
 func _check_stale_client_disconnect_events() -> void:
 	var network := _network_node("CanceledTransport")

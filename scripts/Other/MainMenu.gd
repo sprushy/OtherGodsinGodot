@@ -203,6 +203,9 @@ var _local_bot_spectate_client_id: int = 0
 var _local_bot_spectate_session_id: String = ""
 var _local_bot_spectate_punch: Dictionary = {}
 var _match_punch_watch: Dictionary = {}
+# Print each skipped host-punch reason once per observer instead of spamming
+# the console on every one-second lobby relay.
+var _spectator_punch_skip_printed: Dictionary = {}
 var _pending_spectator_approvals: Dictionary = {}
 var _bot_match_retry_timer: Timer
 var _continuous_bot_match_ids: Dictionary = {}
@@ -9919,7 +9922,8 @@ func _begin_local_bot_spectate_advertising(local_match_info: Dictionary, mock_ga
 		# This client spawned the lobby, so spectators sit on this machine or
 		# LAN. Advertise the LAN address directly: no UPnP mapping is needed,
 		# and the router's external IP would be unreachable for them anyway.
-		lobby_client.submit_local_bot_match_spectate_info(match_id, true, _get_lan_spectate_ip(), bound_port)
+		var lan_ip := _get_lan_spectate_ip()
+		lobby_client.submit_local_bot_match_spectate_info(match_id, true, lan_ip, bound_port, false, lan_ip)
 		return
 	if _local_bot_spectate_probe_thread != null:
 		return
@@ -9954,6 +9958,32 @@ func _get_lan_spectate_ip() -> String:
 			any_ipv4 = address
 	return any_ipv4 if not any_ipv4.is_empty() else "127.0.0.1"
 
+## Private-only address shared with the lobby for same-LAN spectator shortcuts.
+## It is never used as the advertised public endpoint.
+func _get_spectate_lan_ip() -> String:
+	for address_variant in IP.get_local_addresses():
+		var address := PunchReflectorScript.normalize_ip(str(address_variant))
+		if PunchReflectorScript.is_private_ipv4(address) and not PunchReflectorScript.is_loopback_ipv4(address):
+			return address
+	return "127.0.0.1"
+
+## Prefer a host's private endpoint when this spectator shares that LAN with it.
+## This avoids relying on UDP hairpinning of the public reflection endpoint.
+func _resolve_spectate_server_ip(match_info: Dictionary, fallback_ip: String) -> String:
+	if not bool(match_info.get("observer_mode", false)):
+		return fallback_ip
+	var candidate := PunchReflectorScript.normalize_ip(str(match_info.get("spectate_lan_ip", "")))
+	if candidate.is_empty():
+		return fallback_ip
+	if PunchReflectorScript.is_loopback_ipv4(candidate):
+		return "127.0.0.1"
+	if not PunchReflectorScript.is_private_ipv4(candidate):
+		return fallback_ip
+	for address_variant in IP.get_local_addresses():
+		if PunchReflectorScript.is_same_private_subnet(str(address_variant), candidate):
+			return candidate
+	return fallback_ip
+
 func _poll_local_bot_spectate_probe() -> void:
 	if _local_bot_spectate_probe_thread != null and not _local_bot_spectate_probe_thread.is_alive():
 		var result: Dictionary = _local_bot_spectate_probe_thread.wait_to_finish()
@@ -9969,7 +9999,8 @@ func _poll_local_bot_spectate_probe() -> void:
 			var reachable_port := int(result.get("reachable_port", 0))
 			if viable and reachable_port > 0:
 				_local_bot_spectate_external_port = reachable_port
-				lobby_client.submit_local_bot_match_spectate_info(probe_match_id, true, reachable_ip, reachable_port)
+				lobby_client.submit_local_bot_match_spectate_info(
+					probe_match_id, true, reachable_ip, reachable_port, false, _get_spectate_lan_ip())
 			else:
 				# No UPnP mapping: try NAT hole punching through the lobby's
 				# reflector before giving up the spectate offer entirely. An
@@ -10059,7 +10090,7 @@ func _poll_local_bot_spectate_punch() -> void:
 		var attempts := int(_local_bot_spectate_punch.get("submit_attempts", 0)) + 1
 		_local_bot_spectate_punch["submit_attempts"] = attempts
 		_local_bot_spectate_punch["submitted"] = was_submitted or attempts >= SPECTATE_PUNCH_SUBMIT_ATTEMPTS
-		lobby_client.submit_local_bot_match_spectate_info(match_id, true, "", 0, true)
+		lobby_client.submit_local_bot_match_spectate_info(match_id, true, "", 0, true, _get_spectate_lan_ip())
 
 func _get_punch_reflector_host() -> String:
 	var address := _current_lobby_ip.strip_edges()
@@ -10165,32 +10196,48 @@ func _poll_match_punch_watch() -> void:
 	_match_punch_watch["next_report_msec"] = now_msec + MATCH_PUNCH_WATCH_REPORT_INTERVAL_MSEC
 	lobby_client.submit_match_spectator_punch_ready(match_id, observer_session_id)
 
+func _trace_spectator_punch_once(observer_id: String, detail: String) -> void:
+	var key := "%s|%s" % [observer_id, detail]
+	if _spectator_punch_skip_printed.has(key):
+		return
+	_spectator_punch_skip_printed[key] = true
+	print("Spectator punch observer=%s: %s" % [observer_id, detail])
+
 ## A spectator approved for this client-hosted bot challenge bounced the
 ## lobby's punch reflector; punch its endpoint from the match server socket so
 ## its first ENet packets can get through restricted NATs.
 func _on_match_spectator_punch_requested(match_id: String, observer_session_id: String, punch_ip: String, punch_port: int) -> void:
 	if match_id.is_empty() or observer_session_id.is_empty() or punch_ip.is_empty() or punch_port <= 0:
+		_trace_spectator_punch_once(observer_session_id, "skipped: invalid payload")
 		return
 	var mock_game := get_node_or_null("GameContainer/MockGame")
 	if mock_game == null or mock_game.network_manager == null:
+		_trace_spectator_punch_once(observer_session_id, "skipped: match UI or transport is gone")
 		return
 	var active_match: Dictionary = mock_game.get("_current_match_info")
-	if active_match.get("match_id") != match_id:
+	var active_match_id := str(active_match.get("match_id", ""))
+	if active_match_id != match_id:
+		_trace_spectator_punch_once(observer_session_id, "skipped: match id mismatch host=%s relay=%s" % [active_match_id, match_id])
 		return
 	var network_manager = mock_game.network_manager
 	if int(network_manager.get("last_bound_port")) <= 0:
 		# Spectate listener never bound (in-process fallback); nothing to punch.
+		_trace_spectator_punch_once(observer_session_id, "skipped: no bound spectate listener")
 		return
 	var host = mock_game.get("headless_match_host")
 	if host == null or host.match_session == null:
+		_trace_spectator_punch_once(observer_session_id, "skipped: match session is not ready")
 		return
 	var observer_token: String = host.match_session.get_spectator_match_token(observer_session_id)
 	if observer_token.is_empty():
+		_trace_spectator_punch_once(observer_session_id, "skipped: observer token is not registered")
 		return
 	var punch := PunchReflectorScript.make_host_punch(match_id, observer_token)
 	var resolved_punch_ip := PunchReflectorScript.normalize_ip(punch_ip)
+	_trace_spectator_punch_once(observer_session_id, "punching %s:%d" % [resolved_punch_ip, punch_port])
 	var punch_err: Error = network_manager.begin_spectator_punch(observer_session_id, resolved_punch_ip, punch_port, punch)
 	if punch_err != OK:
+		_trace_spectator_punch_once(observer_session_id, "start failed error=%d" % int(punch_err))
 		_write_smoke_trace("spectator_punch_start_failed match=%s error=%d" % [match_id, int(punch_err)])
 
 ## Remove the UPnP port mapping created for spectating a client-hosted bot
@@ -10198,6 +10245,7 @@ func _on_match_spectator_punch_requested(match_id: String, observer_session_id: 
 func _release_local_bot_spectate_mapping() -> void:
 	_local_bot_spectate_punch = {}
 	_match_punch_watch = {}
+	_spectator_punch_skip_printed.clear()
 	if _local_bot_spectate_external_port <= 0:
 		return
 	var port_to_release := _local_bot_spectate_external_port
@@ -10225,6 +10273,14 @@ func _on_remote_match_assigned(match_info: Dictionary) -> void:
 		call_deferred("_launch_host_match_after_lobby_handoff", match_info)
 		return
 	var match_ip := str(match_info.get("server_ip", _current_lobby_ip))
+	var resolved_match_ip := _resolve_spectate_server_ip(match_info, match_ip)
+	if resolved_match_ip != match_ip:
+		match_ip = resolved_match_ip
+		match_info["server_ip"] = match_ip
+		# Same-LAN spectators dial the private endpoint directly; hole punching
+		# would only waste the rendezvous window trying to hairpin the public IP.
+		if bool(match_info.get("observer_mode", false)):
+			match_info["spectate_via_punch"] = false
 	var match_port := int(match_info.get("match_port", _get_configured_match_port()))
 	_match_punch_watch = {}
 	if bool(match_info.get("observer_mode", false)):

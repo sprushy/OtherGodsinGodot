@@ -54,6 +54,44 @@ static func normalize_ip(address: String) -> String:
 		return resolved.trim_prefix("::ffff:")
 	return resolved
 
+## Private IPv4 helpers used for the same-LAN spectate shortcut. Loopback is
+## handled separately because it is reachable only on the same machine.
+static func is_loopback_ipv4(address: String) -> bool:
+	return normalize_ip(address).begins_with("127.")
+
+static func is_private_ipv4(address: String) -> bool:
+	var resolved := normalize_ip(address)
+	if resolved.begins_with("10.") or is_loopback_ipv4(resolved):
+		return true
+	var parts := resolved.split(".")
+	if parts.size() != 4:
+		return false
+	if parts[0] == "192" and parts[1] == "168":
+		return true
+	if parts[0] == "172":
+		var second := int(parts[1])
+		return second >= 16 and second <= 31
+	return false
+
+static func is_same_private_subnet(first: String, second: String) -> bool:
+	var a := normalize_ip(first)
+	var b := normalize_ip(second)
+	if is_loopback_ipv4(a) or is_loopback_ipv4(b):
+		return is_loopback_ipv4(a) and is_loopback_ipv4(b)
+	if not is_private_ipv4(a) or not is_private_ipv4(b):
+		return false
+	var a_parts := a.split(".")
+	var b_parts := b.split(".")
+	if a_parts.size() != 4 or b_parts.size() != 4:
+		return false
+	if a.begins_with("10.") and b.begins_with("10."):
+		return true
+	if a_parts[0] == "192" and a_parts[1] == "168" and b_parts[0] == "192" and b_parts[1] == "168":
+		return a_parts[2] == b_parts[2]
+	if a_parts[0] == "172" and b_parts[0] == "172":
+		return a_parts[1] == b_parts[1]
+	return false
+
 ## Open the UDP route before ENet starts its handshake. The temporary socket
 ## hands its local port to ENet even if the host's punch is delayed.
 static func prime_spectator_socket(

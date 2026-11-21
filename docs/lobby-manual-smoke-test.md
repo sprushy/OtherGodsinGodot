@@ -70,6 +70,9 @@ real two-window/two-network test proves the public UDP path.
 ### Setup
 
 - Use the public lobby, or two clients on different networks when possible.
+- Also test two windows on one machine and two machines on the same LAN; those
+  should use the private endpoint automatically instead of hairpinning the
+  public reflection endpoint.
 - Confirm inbound UDP `22346-22355` is open in both Lightsail and Windows Firewall.
 - Confirm the server log shows `punch reflector listening on port ...`.
 - Ideally disable UPnP on the host so the punch fallback is actually exercised.
@@ -87,6 +90,8 @@ real two-window/two-network test proves the public UDP path.
    - `punch bounce kind=client ...`
    - `spectator punch begin ...`
    - `Spectator rendezvous: host reply=true, remapped port=...`
+   - `Spectator punch observer=...: punching ...` on the host
+   - `Spectator punch observer=...: skipped: ...` if the host rejected the relay
    - `punch local port bind failed ...` or `punch local port remapped ...` if the primed spectator port was not reusable.
 
 ### Pass Criteria

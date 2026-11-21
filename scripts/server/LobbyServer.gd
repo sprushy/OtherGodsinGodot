@@ -3435,6 +3435,7 @@ func _observe_local_bot_match(session_id: String, match_id: String) -> void:
 		"match_id": match_id,
 		"room_id": str(entry.get("room_id", "")),
 		"server_ip": spectate_ip,
+		"spectate_lan_ip": str(entry.get("spectate_lan_ip", "")),
 		"match_port": spectate_port,
 		"match_websocket_url": "",
 		"player_index": -1,
@@ -3525,6 +3526,11 @@ func _handle_local_bot_match_spectate_info(peer_id: int, payload: Dictionary) ->
 	var spectate_ip := str(payload.get("spectate_ip", "")).strip_edges()
 	var spectate_port := int(payload.get("spectate_port", 0))
 	var punched := false
+	var lan_ip := PunchReflectorScript.normalize_ip(str(payload.get("lan_ip", "")))
+	if not lan_ip.is_empty() \
+			and not PunchReflectorScript.is_private_ipv4(lan_ip) \
+			and not PunchReflectorScript.is_loopback_ipv4(lan_ip):
+		lan_ip = ""
 	if bool(payload.get("via_punch", false)):
 		# Hole-punch fallback: the host bounced our reflector through the exact
 		# socket its ENet spectate server listens on, so the recorded bounce is
@@ -3546,6 +3552,7 @@ func _handle_local_bot_match_spectate_info(peer_id: int, payload: Dictionary) ->
 		entry["spectate_via_punch"] = true
 	entry["spectate_ip"] = spectate_ip if viable else ""
 	entry["spectate_port"] = spectate_port if viable else 0
+	entry["spectate_lan_ip"] = lan_ip if viable else ""
 	var room_id := str(entry.get("room_id", ""))
 	if viable and not room_id.is_empty() and rooms_by_id.has(room_id):
 		_emit_room_updates(rooms_by_id[room_id])

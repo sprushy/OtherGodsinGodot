@@ -488,13 +488,14 @@ func submit_deck(
 func submit_local_bot_match_result(payload: Dictionary) -> void:
 	_send_request(LobbyProtocolScript.LOCAL_BOT_MATCH_RESULT, payload.duplicate(true))
 
-func submit_local_bot_match_spectate_info(match_id: String, viable: bool, spectate_ip: String, spectate_port: int, via_punch: bool = false) -> void:
+func submit_local_bot_match_spectate_info(match_id: String, viable: bool, spectate_ip: String, spectate_port: int, via_punch: bool = false, lan_ip: String = "") -> void:
 	_send_request(LobbyProtocolScript.LOCAL_BOT_MATCH_SPECTATE_INFO, {
 		"match_id": match_id.strip_edges(),
 		"viable": viable,
 		"spectate_ip": spectate_ip.strip_edges(),
 		"spectate_port": spectate_port,
 		"via_punch": via_punch,
+		"lan_ip": lan_ip.strip_edges(),
 	})
 
 ## Announce that this spectator bounced the punch reflector from its live
