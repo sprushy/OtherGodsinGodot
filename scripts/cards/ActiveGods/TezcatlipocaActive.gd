@@ -85,10 +85,10 @@ func get_tonal_extraction_spirit_profile() -> Dictionary:
 func converts_follower_damage_to_conversion(_game_manager: GameManager = null) -> bool:
 	return _passives_are_active()
 
-func get_follower_damage_conversion_amount(amount: int, _game_manager: GameManager = null) -> int:
-	if amount <= 0 or not _passives_are_active():
+func get_follower_damage_conversion_amount(destroyed_followers: int, _game_manager: GameManager = null) -> int:
+	if destroyed_followers <= 0 or not _passives_are_active():
 		return 0
-	return GameManager.round_down_divide(amount, 2)
+	return GameManager.round_down_divide(destroyed_followers, 2)
 
 func activate(game_manager: GameManager, _target = null) -> void:
 	if not can_activate(game_manager):
@@ -330,7 +330,7 @@ func get_hover_detail_lines(_viewer: Player = null) -> Array[String]:
 		"[b]Current Form[/b]: %s" % ("Jaguar" if in_jaguar_form else "Divine"),
 		"[b]Divine[/b]: Divine Manifestation, God, Shapeshifter; SPD 2 / RES 37 / STR 25.",
 		"[b]Jaguar[/b]: Divine Manifestation, God, Animal, Feline, Jaguar, Shapeshifter; SPD 3 / RES 24 / STR 35.",
-		"[b]The Smoking Mirror[/b]: Follower damage converts half that amount instead.",
+		"[b]The Smoking Mirror[/b]: Convert half the Followers that would have been destroyed instead.",
 	]
 
 func _is_valid_titlacauan_target(game_manager: GameManager, target: Card) -> bool:

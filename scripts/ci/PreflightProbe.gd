@@ -52,6 +52,7 @@ func run() -> bool:
 	_check_deck_validator(failures)
 	_check_match_command_registry_coverage(failures)
 	_check_command_authority(failures)
+	_check_combat_rounding(failures)
 	_check_target_prompt_refresh_during_submission(failures)
 	_check_network_payload_guards(failures)
 	_check_full_state_event_payload_budget(failures)
@@ -67,9 +68,12 @@ func run() -> bool:
 	_check_ranked_bot_deck_generation(failures)
 	_check_ranked_bot_manifestations(failures)
 	_check_bot_power_followthrough(failures)
+	_check_bot_follower_valuation(failures)
 	_check_bot_summon_and_intercept(failures)
 	_check_bot_speed_one_stealth(failures)
 	_check_bot_reserve_summon_threat(failures)
+	_check_bot_warding_stone_summon_forecast(failures)
+	_check_bot_doorway_grave_denial(failures)
 	_check_bot_fenrir_summon(failures)
 	_check_bot_wolf_master(failures)
 	_check_bot_main_phase_combat_order(failures)
@@ -78,6 +82,7 @@ func run() -> bool:
 	_check_bot_removal_opens_attacks(failures)
 	_check_bot_paired_removals(failures)
 	_check_bot_summon_and_removal_order(failures)
+	_check_bot_removal_threat_priority(failures)
 	_check_bot_disable_overlap(failures)
 	_check_bot_defender_target_value(failures)
 	_check_bot_hermes_speed(failures)
@@ -1179,6 +1184,125 @@ func _check_bot_power_followthrough(failures: PackedStringArray) -> void:
 		failures.append("Bot unlocked Palisade with no enemy attack pressure")
 	bot.detach()
 
+func _check_combat_rounding(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.sfx_enabled = false
+	player.game_manager = game
+	opponent.game_manager = game
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+
+	var attacker := RoboticFootsoldier.new()
+	var partner := RoboticFootsoldier.new()
+	for card: Card in [attacker, partner]:
+		card.card_owner = player
+		card.creature_mode = Card.CreatureMode.AGGRESSIVE
+		card.strength = 5
+	player.frontline_zones[0].add_card(attacker)
+	player.frontline_zones[1].add_card(partner)
+	var action := CardAction.new()
+	action.type = CardAction.Type.ATTACK
+	action.attacker = attacker
+	action.united_front_partner = partner
+	action.target = opponent
+	action.halve_follower_damage = true
+	opponent.followers = 10
+	opponent.guard = 1
+	var projected := bot._estimate_projected_attack_economy(action, {}, false)
+	manager._finish_followers_attack(action, opponent)
+	if opponent.followers != 6 or opponent.guard != 0 or int(projected["opponent_followers_lost"]) != 4:
+		failures.append("United Front did not combine 5 and 5 Strength before halving and spending Guard")
+
+	var tez := TezcatlipocaActive.new()
+	tez.card_owner = player
+	tez.creature_mode = Card.CreatureMode.AGGRESSIVE
+	tez.strength = 11 - TezcatlipocaActive.JAGUAR_FORM_STRENGTH_BONUS
+	player.frontline_zones[2].add_card(tez)
+	action.attacker = tez
+	action.united_front_partner = null
+	action.halve_follower_damage = false
+	var expected_conversion_by_followers := {20: 4, 5: 2, 1: 0}
+	for followers: int in expected_conversion_by_followers:
+		opponent.followers = followers
+		opponent.guard = 2
+		var expected: int = expected_conversion_by_followers[followers]
+		var previous_followers := player.followers
+		projected = bot._estimate_projected_attack_economy(action, {}, false)
+		var converted := game.resolve_followers_attack([tez], opponent)
+		if converted != expected or opponent.guard != 0 or opponent.followers != followers - expected \
+				or player.followers != previous_followers + expected or int(projected["opponent_followers_lost"]) != expected:
+			failures.append("The Smoking Mirror miscalculated conversion against %d followers and 2 Guard" % followers)
+
+func _check_bot_follower_valuation(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+
+	var loss := bot._score_follower_loss(player, 2, 25)
+	var result := {"bot_followers_lost": 2}
+	if bot._score_attack_economy(result, {"bot_followers": 25}) != -loss \
+			or bot._score_attack_economy(result) >= 0 or bot._score_attack_economy(result) <= -loss:
+		failures.append("Bot did not price combat loss from the followers remaining in the line")
+	player.followers = 23
+	if BotCardStrategyScript.follower_gain(player, 2) != loss \
+			or bot._score_follower_safety(23, 25) != roundi(loss * bot._posture_safety_multiplier()):
+		failures.append("Bot prices equivalent follower damage, healing, and safety on different scales")
+	var terminal := {"bot_followers_lost": 2, "opponent_wins": true}
+	var line := {"bot_followers": 2}
+	if bot._score_attack_economy(result, line) - bot._score_attack_economy(terminal, line) != bot.ECON_CARD_VALUE * 20:
+		failures.append("Bot did not account for lethal separately from the follower change")
+
+	var guard := ManaGuard.new()
+	guard.card_owner = player
+	guard.is_face_down = false
+	player.power_zones[0].add_card(guard)
+	var attacker := CreatureCard.new()
+	attacker.card_owner = opponent
+	attacker.creature_mode = Card.CreatureMode.DEFENSIVE
+	attacker.strength = 14
+	opponent.frontline_zones[0].add_card(attacker)
+	player.followers = 10
+	player.mana = 20
+	if not bot._plan_power_activation(guard).is_empty():
+		failures.append("Bot bought Guard against a creature with no projected follower attack")
+
+	attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
+	guard.is_face_down = true
+	player.mana = ManaGuard.UNLOCK_COST
+	if not bot._plan_power_unlock().is_empty():
+		failures.append("Bot unlocked Mana Guard without enough mana to buy protection")
+	player.mana = 20
+	if bot._plan_power_unlock().get("activate_after_unlock_uid") != guard.uid:
+		failures.append("Bot did not plan to unlock and activate Mana Guard against a lethal attack")
+	guard.is_face_down = false
+	var plan := bot._plan_power_activation(guard)
+	var payment := 3
+	var expected := bot._score_follower_safety(0, player.followers) - BotCardStrategyScript.mana_penalty(bot, payment)
+	if plan.get("command", {}).get("mana_amount") != payment or int(plan.get("score", 0)) != expected:
+		failures.append("Bot did not price Mana Guard once for the follower loss the payment prevents")
+	elif not bot._submit_strategy_plan(plan):
+		failures.append("Bot could not submit its Mana Guard payment")
+	else:
+		for _step in range(8):
+			manager.advance_priority()
+		if player.guard != payment * ManaGuard.GUARD_PER_MANA or player.mana != 20 - payment:
+			failures.append("Bot's Mana Guard payment did not resolve as planned")
+	bot.detach()
+
 func _check_bot_summon_and_intercept(failures: PackedStringArray) -> void:
 	var game := _new_fixture_game()
 	var player := _new_fixture_player()
@@ -1362,6 +1486,102 @@ func _check_bot_reserve_summon_threat(failures: PackedStringArray) -> void:
 	defender.remove_status_effects_by_name("cannot_intercept")
 	if not bot._submit_strategy_plan(protected_summon) or recruit.current_zone not in player.reserve_zones:
 		failures.append("Bot did not submit the summon in the protected reserve")
+	bot.detach()
+
+func _check_bot_warding_stone_summon_forecast(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	opponent.mana = 5
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var stone := WardingStone.new()
+	stone.card_owner = player
+	player.hand_zone.add_card(stone)
+	player.followers = 12
+	if not bot._plan_strategy_support(0).is_empty():
+		failures.append("Bot planned Warding Stone with no board attackers or potential recruits")
+	var recruit := CreatureCard.new()
+	recruit.card_owner = opponent
+	recruit.mana_cost = 2
+	recruit.strength = 30
+	recruit.speed = 3
+	opponent.hand_zone.add_card(recruit)
+	var hidden_score := int(bot._plan_strategy_support(0).get("score", 0))
+	if hidden_score <= 0 or hidden_score >= bot.ECON_CARD_VALUE * 20:
+		failures.append("Bot did not price hidden summon risk as a precautionary Warding Stone play")
+	recruit.strength = 1
+	if int(bot._plan_strategy_support(0).get("score", 0)) != hidden_score:
+		failures.append("Warding Stone's hidden summon forecast used a private card's stats")
+	player.followers = 100
+	if not bot._plan_strategy_support(0).is_empty():
+		failures.append("Bot spent Warding Stone on speculative summon risk at healthy followers")
+	player.followers = 12
+	player.guard = 24
+	if not bot._plan_strategy_support(0).is_empty():
+		failures.append("Bot planned Warding Stone for a speculative summon already covered by Guard")
+	player.guard = 0
+	recruit.strength = 30
+	recruit.add_status_effect("revealed_in_hand", "Preflight")
+	if int(bot._plan_strategy_support(0).get("score", 0)) < bot.ECON_CARD_VALUE * 20:
+		failures.append("Bot missed a lethal attack from a revealed, affordable recruit")
+	recruit.mana_cost = 20
+	if not bot._plan_strategy_support(0).is_empty():
+		failures.append("Bot planned Warding Stone for an unaffordable revealed recruit")
+	bot.detach()
+
+func _check_bot_doorway_grave_denial(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var doorway := DoorwayToTheVoid.new()
+	doorway.card_owner = player
+	player.hand_zone.add_card(doorway)
+	var warrior := HariiWarrior.new()
+	warrior.card_owner = opponent
+	opponent.frontline_zones[0].add_card(warrior)
+	var hidden_power := ManaGuard.new()
+	hidden_power.card_owner = opponent
+	hidden_power.is_face_down = true
+	opponent.power_zones[0].add_card(hidden_power)
+	var hidden_score := int(bot._plan_strategy_support(0).get("score", 0))
+	var call := CallOfTheValkyrie.new()
+	call.card_owner = opponent
+	call.is_face_down = true
+	opponent.power_zones[0].remove_card(hidden_power)
+	opponent.power_zones[0].add_card(call)
+	if hidden_score <= 0 or int(bot._plan_strategy_support(0).get("score", 0)) != hidden_score:
+		failures.append("Doorway did not price a hidden power's possible recursion without reading its identity")
+	call.is_face_down = false
+	if int(bot._plan_strategy_support(0).get("score", 0)) <= hidden_score:
+		failures.append("Doorway did not give more weight to a confirmed Call of the Valkyrie")
+	opponent.move_card(warrior, opponent.graveyard_zone)
+	if not bot._plan_strategy_support(0).is_empty():
+		failures.append("Bot built Doorway for a creature already in the graveyard")
+	var priest := FirstSageAdapa.new()
+	priest.card_owner = opponent
+	opponent.frontline_zones[0].add_card(priest)
+	var kur_jara := KurJara.new()
+	kur_jara.card_owner = opponent
+	opponent.hand_zone.add_card(kur_jara)
+	var possible_tree_score := int(bot._plan_strategy_support(0).get("score", 0))
+	kur_jara.add_status_effect("revealed_in_hand", "Preflight")
+	if possible_tree_score <= 0 or int(bot._plan_strategy_support(0).get("score", 0)) <= possible_tree_score:
+		failures.append("Doorway did not price possible Kur-Jara fuel below a confirmed Kur-Jara")
 	bot.detach()
 
 func _check_bot_fenrir_summon(failures: PackedStringArray) -> void:
@@ -2034,6 +2254,65 @@ func _check_bot_summon_and_removal_order(failures: PackedStringArray) -> void:
 		if opponent.followers > 0 or (summon_first and bit_meseri.current_zone != player.hand_zone):
 			failures.append("Bot missed the two attacks opened by the setup or spent the spell unnecessarily")
 		bot.detach()
+
+func _check_bot_removal_threat_priority(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = opponent
+	game.other_player = player
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	player.mana = 2
+	player.followers = 100
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var entrant := CreatureCard.new()
+	entrant.card_owner = opponent
+	entrant.mana_cost = 2
+	entrant.strength = 16
+	entrant.resilience = 14
+	entrant.creature_mode = Card.CreatureMode.AGGRESSIVE
+	opponent.frontline_zones[0].add_card(entrant)
+	var sap := Sap.new()
+	sap.card_owner = player
+	sap.is_prepared = true
+	sap.is_face_down = true
+	player.reserve_zones[0].add_card(sap)
+	game.prepared_hexes[sap] = game.turn_number - 1
+	var entry := CardAction.new()
+	entry.type = CardAction.Type.EVENT
+	entry.event_name = "frontline_entry"
+	entry.source_player = opponent
+	entry.card = entrant
+	game.push_to_stack(entry)
+	if bot._choose_priority_response() != sap:
+		failures.append("Bot passed on a worthwhile Sap target without a combat answer")
+	var recruit := CreatureCard.new()
+	recruit.card_owner = player
+	recruit.mana_cost = 2
+	recruit.strength = 20
+	recruit.resilience = 18
+	player.hand_zone.add_card(recruit)
+	bot._mana_econ_cache = {}
+	if bot._choose_priority_response() != null:
+		failures.append("Bot spent Sap with healthy followers and a clean summon-and-attack answer")
+	player.followers = entrant.strength
+	if bot._choose_priority_response() != sap:
+		failures.append("Bot saved Sap despite a lethal attack before it could summon its answer")
+	game.action_stack.clear()
+	game.current_player = player
+	game.other_player = opponent
+	player.followers = 100
+	var fall := FallOfTheMighty.new()
+	fall.card_owner = player
+	player.hand_zone.add_card(fall)
+	bot._mana_econ_cache = {}
+	bot._take_main_phase_action()
+	if recruit.current_zone not in player.frontline_zones or fall.current_zone != player.hand_zone:
+		failures.append("Bot did not favor a clean summon-and-attack over Fall of the Mighty")
 
 func _check_bot_disable_overlap(failures: PackedStringArray) -> void:
 	var game := _new_fixture_game()
@@ -3270,13 +3549,45 @@ func _check_bot_e2_abzu_sage_retrieval(failures: PackedStringArray) -> void:
 	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
 	var abzu := E2Abzu.new()
 	abzu.card_owner = player
-	player.reserve_zones[0].add_card(abzu)
+	player.hand_zone.add_card(abzu)
 	var enki := EnkiLordOfEridu.new()
 	enki.card_owner = player
-	player.abyss_zone.add_card(enki)
+	for zone: Zone in [player.deck_zone, player.hand_zone, player.graveyard_zone, player.frontline_zones[0]]:
+		player.move_card(enki, zone)
+		if not bot._plan_strategy_support().is_empty():
+			failures.append("Bot planned E2-abzu for a Mer Mage with no retrieval or protection use in %s" % zone.zone_type)
+	var attacker := CreatureCard.new()
+	attacker.card_owner = opponent
+	attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
+	attacker.strength = maxi(enki.strength, enki.resilience) + 1
+	attacker.speed = E2Abzu.VOID_RESPONSE_SPEED
+	opponent.frontline_zones[0].add_card(attacker)
+	if bot._plan_strategy_support().get("command", {}).get("card_uid") != abzu.uid:
+		failures.append("Bot skipped E2-abzu when it could protect Enki from a lethal attack")
+	attacker.speed += 1
+	if not bot._plan_strategy_support().is_empty():
+		failures.append("Bot planned E2-abzu for an attack too fast for its protection")
+	opponent.frontline_zones[0].remove_card(attacker)
+	player.move_card(enki, player.deck_zone)
+	var walk := WalkOfTheSage.new()
+	walk.card_owner = player
+	player.power_zones[0].add_card(walk)
+	if not BotCardStrategyScript.walk_tutor_can_reach(bot, enki) or not bot._plan_strategy_support().is_empty():
+		failures.append("Walk of the Sage should be able to plan its tutor with E2-abzu still in hand")
+	player.power_zones[0].remove_card(walk)
+	player.move_card(enki, player.abyss_zone)
 	var retrieval_floor := E2Abzu.RETURN_TO_HAND_COST + 1 + enki.get_effective_level()
+	player.mana = retrieval_floor - 1
+	if not bot._plan_strategy_support().is_empty():
+		failures.append("Bot built E2-abzu before it could afford to retrieve Enki")
 	if BotCardStrategyScript._mana_saturation_ceiling(bot) < retrieval_floor:
-		failures.append("Mana ceiling ignored a Void Mer Mage the standing E2-abzu can retrieve")
+		failures.append("Mana ceiling ignored a Void Mer Mage the held E2-abzu can retrieve")
+	player.mana = retrieval_floor
+	var build := bot._plan_strategy_support()
+	if build.get("command", {}).get("card_uid") != abzu.uid or not bot._submit_strategy_plan(build):
+		failures.append("Bot did not build E2-abzu for a funded Enki retrieval")
+	for _advance in range(8):
+		manager.advance_priority()
 	var plan := bot._plan_e2_abzu_return(abzu)
 	if plan.get("command", {}).get("target_uid") != enki.uid or int(plan.get("score", 0)) <= 0:
 		failures.append("E2-abzu did not plan the Enki retrieval from the Void")
@@ -3578,7 +3889,7 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 	var writer := MatchHistoryStoreScript.new(storage_file, true)
 	var reader := MatchHistoryStoreScript.new(storage_file, true)
 	var session := MatchSessionScript.new("bot_win", "preflight_room", "127.0.0.1", 12345, ["BOT_A", "human"], {
-		"BOT_A": {"bot_god_name": "Thor", "cards": _known_good_deck_counts()},
+		"BOT_A": {"bot_god_name": "Thor", "bot_name": "Thor: Challenger", "cards": _known_good_deck_counts()},
 	}, {"human": {"account_id": "human_account", "profile_id": "human_profile"}})
 	if not session.to_match_info("human").get("has_bot", false):
 		failures.append("Rated bot match assignment did not identify the bot")
@@ -3715,10 +4026,11 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 	representation_pool.refresh(representation_results)
 	var preferred_gods := representation_pool.rank_underrepresented_gods(["Thor", "Odin", "Baldr"], rng)
 	var reserved_gods := representation_pool.rank_underrepresented_gods(["Thor", "Odin", "Baldr"], rng, {"Baldr": 3})
-	var full_gods := representation_pool.rank_underrepresented_gods(["Thor", "Odin", "Baldr"], rng, {"Odin": 5, "Baldr": 7})
-	if preferred_gods.size() != 2 or preferred_gods[0] != "Baldr" or reserved_gods[0] != "Odin" \
-			or not full_gods.is_empty():
-		failures.append("Fresh bot gods were not prioritized by the fewest of seven represented lists")
+	var nearly_full_gods := representation_pool.rank_underrepresented_gods(["Thor", "Odin", "Baldr"], rng, {"Thor": 6, "Odin": 12, "Baldr": 14})
+	var full_gods := representation_pool.rank_underrepresented_gods(["Thor", "Odin", "Baldr"], rng, {"Thor": 7, "Odin": 12, "Baldr": 14})
+	if preferred_gods != ["Baldr", "Odin", "Thor"] or reserved_gods != ["Odin", "Baldr", "Thor"] \
+			or nearly_full_gods != ["Thor"] or not full_gods.is_empty():
+		failures.append("Fresh bot gods were not prioritized by representation with a shared fourteen-list cap")
 	pool.refresh(stored_results)
 	var first_list := pool.select_deck({}, rng, 1)
 	if first_list.get("deck_name") != "Thor: Bloodaxe" or first_list.get("stars") != 1:
@@ -3736,7 +4048,8 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 			failures.append("Self-play did not award the win or protect the losing bot at its rank floor")
 
 	var results: Array[Dictionary] = []
-	for i in range(7):
+	var list_capacity := RankedBotDeckPoolScript.LISTS_PER_GOD
+	for i in range(list_capacity):
 		results.append(_bot_pool_result("list_%d" % i, "", {"Thor": 1, "Common": 30, "Variant %d" % i: 10}, "win"))
 		for game in range(7 if i == 0 else 8):
 			results.append(_bot_pool_result("seed_%d_%d" % [i, game], "list_%d" % i, {}, "win"))
@@ -3745,7 +4058,7 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 	var candidate := pool.select_deck({}, rng, 1)
 	if pool.can_play_list("Thor", "list_0") or not pool.can_play_list("Thor", "list_1") \
 			or candidate.is_empty() or pool.get_deck_details("candidate").is_empty():
-		failures.append("The eighth bot list did not quarantine an incumbent while preserving same-tier matching")
+		failures.append("Adding a bot above capacity did not quarantine an incumbent while preserving same-tier matching")
 	var high_rank_results := results.duplicate()
 	for i in range(14):
 		high_rank_results.append(_bot_pool_result("ranked_%d" % i, "list_1", {}, "win"))
@@ -3774,10 +4087,10 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 				or abs(int(RankedProgressionScript.summarize_bot_stars(int(band_sample["stars"]))["league"]) - 1) > 1:
 			band_samples_out_of_range = true
 			break
-	var high_rank_fallback := high_rank_pool.select_deck({
-		"list_0": true, "list_1": true, "list_2": true, "list_3": true,
-		"list_4": true, "list_5": true, "list_6": true, "candidate": true,
-	}, rng, 16)
+	var busy_thor_lists := {"candidate": true}
+	for i in range(list_capacity):
+		busy_thor_lists["list_%d" % i] = true
+	var high_rank_fallback := high_rank_pool.select_deck(busy_thor_lists, rng, 16)
 	if high_rank_match.is_empty() or high_rank_alternative.is_empty() \
 			or high_rank_thor.is_empty() \
 			or band_samples_out_of_range \
@@ -3788,7 +4101,7 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 			or str(high_rank_fallback.get("list_id")) != "far_list":
 		failures.append("Bot matchmaking did not sample the league band with a closest-gap fallback while skipping busy lists")
 	var protected_results: Array[Dictionary] = []
-	for i in range(7):
+	for i in range(list_capacity):
 		protected_results.append(_bot_pool_result("protected_list_%d" % i, "", {"Thor": 1, "Common": 30, "Protected %d" % i: 10}, "win"))
 		if i > 0:
 			for game in range(3):
@@ -3809,11 +4122,11 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 		results.append(_bot_pool_result("trial_%d" % i, "candidate", {}, outcome, i % 2 == 0))
 	pool.refresh(results)
 	if pool.can_play_list("Thor", "list_0"):
-		failures.append("A bot list trial ended before seven completed matches")
+		failures.append("A bot list trial ended before the challenger matched the incumbent's game count")
 	var ladder_summary := pool.get_ladder_summary()
 	var thor: Dictionary = ladder_summary["gods"][0]
 	var challenger: Dictionary = thor["challenger"]
-	if thor["lists"].size() != 7 or not thor["lists"][0]["quarantined"] \
+	if thor["lists"].size() != list_capacity or not thor["lists"][0]["quarantined"] \
 			or challenger.get("matches_played") != 7 or challenger.get("wins") != 4 \
 			or challenger.get("losses") != 3 or challenger.get("draws") != 0 \
 			or challenger.has("cards") or challenger.get("trial_length") != 8:
@@ -3829,12 +4142,12 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 		failures.append("The stronger incumbent did not return when the challenger matched its game count")
 	thor = pool.get_ladder_summary()["gods"][0]
 	if not thor["challenger"].is_empty() or thor["lists"][0]["quarantined"]:
-		failures.append("Bot ladder still showed a trial after the seventh match")
+		failures.append("Bot ladder still showed a trial after the challenger matched the incumbent's game count")
 	if not pool.get_deck_details("candidate").is_empty():
 		failures.append("Bot ladder still returned a retired challenger deck")
 
 	var early_retirement_results: Array[Dictionary] = []
-	for i in range(7):
+	for i in range(list_capacity):
 		early_retirement_results.append(_bot_pool_result("early_list_%d" % i, "", {"Thor": 1, "Common": 30, "Variant %d" % i: 10}, "win"))
 		for game in range(3 if i == 0 else 4):
 			early_retirement_results.append(_bot_pool_result("early_seed_%d_%d" % [i, game], "early_list_%d" % i, {}, "win"))
@@ -3856,7 +4169,7 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 		failures.append("The weaker challenger remained after matching the incumbent's game count")
 
 	var variety_results: Array[Dictionary] = []
-	for i in range(7):
+	for i in range(list_capacity):
 		variety_results.append(_bot_pool_result("variety_list_%d" % i, "", {"Thor": 1, "Common": 30, "Variant %d" % i: 10}, "win"))
 		for game in range(7):
 			var outcome := "loss" if i == 0 and game >= 4 else "win"
@@ -3886,7 +4199,7 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 		failures.append("A bot draw did not reset the win streak before the next bonus star")
 
 	var player_loss_results: Array[Dictionary] = []
-	for i in range(7):
+	for i in range(list_capacity):
 		player_loss_results.append(_bot_pool_result("player_loss_list_%d" % i, "", {"Thor": 1, "Common": 30, "Variant %d" % i: 10}, "win"))
 		for game in range(3):
 			player_loss_results.append(_bot_pool_result("player_loss_seed_%d_%d" % [i, game], "player_loss_list_%d" % i, {}, "win", true))

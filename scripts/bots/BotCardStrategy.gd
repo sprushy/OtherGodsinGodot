@@ -5,6 +5,8 @@ extends RefCounted
 const BAD := -1000000
 const CARD_VALUE := 5000
 const MANA_VALUE := 1000
+@warning_ignore("integer_division")
+const FOLLOWER_VALUE := CARD_VALUE / 25
 # A face-up Kur-Jara on board is a repeatable value engine: Tree of Life
 # withdraws it into the grave with a chosen Divine/Priest and resurrects both
 # two own turns later, re-arming the ability while grave fuel remains. Price
@@ -124,7 +126,20 @@ static func open_spaces(player: Player) -> int:
 	return count
 
 static func follower_gain(player: Player, amount: int) -> int:
-	return amount * (600 if player.followers < 25 else 350 if player.followers < 50 else 200)
+	if player == null or not player.followers_enabled or amount <= 0:
+		return 0
+	return follower_change_value(player.followers, player.followers + amount)
+
+static func follower_change_value(before: int, after: int) -> int:
+	var low := maxi(0, mini(before, after))
+	var high := maxi(0, maxi(before, after))
+	var score := (high - low) * FOLLOWER_VALUE
+	# Use the lower total on each step so healing and damage are inverse.
+	# Callers score wins and losses separately from the change in followers.
+	for remaining in range(low, mini(50, high)):
+		var pressure := (50 - remaining) / 50.0
+		score += roundi(FOLLOWER_VALUE * pressure * pressure * 3.0)
+	return score if after >= before else -score
 
 static func _meta_curve_share(anchor_stats: Array, anchor_shares: Array, stat: int) -> float:
 	var clamped_value := maxi(0, stat)
@@ -751,9 +766,7 @@ static func stat_changes(bot, card: Card, target: Card) -> Dictionary:
 		"Hermes": return {"str": 0, "res": 0, "spd": Hermes.SPEED_BONUS}
 		"Snowball": return {"str": -2, "res": 0, "spd": 0}
 		"FairyBlast":
-			var fairy_str := target.get_effective_strength() if target != null else 0
-			var fairy_spd := target.get_effective_speed() if target != null else 0
-			return {"str": -int(fairy_str / 2.0), "res": 0, "spd": -int(fairy_spd / 2.0)}
+			return FairyBlast.get_stat_changes(target)
 		"SapStrength": return {"str": -10, "res": 0, "spd": 0}
 		"VisionOfTartarus":
 			var reduction: int = -3 * card._count_void_creatures(bot.game_manager)
@@ -1171,6 +1184,115 @@ static func wipe_cards(bot, card: Card) -> Array:
 		return card.get_strongest_creatures(bot.game_manager)
 	return result
 
+# Namburbi saves the whole body from opposing card destruction, not half of it.
+# Use the authority's own ward predicate so the bot prices exactly the actions
+# the engine would let the ward stop, then fall back to explicit removal targets
+# for destruction cards without a would_destroy_creature_of_player hook.
+static func _namburbi_can_save_creature(bot, source: Card, candidate: Card, targeted: bool = false) -> bool:
+	if bot == null or source == null or candidate == null or bot.game_manager == null:
+		return false
+	if candidate.card_type != Card.CardType.CREATURE or candidate.get_controller() != bot.bot_player:
+		return false
+	if bot.game_manager.is_immune_to_source(candidate, source):
+		return false
+	return can_remove_from_board(bot, source, candidate, true, targeted)
+
+static func namburbi_saved_creatures(bot, source: Card, target: Card = null) -> Array[Card]:
+	var saved: Array[Card] = []
+	if bot == null or source == null or bot.game_manager == null or bot.bot_player == null:
+		return saved
+	var source_player := source.get_controller()
+	if source_player == null:
+		source_player = source.card_owner
+	if source_player == bot.bot_player:
+		return saved
+	if not bot.game_manager._would_activation_break_turn_destruction_ward(source, bot.bot_player, target):
+		return saved
+	var area_ids := [
+		"TheInferno", "TheDeluge", "Earthquake", "FiresOfJudgment", "Famine",
+		"OccultSingularity", "FalloftheMighty", "BaneOfTheSvartalfar", "Ragnarok",
+	]
+	var targeted := target != null and key(source) not in area_ids
+	if _namburbi_can_save_creature(bot, source, target, targeted):
+		saved.append(target)
+	for doomed in removal_targets(bot, source, target):
+		var doomed_card := doomed as Card
+		if doomed_card != null and doomed_card not in saved and _namburbi_can_save_creature(bot, source, doomed_card):
+			saved.append(doomed_card)
+	# Conditional board wipes without an explicit bot catalog entry still
+	# advertise a creature casualty through their rules hook.
+	if saved.is_empty() and source.has_method("would_destroy_creature_of_player") \
+			and source.would_destroy_creature_of_player(bot.game_manager, bot.bot_player, target):
+		for creature in bot._get_board_creatures(bot.bot_player):
+			if creature != null and creature not in saved and _namburbi_can_save_creature(bot, source, creature):
+				saved.append(creature)
+	return saved
+
+static func namburbi_saved_creature_value(bot, creature: Card) -> int:
+	if creature == null:
+		return 0
+	return maxi(0, value(bot, creature) - _debilitation_discount(bot, creature))
+
+static func namburbi_response_gain(bot, action: CardAction) -> int:
+	if bot == null or action == null or action.card == null or bot.bot_player == null:
+		return 0
+	var gain := 0
+	for creature in namburbi_saved_creatures(bot, action.card, action.target as Card):
+		gain += namburbi_saved_creature_value(bot, creature)
+	if action.type == CardAction.Type.ATTACK and combat_visible(bot, action):
+		var economy: Dictionary = bot._estimate_attack_economy(action, null, 0, 0)
+		gain += bot._score_follower_loss(bot.bot_player, int(economy.get("bot_followers_lost", 0)))
+	return gain
+
+static func namburbi_preparation_score(bot) -> int:
+	var game: GameManager = bot.game_manager
+	var opponent: Player = bot.opponent
+	if game == null or opponent == null or bot.bot_player == null:
+		return 0
+	var projected_mana := opponent.mana \
+		+ game.get_automatic_upkeep_mana_gain(opponent, game.turn_number + 1) \
+		+ game.get_effective_upkeep_mana_gain(game.get_base_upkeep_mana_gain(), opponent)
+	var sources: Array[Card] = []
+	for raw_source in game.get_field_cards(opponent) + opponent.hand_zone.cards:
+		var source := raw_source as Card
+		if source == null or not visible(bot, source):
+			continue
+		var source_player := source.get_controller()
+		if source_player == null:
+			source_player = source.card_owner
+		if source_player != opponent:
+			continue
+		var cost := game.get_prepared_card_activation_mana_cost(opponent, source) if source.is_prepared \
+			else game.get_card_play_mana_cost(opponent, source, false)
+		if cost > projected_mana:
+			continue
+		sources.append(source)
+	var saved: Array[Card] = []
+	for source in sources:
+		for creature in namburbi_saved_creatures(bot, source):
+			if creature not in saved:
+				saved.append(creature)
+		# Targeted destruction needs a concrete target before the ward predicate
+		# can prove the creature is endangered.
+		for creature in bot._get_board_creatures(bot.bot_player):
+			for doomed in namburbi_saved_creatures(bot, source, creature):
+				if doomed not in saved:
+					saved.append(doomed)
+	var gain := 0
+	for creature in saved:
+		gain += namburbi_saved_creature_value(bot, creature)
+	var follower_loss: int = bot._forecast_incoming_follower_loss()
+	if follower_loss > 0 and bot.bot_player.followers_enabled:
+		gain += int(round(float(bot._score_follower_loss(bot.bot_player, follower_loss)) * 0.5))
+	# Keep the old unconditional preparation baseline, then add a threat premium.
+	# Subtracting a full card price here would make saving even one creature a
+	# net-zero preparation and suppress the ward exactly when it is needed.
+	var baseline := 1700 if bot._board_creature_count(bot.bot_player) > 0 \
+			or bot._board_creature_count(bot.opponent) > 0 else 0
+	if baseline <= 0:
+		return 0
+	return baseline + maxi(0, gain - CARD_VALUE)
+
 static func effect_score(bot, card: Card, target: Card = null, action: CardAction = null) -> int:
 	var gain := BAD
 	var id := key(card)
@@ -1181,10 +1303,21 @@ static func effect_score(bot, card: Card, target: Card = null, action: CardActio
 			if not combat_visible(bot, action):
 				return BAD
 			var result: Dictionary = bot._estimate_attack_economy(action, null, 0, 0)
+			var loss: int = bot._estimate_saving_grace_turn_loss(action, result)
 			var cost: int = card.get_unlock_mana_cost(bot.game_manager)
 			if action.get_timing_speed() > SavingGrace.BASE_RESPONSE_SPEED:
 				cost += SavingGrace.FAST_RESPONSE_EXTRA_COST
-			return bot._score_follower_loss(bot.bot_player, int(result["bot_followers_lost"])) - mana_penalty(bot, cost)
+			var score: int = bot._score_follower_loss(bot.bot_player, loss) - mana_penalty(bot, cost)
+			var followers: int = bot.bot_player.followers
+			if score <= 0 or loss >= followers:
+				return score
+			# A small hit still leaves time to find a better use, even at low
+			# followers. Discount the reserve as this turn threatens more of the pool.
+			var loss_share := float(loss) / float(followers)
+			var hold_value := CARD_VALUE * (1.0 - loss_share * loss_share)
+			if bot._expects_saving_grace_board_blocker(cost):
+				hold_value *= 0.5
+			return score - roundi(hold_value)
 		"JiangZiyaFisherOfKings":
 			if action == null:
 				return BAD
@@ -1215,15 +1348,11 @@ static func effect_score(bot, card: Card, target: Card = null, action: CardActio
 		"GungnirTheSpearOfOdin":
 			gain = removal_score(bot, card, bot._get_attack_defender_card(action), action) if action != null else BAD
 		"NamburbiApotropaeon":
-			gain = 0
-			if action != null and action.type == CardAction.Type.ATTACK and combat_visible(bot, action):
-				var economy: Dictionary = bot._estimate_attack_economy(action, null, 0, 0)
-				gain += bot._score_follower_loss(bot.bot_player, int(economy.get("bot_followers_lost", 0)))
-			elif action != null and action.card != null and action.card.has_method("would_destroy_creature_of_player"):
-				if action.card.would_destroy_creature_of_player(bot.game_manager, bot.bot_player, action.target):
-					for creature in bot._get_board_creatures(bot.bot_player):
-						@warning_ignore("integer_division")
-						gain += value(bot, creature) / 2
+			if action == null:
+				return BAD
+			# A response that saves a creature has already paid for itself; the
+			# generic CARD_VALUE write-off would turn a real save into a pass.
+			return namburbi_response_gain(bot, action) - mana_penalty(bot, activation_cost(bot, card))
 		"HeroicStand": gain = mana_gain_value(bot, 7)
 		"TheInferno", "TheDeluge", "Earthquake", "FiresOfJudgment", "Famine", "OccultSingularity", "FalloftheMighty", "BaneOfTheSvartalfar":
 			gain = 0
@@ -1245,7 +1374,7 @@ static func effect_score(bot, card: Card, target: Card = null, action: CardActio
 				removed.append(doomed)
 			if action != null and action.type == CardAction.Type.ATTACK and combat_visible(bot, action) and (action.attacker in removed or bot._get_attack_defender_card(action) in removed):
 				gain -= bot._score_attack_economy(bot._estimate_attack_economy(action, null, 0, 0))
-		"BookOfLife": gain = maxi(0, gain) + follower_gain(bot.bot_player, 10)
+		"BookOfLife": gain = maxi(0, gain) + follower_gain(bot.bot_player, BookOfLife.FOLLOWERS_GAINED)
 		"FoolishOptimism":
 			var choice := forced_combat_choice(bot, card, card.get_lowest_level_attacker_choices(bot.game_manager), card.get_highest_level_defender_choices(bot.game_manager))
 			gain = int(choice.get("score", BAD))
@@ -1545,6 +1674,11 @@ static func structure_score(bot, structure: Card, excluded: Array = []) -> int:
 	var gain := 0
 	match key(structure):
 		"AncientPyre":
+			if bot.bot_player.mana - activation_cost(bot, structure) < AncientPyre.ACTIVATION_COST \
+					or not bot.opponent.followers_enabled or bot.opponent.followers <= 0 \
+					or not bot.game_manager.can_player_lose_followers_now(bot.opponent) \
+					or bot._ancient_pyre_conversion_score() <= 0:
+				return BAD
 			gain = 6500 if bot.opponent.followers < 50 or bot.bot_player.followers < 50 else 0
 			# In a locked board state the Pyre is the win condition: its
 			# conversion clock turns surplus mana into direct follower swing.
@@ -1556,56 +1690,34 @@ static func structure_score(bot, structure: Card, excluded: Array = []) -> int:
 					@warning_ignore("integer_division")
 					gain = maxi(gain, CARD_VALUE + CARD_VALUE * 2 / clock_turns)
 		"Watchtower":
-			# Counters arrive from future enemy entries, not existing cards.
-			gain = 6000 if bot._board_creature_count(bot.opponent) < 3 else 3000
-			# Scout reveals pay off when the enemy actually hides bodies: each
-			# face-down or stealthed opposing creature is a threat the tower
-			# can flip for a counter, worth far more against stealth engines
-			# than against boards that play face-up.
-			var hidden_enemies := 0
-			for enemy in bot._get_board_creatures(bot.opponent):
-				if enemy.is_face_down or enemy.is_stealth:
-					hidden_enemies += 1
-			gain += mini(hidden_enemies, 3) * 1500
-			if hidden_enemies == 0 and bot._board_creature_count(bot.opponent) >= 3:
-				gain = 3000
+			# Scout needs both a reveal target and a future summon to fund it.
+			if bot.opponent.hand_zone.cards.is_empty() or bot._get_first_open_summon_zone(bot.opponent) == null:
+				return BAD
+			for target in (structure as Watchtower).get_valid_targets(bot.game_manager):
+				if target not in excluded and target.current_zone.is_board_zone() and not visible(bot, target):
+					gain += 1500
+			if gain > 0:
+				gain += CARD_VALUE
 		"DoorwayToTheVoid":
-			for dead in bot.opponent.graveyard_zone.cards:
-				if dead is CreatureCard:
-					gain += 600
-			for enemy in bot._get_board_creatures(bot.opponent):
-				if visible(bot, enemy) and (enemy is AgainWalker or enemy is Huginn or enemy is Muninn):
-					gain += 3500
-			for god in bot.opponent.god_zone.cards:
-				if visible(bot, god) and god is Freyja:
-					gain += 4500
+			gain = _doorway_grave_denial_gain(bot, excluded)
 		"WardingStone":
 			if bot.game_manager.attack_restrictions.has(bot.opponent):
 				return BAD
-			for creature in bot._get_board_creatures(bot.opponent):
-				if visible(bot, creature) and not creature.is_sleeping and not creature.has_status_effect("cannot_attack"):
-					@warning_ignore("integer_division")
-					gain += value(bot, creature) / 2
-			gain += 2500 if bot.bot_player.followers < 50 else 0
+			for creature in bot._get_creature_attackers_next_turn(null, excluded):
+				@warning_ignore("integer_division")
+				gain += value(bot, creature) / 2
 		"E2Abzu":
-			var mer_mage_count := 0
-			var candidate_zones: Array = [bot.bot_player.hand_zone, bot.bot_player.deck_zone, bot.bot_player.graveyard_zone, bot.bot_player.abyss_zone]
-			candidate_zones.append_array(bot.bot_player.frontline_zones)
-			candidate_zones.append_array(bot.bot_player.reserve_zones)
-			for zone: Zone in candidate_zones:
-				for candidate: Card in zone.cards:
-					if candidate.card_type == Card.CardType.CREATURE and candidate.has_type("Mer") and candidate.has_type("Mage"):
-						mer_mage_count += 1
-			if mer_mage_count == 0:
+			var use_score: int = bot._score_e2_abzu_build(structure, excluded)
+			if use_score <= 0:
 				return BAD
-			gain = 6500 + mini(3, mer_mage_count - 1) * 1000
+			gain = CARD_VALUE + use_score
 		"AnointingStatue":
-			gain = CARD_VALUE + 500 * bot._board_creature_count(bot.bot_player)
 			for target in bot.game_manager.get_field_cards(null, false):
-				gain = maxi(gain, CARD_VALUE + cleanse_score(bot, structure, target))
+				if target not in excluded and target.current_zone != null and target.current_zone.is_board_zone():
+					gain = maxi(gain, CARD_VALUE + cleanse_score(bot, structure, target))
 		"EriduCityOfSages":
 			for creature in bot._get_board_creatures(bot.bot_player):
-				if creature.has_type("Mage"):
+				if creature not in excluded and creature.has_type("Mage"):
 					# One mana dose per turn for three turns, priced from the
 					# current stock so a saturated position values it less.
 					gain += mana_gain_value(bot, EriduCityOfSages.MANA_PER_MAGE * 3)
@@ -1637,6 +1749,58 @@ static func structure_score(bot, structure: Card, excluded: Array = []) -> int:
 				gain = 8600 if bot._find_player_god() is Odin else 6800
 		_: return BAD
 	return gain - CARD_VALUE - mana_penalty(bot, activation_cost(bot, structure))
+
+static func _doorway_grave_denial_gain(bot, excluded: Array) -> int:
+	var opponent: Player = bot.opponent
+	var targets: Array[Card] = []
+	for card in bot._get_board_creatures(opponent):
+		if card not in excluded and card.card_owner == opponent and not card.is_god and not card.is_token:
+			targets.append(card)
+	if targets.is_empty():
+		return 0
+	# Even an unknown deck can exploit the grave. Price a longer stream of
+	# deaths more highly, with extra credit for specific known enablers.
+	var gain := 3800 + mini(targets.size(), 3) * 700
+	var norse_recovery := 0
+	var kur_jara := false
+	var gala_tura := false
+	var hidden_hand := false
+	for zone in opponent.power_zones:
+		for power: Card in zone.cards:
+			if power in excluded:
+				continue
+			if power.is_face_down and not visible(bot, power):
+				norse_recovery = maxi(norse_recovery, 1000)
+			elif visible(bot, power) and power is CallOfTheValkyrie and not power.abilities_suppressed_by_effects():
+				norse_recovery = 2000
+	for source: Card in targets + opponent.hand_zone.cards + opponent.god_zone.cards:
+		if source in excluded:
+			continue
+		if not visible(bot, source):
+			hidden_hand = hidden_hand or source.current_zone == opponent.hand_zone
+			continue
+		if source.abilities_suppressed_by_effects():
+			continue
+		if source is Freyja or source is FreyjaActive:
+			norse_recovery = 2000
+		kur_jara = kur_jara or source is KurJara
+		gala_tura = gala_tura or source is GalaTura
+	var engine_gain := 0
+	for target in targets:
+		if not visible(bot, target):
+			continue
+		if target is AgainWalker or target is Huginn or target is Muninn or target is Capricorn or target is PictishBeast:
+			engine_gain += 2000
+		if target.culture == "Norse" and target.has_type("Warrior"):
+			engine_gain += norse_recovery
+		if gala_tura:
+			engine_gain += 1500
+		if target.has_type("Divine") or target.has_type("Priest"):
+			if kur_jara:
+				engine_gain += 1500
+			elif hidden_hand and target.culture == "Ancient":
+				engine_gain += 750
+	return gain + mini(engine_gain, CARD_VALUE)
 
 static func preparation_removal_penalty(bot, card: Card) -> int:
 	var game: GameManager = bot.game_manager
@@ -1700,7 +1864,9 @@ static func preparation_score(bot, card: Card) -> int:
 					and not bot.game_manager.is_immune_to_source(enemy, card):
 				score = maxi(score, 1400)
 		return score
-	if id in ["Banishment", "SpellDemolition", "Sap", "SepLemutti", "Smite", "VoidShield", "NamburbiApotropaeon", "Exorcism", "Hringhorni", "HeroicStand"]:
+	if id == "NamburbiApotropaeon":
+		return namburbi_preparation_score(bot)
+	if id in ["Banishment", "SpellDemolition", "Sap", "SepLemutti", "Smite", "VoidShield", "Exorcism", "Hringhorni", "HeroicStand"]:
 		return 1700 if bot._board_creature_count(bot.opponent) > 0 or bot._board_creature_count(bot.bot_player) > 0 else 0
 	if id in ["TheInferno", "TheDeluge", "Dromi", "Gleipnir"]:
 		var gain := 0
@@ -1715,14 +1881,35 @@ static func preparation_score(bot, card: Card) -> int:
 		return 1500 if bot._board_creature_count(bot.bot_player) > 0 and bot._board_creature_count(bot.opponent) > 0 else 0
 	return 0
 
-static func guard_mana(bot, available_mana: int = -1) -> int:
-	var budget: int = bot.bot_player.mana if available_mana < 0 else available_mana
-	var danger := 0
-	for creature in bot._get_board_creatures(bot.opponent):
-		if visible(bot, creature) and creature.current_zone in bot.opponent.frontline_zones and not creature.is_sleeping and not creature.has_status_effect("cannot_attack"):
-			danger += maxi(0, creature.get_effective_strength())
-	var needed := maxi(0, danger - bot.bot_player.guard)
-	return mini(budget, int(ceil(float(needed) / ManaGuard.GUARD_PER_MANA)))
+static func mana_guard_plan(bot, budget: int, unlock_cost: int = 0, danger: int = -1) -> Dictionary:
+	var max_payment := budget - unlock_cost
+	if max_payment <= 0:
+		return {}
+	if danger < 0:
+		danger = bot._forecast_incoming_follower_loss({"mana_left": budget})
+	if danger <= 0:
+		return {}
+	var player: Player = bot.bot_player
+	# Find the best possible protection even if some loss bypasses Guard.
+	# Leave mana available for other defenses here to bound the search.
+	var best_possible_loss: int = bot._forecast_incoming_follower_loss({
+		"guard": player.guard + max_payment * ManaGuard.GUARD_PER_MANA, "mana_left": budget,
+	})
+	if best_possible_loss >= danger:
+		return {}
+	var best := {}
+	for payment in range(1, max_payment + 1):
+		var spend := unlock_cost + payment
+		var loss: int = bot._forecast_incoming_follower_loss({
+			"guard": player.guard + payment * ManaGuard.GUARD_PER_MANA, "mana_left": budget - spend,
+		})
+		var gain: int = bot._score_follower_safety(player.followers - danger, player.followers - loss)
+		var score := gain - mana_penalty(bot, spend, budget)
+		if score > int(best.get("score", 0)):
+			best = {"mana_amount": payment, "score": score}
+		if loss <= best_possible_loss:
+			break
+	return best
 
 # A compelled fight still leaves the opponent a response window, and a prepared
 # combat trick can pump the forced attacker (Fifa's +5 STR is the smallest
@@ -1843,8 +2030,7 @@ static func power_score(bot, power: PowerCard, target: Card = null, available_ma
 		"Palisade":
 			gain = palisade_gain(bot)
 		"ManaGuard":
-			var amount := guard_mana(bot, budget)
-			return bot._score_follower_loss(bot.bot_player, amount * ManaGuard.GUARD_PER_MANA) - mana_penalty(bot, amount) if amount > 0 else BAD
+			return int(mana_guard_plan(bot, budget).get("score", BAD))
 	return gain - mana_penalty(bot, cost) if gain > BAD else BAD
 
 static func palisade_gain(bot) -> int:
@@ -1902,6 +2088,9 @@ static func unlock_score(bot, power: PowerCard, unlock_cost: int = -1) -> int:
 		unlock_cost = power.get_unlock_mana_cost(bot.game_manager)
 	var id := key(power)
 	var gain := 0
+	if power is ManaGuard:
+		var score := int(mana_guard_plan(bot, bot.bot_player.mana, unlock_cost).get("score", BAD))
+		return score if score >= MIN_POWER_ACTIVATION_SCORE else BAD
 	if id in ACTIVE_POWERS:
 		var budget: int = bot.bot_player.mana - unlock_cost
 		if budget < 0:
@@ -1915,8 +2104,8 @@ static func unlock_score(bot, power: PowerCard, unlock_cost: int = -1) -> int:
 		if activation < MIN_POWER_ACTIVATION_SCORE:
 			return BAD
 		# A usable repeatable Power is worth more than its first activation.
-		var repeat_value := 0 if id in ["BerserkerMead", "ManaGuard"] else MANA_VALUE
-		var cost := guard_mana(bot, budget) if id == "ManaGuard" else activation_cost(bot, power)
+		var repeat_value := 0 if id == "BerserkerMead" else MANA_VALUE
+		var cost := activation_cost(bot, power)
 		return activation + mana_penalty(bot, cost) - mana_penalty(bot, unlock_cost + cost) + repeat_value
 	elif id == "AltarOfDreams":
 		# The Altar is worth the Void-fuelled summons it enables, not merely
@@ -2757,12 +2946,13 @@ static func find_walk_of_the_sage(bot) -> WalkOfTheSage:
 static func e2_abzu_available(bot) -> bool:
 	if bot == null or bot.bot_player == null or bot.game_manager == null:
 		return false
-	for field_card in bot.game_manager.get_field_cards(bot.bot_player):
+	for field_card in bot.game_manager.get_field_cards(bot.bot_player, false):
 		var abzu := field_card as E2Abzu
-		if abzu != null and not abzu.is_face_down and not abzu.is_muted:
+		if abzu != null and abzu.current_zone.is_board_zone() and abzu.card_owner == bot.bot_player \
+				and not abzu.abilities_suppressed():
 			return true
 	for card in bot.bot_player.hand_zone.cards:
-		if card is E2Abzu and bot._get_first_open_reserve_zone(bot.bot_player) != null:
+		if card is E2Abzu and not card.abilities_suppressed_by_effects() and bot._get_first_open_reserve_zone(bot.bot_player) != null:
 			return true
 	return false
 
@@ -2771,11 +2961,12 @@ static func e2_abzu_available(bot) -> bool:
 # not live. The retrieval can wait a turn, so two upkeeps of income count.
 static func walk_tutor_budget(bot) -> int:
 	var walk := find_walk_of_the_sage(bot)
-	if walk == null or not e2_abzu_available(bot):
+	if walk == null or walk.abilities_suppressed_by_effects() \
+			or not bot.game_manager.can_player_use_powers(bot.bot_player) or not e2_abzu_available(bot):
 		return -1
-	var walk_cost: int = WalkOfTheSage.ACTIVATION_COST
+	var walk_cost := activation_cost(bot, walk)
 	if walk.is_face_down:
-		walk_cost += WalkOfTheSage.UNLOCK_COST
+		walk_cost += walk.get_unlock_mana_cost(bot.game_manager)
 	var budget := projected_upkeep_mana(bot, 2) - walk_cost
 	return budget if budget >= E2Abzu.RETURN_TO_HAND_COST else -1
 

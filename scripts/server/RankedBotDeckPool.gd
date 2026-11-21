@@ -4,7 +4,6 @@ const RankedProgressionScript = preload("res://scripts/server/RankedProgression.
 const ServerPathsScript = preload("res://scripts/server/ServerPaths.gd")
 const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
 const LISTS_PER_GOD := 14
-const THOR_LISTS_PER_GOD := 8
 const EARLY_RETIREMENT_GAMES := 60
 const EXPLORATION_CHANCE := 0.25
 # How many of the worst bots per god are kept as quarantined bad bots for
@@ -1026,7 +1025,7 @@ func rank_underrepresented_gods(god_names: Array[String], rng: RandomNumberGener
 	for god_name in god_names:
 		var pool: Dictionary = _by_god.get(god_name, {})
 		var count := (pool.get("lists", []) as Array).size() + int(reserved.get(god_name, 0))
-		if count >= list_capacity(god_name):
+		if count >= LISTS_PER_GOD:
 			continue
 		candidates.append({"name": god_name, "count": count, "tie": rng.randf()})
 	candidates.sort_custom(func(first: Dictionary, second: Dictionary) -> bool:
@@ -1069,11 +1068,6 @@ func load_state(path: String) -> bool:
 	_last_replayed_id = str(loaded.get("last_replayed_id", ""))
 	_assigned_names_by_list_id = (loaded.get("assigned_names", {}) as Dictionary).duplicate(true)
 	return true
-
-static func list_capacity(god_name: String) -> int:
-	if display_god_name(god_name) == "Thor":
-		return THOR_LISTS_PER_GOD
-	return LISTS_PER_GOD
 
 func can_play_list(god_name: String, list_id: String) -> bool:
 	if list_id.is_empty():
@@ -1246,7 +1240,7 @@ func _apply_result(result: Dictionary) -> void:
 		return
 	# Historical/established bots (stable ladder ids) take priority over fresh
 	# league bots: make room for them instead of dropping them when full.
-	if not list_id.is_empty() and lists.size() >= list_capacity(god_name):
+	if not list_id.is_empty() and lists.size() >= LISTS_PER_GOD:
 		var victim_index := 0
 		for i in range(1, lists.size()):
 			var current: Dictionary = lists[i]
@@ -1265,7 +1259,7 @@ func _apply_result(result: Dictionary) -> void:
 			elif current_priority == victim_priority and _get_played_match_count(current) < _get_played_match_count(victim):
 				victim_index = i
 		lists.remove_at(victim_index)
-	if lists.size() < list_capacity(god_name):
+	if lists.size() < LISTS_PER_GOD:
 		_name_list(new_list, lists)
 		lists.append(new_list)
 		return
@@ -1336,7 +1330,7 @@ func _retire_list(pool: Dictionary, list: Dictionary) -> void:
 			lists.append(challenger)
 			pool["challenger"] = {}
 	if pool["challenger"].is_empty() and not pool["pending"].is_empty():
-		if lists.size() < list_capacity(str(list.get("god_name", ""))):
+		if lists.size() < LISTS_PER_GOD:
 			var pending: Dictionary = pool["pending"].pop_front()
 			_name_list(pending, lists)
 			lists.append(pending)

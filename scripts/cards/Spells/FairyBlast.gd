@@ -23,16 +23,13 @@ func resolve(game_manager: GameManager, target = null) -> void:
 		if game_manager != null:
 			game_manager.note_player_feedback("Fairy Blast fizzles: choose a creature on the field.")
 		return
-	var current_strength := creature.get_effective_strength()
-	var strength_reduction := int(current_strength / 2.0)
-	var current_speed := creature.get_effective_speed()
-	var speed_reduction := int(current_speed / 2.0)
-	if strength_reduction > 0 or speed_reduction > 0:
+	var stat_changes := get_stat_changes(creature)
+	if stat_changes.str != 0 or stat_changes.spd != 0:
 		creature.add_buff(
 			card_name,
-			-strength_reduction,
-			0,
-			-speed_reduction,
+			stat_changes.str,
+			stat_changes.res,
+			stat_changes.spd,
 			self,
 			card_owner,
 			DEBUFF_EFFECT_TYPE
@@ -47,6 +44,15 @@ func resolve(game_manager: GameManager, target = null) -> void:
 	game_manager.note_player_feedback(
 		"Fairy Blast halved %s's Str and SPD and paralyzed it." % target_name
 	)
+
+static func get_stat_changes(creature: Card) -> Dictionary:
+	if creature == null:
+		return {"str": 0, "res": 0, "spd": 0}
+	var current_strength := creature.get_effective_strength()
+	var current_speed := creature.get_effective_speed()
+	var halved_strength := floori(current_strength / 2.0)
+	var halved_speed := maxi(1, floori(current_speed / 2.0))
+	return {"str": halved_strength - current_strength, "res": 0, "spd": halved_speed - current_speed}
 
 func can_be_played(game_manager: GameManager, player: Player) -> bool:
 	if not super.can_be_played(game_manager, player):

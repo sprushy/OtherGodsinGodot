@@ -24,11 +24,11 @@ const CALL_VALKYRIE_LOW_HAND_LIMIT := 2
 const CALL_VALKYRIE_SMALL_UPGRADE_MARGIN := 200
 const CALL_VALKYRIE_LARGE_UPGRADE_MARGIN := 500
 const ECON_CARD_VALUE := 5000
+const SINGLE_TARGET_REMOVAL_HOLD_VALUE := 1000
 const COMBAT_ATTACK_SEARCH_WIDTH := 16
 const COMBAT_REMOVAL_SEARCH_WIDTH := 32
 const COMBAT_RESPONSE_SEARCH_WIDTH := 24
 const ECON_MANA_VALUE := 1000
-const ECON_FOLLOWERS_PER_CARD := 25
 # God Death makes the enemy board's defensive value a countdown: blocking never
 # stops the 7/turn bleed, so combat that a removal unlocks from a locked board
 # is priced at double worth while the bot is the one bleeding.
@@ -687,6 +687,10 @@ func _score_priority_card(card: Card, action: CardAction, danger: int) -> Dictio
 						cancel_score -= CardStrategy.value(self, removed_combatant)
 					score = maxi(score, cancel_score)
 			score += _follower_safety_gain(danger, {"removed": removed})
+			if action.type == CardAction.Type.EVENT:
+				score -= _single_creature_removal_discount(card, removed)
+				if game_manager.current_player == opponent:
+					score += _current_turn_removal_safety(removed)
 		elif (card is Dromi or card is Gleipnir) and target != null and score > CardStrategy.BAD \
 				and CardStrategy.adds_attack_lock_next_turn(self, target):
 			score += _follower_safety_gain(danger, {"disable_attacker": target})
@@ -2285,17 +2289,11 @@ func _score_champions_call_trade(
 		loss -= _champions_call_follow_up_value(attacker, removed + casualties, mana, unavailable, bot_death_cost > 0) / 2
 	return loss
 
-func _god_death_cost(player: Player, combat_damage: int = 0) -> int:
-	var cost := ECON_CARD_VALUE
-	if player.followers_enabled:
-		cost += _score_follower_loss(player, GameManager.GOD_DEATH_FOLLOWER_LOSS + combat_damage) \
-			- _score_follower_loss(player, combat_damage)
-	return cost
-
-func _combat_god_death_cost(player: Player, casualties: Array, damage: int, replaces_god: bool = false) -> int:
+func _combat_god_death_cost(player: Player, casualties: Array, damage: int, replaces_god: bool = false, starting_followers: int = -1) -> int:
 	if casualties.any(func(card: Card) -> bool: return card is ActiveGodCard and card.get_controller() == player) \
 			and _loses_last_god(player, casualties, replaces_god):
-		return _god_death_cost(player, damage)
+		var before := player.followers if starting_followers < 0 else starting_followers
+		return ECON_CARD_VALUE + _score_follower_loss(player, GameManager.GOD_DEATH_FOLLOWER_LOSS, maxi(0, before - damage))
 	return 0
 
 func _loses_last_god(player: Player, removed: Array, replaces_god: bool) -> bool:
@@ -2437,11 +2435,11 @@ func _get_creature_attackers_next_turn(target: Card, removed: Array) -> Array[Ca
 	var budget := opponent.mana + game_manager.get_automatic_upkeep_mana_gain(opponent, game_manager.turn_number + 1) \
 		+ game_manager.get_effective_upkeep_mana_gain(game_manager.get_base_upkeep_mana_gain(), opponent)
 	for attacker in _get_board_creatures(opponent):
-		if attacker in removed or not CardStrategy.visible(self, attacker) \
+		if attacker in removed or attacker.get_controller() != opponent or not CardStrategy.visible(self, attacker) \
 				or attacker.is_petrified() or _status_persists_to_next_turn(attacker, "sleep", removed) \
 				or _status_persists_to_next_turn(attacker, "cannot_attack", removed) \
 				or game_manager.get_creature_action_mana_cost(attacker, "attack") > budget \
-				or not game_manager.can_cards_engage_each_other(attacker, target):
+				or (target != null and not game_manager.can_cards_engage_each_other(attacker, target)):
 			continue
 		if attacker.current_zone in opponent.frontline_zones:
 			if attacker.creature_mode != Card.CreatureMode.AGGRESSIVE and not attacker.is_stealth:
@@ -2636,9 +2634,19 @@ func _try_cast_divine_lightning() -> bool:
 
 func _get_best_strategy_action(attacks: Array[Dictionary], attack: Dictionary, danger: int = -1, removals: Array[Dictionary] = []) -> Dictionary:
 	var best_plan: Dictionary = {}
+	# Cast Namburbi before declaring attacks when known response cards would
+	# destroy the attackers or drain followers. Its ward lasts this turn, so the
+	# generic action scorer (which has no action to respond to) cannot see it.
+	var ward_plan := _plan_namburbi_ward(attacks)
+	if _is_better_strategy_plan(ward_plan, best_plan):
+		best_plan = ward_plan
 	var cards: Array = bot_player.hand_zone.cards.duplicate()
 	cards.append_array(game_manager.get_field_cards(bot_player))
 	for card in cards:
+		if card is NamburbiApotropaeon:
+			# Planned above; effect_score with no stack action intentionally
+			# does not value a self-only ward.
+			continue
 		if card is HildskjalfThroneOfOdin or card is AnointingStatue or card is Gambanteinn \
 				or card is ShroudOfTheAncients or card is ApollyonsDemiurge:
 			var reading := _plan_special_card(card, attacks, attack, danger)
@@ -2735,6 +2743,7 @@ func _get_best_strategy_action(attacks: Array[Dictionary], attack: Dictionary, d
 				else:
 					# Persistent cards can occupy the lane needed by the projected summon.
 					var cost := CardStrategy.activation_cost(self, card)
+					plan["score"] -= _single_creature_removal_discount(card, removed)
 					if card.goes_to_graveyard_after_use():
 						_record_targeted_removal(removals, plan, card, target, removed, cost)
 					plan = _plan_removal_setup(plan, attacks, attack, danger, removed, cost, null, card.goes_to_graveyard_after_use())
@@ -2838,17 +2847,7 @@ func _get_best_strategy_action(attacks: Array[Dictionary], attack: Dictionary, d
 				if _is_better_strategy_plan(plan, best_plan):
 					best_plan = plan
 			if id == "AncientPyre" and game_manager.can_player_lose_followers_now(opponent):
-				var conversion_score := _score_follower_loss(opponent, AncientPyre.EFFECT_AMOUNT) \
-					+ CardStrategy.follower_gain(bot_player, AncientPyre.EFFECT_AMOUNT) \
-					- CardStrategy.mana_penalty(self, AncientPyre.ACTIVATION_COST)
-				if _locked_board_state():
-					# When neither side can push attacks through, the
-					# conversion clock is the win condition. Price each
-					# conversion as direct progress toward the opponent's
-					# follower loss so surplus mana keeps getting pumped.
-					@warning_ignore("integer_division")
-					conversion_score += ECON_CARD_VALUE * 20 * AncientPyre.EFFECT_AMOUNT / maxi(1, opponent.followers)
-				var conversion := {"command": {"type": "activate_card_ability", "source_uid": card.uid, "option": {"mode": "convert"}}, "score": conversion_score}
+				var conversion := {"command": {"type": "activate_card_ability", "source_uid": card.uid, "option": {"mode": "convert"}}, "score": _ancient_pyre_conversion_score()}
 				if AncientPyre.EFFECT_AMOUNT >= opponent.followers:
 					# The conversion empties the opponent's follower stock:
 					# carry the lethal flag so the line outranks every other
@@ -2862,6 +2861,16 @@ func _get_best_strategy_action(attacks: Array[Dictionary], attack: Dictionary, d
 				if _is_better_strategy_plan(conversion, best_plan):
 					best_plan = conversion
 	return best_plan
+
+func _ancient_pyre_conversion_score() -> int:
+	var score := _score_follower_loss(opponent, AncientPyre.EFFECT_AMOUNT) \
+			+ CardStrategy.follower_gain(bot_player, AncientPyre.EFFECT_AMOUNT) \
+			- CardStrategy.mana_penalty(self, AncientPyre.ACTIVATION_COST)
+	if _locked_board_state():
+		# Convert provides a win condition when neither side can push attacks through.
+		@warning_ignore("integer_division")
+		score += ECON_CARD_VALUE * 20 * AncientPyre.EFFECT_AMOUNT / maxi(1, opponent.followers)
+	return score
 
 func _record_targeted_removal(options: Array[Dictionary], plan: Dictionary, source: Card, target: Card, removed: Array, cost: int, committed: Card = null, reserved: Array = []) -> void:
 	# Only compose immediate, fixed-target effects. A sweep or delayed
@@ -3065,6 +3074,44 @@ func _plan_summoned_removal_ability(attacks: Array[Dictionary], baseline: Dictio
 					best = plan
 	return best
 
+func _score_e2_abzu_build(abzu: E2Abzu, excluded: Array) -> int:
+	var zone := _get_first_open_reserve_zone(bot_player)
+	if zone == null or abzu.abilities_suppressed_by_effects() or abzu.is_activation_locked(game_manager):
+		return 0
+	for card in game_manager.get_field_cards(bot_player, false):
+		if card is E2Abzu and card.current_zone.is_board_zone() and card not in excluded \
+				and card.card_owner == bot_player and not card.abilities_suppressed() \
+				and not card.is_activation_locked(game_manager):
+			return 0
+	var mana := bot_player.mana - _get_play_cost(abzu, false)
+	return _score_e2_abzu_use(abzu, mana, _get_first_open_summon_zone(bot_player, zone), excluded)
+
+func _score_e2_abzu_use(abzu: E2Abzu, mana: int, summon_zone: Zone, excluded: Array = []) -> int:
+	var best := 0
+	if game_manager.can_player_add_to_hand_now(bot_player):
+		var mana_after_return := mana - E2Abzu.RETURN_TO_HAND_COST
+		for mage in abzu.get_valid_void_targets(game_manager):
+			if mage not in excluded and mage.get_effective_level() < mana_after_return:
+				best = maxi(best, _score_e2_abzu_return(mage, mana_after_return, summon_zone))
+	if best > 0 or mana - _incoming_mana_drain() < E2Abzu.VOID_AND_RETURN_COST:
+		return best
+	# Walk of the Sage can put its target in the Void before we build.
+	# Build for protection only when a Mer Mage faces an attack Abzu can dodge.
+	for mage in abzu.get_valid_field_targets(game_manager):
+		if mage in excluded or mage.get_controller() != bot_player:
+			continue
+		for attacker in _get_creature_attackers_next_turn(mage, excluded):
+			if attacker.get_effective_speed() > E2Abzu.VOID_RESPONSE_SPEED:
+				continue
+			var attack := CardAction.new()
+			attack.type = CardAction.Type.ATTACK
+			attack.attacker = attacker
+			attack.target = mage
+			attack.source_player = opponent
+			var dodge := _score_e2_abzu_dodge(abzu, mage, attack)
+			best = maxi(best, int(dodge * CardStrategy.LINE_CONTINUATION_SHARE))
+	return best
+
 func _plan_e2_abzu_return(abzu: E2Abzu) -> Dictionary:
 	if abzu == null or abzu.current_zone == null or not abzu.current_zone.is_board_zone() \
 			or not abzu.can_activate(game_manager) or not game_manager.can_player_add_to_hand_now(bot_player):
@@ -3074,12 +3121,7 @@ func _plan_e2_abzu_return(abzu: E2Abzu) -> Dictionary:
 	var mana_after_return := bot_player.mana - E2Abzu.RETURN_TO_HAND_COST
 	var summon_zone := _get_first_open_summon_zone(bot_player)
 	for mage: Card in abzu.get_valid_void_targets(game_manager):
-		var score := _get_hand_value(mage) * 100 - E2Abzu.RETURN_TO_HAND_COST * _mana_rate()
-		var summon_live := summon_zone != null \
-				and _score_creature_play_in_zone(mage, summon_zone, mana_after_return) > 0
-		if summon_live:
-			score += 2500
-		score += _sage_retrieval_impact_gain(mage, summon_live)
+		var score := _score_e2_abzu_return(mage, mana_after_return, summon_zone)
 		if score <= best_score:
 			continue
 		best_score = score
@@ -3092,6 +3134,12 @@ func _plan_e2_abzu_return(abzu: E2Abzu) -> Dictionary:
 			},
 		}
 	return best_plan
+
+func _score_e2_abzu_return(mage: Card, mana_after_return: int, summon_zone: Zone) -> int:
+	var summon_live := summon_zone != null \
+			and _score_creature_play_in_zone(mage, summon_zone, mana_after_return) > 0
+	var score := _get_hand_value(mage) * 100 - E2Abzu.RETURN_TO_HAND_COST * _mana_rate()
+	return score + (2500 if summon_live else 0) + _sage_retrieval_impact_gain(mage, summon_live)
 
 # A retrieved Sage is bought for its impact, not its body: the summon fires
 # Silence, Good Fortune, Search, or a channeled replay, so the E2-abzu return
@@ -3136,7 +3184,7 @@ func _effect_follower_safety_gain(card: Card, target: Card, danger: int) -> int:
 			var zone := _get_first_open_summon_zone(bot_player)
 			if target != null and zone != null:
 				change.merge({"summon": target, "zone": zone, "stance": target, "defensive": false})
-			return _follower_safety_gain(danger, change)
+			return _follower_safety_gain(danger, change, false)
 		"TabletOfLife":
 			if target != null and target.get_effective_level() < 3:
 				var zone := (card as TabletOfLife)._get_best_summon_zone(target)
@@ -3366,6 +3414,11 @@ func _structure_ward_plan(structure: Card, budget: int, projected: bool, project
 	for strength in threats:
 		var payment := ceili(float(strength - resilience) / AdvancedBuildingTechniques.RESILIENCE_PER_MANA)
 		if payment <= 0 or payment > budget:
+			continue
+		var mana_left := (budget if projected else bot_player.mana) - payment
+		# Reinforce only with mana left over from the structure's planned use.
+		if (structure is E2Abzu and _score_e2_abzu_use(structure, mana_left, _get_first_open_summon_zone(bot_player, projected_zone)) <= 0) \
+				or (structure is AncientPyre and mana_left < AncientPyre.ACTIVATION_COST):
 			continue
 		var protected_resilience := resilience + payment * AdvancedBuildingTechniques.RESILIENCE_PER_MANA
 		var stopped := threats.filter(func(threat: int) -> bool: return threat <= protected_resilience).size()
@@ -3809,6 +3862,8 @@ func _plan_strategy_support(danger: int = -1) -> Dictionary:
 			if zone == null or not game_manager.can_play_card(bot_player, card, zone):
 				continue
 			var score := CardStrategy.structure_score(self, card)
+			if score <= CardStrategy.BAD:
+				continue
 			var payment: Card = null
 			if card is EriduCityOfSages or card is SleepOfTheDuat:
 				payment = _choose_lowest_priority_card(card.get_valid_play_discards(bot_player), [])
@@ -3816,7 +3871,7 @@ func _plan_strategy_support(danger: int = -1) -> Dictionary:
 					continue
 				score -= _deck_card_hand_value(payment, bot_player.mana)
 			if card is WardingStone:
-				score += _follower_safety_gain(danger, {"block_attacks": true})
+				score += _warding_stone_safety_gain(danger, bot_player.followers)
 			if score > best_score:
 				best_card = card
 				best_zone = zone
@@ -4100,18 +4155,14 @@ func _plan_power_activation(required_power: PowerCard = null, danger: int = -1, 
 			chosen_target = CardStrategy.best_target(self, power, power.get_valid_targets(game_manager))
 		if power.targets and chosen_target == null:
 			continue
-		var score := _score_power_activation(power, chosen_target)
+		var score: int
 		var guard_mana := 0
 		if power is ManaGuard:
-			guard_mana = CardStrategy.guard_mana(self)
-			if danger >= bot_player.followers and guard_mana > 0:
-				# Find the smallest payment that leaves followers after the projected line.
-				for mana in range(1, guard_mana + 1):
-					var gain := _follower_safety_gain(danger, {"guard": bot_player.guard + mana * ManaGuard.GUARD_PER_MANA})
-					if gain >= ECON_CARD_VALUE * 20:
-						guard_mana = mana
-						score = _score_follower_loss(bot_player, mana * ManaGuard.GUARD_PER_MANA) - CardStrategy.mana_penalty(self, mana) + gain
-						break
+			var guard_plan := CardStrategy.mana_guard_plan(self, bot_player.mana, 0, danger)
+			guard_mana = int(guard_plan.get("mana_amount", 0))
+			score = int(guard_plan.get("score", CardStrategy.BAD))
+		else:
+			score = _score_power_activation(power, chosen_target)
 		if score > best_score:
 			best_score = score
 			best_power = power
@@ -4180,7 +4231,7 @@ func _plan_special_power(power: PowerCard, danger: int, combat: Dictionary, unlo
 			var followers := target.get_effective_level() * Breidablik.FOLLOWERS_PER_LEVEL
 			@warning_ignore("integer_division")
 			gain = CardStrategy.follower_gain(bot_player, followers * 2) - _get_card_economic_value(target) / 3
-			gain += _follower_safety_gain(danger, {"removed": [target], "followers": bot_player.followers + followers})
+			gain += _follower_safety_gain(danger, {"removed": [target], "followers": bot_player.followers + followers}, false)
 			if target in _get_attack_ready_creatures():
 				@warning_ignore("integer_division")
 				gain -= _score_follower_loss(opponent, _get_direct_follower_damage(target)) / 2
@@ -4478,7 +4529,7 @@ func _plan_odin_draw(danger: int, desperation: bool = false) -> Dictionary:
 		var hit := {"removed": removed}
 		var miss := {"removed": removed, "followers": bot_player.followers - penalty}
 		var hit_safety := _follower_safety_gain(danger, hit) if not removed.is_empty() else 0
-		var miss_safety := _follower_safety_gain(danger, miss) if not removed.is_empty() or penalty > 0 else 0
+		var miss_safety := _follower_safety_gain(danger, miss, false) if not removed.is_empty() or penalty > 0 else 0
 		for card in representatives:
 			var probability := 1.0 if known != null else float(counts[CardCatalog.to_lookup_key(card.card_name)]) / unknown_count
 			var out := 0
@@ -4550,7 +4601,7 @@ func _deck_card_tactical_gain(card: Card, mana: int, danger: int, removed: Array
 		var zone := _get_first_open_summon_zone(bot_player)
 		if zone != null:
 			best = _follower_safety_gain(danger, {"removed": removed, "followers": followers,
-				"summon": card, "zone": zone, "stance": card, "defensive": true})
+				"summon": card, "zone": zone, "stance": card, "defensive": true}, false)
 			for candidate in _get_summon_attack_candidates(card, zone, mana):
 				var outcome := _project_attack(candidate, removed)
 				if bool(outcome.get("bot_wins", false)):
@@ -4574,10 +4625,10 @@ func _deck_card_tactical_gain(card: Card, mana: int, danger: int, removed: Array
 				var zone := _get_first_open_summon_zone(bot_player)
 				if zone != null:
 					change.merge({"summon": target, "zone": zone, "stance": target})
-			var safety := _follower_safety_gain(danger, change) if not casualties.is_empty() or adjusted_followers != bot_player.followers else 0
+			var safety := _follower_safety_gain(danger, change, false) if not casualties.is_empty() or adjusted_followers != bot_player.followers else 0
 			best = maxi(best, score + safety)
 	elif card is WardingStone and _get_first_open_reserve_zone(bot_player) != null:
-		best = _follower_safety_gain(danger, {"removed": removed, "followers": followers, "block_attacks": true})
+		best = _warding_stone_safety_gain(danger, followers, removed)
 	return best
 
 func _plan_removal_god_ability(danger: int, attacks: Array[Dictionary] = [], combat: Dictionary = {}, removals: Array[Dictionary] = []) -> Dictionary:
@@ -4748,18 +4799,23 @@ func _plan_defensive_attack(attacks: Array[Dictionary], danger: int) -> Dictiona
 			best = {"score": score, "command": {"type": "request_attack", "attacker_uid": attack["attacker"].uid, "target_id": str(game_manager.players.find(target)) if target is Player else target.uid}}
 	return best
 
-func _follower_safety_gain(danger: int, change: Dictionary) -> int:
+func _follower_safety_gain(danger: int, change: Dictionary, include_immediate_change: bool = true) -> int:
 	if danger < 0:
 		return 0
-	var after := _forecast_incoming_follower_loss(change)
 	var followers := int(change.get("followers", bot_player.followers))
-	var difference := (followers - after) - (bot_player.followers - danger)
-	if danger >= bot_player.followers and after < followers:
-		return ECON_CARD_VALUE * 30 + difference * 100
-	if danger < bot_player.followers and after >= followers:
+	var after := followers - _forecast_incoming_follower_loss(change)
+	# A play or combat can already score the immediate change. Its safety
+	# still depends on the total left after the opponent's projected turn.
+	var immediate_change := 0 if include_immediate_change else CardStrategy.follower_change_value(bot_player.followers, followers)
+	return _score_follower_safety(bot_player.followers - danger, after, immediate_change)
+
+func _score_follower_safety(before: int, after: int, scored_immediate_change: int = 0) -> int:
+	if before <= 0:
+		return ECON_CARD_VALUE * 30 + CardStrategy.follower_change_value(0, after) if after > 0 else 0
+	if after <= 0:
 		return -ECON_CARD_VALUE * 30
-	# A defending bot pays extra to keep followers on the board.
-	return int(round(difference * (600 if bot_player.followers < 25 else 200) * _posture_safety_multiplier()))
+	var gain := CardStrategy.follower_change_value(before, after) - scored_immediate_change
+	return roundi(gain * _posture_safety_multiplier())
 
 # Preservation-only defensive stance switches trade attack tempo for card
 # safety. That trade is only worth it when the follower pool is actually
@@ -4771,12 +4827,224 @@ func _is_dangerously_low_on_followers() -> bool:
 		return bot_player.followers <= 25
 	return bot_player.followers <= 25 or bot_player.followers * 2 <= opponent.followers
 
-func _forecast_incoming_follower_loss(change: Dictionary = {}) -> int:
+func _single_creature_removal_discount(source: Card, removed: Array) -> int:
+	if removed.size() != 1 or not source.goes_to_graveyard_after_use():
+		return 0
+	var target := removed[0] as Card
+	if target.get_controller() != opponent or not CardStrategy.visible(self, target) \
+			or target.card_type != Card.CardType.CREATURE:
+		return 0
+	var hold_value := SINGLE_TARGET_REMOVAL_HOLD_VALUE
+	if target.card_owner == bot_player and not target.is_enslaved():
+		return hold_value
+	var this_turn := game_manager.current_player == bot_player
+	if game_manager.attack_restrictions.has(bot_player) or (this_turn and game_manager.turn_number <= 1):
+		return hold_value
+	var mana := bot_player.mana
+	if not this_turn:
+		mana += game_manager.get_automatic_upkeep_mana_gain(bot_player, game_manager.turn_number + 1) \
+			+ game_manager.get_effective_upkeep_mana_gain(game_manager.get_base_upkeep_draw_mana_gain(), bot_player)
+	# A combat kill spends an attack and can be disrupted before it resolves.
+	@warning_ignore("integer_division")
+	var combat_credit := CardStrategy.value(self, target) / 2
+	var mana_rate := _mana_rate()
+	var best := 0
+	for attacker in _get_board_creatures(bot_player):
+		if attacker.get_controller() != bot_player or attacker.current_zone not in bot_player.frontline_zones or attacker.is_petrified() \
+				or (attacker.creature_mode != Card.CreatureMode.AGGRESSIVE and not attacker.is_stealth) \
+				or (attacker.is_face_down and not attacker.is_stealth):
+			continue
+		if this_turn and not _can_attack_after_priority(attacker):
+			continue
+		if not this_turn and (attacker.is_paralyzed() or _status_persists_to_next_turn(attacker, "sleep") \
+				or _status_persists_to_next_turn(attacker, "cannot_attack")):
+			continue
+		var cost := game_manager.get_creature_action_mana_cost(attacker, "attack")
+		var credit := combat_credit - cost * mana_rate
+		if cost <= mana and credit > best and _has_clean_removal_attack(attacker, target):
+			best = credit
+	var zone := _get_central_open_zone(bot_player.frontline_zones)
+	if zone == null or (this_turn and game_manager.has_resolved_attack_this_turn) \
+			or game_manager._any_active_structure_forces_defensive_summon():
+		return hold_value + best
+	for recruit in bot_player.hand_zone.cards:
+		if recruit.card_type != Card.CardType.CREATURE or recruit.sacrifice_cost > 0 or recruit.discard_cost > 0 \
+				or (recruit is ActiveGodCard and not recruit.can_be_played(game_manager, bot_player)) \
+				or game_manager.is_first_turn_attack_blocked_by_weather(recruit, true):
+			continue
+		if this_turn and bot_player.has_summoned_this_turn and not game_manager._can_use_extra_normal_summon(bot_player, recruit, zone):
+			continue
+		var summon_cost := _get_play_cost(recruit, false)
+		var attack_cost := game_manager.get_creature_action_mana_cost(recruit, "attack")
+		# The summon still develops a body, so allocate part of its cost to the kill.
+		@warning_ignore("integer_division")
+		var credit := combat_credit - attack_cost * mana_rate - summon_cost * mana_rate / 2
+		if summon_cost + attack_cost > mana or credit <= best or not _can_evaluate_creature_play(recruit, zone, mana) \
+				or _known_entry_response_penalty(recruit, zone, false) > 0:
+			continue
+		if _has_clean_removal_attack(recruit, target, zone):
+			best = credit
+	return hold_value + best
+
+func _has_clean_removal_attack(attacker: Card, target: Card, summon_zone: Zone = null) -> bool:
+	var partner := match_manager._get_declared_attack_partner(attacker) if summon_zone == null else null
+	for attack in _get_attack_candidates(attacker, partner, summon_zone != null, null, 0, null, {}, summon_zone, target):
+		if _attack_has_remaining_barrier(attack, []):
+			continue
+		var outcomes: Array = [attack["base"]]
+		outcomes.append_array(attack["replies"].values())
+		return outcomes.all(func(outcome: Dictionary) -> bool:
+			return target in outcome.get("casualties", []) and target not in outcome.get("returning_casualties", []) \
+				and attacker not in outcome["casualties"] and int(outcome.get("bot_cards_lost", 0)) == 0 \
+				and not bool(outcome.get("opponent_wins", false))
+		)
+	return false
+
+func _can_attack_after_priority(attacker: Card) -> bool:
+	# MatchManager.can_attack also checks whether priority is still resolving.
+	return game_manager.turn_number > 1 and attacker.can_take_major_creature_action() \
+		and not attacker.summoned_after_first_attack_this_turn and not game_manager.is_first_turn_attack_blocked_by_weather(attacker) \
+		and not attacker.is_sleeping and not attacker.is_paralyzed() and not attacker.has_status_effect("cannot_attack") \
+		and (not attacker.is_face_down or attacker.is_stealth)
+
+func _current_turn_removal_safety(removed: Array) -> int:
+	var before := _forecast_incoming_follower_loss({}, true)
+	if before <= 0:
+		return 0
+	var after := _forecast_incoming_follower_loss({"removed": removed}, true)
+	var gain := _score_follower_safety(bot_player.followers - before, bot_player.followers - after)
+	if before >= bot_player.followers or after >= bot_player.followers:
+		return gain
+	# A healthy follower pool can absorb some damage while the bot saves its answer.
+	var urgency := clampf(1.0 - float(bot_player.followers - before) / 100.0, 0.25, 1.0)
+	return roundi(gain * urgency)
+
+func _estimate_saving_grace_turn_loss(action: CardAction, outcome: Dictionary) -> int:
+	var loss := int(outcome["bot_followers_lost"])
+	if game_manager.current_player != opponent or loss >= bot_player.followers:
+		return loss
+	# Count follow-up damage the ward would also stop, with the guard and
+	# followers left after this attack. The committed attackers can't go again.
+	var committed: Array[Card] = [action.attacker]
+	if action.united_front_partner != null:
+		committed.append(action.united_front_partner)
+	return loss + _forecast_incoming_follower_loss({
+		"removed": committed,
+		"guard": maxi(0, bot_player.guard - int(outcome.get("bot_guard_spent", 0))),
+		"followers": bot_player.followers - loss,
+	}, true)
+
+func _expects_saving_grace_board_blocker(ward_cost: int) -> bool:
+	var mana := bot_player.mana - ward_cost
+	var next_turn := game_manager.current_player != bot_player
+	if next_turn:
+		mana += game_manager.get_automatic_upkeep_mana_gain(bot_player, game_manager.turn_number + 1)
+		mana += game_manager.get_effective_upkeep_mana_gain(game_manager.get_base_upkeep_draw_mana_gain(), bot_player)
+	var summon_zone := _get_first_open_summon_zone(bot_player)
+	if summon_zone != null and (next_turn or not bot_player.has_summoned_this_turn):
+		for card: Card in bot_player.hand_zone.cards:
+			# Red Cap normally leaves the field on its own when it attacks.
+			if not (card is RedCap or card is ActiveGodCard) and _can_evaluate_creature_play(card, summon_zone, mana) \
+					and _score_projected_card(card) > 0:
+				return true
+	var reserve := _get_first_open_reserve_zone(bot_player)
+	if reserve == null:
+		return false
+	for card: Card in bot_player.hand_zone.cards:
+		if not card.is_magical_card() or not CardStrategy.supported(card) \
+				or (card is SpellCard and not game_manager.spells_must_be_prepared()) \
+				or not game_manager.get_prepare_card_failure_reason(bot_player, card, reserve, true).is_empty():
+			continue
+		var cost := _get_play_cost(card, true)
+		if cost > mana:
+			continue
+		var score := CardStrategy.preparation_score(self, card)
+		if card is SpellCard:
+			var target := CardStrategy.best_target(self, card, CardStrategy.targets(self, card))
+			score = CardStrategy.effect_score(self, card, target)
+		if score > 0 and score > CardStrategy.mana_penalty(self, cost, mana) + CardStrategy.preparation_removal_penalty(self, card):
+			return true
+	return false
+
+func _warding_stone_safety_gain(danger: int, followers: int, removed: Array = []) -> int:
+	if not bot_player.followers_enabled or game_manager.attack_restrictions.has(opponent):
+		return 0
+	var safe_followers := followers - _forecast_incoming_follower_loss({
+		"removed": removed, "followers": followers, "block_attacks": true,
+	})
+	var immediate := CardStrategy.follower_change_value(bot_player.followers, followers)
+	var recruits := _projected_warding_stone_recruits()
+	var known_danger := danger if danger >= 0 else _forecast_incoming_follower_loss()
+	var known: Dictionary = recruits["known"]
+	if not known.is_empty():
+		known_danger = maxi(known_danger, _forecast_incoming_follower_loss({}, false, known))
+	var gain := _score_follower_safety(bot_player.followers - known_danger, safe_followers, immediate)
+	var possible: Dictionary = recruits["possible"]
+	if possible.is_empty() or safe_followers <= 0 or known_danger >= bot_player.followers:
+		return gain
+	var possible_danger := _forecast_incoming_follower_loss({}, false, possible)
+	if possible_danger > known_danger:
+		var possible_gain := _score_follower_safety(bot_player.followers - possible_danger, safe_followers, immediate)
+		# A plausible unknown summon matters near defeat, but cannot get the
+		# full priority of a lethal attack we can see.
+		@warning_ignore("integer_division")
+		gain += mini(possible_gain - gain, ECON_CARD_VALUE * 4) / 2
+	return gain
+
+func _projected_warding_stone_recruits() -> Dictionary:
+	var known := {}
+	var possible := {}
+	var result := {"known": known, "possible": possible}
+	var zone := _get_central_open_zone(opponent.frontline_zones)
+	if zone == null:
+		return result
+	var base_mana := opponent.mana + game_manager.get_automatic_upkeep_mana_gain(opponent, game_manager.turn_number + 1)
+	var mana_budget := base_mana + game_manager.get_effective_upkeep_mana_gain(game_manager.get_base_upkeep_mana_gain(), opponent)
+	var draw_budget := base_mana + game_manager.get_effective_upkeep_mana_gain(game_manager.get_base_upkeep_draw_mana_gain(), opponent)
+	var unknown_budget := -1
+	var cards: Array[Card] = opponent.hand_zone.cards.duplicate()
+	var top := opponent.deck_zone.known_top_card
+	if not opponent.deck_zone.cards.is_empty():
+		if CardStrategy.visible(self, top):
+			cards.append(top)
+		else:
+			unknown_budget = draw_budget
+	for card in cards:
+		if not CardStrategy.visible(self, card):
+			unknown_budget = mana_budget
+			continue
+		if not card is CreatureCard or card.is_god or card.sacrifice_cost > 0 or card.discard_cost > 0 \
+				or card.shelve_cost > 0 or card.banish_cost > 0 \
+				or game_manager.is_first_turn_attack_blocked_by_weather(card, true):
+			continue
+		var cost := game_manager.get_creature_summon_mana_cost(opponent, card)
+		if card == top:
+			cost += mana_budget - draw_budget
+		if cost + game_manager.get_creature_action_mana_cost(card, "attack") > mana_budget:
+			continue
+		var recruit := _preview_board_creature(card, zone)
+		recruit.is_face_down = false
+		recruit.is_stealth = false
+		recruit.creature_mode = Card.CreatureMode.AGGRESSIVE
+		known[recruit] = cost
+	if unknown_budget > 0:
+		# Use only public mana and card counts to model a typical incoming body.
+		var recruit := CreatureCard.new()
+		recruit.card_owner = opponent
+		recruit.current_zone = zone
+		recruit.creature_mode = Card.CreatureMode.AGGRESSIVE
+		recruit.strength = mini(24, unknown_budget * ECON_FORECAST_SUMMON_STR_PER_MANA)
+		recruit.speed = 2
+		if not game_manager.is_first_turn_attack_blocked_by_weather(recruit, true):
+			possible[recruit] = mana_budget - unknown_budget + ceili(float(recruit.strength) / ECON_FORECAST_SUMMON_STR_PER_MANA)
+	return result
+
+func _forecast_incoming_follower_loss(change: Dictionary = {}, this_turn: bool = false, recruits: Dictionary = {}) -> int:
 	if not bot_player.followers_enabled or opponent == null:
 		return 0
 	var removed: Array = change.get("removed", []).duplicate()
 	var followers := int(change.get("followers", bot_player.followers))
-	var upkeep_loss := _projected_upkeep_follower_loss(removed, followers)
+	var upkeep_loss := 0 if this_turn else _projected_upkeep_follower_loss(removed, followers)
 	var followers_after_upkeep := maxi(0, followers - upkeep_loss)
 	if bool(change.get("block_attacks", false)) or followers_after_upkeep <= 0:
 		return mini(followers, upkeep_loss)
@@ -4790,7 +5058,8 @@ func _forecast_incoming_follower_loss(change: Dictionary = {}) -> int:
 	if not restriction.is_empty() and restriction.get("source") not in removed:
 		return mini(followers, upkeep_loss)
 	var prevention: Dictionary = game_manager.turn_follower_loss_preventions.get(bot_player, {})
-	if int(prevention.get("expires_turn", -1)) > game_manager.turn_number and prevention.get("source_card") not in removed:
+	if int(prevention.get("expires_turn", -1)) >= game_manager.turn_number + (0 if this_turn else 1) \
+			and prevention.get("source_card") not in removed:
 		return mini(followers, upkeep_loss)
 
 	var targets: Array = [bot_player]
@@ -4823,13 +5092,16 @@ func _forecast_incoming_follower_loss(change: Dictionary = {}) -> int:
 			targets.append(structure)
 
 	var attack_lines: Array[Dictionary] = []
-	var budget := opponent.mana + game_manager.get_automatic_upkeep_mana_gain(opponent, game_manager.turn_number + 1) \
-		+ game_manager.get_effective_upkeep_mana_gain(game_manager.get_base_upkeep_mana_gain(), opponent)
+	var budget := opponent.mana
+	if not this_turn:
+		budget += game_manager.get_automatic_upkeep_mana_gain(opponent, game_manager.turn_number + 1) \
+			+ game_manager.get_effective_upkeep_mana_gain(game_manager.get_base_upkeep_mana_gain(), opponent)
 	var attackers := _get_board_creatures(opponent)
-	var champions_call := _projected_champions_call(removed)
+	var champions_call := {} if this_turn else _projected_champions_call(removed)
 	var manifestation := champions_call.get("attacker") as Card
 	if manifestation != null:
 		attackers.append(manifestation)
+	attackers.append_array(recruits.keys())
 	var mana_left := int(change.get("mana_left", bot_player.mana))
 	for attacker in attackers:
 		var attack_zone := destination if attacker == moved else attacker.current_zone
@@ -4839,7 +5111,9 @@ func _forecast_incoming_follower_loss(change: Dictionary = {}) -> int:
 				or attacker.is_petrified() or _status_persists_to_next_turn(attacker, "sleep", removed) \
 				or _status_persists_to_next_turn(attacker, "cannot_attack", removed):
 			continue
-		var cost := game_manager.get_creature_action_mana_cost(attacker, "attack")
+		if this_turn and not _can_attack_after_priority(attacker):
+			continue
+		var cost := game_manager.get_creature_action_mana_cost(attacker, "attack") + int(recruits.get(attacker, 0))
 		if attacker == manifestation:
 			cost += int(champions_call["cost"])
 		if cost > budget:
@@ -4888,8 +5162,9 @@ func _forecast_incoming_follower_loss(change: Dictionary = {}) -> int:
 				var interceptor_stance := interceptor if interceptor in summons else stance
 				replies[interceptor] = _forecast_incoming_combat(action, interceptor_stance, (defensive and interceptor == stance) or (defensive_summons and interceptor in summons), projected_stealth, removed, stats)
 			attack_lines.append({"attacker": attacker, "target": target, "replies": replies, "barriers": barriers, "cost": cost})
+	var exposure := 0 if this_turn else _aphrodite_exposure_pulse()
 	if attack_lines.is_empty():
-		return mini(followers, upkeep_loss + _aphrodite_exposure_pulse())
+		return mini(followers, upkeep_loss + exposure)
 	var guard := int(change.get("guard", bot_player.guard))
 	var most_damage := 0
 	# The opponent chooses the attack and the bot chooses whether to intercept.
@@ -4899,22 +5174,26 @@ func _forecast_incoming_follower_loss(change: Dictionary = {}) -> int:
 			continue
 		var least_damage := followers_after_upkeep
 		for first: Dictionary in line["replies"].values():
-			var first_loss := _forecast_follower_damage(first, guard)
+			var first_loss := _forecast_follower_damage(first, guard, followers_after_upkeep)
 			if first_loss >= least_damage:
 				continue
 			var remaining_guard := maxi(0, guard - int(first["damage"]))
+			var remaining_followers := followers_after_upkeep - first_loss
 			var casualties: Array = first["casualties"]
 			var followup := 0
 			for second in attack_lines:
 				if second["attacker"] == line["attacker"] or second["attacker"] in casualties or second["target"] in casualties \
 						or int(line["cost"]) + int(second["cost"]) > budget:
 					continue
+				if recruits.has(line["attacker"]) and (recruits.has(second["attacker"]) or second["attacker"] == manifestation) \
+						or line["attacker"] == manifestation and recruits.has(second["attacker"]):
+					continue
 				if second["barriers"].any(func(barrier: Card) -> bool: return barrier not in casualties):
 					continue
-				var second_loss := _forecast_follower_damage(second["replies"][second["target"]], remaining_guard)
+				var second_loss := _forecast_follower_damage(second["replies"][second["target"]], remaining_guard, remaining_followers)
 				for interceptor in second["replies"]:
 					if interceptor not in casualties:
-						second_loss = mini(second_loss, _forecast_follower_damage(second["replies"][interceptor], remaining_guard))
+						second_loss = mini(second_loss, _forecast_follower_damage(second["replies"][interceptor], remaining_guard, remaining_followers))
 				followup = maxi(followup, second_loss)
 				if first_loss + followup >= least_damage:
 					break
@@ -4922,7 +5201,7 @@ func _forecast_incoming_follower_loss(change: Dictionary = {}) -> int:
 		most_damage = maxi(most_damage, least_damage)
 		if upkeep_loss + most_damage >= followers:
 			break
-	return mini(followers, upkeep_loss + most_damage + _aphrodite_exposure_pulse())
+	return mini(followers, upkeep_loss + most_damage + exposure)
 
 func _projected_upkeep_follower_loss(removed: Array, projected_followers: int) -> int:
 	if game_manager == null or opponent == null:
@@ -4959,7 +5238,7 @@ func _forecast_incoming_combat(action: CardAction, stance: Card, defensive: bool
 	if defender is Askelladen and _can_askelladen_retreat(defender, action.attacker, stats):
 		return {"damage": 0, "casualties": [defender, action.attacker]}
 	var damage := int(result["bot_followers_lost"])
-	if GameManager.combat_halves_follower_damage(action.attacker, defender):
+	if action.halve_follower_damage or GameManager.combat_halves_follower_damage(action.attacker, defender, action.united_front_partner):
 		damage = GameManager.round_down_divide(damage, 2)
 	if (defender is MasmassuPriest or defender is Grindylow) and (projected_stealth or defender.is_stealth):
 		var targets := _get_reveal_removal_targets(defender)
@@ -4971,11 +5250,11 @@ func _forecast_incoming_combat(action: CardAction, stance: Card, defensive: bool
 	return {"damage": damage, "source": result.get("bot_loss_source"), "casualties": result["casualties"],
 		"enslavement_risk": int(result.get("enslavement_risk", 0))}
 
-func _forecast_follower_damage(result: Dictionary, guard: int) -> int:
+func _forecast_follower_damage(result: Dictionary, guard: int, remaining_followers: int) -> int:
 	var damage := maxi(0, int(result["damage"]) - guard)
 	var source := result.get("source") as Card
 	if game_manager._source_converts_combat_follower_damage(source):
-		return game_manager._get_combat_follower_conversion_amount(source, damage)
+		return game_manager._get_combat_follower_conversion_amount(source, damage, remaining_followers)
 	return damage
 
 func _get_combat_candidates(projected_mana: int = -1) -> Array[Dictionary]:
@@ -4985,12 +5264,13 @@ func _get_combat_candidates(projected_mana: int = -1) -> Array[Dictionary]:
 			candidates.append_array(_get_attack_candidates(attacker, match_manager._get_declared_attack_partner(attacker)))
 	return candidates
 
-func _get_attack_candidates(attacker: Card, partner: Card, projected_summon: bool = false, modified_card: Card = null, speed_delta: int = 0, shifted_form: Card = null, summon_stats: Dictionary = {}, projected_zone: Zone = null) -> Array[Dictionary]:
+func _get_attack_candidates(attacker: Card, partner: Card, projected_summon: bool = false, modified_card: Card = null, speed_delta: int = 0, shifted_form: Card = null, summon_stats: Dictionary = {}, projected_zone: Zone = null, only_target: Card = null) -> Array[Dictionary]:
 	var candidates: Array[Dictionary] = []
-	var targets: Array = [opponent]
-	for card in game_manager.get_field_cards(opponent):
-		if CardStrategy.visible(self, card) and card.card_type in [Card.CardType.CREATURE, Card.CardType.STRUCTURE]:
-			targets.append(card)
+	var targets: Array = [only_target] if only_target != null else [opponent]
+	if only_target == null:
+		for card in game_manager.get_field_cards(opponent):
+			if CardStrategy.visible(self, card) and card.card_type in [Card.CardType.CREATURE, Card.CardType.STRUCTURE]:
+				targets.append(card)
 	var attacker_form := shifted_form if shifted_form != null and attacker == modified_card else attacker
 	if projected_zone != null:
 		attacker_form = _preview_board_creature(attacker_form, projected_zone)
@@ -5068,14 +5348,14 @@ func _get_known_attack_response_cards(action: CardAction) -> Array[Card]:
 		return responses
 	for zone in opponent.frontline_zones + opponent.reserve_zones:
 		for card in zone.cards:
-			if not (card is TheInferno or card is VoidShield or card is Smite or card is ObsidianReflection) or not CardStrategy.visible(self, card):
+			if not (card is TheInferno or card is VoidShield or card is Smite or card is DivineLightning or card is ObsidianReflection) or not CardStrategy.visible(self, card):
 				continue
 			if game_manager.can_card_respond_to_action(card, action, opponent):
 				responses.append(card)
 	# Revealed hand responses (Seer, Dellingr, effects that expose the hand)
 	# are modeled exactly like their prepared counterparts, priced by mana.
 	for card in opponent.hand_zone.cards:
-		if not (card is TheInferno or card is VoidShield or card is Smite) or not CardStrategy.visible(self, card):
+		if not (card is TheInferno or card is VoidShield or card is Smite or card is DivineLightning) or not CardStrategy.visible(self, card):
 			continue
 		if opponent.mana < game_manager.get_card_play_mana_cost(opponent, card, false):
 			continue
@@ -5104,6 +5384,14 @@ func _estimate_known_attack_response(response: Card, action: CardAction, origina
 		if not CardStrategy.can_remove_from_board(self, response, action.attacker, destroys):
 			return {}
 		_add_destroyed_card_to_economy(result, attacker)
+	elif response is DivineLightning:
+		# Single magical target, not a frontline wipe. Namburbi can save this
+		# attacker, but pricing it as an area answer would overstate the threat.
+		if action.attacker == null or action.attacker.current_zone not in bot_player.frontline_zones \
+				or not response.is_valid_target(action.attacker) \
+				or not CardStrategy.can_remove_from_board(self, response, action.attacker, true, false):
+			return {}
+		_add_destroyed_card_to_economy(result, attacker)
 	else:
 		if action.attacker.current_zone in bot_player.frontline_zones \
 				and CardStrategy.can_remove_from_board(self, response, action.attacker, true, false):
@@ -5119,6 +5407,67 @@ func _estimate_known_attack_response(response: Card, action: CardAction, origina
 		mana_left -= _get_play_cost(attacker, false)
 	result["hex_trade_credit"] = _known_hex_trade_credit(response, result["casualties"], mana_left, [attacker])
 	return result
+
+func _find_namburbi_ward_card() -> Card:
+	if game_manager == null or bot_player == null:
+		return null
+	# A prepared copy is already paid for and can cover this turn without
+	# spending the hand copy, so prefer it when both are available.
+	for card in game_manager.get_field_cards(bot_player):
+		if card is NamburbiApotropaeon and card.is_prepared and card.can_activate_prepared(game_manager):
+			return card
+	for card in bot_player.hand_zone.cards:
+		if card is NamburbiApotropaeon and card.can_activate_from_hand(game_manager) \
+				and game_manager.can_play_card(bot_player, card, null):
+			return card
+	return null
+
+func _namburbi_attack_response_gain(attack: Dictionary) -> int:
+	var replies: Dictionary = attack.get("replies", {})
+	var best := 0
+	for raw_response in replies.keys():
+		var response := raw_response as Card
+		if response == null:
+			continue
+		var raw_result = replies[raw_response]
+		if not (raw_result is Dictionary):
+			continue
+		var result: Dictionary = raw_result
+		if result.is_empty():
+			continue
+		var saved := 0
+		if response is Smite or response is TheInferno or response is DivineLightning:
+			for raw_casualty in result.get("casualties", []):
+				var casualty := raw_casualty as Card
+				if casualty != null and casualty.get_controller() == bot_player:
+					saved += CardStrategy.value(self, casualty)
+		elif response is ObsidianReflection:
+			saved += _score_follower_loss(bot_player, int(result.get("bot_followers_lost", 0)))
+		best = maxi(best, saved)
+	return best
+
+func _plan_namburbi_ward(attacks: Array[Dictionary]) -> Dictionary:
+	if attacks.is_empty() or game_manager == null or bot_player == null:
+		return {}
+	if game_manager.has_turn_destruction_ward(bot_player) and game_manager.has_turn_follower_loss_prevention(bot_player):
+		return {}
+	var ward := _find_namburbi_ward_card()
+	if ward == null:
+		return {}
+	var best_saved := 0
+	for attack in attacks:
+		best_saved = maxi(best_saved, _namburbi_attack_response_gain(attack))
+	if best_saved <= 0:
+		return {}
+	var cost := CardStrategy.activation_cost(self, ward)
+	var score := best_saved - CardStrategy.CARD_VALUE - CardStrategy.mana_penalty(self, cost)
+	if score <= 0:
+		return {}
+	return {
+		"score": score,
+		"combined_setup": true,
+		"command": {"type": "cast_charm", "charm_uid": ward.uid, "target_uid": "", "prepared": ward.is_prepared},
+	}
 
 func _plan_united_front(attacks: Array[Dictionary], baseline: Dictionary) -> Dictionary:
 	var best := {}
@@ -5161,7 +5510,7 @@ func _project_attack(candidate: Dictionary, removed: Array = [], occupied_zone: 
 	var result := _account_for_projected_scavenge_lane(candidate["base"], occupied_zone)
 	if not line.is_empty():
 		result = _combat_outcome_with_remaining_guard(result, line)
-	var score := _score_attack_economy(result)
+	var score := _score_attack_economy(result, line)
 	for interceptor in candidate["replies"]:
 		if interceptor in removed:
 			continue
@@ -5174,10 +5523,10 @@ func _project_attack(candidate: Dictionary, removed: Array = [], occupied_zone: 
 				continue
 		if not line.is_empty():
 			reply = _combat_outcome_with_remaining_guard(reply, line)
-		var reply_score := _score_attack_economy(reply)
-		var reply_loses := bool(reply["opponent_wins"])
-		var base_loses := bool(result["opponent_wins"])
-		if (reply_loses and not base_loses) or (reply_loses == base_loses and reply_score < score):
+		var reply_score := _score_attack_economy(reply, line)
+		var reply_outcome := -1 if reply["opponent_wins"] else int(reply["bot_wins"])
+		var outcome := -1 if result["opponent_wins"] else int(result["bot_wins"])
+		if reply_outcome < outcome or (reply_outcome == outcome and reply_score < score):
 			result = reply
 			score = reply_score
 	return result
@@ -5316,7 +5665,7 @@ func _extend_combat_line(line: Dictionary, attack: Dictionary, occupied_zone: Zo
 	result["bot_wins"] = lethal
 	if line["scavenged"]:
 		result["scavenge_value"] = 0
-	var score := _score_attack_economy(result) - int(attack["mana_cost"]) * _mana_rate()
+	var score := _score_attack_economy(result, line) - int(attack["mana_cost"]) * _mana_rate()
 	# Discount later trades, while keeping confirmed lethal decisive.
 	var lethal_bonus := ECON_CARD_VALUE * 20 if lethal else 0
 	score = int(line["score"]) + int((score - lethal_bonus) * weight) + lethal_bonus
@@ -5355,8 +5704,8 @@ func _combat_outcome_with_remaining_guard(outcome: Dictionary, line: Dictionary)
 		var damage := int(raw_damage) - absorbed
 		var source := outcome.get(side + "_loss_source") as Card
 		if source != null and CardStrategy.visible(self, source) and game_manager._source_converts_combat_follower_damage(source):
-			damage = game_manager._get_combat_follower_conversion_amount(source, damage)
-			result["bot_followers_gained" if side == "opponent" else "opponent_followers_gained"] = mini(remaining, damage)
+			damage = game_manager._get_combat_follower_conversion_amount(source, damage, remaining)
+			result["bot_followers_gained" if side == "opponent" else "opponent_followers_gained"] = damage
 		result[loss_key] = mini(remaining, damage)
 	var conversion_defender := result.get("defensive_conversion_defender") as Card
 	if conversion_defender != null:
@@ -6855,14 +7204,15 @@ func _can_win_followers_after_modifiers(stats: Dictionary) -> bool:
 	return total_damage >= opponent.followers + opponent.guard
 
 func _score_followers_attack(attacker: Card) -> int:
-	if attacker == null or opponent == null:
+	if attacker == null or opponent == null or match_manager == null:
 		return -1000000
-	var damage := _get_direct_follower_damage(attacker)
-	var score := damage * 140 + attacker.get_effective_speed() * 25
-	if damage >= opponent.followers + opponent.guard:
-		score += 3000
-	if opponent.followers + opponent.guard <= damage * 2:
-		score += 1200
+	var action := CardAction.new()
+	action.type = CardAction.Type.ATTACK
+	action.attacker = attacker
+	action.united_front_partner = match_manager._get_declared_attack_partner(attacker)
+	action.target = opponent
+	var score := _score_attack_economy(_estimate_attack_economy(action, null, 0, 0))
+	score += attacker.get_effective_speed() * 25
 	if attacker.is_stealth:
 		score += 400
 	return score
@@ -7434,7 +7784,7 @@ func _should_use_askelladen_retreat(ask_card: Askelladen, other_card: Card, acti
 				"removed": fight["casualties"],
 				"followers": bot_player.followers - int(fight["bot_followers_lost"]) + int(fight.get("bot_followers_gained", 0)),
 				"guard": bot_player.guard - int(fight.get("bot_guard_spent", 0)),
-			})
+			}, false)
 		return retreat_score > fight_score + ASKELLADEN_RETREAT_SCORE_MARGIN
 	var score := _score_askelladen_bounce_target(other_card)
 	if _can_clear_creature_without_askelladen(other_card):
@@ -8557,7 +8907,7 @@ func _opponent_hermes_speed_gain(creature: Card) -> int:
 			return 0
 	return Hermes.SPEED_BONUS
 
-func _score_attack_economy(result: Dictionary) -> int:
+func _score_attack_economy(result: Dictionary, line: Dictionary = {}) -> int:
 	var score := int(result.get("opponent_cards_lost", 0)) - int(result.get("bot_cards_lost", 0))
 	score += int(result.get("hex_trade_credit", 0))
 	score += int(result.get("scavenge_value", 0)) + int(result.get("deck_reward", 0))
@@ -8565,14 +8915,20 @@ func _score_attack_economy(result: Dictionary) -> int:
 	score -= int(result.get("guanyu_counter_risk", 0))
 	score += int(result.get("guanyu_counter_break", 0))
 	score += int(result.get("reveal_bonus", 0))
-	score += _score_follower_loss(opponent, int(result.get("opponent_followers_lost", 0)))
-	score -= _score_follower_loss(bot_player, int(result.get("bot_followers_lost", 0)))
-	score += CardStrategy.follower_gain(bot_player, int(result.get("bot_followers_gained", 0)))
-	score -= CardStrategy.follower_gain(opponent, int(result.get("opponent_followers_gained", 0)))
+	var bot_followers := int(line.get("bot_followers", bot_player.followers))
+	var opponent_followers := int(line.get("opponent_followers", opponent.followers))
+	var bot_loss := int(result.get("bot_followers_lost", 0)) - int(result.get("bot_followers_gained", 0))
+	var opponent_loss := int(result.get("opponent_followers_lost", 0)) - int(result.get("opponent_followers_gained", 0))
+	var bot_after := maxi(0, bot_followers - bot_loss)
+	var opponent_after := maxi(0, opponent_followers - opponent_loss)
+	var opponent_change := CardStrategy.follower_change_value(opponent_followers, opponent_after)
+	if opponent_change < 0:
+		opponent_change = roundi(opponent_change * _posture_damage_multiplier())
+	score += CardStrategy.follower_change_value(bot_followers, bot_after) - opponent_change
 	var casualties: Array = result.get("casualties", [])
 	if not casualties.is_empty():
-		score += _combat_god_death_cost(opponent, casualties, int(result.get("opponent_followers_lost", 0)))
-		score -= _combat_god_death_cost(bot_player, casualties, int(result.get("bot_followers_lost", 0)))
+		score += _combat_god_death_cost(opponent, casualties, opponent_loss, false, opponent_followers)
+		score -= _combat_god_death_cost(bot_player, casualties, bot_loss, false, bot_followers)
 	# A lasting kill can prevent the creature's next attack even if stronger enemies remain.
 	var returning: Array = result.get("returning_casualties", [])
 	for casualty: Card in casualties:
@@ -8583,8 +8939,7 @@ func _score_attack_economy(result: Dictionary) -> int:
 				and casualty.creature_mode == Card.CreatureMode.AGGRESSIVE \
 				and not casualty.has_status_effect("cannot_attack") \
 				and not game_manager.is_followers_attack_blocked_by_active_structure(casualty, bot_player):
-			@warning_ignore("integer_division")
-			score += mini(_get_direct_follower_damage(casualty), bot_player.followers) * (ECON_CARD_VALUE / ECON_FOLLOWERS_PER_CARD)
+			score += mini(_get_direct_follower_damage(casualty), bot_after) * CardStrategy.FOLLOWER_VALUE
 	if bool(result.get("bot_wins", false)):
 		score += ECON_CARD_VALUE * 20
 	if bool(result.get("opponent_wins", false)):
@@ -8844,20 +9199,15 @@ func _get_opponent_mummu() -> Mummu:
 			return card as Mummu
 	return null
 
-func _score_follower_loss(player: Player, amount: int) -> int:
-	if player == null or amount <= 0:
+func _score_follower_loss(player: Player, amount: int, starting_followers: int = -1) -> int:
+	if player == null or not player.followers_enabled or amount <= 0:
 		return 0
-	if amount >= player.followers:
+	var followers := player.followers if starting_followers < 0 else starting_followers
+	if followers <= 0:
+		return 0
+	if amount >= followers:
 		return ECON_CARD_VALUE * 20
-	var base_per_follower := int(float(ECON_CARD_VALUE) / float(ECON_FOLLOWERS_PER_CARD))
-	var score := 0
-	for index in range(amount):
-		var followers_after_loss := maxi(0, player.followers - index - 1)
-		var pressure := 1.0
-		if followers_after_loss < 50:
-			var danger := float(50 - followers_after_loss) / 50.0
-			pressure += pow(danger, 2.0) * 3.0
-		score += int(round(float(base_per_follower) * pressure))
+	var score := -CardStrategy.follower_change_value(followers, followers - amount)
 	if player == opponent:
 		# A racing bot values each point of opponent follower damage above its
 		# neutral rate: the clock, not the card economy, wins the game.

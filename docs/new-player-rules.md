@@ -299,7 +299,7 @@ Reserve Creatures are protected from many direct melee attacks. Use lane positio
 
 If you have another eligible Creature, two Creatures can attack together as a United Front.
 
-The attacking Creatures combine their Strength for that attack. This helps break through a large defender or deal a large burst of Follower damage.
+The attacking Creatures combine their Strength for that attack. If the attack's Follower damage is halved, halve the total damage and round down once. This helps break through a large defender or deal a large burst of Follower damage.
 
 Use United Front when:
 

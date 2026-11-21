@@ -575,7 +575,8 @@ func set_temporary_combat_follower_damage_reversed(reversed: bool) -> void:
 	_temporary_combat_follower_damage_reversed = reversed
 
 static func combat_halves_follower_damage(attacker: Card, defender: Card = null, partner: Card = null) -> bool:
-	if attacker != null and attacker.halves_follower_damage_inflicted():
+	if (attacker != null and attacker.halves_follower_damage_inflicted()) \
+			or (partner != null and partner.halves_follower_damage_inflicted()):
 		return true
 	for combatant in [attacker, defender, partner]:
 		if combatant != null and combatant.halves_follower_damage_in_combat():
@@ -2318,23 +2319,20 @@ func resolve_followers_attack(attackers: Array[Card], defending_player: Player) 
 	for combatant in active_attackers:
 		_notify_attack_declared(combatant)
 
-	var halved_by_combatant := false
-	for combatant in active_attackers:
-		halved_by_combatant = halved_by_combatant or combatant.halves_follower_damage_in_combat()
 	var damage_target_player := defending_player
-	if _temporary_combat_follower_damage_reversed and not active_attackers.is_empty():
+	if _temporary_combat_follower_damage_reversed:
 		var attacker_controller := active_attackers[0].get_controller()
 		if attacker_controller != null:
 			damage_target_player = attacker_controller
-	var follower_damage := 0
+	var combined_strength := 0
+	var halve_follower_damage := false
 	for combatant in active_attackers:
-		var halve_follower_damage := halved_by_combatant or combat_halves_follower_damage(combatant)
-		if _source_converts_combat_follower_damage(combatant):
-			follower_damage += _apply_combat_follower_damage(combatant, damage_target_player, combatant.get_effective_strength(), halve_follower_damage)
-		else:
-			follower_damage += _apply_combat_follower_damage(null, damage_target_player, combatant.get_effective_strength(), halve_follower_damage, [combatant])
-		if is_game_over:
-			break
+		combined_strength += combatant.get_effective_strength()
+		halve_follower_damage = halve_follower_damage or combat_halves_follower_damage(combatant)
+	var converting_attacker := _get_combat_follower_conversion_source(active_attackers)
+	var follower_damage := _apply_combat_follower_damage(
+		converting_attacker, damage_target_player, combined_strength, halve_follower_damage, active_attackers
+	)
 
 	if is_game_over:
 		return follower_damage
@@ -2602,11 +2600,7 @@ func resolve_united_front_combat(attacker: Card, partner: Card, defender: Card) 
 	var combined_strength := primary.get_effective_strength() + support.get_effective_strength()
 
 	if defender.is_god:
-		var converting_attacker: Card = null
-		for combatant in active_attackers:
-			if _source_converts_combat_follower_damage(combatant):
-				converting_attacker = combatant
-				break
+		var converting_attacker := _get_combat_follower_conversion_source(active_attackers)
 		var god_damage := _apply_combat_follower_damage(converting_attacker, defender_controller, combined_strength, halve_follower_damage, active_attackers)
 		print("%s and %s attack %s's followers for %d!" % [primary.card_name, support.card_name, defender_controller.player_name, god_damage])
 		finish.call()
@@ -2630,11 +2624,7 @@ func resolve_united_front_combat(attacker: Card, partner: Card, defender: Card) 
 			var combined_strength_for_damage: int = _get_giants_disdain_combined_strength_for_damage(active_attackers, defender)
 			print("	Combined STR vs STR: %d vs %d" % [combined_strength, defender_str_real])
 			if combined_strength > defender_str_real:
-				var converting_attacker: Card = null
-				for combatant in active_attackers:
-					if _source_converts_combat_follower_damage(combatant):
-						converting_attacker = combatant
-						break
+				var converting_attacker := _get_combat_follower_conversion_source(active_attackers)
 				var diff := _apply_combat_follower_damage(converting_attacker, defender_controller, combined_strength - defender_str_for_damage, halve_follower_damage, active_attackers)
 				print("	%s destroyed! %s loses %d followers" % [defender.card_name, defender_controller.player_name, diff])
 				_combat_kill(primary, defender)
@@ -3205,12 +3195,19 @@ func _source_converts_combat_follower_damage(source_card: Card) -> bool:
 		return false
 	return source_card.converts_follower_damage_to_conversion(self)
 
-func _get_combat_follower_conversion_amount(source_card: Card, amount: int) -> int:
-	if amount <= 0:
+func _get_combat_follower_conversion_source(attackers: Array[Card]) -> Card:
+	for attacker in attackers:
+		if _source_converts_combat_follower_damage(attacker):
+			return attacker
+	return null
+
+func _get_combat_follower_conversion_amount(source_card: Card, damage: int, remaining_followers: int) -> int:
+	var destroyed_followers := mini(damage, remaining_followers)
+	if destroyed_followers <= 0:
 		return 0
 	if source_card != null and source_card.has_method("get_follower_damage_conversion_amount"):
-		return clampi(int(source_card.get_follower_damage_conversion_amount(amount, self)), 0, amount)
-	return amount
+		return clampi(int(source_card.get_follower_damage_conversion_amount(destroyed_followers, self)), 0, destroyed_followers)
+	return destroyed_followers
 
 func _apply_combat_follower_damage(source_card: Card, damaged_player: Player, amount: int, halved_by_combatant: bool = false, attribution_sources: Array[Card] = []) -> int:
 	if damaged_player == null or amount <= 0:
@@ -3230,7 +3227,8 @@ func _apply_combat_follower_damage(source_card: Card, damaged_player: Player, am
 	if _source_converts_combat_follower_damage(source_card) \
 			and source_controller != null \
 			and source_controller != damaged_player:
-		var conversion_amount := _get_combat_follower_conversion_amount(source_card, adjusted_amount)
+		var remaining_followers := damaged_player.followers if damaged_player.followers_enabled and not damaged_player.is_defeated else 0
+		var conversion_amount := _get_combat_follower_conversion_amount(source_card, adjusted_amount, remaining_followers)
 		if conversion_amount <= 0:
 			match_statistics.damage_sources = previous_sources
 			return 0
