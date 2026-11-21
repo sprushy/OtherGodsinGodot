@@ -249,15 +249,14 @@ func _setup_test_board() -> void:
 	load_featured_card_test_scenario()
 
 func load_featured_card_test_scenario() -> void:
-	load_gullinbursti_defensive_test_scenario()
+	load_hermes_dodge_test_scenario()
 
-func load_gullinbursti_defensive_test_scenario() -> void:
+func load_hermes_dodge_test_scenario() -> void:
 	_reset_test_match_state()
-	_add_test_god(player1, Odin.new())
+	_add_test_god(player1, Hermes.new())
 	_add_test_god(player2, Thor.new())
 
-	# Defensive Gullinbursti on both sides.
-	_place_test_board_card(player1, player1.frontline_zones[0], Gullinbursti.new(), Card.CreatureMode.DEFENSIVE)
+	_place_test_board_card(player1, player1.frontline_zones[0], HariiWarrior.new(), Card.CreatureMode.AGGRESSIVE)
 	_place_test_board_card(player2, player2.frontline_zones[0], Gullinbursti.new(), Card.CreatureMode.DEFENSIVE)
 
 	# Enkidus in hand for both players.
@@ -294,8 +293,8 @@ func load_gullinbursti_defensive_test_scenario() -> void:
 	game_manager.start_turn()
 	_open_upkeep_choice_window()
 	action_label.text = (
-		"Gullinbursti Defensive Test Scenario. Each side has a defensive Gullinbursti on the frontline. "
-		+ "Both players have Enkidus in hand. Choose Mana first, then play Enkidu or attack with the Gullinbursti."
+		"Hermes Dodge Test. Harii Warrior faces a defensive Gullinbursti. "
+		+ "Choose an upkeep option, then use Hermes's Deceptive Speed on Harii Warrior to get past Dodge."
 	)
 	update_ui()
 
@@ -1697,5 +1696,53 @@ func load_v_w_card_scenario() -> void:
 		+ "Hand - Wild Magic shelves Brown Bear then Lailoken from the top of your deck before landing on Heroic Stand and preparing it revealed in your first open reserve slot. Vision of Tartarus hits any board creature for -6 Str / -6 Res (two creatures are already banished in your Abyss). Wheel of Fire binds the enemy Minotaur Footsoldier, pushes it back one row on cast, then lets you pay 1 mana at the start of your turn to push it further again.  |  "
 		+ "Prepared - pass to P2 and let the aggressive Brown Bear declare an attack on your creature: Void Shield intercepts and banishes the attacker. Vision of Odin is also prepared; respond to any action, target a non-Norse creature for -7 Str / -1 Spd, or target Wolf Adolescent (Norse) for +7 Str / +1 Spd instead.  |  "
 		+ "Power - Walk of the Sage is unlocked; pay 2 mana to Void Lailoken or Nimue (both Mages) from your deck."
+	)
+	update_ui()
+
+func load_saving_grace_vs_baldr_active_test_scenario() -> void:
+	_reset_test_match_state()
+	_add_test_god(player1, Thor.new())
+	_add_test_god(player2, Thor.new())
+
+	# P1 (attacker) controls Baldr, Active God. P2 (defender) has Saving Grace face-down.
+	_place_test_board_card(player1, player1.frontline_zones[0], BaldrActive.new(), Card.CreatureMode.AGGRESSIVE)
+
+	_add_test_power(player2, 0, SavingGrace.new(), false)
+
+	# Empty P2 field is required for Saving Grace's Ward condition.
+	_add_test_hand_card(player1, BrownBear.new())
+	_add_test_hand_card(player2, BrownBear.new())
+	_add_test_deck_card(player1, BrownBear.new())
+	_add_test_deck_card(player2, BrownBear.new())
+
+	player1.spend_mana(player1.mana)
+	player1.gain_mana(12)
+	player2.spend_mana(player2.mana)
+	player2.gain_mana(12)
+	player1.followers = 100
+	player2.followers = 100
+	player1.followers_changed.emit(player1.followers)
+	player2.followers_changed.emit(player2.followers)
+	player1.has_summoned_this_turn = false
+	player2.has_summoned_this_turn = false
+
+	game_manager.current_player = player1
+	game_manager.other_player = player2
+	game_manager.feedback_viewer = player1
+	player1.is_turn_player = true
+	player2.is_turn_player = false
+	selected_card = null
+	selected_attacker = null
+	selected_interceptor = null
+	_test_turn_owner = player1
+	_test_turn_opponent = player2
+	game_manager.turn_number = 1
+	game_manager.start_turn()
+	_open_upkeep_choice_window()
+	action_label.text = (
+		"Saving Grace vs Baldr Active Test. P1 controls Baldr, Active God in frontline 1. "
+		+ "P2 has face-down Saving Grace in power slot 1 and an empty field. "
+		+ "Choose an upkeep option, then attack P2's followers with Baldr Active. "
+		+ "Saving Grace can flip in response (base cost only, no fast surcharge) and should prevent all follower conversion."
 	)
 	update_ui()

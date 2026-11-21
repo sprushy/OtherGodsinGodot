@@ -81,12 +81,14 @@ func _resolve_ragnarok(game_manager: GameManager) -> void:
 		return
 
 	game_manager.field_effect_requested.emit("ragnarok", self)
-	var doomed_cards := _get_field_cards(game_manager)
-	var destroyed_count := 0
-	for doomed_card in doomed_cards:
-		if game_manager.request_send_to_graveyard(doomed_card, Callable(), false, true):
-			destroyed_count += 1
+	game_manager.request_send_cards_to_graveyard(
+		_get_field_cards(game_manager),
+		_resolve_ragnarok_discards.bind(game_manager),
+		false,
+		true
+	)
 
+func _resolve_ragnarok_discards(destroyed_count: int, game_manager: GameManager) -> void:
 	if _begin_pending_discards(game_manager, destroyed_count, HAND_LIMIT):
 		return
 	var discarded_count := 0

@@ -218,8 +218,13 @@ func enable_relay_session(match_id: String, observer_session_id: String) -> bool
 		_prune_oldest_relay_session()
 	return true
 
-func disable_relay_session(match_id: String, observer_session_id: String) -> void:
+func disable_relay_session(match_id: String, observer_session_id: String, delay_seconds: float = 0.0) -> void:
 	var key := _relay_session_key(match_id, observer_session_id)
+	if delay_seconds > 0.0 and _relay_sessions.has(key):
+		var tree := get_tree()
+		if tree != null:
+			tree.create_timer(delay_seconds).timeout.connect(disable_relay_session.bind(match_id, observer_session_id))
+			return
 	_relay_sessions.erase(key)
 	_relay_ready_printed.erase(key)
 

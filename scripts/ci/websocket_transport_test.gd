@@ -56,7 +56,7 @@ func _run() -> void:
 	await _check_direct_spectator_punch()
 	await _check_verified_punch_from_alternate_ip()
 	await _check_udp_relay()
-	await _check_relay_cleanup_on_match_end()
+	await _check_immediate_relay_cleanup()
 	_check_spectate_endpoint_selection()
 	_check_spectate_relay_fallback_selection()
 	await _check_failed_lobby_transport_cleanup()
@@ -372,21 +372,28 @@ func _check_udp_relay() -> void:
 	_check(host_socket.get_available_packet_count() > 0, "relay forwards spectator traffic to host")
 	if host_socket.get_available_packet_count() > 0:
 		_check(host_socket.get_packet().get_string_from_utf8() == "client-enet", "relayed spectator payload is unchanged")
+	var lobby := LobbyServerScript.new()
+	lobby.punch_reflector = reflector
+	lobby._cleanup_local_bot_spectate_state("relay-match", {
+		"spectator_match_tokens_by_session": {"relay-observer": "token"},
+	}, 1.0)
+	lobby.free()
 	host_socket.set_dest_address("127.0.0.1", relay_port)
-	host_socket.put_packet("host-enet".to_utf8_buffer())
+	host_socket.put_packet("final-result".to_utf8_buffer())
 	await _wait_for(func() -> bool: return client_socket.get_available_packet_count() > 0)
-	_check(client_socket.get_available_packet_count() > 0, "relay forwards host traffic to spectator")
+	_check(client_socket.get_available_packet_count() > 0, "relay still forwards the result after match cleanup")
 	if client_socket.get_available_packet_count() > 0:
-		_check(client_socket.get_packet().get_string_from_utf8() == "host-enet", "relayed host payload is unchanged")
+		_check(client_socket.get_packet().get_string_from_utf8() == "final-result", "relayed result payload is unchanged")
+	await _wait_for(func() -> bool: return not reflector._relay_sessions.has("relay-match|relay-observer"))
+	_check(not reflector._relay_sessions.has("relay-match|relay-observer"), "finished match relay closes after the grace period")
 	host_socket.close()
 	client_socket.close()
 	reflector.shutdown()
 	reflector.queue_free()
 	await process_frame
 
-## Relay sessions and punch throttles used to linger until the reflector TTL
-## expired. They should be dropped as soon as a client-hosted bot match settles.
-func _check_relay_cleanup_on_match_end() -> void:
+## Abandoned and expired matches can drop relays without a delivery window.
+func _check_immediate_relay_cleanup() -> void:
 	var reflector := PunchReflectorScript.new()
 	root.add_child(reflector)
 	var probe := PacketPeerUDP.new()

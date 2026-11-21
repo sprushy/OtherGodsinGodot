@@ -115,17 +115,16 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 func on_turn_upkeep(game_manager: GameManager) -> void:
 	if game_manager == null or game_manager.current_player != card_owner:
 		return
-	var due_cards := _get_due_returned_cards(game_manager)
-	for card in due_cards:
+	var doomed_cards: Array[Card] = []
+	for card in _get_due_returned_cards(game_manager):
 		if card == null or not is_instance_valid(card):
 			continue
 		card.remove_status_effects_from_source_card(self, DOOMED_STATUS)
 		if card.current_zone == null or not card.current_zone.is_board_zone():
 			_cleanup_spirit_grant(card)
 			continue
-		game_manager.request_send_to_graveyard(card, Callable(), false, true)
-		if card.current_zone == null or not card.current_zone.is_board_zone():
-			_cleanup_spirit_grant(card)
+		doomed_cards.append(card)
+	game_manager.request_send_cards_to_graveyard(doomed_cards, Callable(), false, true)
 
 func on_any_card_moved(_game_manager: GameManager, moved_card: Card, from_zone: Zone, to_zone: Zone) -> void:
 	if moved_card == null:

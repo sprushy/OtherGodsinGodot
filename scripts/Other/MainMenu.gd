@@ -13610,6 +13610,10 @@ func _start_smoke_mode() -> void:
 		call_deferred("_run_card_test_gala_tura_smoke")
 		return
 
+	if role == "card_test_saving_grace_baldr":
+		call_deferred("_run_card_test_saving_grace_baldr_smoke")
+		return
+
 	if role == "resume":
 		var resume_timer := get_tree().create_timer(0.5)
 		resume_timer.timeout.connect(Callable(self, "_on_resume_match_pressed"))
@@ -15311,6 +15315,34 @@ func _run_card_test_gala_tura_smoke() -> void:
 		return
 
 	_finish_smoke_if_enabled("PASS:card_test_gala_tura targets=%d" % chosen_uids.size())
+
+func _run_card_test_saving_grace_baldr_smoke() -> void:
+	var card_test = _show_embedded_game("CardTest")
+	if card_test == null:
+		_fail_smoke_if_enabled("card_test_missing")
+		return
+	show_game()
+	await card_test.start_game()
+	card_test.load_saving_grace_vs_baldr_active_test_scenario()
+	await get_tree().process_frame
+	await get_tree().process_frame
+
+	if not card_test.game_input.submit_action({type = "upkeep_choice", choice = "mana"}):
+		_fail_smoke_if_enabled("card_test_saving_grace_baldr_upkeep_choice_failed")
+		return
+	if not await _wait_for_card_test_turn2_smoke_condition(
+		func() -> bool:
+			return card_test.game_manager.current_player == card_test.player1 \
+				and card_test.game_manager.has_resolved_turn_upkeep(),
+		180
+	):
+		_fail_smoke_if_enabled("card_test_saving_grace_baldr_upkeep_timeout")
+		return
+	if not await _settle_card_test_turn2_smoke_priority(card_test, 240):
+		_fail_smoke_if_enabled("card_test_saving_grace_baldr_priority_timeout")
+		return
+
+	_finish_smoke_if_enabled("PASS:card_test_saving_grace_baldr")
 
 func _wait_for_card_test_turn2_smoke_condition(predicate: Callable, max_frames: int) -> bool:
 	for _frame in range(max_frames):

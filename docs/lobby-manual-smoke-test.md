@@ -92,7 +92,9 @@ real two-window/two-network test proves the public UDP path.
 3. In the spectator window, open `View Bot Matches` and select that row.
 4. Confirm the loading overlay resolves into the match and that `full_state` arrives.
 5. Let the host or spectator reconnect once, then confirm the watch link survives.
-6. Check the host, spectator, and lobby-server consoles for the shared breadcrumb
+6. Let the match finish while spectating through the relay. Confirm the result
+   screen opens with Review Board, View Replay, and Back to Menu.
+7. Check the host, spectator, and lobby-server consoles for the shared breadcrumb
    prefix `Spectate breadcrumb`. Search that exact string in each console window;
    the `observer` and `match` fields let you line the three logs up:
    - Host: `spectate_advertising_started`, `endpoint_advertised`,
@@ -101,7 +103,7 @@ real two-window/two-network test proves the public UDP path.
    - Lobby: `host_endpoint_recorded`, `observe_requested`, `host_approval_requested`,
      `assignment_sent`, `relay_session_armed`, `punch_ready_received`,
      `spectator_endpoint_resolved`, `host_punch_relayed`,
-     `relay_sessions_disabled`
+     `relay_cleanup`
    - Spectator: `assignment_received`, `private_endpoint_ignored` or
      `private_endpoint_preferred`, `rendezvous_armed`, `bounce_sent`,
      `punch_ready_reported`, `prime_finished`, `dial_endpoint_selected`,
@@ -127,9 +129,8 @@ real two-window/two-network test proves the public UDP path.
    - Either way, `Spectate breadcrumb role=reflector stage=relay_ready ...`
      should appear on the lobby, followed by normal ENet/join breadcrumbs on
      both ends.
-   - When the match ends, expires, or its room closes, the lobby logs
-     `relay_sessions_disabled` for that `match` instead of waiting for the
-     reflector TTL.
+   - The lobby logs `relay_cleanup` with `grace_seconds=5.0` on completion to give
+     the result time to arrive. Expiration and room closure use zero grace.
    - Legacy single-line checks still present: `Spectator rendezvous: ...`,
      `Spectator punch observer=...: punching ...`, and
      `Spectator punch observer=...: skipped: ...` on the host.

@@ -50,6 +50,7 @@ const BOT_SELF_PLAY_BLOCK_LOG_INTERVAL_SECONDS := 60.0
 ## volunteer bot workers); the lobby only brokers the pairing and records the
 ## reported result. This bounds how long an unreported match may hold its room.
 const LOCAL_BOT_MATCH_RESULT_TIMEOUT_SECONDS := 3 * 60 * 60
+const LOCAL_BOT_MATCH_RESULT_RELAY_GRACE_SECONDS := 5.0
 ## How long the lobby waits for a client-hosted match's host to acknowledge a
 ## spectator approval before telling the spectator the match is not watchable.
 # A client host can receive the approval before its match session exists and
@@ -3679,17 +3680,16 @@ func _get_punch_bounce(key: String, max_age_seconds: float) -> Dictionary:
 	var bounce: Dictionary = punch_reflector.get_bounce(key, max_age_seconds)
 	return bounce if bounce is Dictionary else {}
 
-## Tear down relay sessions and punch throttles as soon as a client-hosted bot
-## match is settled, abandoned, or expired instead of waiting for the reflector
-## TTL to expire them.
-func _cleanup_local_bot_spectate_state(match_id: String, entry: Dictionary) -> void:
+## Clear punch throttles immediately. Completed matches can keep forwarding
+## briefly so ENet can deliver the final board and result to spectators.
+func _cleanup_local_bot_spectate_state(match_id: String, entry: Dictionary, relay_grace_seconds: float = 0.0) -> void:
 	if match_id.is_empty():
 		return
 	if punch_reflector != null and punch_reflector.has_method("disable_relay_session"):
 		var spectator_tokens = entry.get("spectator_match_tokens_by_session", {})
 		if spectator_tokens is Dictionary:
 			for observer_variant in (spectator_tokens as Dictionary).keys():
-				punch_reflector.disable_relay_session(match_id, str(observer_variant))
+				punch_reflector.disable_relay_session(match_id, str(observer_variant), relay_grace_seconds)
 	var stale_keys: Array[String] = []
 	for key_variant in _punch_ready_last_msec_by_key.keys():
 		var key := str(key_variant)
@@ -3697,7 +3697,7 @@ func _cleanup_local_bot_spectate_state(match_id: String, entry: Dictionary) -> v
 			stale_keys.append(key)
 	for key in stale_keys:
 		_punch_ready_last_msec_by_key.erase(key)
-	_spectate_breadcrumb("relay_sessions_disabled", {"match": match_id})
+	_spectate_breadcrumb("relay_cleanup", {"match": match_id, "grace_seconds": relay_grace_seconds})
 
 func _generate_spectator_token() -> String:
 	var crypto := Crypto.new()
@@ -4076,7 +4076,8 @@ func _handle_local_bot_match_result(peer_id: int, payload: Dictionary) -> void:
 			var loser_rank_name := str(loser_progress.get("rank_name", ""))
 			if loser_rank_name.begins_with("Iron") or loser_rank_name.begins_with("Bronze"):
 				match_history_store.set_serve_quarantined_next(loser_account_id, true)
-	_cleanup_local_bot_spectate_state(match_id, entry)
+	# The host reports through the lobby independently of its ENet result broadcast.
+	_cleanup_local_bot_spectate_state(match_id, entry, LOCAL_BOT_MATCH_RESULT_RELAY_GRACE_SECONDS)
 	_local_bot_matches_by_id.erase(match_id)
 	var room_id := str(entry.get("room_id", ""))
 	if not room_id.is_empty() and rooms_by_id.has(room_id):

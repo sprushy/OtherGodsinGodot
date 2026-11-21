@@ -99,6 +99,7 @@ var pending_humbaba_action: CardAction = null
 var pending_humbaba_target = null
 var pending_humbaba_prompt_uids: Array[String] = []
 var pending_combat_reveal_linger_action: CardAction = null
+var _combat_reveal_before_retreat: bool = false
 var _combat_reveal_wait_generation: int = 0
 var _board_leaving_activation_linger_pending: bool = false
 var _pending_end_turn_player: Player = null
@@ -175,6 +176,7 @@ func reset_runtime_state() -> void:
 	pending_humbaba_target = null
 	pending_humbaba_prompt_uids.clear()
 	pending_combat_reveal_linger_action = null
+	_combat_reveal_before_retreat = false
 	_combat_reveal_wait_generation = 0
 	_board_leaving_activation_linger_pending = false
 	_pending_end_turn_player = null
@@ -2111,6 +2113,13 @@ func _continue_pending_authoritative_graveyard_prompt_action() -> void:
 	var completion_command_type := str(action.event_data.get("deferred_authoritative_completion_command", "")).strip_edges()
 	_complete_deferred_authoritative_action(action, completion_command_type)
 
+func _complete_attack_or_wait_for_graveyard_choice(action: CardAction, completion_command_type: String) -> void:
+	var graveyard_command_type := _get_pending_authoritative_graveyard_prompt_command_type()
+	if not graveyard_command_type.is_empty():
+		_mark_deferred_authoritative_action(action, graveyard_command_type)
+		return
+	_complete_deferred_authoritative_action(action, completion_command_type)
+
 func _remove_resolved_action(action: CardAction) -> void:
 	if action == null or game_manager == null:
 		return
@@ -2216,57 +2225,45 @@ func _resolve_attack(action: CardAction) -> void:
 			game_manager._clear_combat_engagement_state(actual_target)
 			last_resolution_text = action.attacker.card_name + "'s attack fizzles — target is no longer on the board."
 			return
-		# Check for Askelladen Tactical Retreat prompts.
-		# If any combatant can retreat, delegate to the UI for the interactive prompt.
-		# Otherwise, resolve headlessly so the server can handle networked combat.
-		var retreat_prompts := _get_retreat_candidates(action.attacker, actual_target, action.source_player)
-		if not retreat_prompts.is_empty():
-			_reveal_combatants_before_retreat_prompt(action, actual_target)
-			retreat_prompts = _get_retreat_candidates(action.attacker, actual_target, action.source_player)
-		if not retreat_prompts.is_empty():
-			pending_retreat_action = action
-			pending_retreat_target = actual_target
-			pending_retreat_prompt_uids.clear()
-			for prompt in retreat_prompts:
-				if prompt != null:
-					pending_retreat_prompt_uids.append(str(prompt.uid))
-			pending_retreat_guardian_blocked_uids = _get_guardian_blocked_retreat_candidate_uids(action.attacker, actual_target)
-			_mark_deferred_authoritative_action(
-				action,
-				"combat_retreat_decision"
-			)
-			var target_player: Player = _get_card_controller(retreat_prompts[0])
-			_emit_ui_interaction_for_player(target_player, "combat_retreat", {
-				"action": action,
-				"target": actual_target,
-				"askelladen_uid": str(retreat_prompts[0].uid),
-			})
-			return
-		pending_humbaba_action = action
-		pending_humbaba_target = actual_target
-		pending_humbaba_prompt_uids = _get_humbaba_prompt_uids_for_attack(action, actual_target)
-		_mark_deferred_authoritative_action(
-			action,
-			"humbaba_augury_choice"
-		)
-		if _emit_next_pending_humbaba_prompt():
-			return
-		_clear_pending_humbaba_state()
-		# No retreat possible - resolve directly.
-		_finish_creature_combat(action, actual_target)
+		if not _offer_creature_combat_prompts(action, actual_target):
+			_finish_creature_combat(action, actual_target)
 		return
 	elif actual_target is Player:
 		pending_humbaba_action = action
 		pending_humbaba_target = actual_target
 		pending_humbaba_prompt_uids = _get_humbaba_prompt_uids_for_attack(action, actual_target)
-		_mark_deferred_authoritative_action(
-			action,
-			"humbaba_augury_choice"
-		)
 		if _emit_next_pending_humbaba_prompt():
 			return
 		_clear_pending_humbaba_state()
 		_finish_followers_attack(action, actual_target)
+
+func _offer_creature_combat_prompts(action: CardAction, target: Card, reveal_before_retreat: bool = true) -> bool:
+	var retreat_prompts := _get_retreat_candidates(action.attacker, target, action.source_player)
+	if not retreat_prompts.is_empty():
+		# Set up the combat pause before Reveal can request a target. That choice
+		# and its response window must finish before Tactical Retreat is offered.
+		if reveal_before_retreat and _begin_combat_reveal_linger(action, target, true):
+			return true
+		pending_retreat_action = action
+		pending_retreat_target = target
+		pending_retreat_prompt_uids.clear()
+		for prompt in retreat_prompts:
+			pending_retreat_prompt_uids.append(str(prompt.uid))
+		pending_retreat_guardian_blocked_uids = _get_guardian_blocked_retreat_candidate_uids(action.attacker, target)
+		_mark_deferred_authoritative_action(action, "combat_retreat_decision")
+		_emit_ui_interaction_for_player(_get_card_controller(retreat_prompts[0]), "combat_retreat", {
+			"action": action,
+			"target": target,
+			"askelladen_uid": str(retreat_prompts[0].uid),
+		})
+		return true
+	pending_humbaba_action = action
+	pending_humbaba_target = target
+	pending_humbaba_prompt_uids = _get_humbaba_prompt_uids_for_attack(action, target)
+	if _emit_next_pending_humbaba_prompt():
+		return true
+	_clear_pending_humbaba_state()
+	return false
 
 func _finish_followers_attack(action: CardAction, defending_player: Player) -> void:
 	if action == null or defending_player == null:
@@ -2290,57 +2287,45 @@ func _finish_followers_attack(action: CardAction, defending_player: Player) -> v
 	if feedback != "":
 		last_resolution_text += " " + feedback
 
-## Headless combat resolution (no retreat dialog needed).
-## Called by _resolve_attack when no Askelladen can retreat.
 func _finish_creature_combat(action: CardAction, target: Card) -> void:
 	if _begin_combat_reveal_linger(action, target):
 		return
 	_resolve_creature_combat_now(action, target)
 
-func _reveal_combatants_before_retreat_prompt(action: CardAction, target: Card) -> void:
-	if action == null or target == null:
-		return
-	var reveal_cards: Array[Card] = []
-	for combatant in [action.attacker, action.united_front_partner, target]:
-		if combatant != null and combatant.is_stealth and combatant not in reveal_cards:
-			reveal_cards.append(combatant)
-	if reveal_cards.is_empty():
-		return
-	for combatant in reveal_cards:
-		combatant.reveal_from_stealth(game_manager)
-	last_resolution_text = "%s revealed before combat." % _format_card_name_list(reveal_cards)
-	_request_ui_refresh()
-
-func _begin_combat_reveal_linger(action: CardAction, target: Card) -> bool:
+func _begin_combat_reveal_linger(action: CardAction, target: Card, before_retreat: bool = false) -> bool:
 	if action == null or target == null or pending_combat_reveal_linger_action != null:
 		return false
 
 	var reveal_cards: Array[Card] = []
 	for combatant in [action.attacker, action.united_front_partner, target]:
-		if combatant != null and combatant.is_stealth:
+		if combatant != null and combatant.is_stealth and combatant not in reveal_cards:
 			reveal_cards.append(combatant)
 
 	if reveal_cards.is_empty():
 		return false
 
 	var tree = _get_authoritative_resolution_tree()
-	if tree == null:
+	if tree == null and not before_retreat:
 		return false
 
 	pending_combat_reveal_linger_action = action
+	_combat_reveal_before_retreat = before_retreat
 	_mark_deferred_authoritative_action(action, "combat_reveal_linger")
 
 	for combatant in reveal_cards:
 		combatant.reveal_from_stealth(game_manager)
 
-	if action.united_front_partner == null:
+	if not before_retreat and action.united_front_partner == null:
 		game_manager.capture_committed_combat_snapshot(action.attacker, target)
 
 	last_resolution_text = "%s revealed before combat." % _format_card_name_list(reveal_cards)
 	_request_ui_refresh()
 
 	_combat_reveal_wait_generation += 1
-	_wait_for_combat_reveal_interactions_then_resume(action, target, _combat_reveal_wait_generation)
+	if tree == null:
+		call_deferred("_wait_for_combat_reveal_interactions_then_resume", action, target, _combat_reveal_wait_generation)
+	else:
+		_wait_for_combat_reveal_interactions_then_resume(action, target, _combat_reveal_wait_generation)
 
 	return true
 
@@ -2406,8 +2391,14 @@ func _resume_pending_combat_reveal(action: CardAction, target: Card) -> void:
 		return
 	if _has_pending_combat_reveal_interaction(action):
 		return
+	var before_retreat := _combat_reveal_before_retreat
 	pending_combat_reveal_linger_action = null
+	_combat_reveal_before_retreat = false
 	_combat_reveal_wait_generation += 1
+	if before_retreat and target.current_zone != null and target.current_zone.is_board_zone() \
+			and not _get_active_attackers(action).is_empty():
+		if _offer_creature_combat_prompts(action, target, false):
+			return
 	_resolve_creature_combat_now(
 		action,
 		target,
@@ -2479,6 +2470,10 @@ func _resolve_creature_combat_now(
 			completion_callback.call()
 
 	if not has_committed_snapshot and (target.current_zone == null or not target.current_zone.is_board_zone()):
+		for combatant in _get_active_attackers(action):
+			combatant.spend_attack_creature_action()
+			combatant.mark_attacked_this_turn()
+		game_manager._clear_combat_engagement_state(target)
 		last_resolution_text = attacker.card_name + "'s attack fizzles - target is no longer on the board."
 		if completion_callback.is_valid():
 			completion_callback.call()
@@ -2488,21 +2483,19 @@ func _resolve_creature_combat_now(
 	var partner_on_board := partner != null \
 		and _can_continue_declared_attack(partner)
 	if not has_committed_snapshot and not attacker_on_board and not partner_on_board:
+		game_manager._clear_combat_engagement_state(target)
 		last_resolution_text = "The attack fizzles - no attacker remains on the frontline."
 		if completion_callback.is_valid():
 			completion_callback.call()
 		return
 		
-	if partner != null:
-		game_manager.set_temporary_combat_follower_damage_halved(action.halve_follower_damage)
-		game_manager.resolve_united_front_combat(attacker, partner, target)
+	game_manager.set_temporary_combat_follower_damage_halved(action.halve_follower_damage)
+	var wrapped_finish := func() -> void:
 		game_manager.set_temporary_combat_follower_damage_halved(false)
 		finish.call()
+	if partner != null:
+		game_manager.resolve_united_front_combat(attacker, partner, target, wrapped_finish)
 	else:
-		game_manager.set_temporary_combat_follower_damage_halved(action.halve_follower_damage)
-		var wrapped_finish := func() -> void:
-			game_manager.set_temporary_combat_follower_damage_halved(false)
-			finish.call()
 		if action.interceptor != null:
 			game_manager.record_interception(action.interceptor)
 		game_manager.resolve_combat_with_continuation(attacker, target, wrapped_finish, action.interceptor != null)
@@ -2531,6 +2524,8 @@ func _get_declared_attack_fizzle_reason(attacker: Card, attacking_player: Player
 ## Returns any Askelladen cards in the combat that qualify for Tactical Retreat.
 func _get_retreat_candidates(attacker: Card, defender: Card, _turn_player: Player) -> Array:
 	var candidates: Array = []
+	if not _can_continue_declared_attack(attacker):
+		return candidates
 	for card in [attacker, defender]:
 		if not (card is Askelladen):
 			continue
@@ -2598,6 +2593,7 @@ func _emit_next_pending_humbaba_prompt() -> bool:
 		if humbaba.abilities_suppressed_by_effects():
 			pending_humbaba_prompt_uids.remove_at(0)
 			continue
+		_mark_deferred_authoritative_action(pending_humbaba_action, "humbaba_augury_choice")
 		humbaba.queue_augury_trigger_suppression()
 		var prompt_targets := humbaba.get_augury_cards(game_manager)
 		if prompt_targets.is_empty():
@@ -2661,7 +2657,7 @@ func _resume_pending_humbaba_after_auto_resolution(action: CardAction, actual_ta
 	if pending_combat_reveal_linger_action == action:
 		_mark_deferred_authoritative_action(action, "combat_reveal_linger")
 		return
-	_complete_deferred_authoritative_action(action, "humbaba_augury_choice")
+	_complete_attack_or_wait_for_graveyard_choice(action, "humbaba_augury_choice")
 
 func _continue_pending_humbaba_attack_resolution(action: CardAction, actual_target) -> void:
 	if action == null:
@@ -3436,10 +3432,16 @@ func _advance_authoritative_priority() -> void:
 	if game_manager.action_stack.is_empty():
 		_log_authoritative_flow_state("priority_advance:no_stack")
 		return
+	var top_action: CardAction = game_manager.action_stack.back()
+	if pending_combat_reveal_linger_action != null and top_action == pending_combat_reveal_linger_action:
+		_clear_priority_window_state()
+		if _get_authoritative_resolution_tree() == null:
+			var target: Card = top_action.interceptor if top_action.interceptor != null else top_action.target as Card
+			_resume_pending_combat_reveal(top_action, target)
+		return
 	var player := game_manager.priority_player
 	if player == null:
-		var restore_action: CardAction = game_manager.action_stack.back()
-		player = restore_action.initial_priority_player if restore_action.initial_priority_player != null else game_manager.get_opponent(restore_action.source_player)
+		player = top_action.initial_priority_player if top_action.initial_priority_player != null else game_manager.get_opponent(top_action.source_player)
 		game_manager.priority_player = player
 	if player == null:
 		_log_authoritative_flow_state("priority_advance:no_player")
@@ -3449,7 +3451,6 @@ func _advance_authoritative_priority() -> void:
 		return
 	var prompt_data := build_priority_prompt_data(player)
 	var prompt_offering_responses := get_priority_prompt_offering_responses(player)
-	var top_action: CardAction = game_manager.action_stack.back()
 	var force_priority_window := player_requires_priority_window(top_action, player)
 	_log_authoritative_flow_state("priority_advance:evaluate player=%s responses=%d force=%s top=%s" % [
 		_get_player_debug_label(player),
@@ -6795,7 +6796,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 					)
 					move_validated.emit(command)
 					return true
-				_complete_deferred_authoritative_action(action, "humbaba_augury_choice")
+				_complete_attack_or_wait_for_graveyard_choice(action, "humbaba_augury_choice")
 				if pending_target is Player:
 					_schedule_authoritative_deferred_action_check(
 						"humbaba_followers_after_augury",
@@ -7165,12 +7166,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if pending_card.uid != card_uid:
 				move_failed.emit("doorway_choice: pending card does not match")
 				return false
-			var doorway_resolved := game_manager.resolve_pending_doorway_choice(bool(command.get("send_to_abyss", false)))
-			# Declining one gateway can offer the next gateway for the same death.
-			# The first decision completed even though the graveyard send waits.
-			var offered_next_doorway := game_manager.has_pending_doorway_choice() \
-				and game_manager.get_pending_doorway_structure() != pending_structure
-			if not doorway_resolved and not offered_next_doorway:
+			if not game_manager.resolve_pending_doorway_choice(bool(command.get("send_to_abyss", false))):
 				move_failed.emit("doorway_choice: failed to resolve")
 				return false
 			move_validated.emit(command)
@@ -7270,7 +7266,7 @@ func _process_combat_retreat_decision(command: Dictionary) -> bool:
 	_finish_creature_combat(action, target)
 	if blocked_ask != null:
 		last_resolution_text = "Asaruludu's Guardian prevented %s's Tactical Retreat!" % blocked_ask.card_name
-	_complete_deferred_authoritative_action(action, "combat_retreat_decision")
+	_complete_attack_or_wait_for_graveyard_choice(action, "combat_retreat_decision")
 	return true
 
 func _queue_askelladen_retreat_priority_action(ask_card: Askelladen, attack_action: CardAction, target: Card) -> bool:

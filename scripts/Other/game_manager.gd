@@ -106,6 +106,8 @@ var _pending_doorway_combat_death: bool = false
 var _pending_doorway_destruction: bool = false
 var _pending_doorway_ignore_self_combat_replacement: bool = false
 var _pending_doorway_continue: Callable = Callable()
+var _pending_doorway_effect_source: Card = null
+var _queued_doorway_requests: Array[Callable] = []
 var _pending_return_to_hand_card: Card = null
 var _pending_return_to_hand_reason: String = ""
 var _pending_return_to_hand_send_to_abyss: bool = false
@@ -2317,7 +2319,8 @@ func creature_attack(attacker: Card, target) -> void:
 	var attack_resolved := false
 	if target is Card:
 		if united_front_partner != null:
-			resolve_united_front_combat(attacker, united_front_partner, target)
+			resolve_united_front_combat(attacker, united_front_partner, target, note_attack_resolved)
+			return
 		else:
 			resolve_combat(attacker, target)
 		attack_resolved = true
@@ -2611,17 +2614,26 @@ func resolve_combat(attacker: Card, defender: Card, continue_callback: Callable 
 	finish.call()
 	return true
 
-func resolve_united_front_combat(attacker: Card, partner: Card, defender: Card) -> void:
+func resolve_united_front_combat(
+	attacker: Card,
+	partner: Card,
+	defender: Card,
+	continue_callback: Callable = Callable()
+) -> void:
 	var active_attackers: Array[Card] = _get_active_united_front_attackers(attacker, partner)
-	if active_attackers.is_empty():
+	if active_attackers.is_empty() or defender == null:
+		if continue_callback.is_valid():
+			continue_callback.call()
 		return
 	if active_attackers.size() == 1:
-		resolve_combat(active_attackers[0], defender)
+		resolve_combat(active_attackers[0], defender, continue_callback)
 		return
 	var primary: Card = active_attackers[0]
 	var support: Card = active_attackers[1]
 	if is_attack_blocked_by_active_structure(primary, defender, [support]):
 		print(primary.card_name + " and " + support.card_name + " cannot engage " + defender.card_name + ".")
+		if continue_callback.is_valid():
+			continue_callback.call()
 		return
 	_begin_declared_combat(primary, defender)
 	_begin_declared_combat(support, defender)
@@ -2630,6 +2642,8 @@ func resolve_united_front_combat(attacker: Card, partner: Card, defender: Card) 
 	var finish := func() -> void:
 		_notify_after_united_front_combat(attacker, partner, defender)
 		_clear_combat_engagement_state(defender)
+		if continue_callback.is_valid():
+			continue_callback.call()
 	for combatant in active_attackers:
 		combatant.reveal_from_stealth(self)
 	defender.reveal_from_stealth(self)
@@ -2666,10 +2680,12 @@ func resolve_united_front_combat(attacker: Card, partner: Card, defender: Card) 
 		print("	STR vs Structure RES: %d vs %d" % [combined_strength, defender_res])
 		if combined_strength > defender_res:
 			print("	Structure destroyed!")
-			_combat_kill(primary, defender)
+			_combat_kill_deferred(primary, defender, finish)
+			return
 		finish.call()
 		return
 
+	var both_attackers_defeated := false
 	if defender.card_type == Card.CardType.CREATURE:
 		var primary_str_for_damage := _get_giants_disdain_damage_stat(primary, [defender], primary_strength)
 		var support_str_for_damage := _get_giants_disdain_damage_stat(support, [defender], support_strength)
@@ -2694,7 +2710,8 @@ func resolve_united_front_combat(attacker: Card, partner: Card, defender: Card) 
 					active_attackers
 				)
 				print("	%s destroyed! %s loses %d followers" % [defender.card_name, defender_controller.player_name, diff])
-				_combat_kill(primary, defender)
+				_combat_kill_deferred(primary, defender, finish)
+				return
 			elif defender_str_real > combined_strength:
 				var diff := _apply_combat_follower_damage(
 					defender, attacker_controller, defender_str_real - combined_strength_for_damage,
@@ -2709,17 +2726,16 @@ func resolve_united_front_combat(attacker: Card, partner: Card, defender: Card) 
 					note_player_feedback("United Front loses the clash.")
 				else:
 					note_player_feedback("United Front loses! Both attackers are destroyed.")
-				_combat_kill(defender, primary)
-				_combat_kill(defender, support)
+				both_attackers_defeated = true
 			else:
 				print("	Tie! Both united attackers and the defender are destroyed")
-				var void_primary := _should_class_rend(defender, primary)
-				var void_support := _should_class_rend(defender, support)
-				var void_defender := _should_class_rend(primary, defender)
 				var simultaneous_casualties := _get_simultaneous_combat_casualties(primary, defender, support)
-				_combat_kill_routed(defender, primary, void_primary, simultaneous_casualties)
-				_combat_kill_routed(defender, support, void_support, simultaneous_casualties)
-				_combat_kill_routed(primary, defender, void_defender, simultaneous_casualties)
+				_combat_kill_sequence_deferred([
+					{"killer": defender, "victim": primary, "do_void": _should_class_rend(defender, primary), "suppress_ally_kill_sources": simultaneous_casualties},
+					{"killer": defender, "victim": support, "do_void": _should_class_rend(defender, support), "suppress_ally_kill_sources": simultaneous_casualties},
+					{"killer": primary, "victim": defender, "do_void": _should_class_rend(primary, defender), "suppress_ally_kill_sources": simultaneous_casualties},
+				], finish)
+				return
 		else:
 			var vs_defense_bonus := 0
 			var conversion_strength_text := combined_strength_for_damage_text
@@ -2738,7 +2754,8 @@ func resolve_united_front_combat(attacker: Card, partner: Card, defender: Card) 
 			print("\tCombined STR vs RES: %d vs %d" % [attacker_str_vs_res, defender_res_real])
 			if attacker_str_vs_res > defender_res_real:
 				print("	%s destroyed!" % defender.card_name)
-				_combat_kill(primary, defender)
+				_combat_kill_deferred(primary, defender, finish)
+				return
 			elif attacker_str_vs_res < defender_res_real:
 				var diff_damage: int = _convert_combat_follower_damage(
 					attacker_controller,
@@ -2751,19 +2768,24 @@ func resolve_united_front_combat(attacker: Card, partner: Card, defender: Card) 
 				print("	%d followers convert to %s" % [diff_damage, defender_controller.player_name])
 				if _ferocious_defence_triggers(defender, attacker_str_vs_res):
 					print("	Ferocious Defence! United Front attackers destroyed!")
-					_combat_kill(defender, primary)
-					_combat_kill(defender, support)
+					both_attackers_defeated = true
 			else:
 				if _ferocious_defence_triggers(defender, attacker_str_vs_res):
 					print("	Exact match - no follower conversion")
 					print("	Ferocious Defence! United Front attackers destroyed!")
-					_combat_kill(defender, primary)
-					_combat_kill(defender, support)
+					both_attackers_defeated = true
 				else:
 					print("	Exact match - no effect")
 	elif defender.card_type == Card.CardType.EQUIPMENT and defender.equipped_on == null:
 		print("	Equipment destroyed!")
-		_combat_kill(primary, defender)
+		_combat_kill_deferred(primary, defender, finish)
+		return
+	if both_attackers_defeated:
+		_combat_kill_sequence_deferred([
+			{"killer": defender, "victim": primary, "do_void": _should_class_rend(defender, primary)},
+			{"killer": defender, "victim": support, "do_void": _should_class_rend(defender, support)},
+		], finish)
+		return
 	finish.call()
 
 func resolve_combat_with_continuation(
@@ -3964,6 +3986,20 @@ func request_send_to_graveyard(
 			continue_callback.call()
 		return true
 	var graveyard_replacements := _get_graveyard_replacement_sources(card)
+	var effect_source := get_effect_source_card()
+	# Separate effects can destroy cards during the same turn-start sequence.
+	if not graveyard_replacements.is_empty() and has_pending_doorway_choice():
+		var from_zone := card.current_zone
+		_queued_doorway_requests.append(func() -> void:
+			if card.current_zone != from_zone:
+				if continue_callback.is_valid():
+					continue_callback.call()
+				return
+			run_with_effect_source(effect_source, func() -> void:
+				request_send_to_graveyard(card, continue_callback, combat_death, destruction, ignore_self_combat_replacement, source_card)
+			)
+		)
+		return false
 	if combat_death or destruction:
 		_expect_match_destruction(card, source_card if source_card != null else get_effect_source_card(), source_card != null)
 	else:
@@ -3976,6 +4012,7 @@ func request_send_to_graveyard(
 		_pending_doorway_destruction = destruction
 		_pending_doorway_ignore_self_combat_replacement = ignore_self_combat_replacement
 		_pending_doorway_continue = continue_callback
+		_pending_doorway_effect_source = effect_source
 		doorway_choice_requested.emit(_pending_doorway_structure, card, combat_death, destruction)
 		return false
 	return _send_to_graveyard_with_hook_resolved(
@@ -4039,18 +4076,21 @@ func request_send_cards_to_graveyard(
 			destroyed_count
 		)
 		return
+	var effect_source := get_effect_source_card()
 	var on_continue := func() -> void:
 		var next_destroyed_count := destroyed_count
 		if _counts_as_destroyed_destination(card):
 			next_destroyed_count += 1
-		request_send_cards_to_graveyard(
-			working_queue,
-			completion_callback,
-			combat_death,
-			destruction,
-			ignore_self_combat_replacement,
-			1,
-			next_destroyed_count
+		run_with_effect_source(effect_source, func() -> void:
+			request_send_cards_to_graveyard(
+				working_queue,
+				completion_callback,
+				combat_death,
+				destruction,
+				ignore_self_combat_replacement,
+				1,
+				next_destroyed_count
+			)
 		)
 	request_send_to_graveyard(
 		card,
@@ -4258,37 +4298,28 @@ func _is_turn_destruction_ward_protected(card: Card) -> bool:
 func has_pending_doorway_choice() -> bool:
 	return _pending_doorway_structure != null and _pending_doorway_card != null
 
+## Returns whether a choice was consumed. Its casualty may still await another Doorway.
 func resolve_pending_doorway_choice(send_to_abyss: bool) -> bool:
 	if not has_pending_doorway_choice():
 		return false
+	if not send_to_abyss and _advance_pending_doorway_choice():
+		return true
 	var card := _pending_doorway_card
 	var combat_death := _pending_doorway_combat_death
 	var destruction := _pending_doorway_destruction
 	var ignore_self_combat_replacement := _pending_doorway_ignore_self_combat_replacement
 	var continue_callback := _pending_doorway_continue
-	if send_to_abyss:
-		_clear_pending_doorway_choice()
-		var abyss_success := _send_to_graveyard_with_hook_resolved(
-			card,
-			true,
-			combat_death,
-			destruction,
-			continue_callback,
-			ignore_self_combat_replacement
-		)
-		return abyss_success
-	if _advance_pending_doorway_choice():
-		return false
+	var effect_source := _pending_doorway_effect_source
 	_clear_pending_doorway_choice()
-	var graveyard_success := _send_to_graveyard_with_hook_resolved(
-		card,
-		false,
-		combat_death,
-		destruction,
-		continue_callback,
-		ignore_self_combat_replacement
+	run_with_effect_source(effect_source, func() -> void:
+		_send_to_graveyard_with_hook_resolved(
+			card, send_to_abyss, combat_death, destruction, continue_callback, ignore_self_combat_replacement
+		)
 	)
-	return graveyard_success
+	while not has_pending_doorway_choice() and not _queued_doorway_requests.is_empty():
+		var request: Callable = _queued_doorway_requests.pop_front()
+		request.call()
+	return true
 
 func _advance_pending_doorway_choice() -> bool:
 	if _pending_doorway_card == null:
@@ -4319,6 +4350,7 @@ func _clear_pending_doorway_choice() -> void:
 	_pending_doorway_destruction = false
 	_pending_doorway_ignore_self_combat_replacement = false
 	_pending_doorway_continue = Callable()
+	_pending_doorway_effect_source = null
 func banish_card_with_hook(card: Card) -> void:
 	_send_to_abyss_with_hook(card)
 

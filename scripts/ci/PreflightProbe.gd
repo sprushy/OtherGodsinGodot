@@ -53,6 +53,10 @@ func run() -> bool:
 	_check_match_command_registry_coverage(failures)
 	_check_command_authority(failures)
 	_check_combat_rounding(failures)
+	_check_reveal_before_tactical_retreat(failures)
+	_check_united_front_doorway(failures)
+	_check_ragnarok_doorway(failures)
+	_check_freyja_doorway(failures)
 	_check_card_interception_exceptions(failures)
 	_check_target_prompt_refresh_during_submission(failures)
 	_check_network_payload_guards(failures)
@@ -157,6 +161,7 @@ func _release_fixtures() -> void:
 		game.action_stack.clear()
 		game.resolving_stack_actions.clear()
 		game._pending_doorway_continue = Callable()
+		game._queued_doorway_requests.clear()
 		game._pending_return_to_hand_continue = Callable()
 		game._deferred_combat_resume = Callable()
 	_fixture_games.clear()
@@ -3219,6 +3224,207 @@ func _check_bot_jiang_counterstroke(failures: PackedStringArray) -> void:
 			or bot._is_attack_target_tactically_bad(attacker, jiang):
 		failures.append("Bot still avoided enemy Jiang after its Counterstroke counters were spent")
 	bot.detach()
+
+func _check_reveal_before_tactical_retreat(failures: PackedStringArray) -> void:
+	for destroy_attacker in [false, true]:
+		var game := _new_fixture_game()
+		var attacking_player := _new_fixture_player()
+		var defending_player := _new_fixture_player()
+		game.players.assign([attacking_player, defending_player])
+		game.current_player = attacking_player
+		game.other_player = defending_player
+		game.turn_number = 3
+		var manager := _new_fixture_match(game)
+		var attacker := Askelladen.new()
+		attacker.card_owner = attacking_player
+		attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
+		attacking_player.frontline_zones[0].add_card(attacker)
+		var priest := MasmassuPriest.new()
+		priest.card_owner = defending_player
+		priest.creature_mode = Card.CreatureMode.DEFENSIVE
+		priest.is_stealth = true
+		priest.is_face_down = true
+		defending_player.frontline_zones[0].add_card(priest)
+		var other_creature := BrownBear.new()
+		other_creature.card_owner = attacking_player
+		attacking_player.reserve_zones[1].add_card(other_creature)
+
+		var attack := CardAction.new()
+		attack.type = CardAction.Type.ATTACK
+		attack.source_player = attacking_player
+		attack.attacker = attacker
+		attack.target = priest
+		game.push_to_stack(attack)
+		manager.resolve_action(attack)
+		manager._release_next_queued_ui_interaction()
+		if not manager.has_pending_ui_interaction(defending_player, "masmassu_priest_reveal", priest.uid) \
+				or manager.pending_retreat_action != null:
+			failures.append("Askelladen's attack blocked the Priest's Reveal choice behind Tactical Retreat")
+			continue
+
+		manager.set_priority_preferences(attacking_player, {"combat": true}, false)
+		var reveal_target: Card = attacker if destroy_attacker else other_creature
+		var reveal_ok := manager.process_command({
+			"type": "masmassu_priest_reveal_choice", "source_uid": priest.uid, "target_uid": reveal_target.uid,
+		}, {"player_index": 1})
+		manager.advance_priority()
+		if not reveal_ok or not manager.has_pending_ui_interaction(attacking_player, "priority") \
+				or manager.pending_retreat_action != null or game.action_stack.back() == attack:
+			failures.append("Dalkhu Break did not offer its response window before Tactical Retreat")
+			continue
+		if not manager.process_command({"type": "priority_pass"}, {"player_index": 0}):
+			failures.append("Could not pass priority on Dalkhu Break during Askelladen's attack")
+			continue
+		manager.advance_priority()
+		if reveal_target.current_zone != attacking_player.graveyard_zone:
+			failures.append("Dalkhu Break did not destroy its target during Askelladen's attack")
+			continue
+		if not destroy_attacker:
+			if not manager.has_pending_ui_interaction(attacking_player, "combat_retreat"):
+				failures.append("Askelladen did not get Tactical Retreat after the Priest's Reveal resolved")
+				continue
+			manager.set_priority_preferences(attacking_player, {}, false)
+			if not manager.process_command({
+				"type": "combat_retreat_decision", "askelladen_uid": attacker.uid, "retreat": true,
+			}, {"player_index": 0}) or attacker.current_zone != attacking_player.deck_zone \
+					or priest.current_zone != defending_player.deck_zone:
+				failures.append("Tactical Retreat did not shelve both creatures after the Priest's Reveal")
+		if manager.has_unresolved_stack_action_window():
+			failures.append("Askelladen's attack left the combat stack locked after the Priest's Reveal")
+
+func _new_doorway_match() -> MatchManager:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.setup_game()
+	game.turn_number = 2
+	game.sfx_enabled = false
+	var doorway := DoorwayToTheVoid.new()
+	doorway.card_owner = opponent
+	opponent.reserve_zones[0].add_card(doorway)
+	return _new_fixture_match(game)
+
+func _answer_doorway_choice(manager: MatchManager, card: Card, send_to_abyss: bool) -> bool:
+	var game := manager.game_manager
+	var doorway := game.get_pending_doorway_structure()
+	return doorway != null and game.get_pending_doorway_card() == card \
+		and manager.process_command({
+			"type": "doorway_choice", "structure_uid": doorway.uid, "card_uid": card.uid,
+			"send_to_abyss": send_to_abyss,
+		}, {"player_index": game.players.find(doorway.card_owner)})
+
+func _check_united_front_doorway(failures: PackedStringArray) -> void:
+	for defender_strength in [14, 10]:
+		var manager := _new_doorway_match()
+		var game := manager.game_manager
+		var player := game.current_player
+		var opponent := game.other_player
+		var attacker := RoboticFootsoldier.new()
+		var partner := RoboticFootsoldier.new()
+		var defender := BrownBear.new()
+		for card: Card in [attacker, partner]:
+			card.card_owner = player
+			card.creature_mode = Card.CreatureMode.AGGRESSIVE
+			card.strength = 5
+		player.frontline_zones[0].add_card(attacker)
+		player.frontline_zones[1].add_card(partner)
+		defender.card_owner = opponent
+		defender.creature_mode = Card.CreatureMode.AGGRESSIVE
+		defender.strength = defender_strength
+		opponent.frontline_zones[0].add_card(defender)
+
+		var attack := CardAction.new()
+		attack.type = CardAction.Type.ATTACK
+		attack.source_player = player
+		attack.attacker = attacker
+		attack.united_front_partner = partner
+		attack.target = defender
+		game.push_to_stack(attack)
+		manager.resolve_action(attack)
+		if not _answer_doorway_choice(manager, attacker, true) or not manager.has_unresolved_stack_action_window() \
+				or not _answer_doorway_choice(manager, partner, false):
+			failures.append("United Front did not wait for each attacker's Doorway choice")
+			continue
+		if defender_strength == 10 and not _answer_doorway_choice(manager, defender, false):
+			failures.append("United Front tie did not offer a Doorway choice for the defender")
+		if attacker.current_zone != player.abyss_zone or partner.current_zone != player.graveyard_zone \
+				or defender.current_zone != (opponent.graveyard_zone if defender_strength == 10 else opponent.frontline_zones[0]) \
+				or not game.has_resolved_attack_this_turn or manager.has_unresolved_stack_action_window():
+			failures.append("United Front did not complete after its Doorway choices")
+
+func _check_ragnarok_doorway(failures: PackedStringArray) -> void:
+	var manager := _new_doorway_match()
+	var game := manager.game_manager
+	var player := game.current_player
+	var doorway := game.other_player.reserve_zones[0].cards[0] as DoorwayToTheVoid
+	game._upkeep_resolved_turn = game.turn_number
+	player.mana = Ragnarok.UNLOCK_COST
+	var power := Ragnarok.new()
+	power.card_owner = player
+	player.power_zones[0].add_card(power)
+	var victims: Array[Card] = [BrownBear.new(), BrownBear.new()]
+	for i in range(victims.size()):
+		victims[i].card_owner = player
+		player.frontline_zones[i].add_card(victims[i])
+	for i in range(Ragnarok.HAND_LIMIT + 1):
+		var card := BrownBear.new()
+		card.card_owner = player
+		player.hand_zone.add_card(card)
+	if not manager.process_command({"type": "unlock_power", "power_uid": power.uid}, {"player_index": 0}) \
+			or power.get_pending_discard_player(game) != null \
+			or not _answer_doorway_choice(manager, victims[0], false) \
+			or power.get_pending_discard_player(game) != null \
+			or not _answer_doorway_choice(manager, victims[1], true):
+		failures.append("Ragnarok did not finish both Doorway choices before asking for discards")
+		return
+	if not manager.process_command({
+		"type": "ragnarok_discard_choice", "source_uid": power.uid, "target_uid": player.hand_zone.cards[0].uid,
+	}, {"player_index": 0}) or player.hand_zone.get_card_count() != Ragnarok.HAND_LIMIT \
+			or victims[0].current_zone != player.graveyard_zone or victims[1].current_zone != player.abyss_zone \
+			or doorway.current_zone != game.other_player.graveyard_zone or not game.attack_restrictions.has(player) \
+			or power.get_relock_turns_remaining(game) != Ragnarok.RELOCK_TURNS \
+			or not manager.get_pending_ui_interaction_entries().is_empty():
+		failures.append("Ragnarok did not finish destruction, discards, and relock after Doorway choices")
+
+func _check_freyja_doorway(failures: PackedStringArray) -> void:
+	for active in [false, true]:
+		var manager := _new_doorway_match()
+		var game := manager.game_manager
+		var player := game.current_player
+		var freyja: Card = FreyjaActive.new() if active else Freyja.new()
+		freyja.card_owner = player
+		var god_zone := player.frontline_zones[4] if active else player.god_zone
+		god_zone.add_card(freyja)
+		var warriors: Array[Card] = [HariiWarrior.new(), HariiWarrior.new()]
+		for i in range(warriors.size()):
+			warriors[i].card_owner = player
+			player.frontline_zones[i].add_card(warriors[i])
+			if active:
+				(freyja as FreyjaActive)._apply_open_sessrumnir_effects(warriors[i], game)
+			else:
+				(freyja as Freyja)._apply_receiver_of_the_slain(warriors[i], game)
+		game.start_turn()
+		var upkeep := {"type": "upkeep_choice", "choice": "skip"}
+		if active and not manager.process_command(upkeep, {"player_index": 0}):
+			failures.append("Freyja, Active God could not finish upkeep to trigger warrior expiration")
+			continue
+		var other_casualty := BrownBear.new()
+		other_casualty.card_owner = player
+		player.frontline_zones[2].add_card(other_casualty)
+		game.request_send_to_graveyard(other_casualty, Callable(), false, true)
+		if not _answer_doorway_choice(manager, warriors[0], true) \
+				or not _answer_doorway_choice(manager, warriors[1], false) \
+				or not _answer_doorway_choice(manager, other_casualty, false):
+			failures.append("%s did not resolve consecutive Doorway choices during warrior expiration" % freyja.card_name)
+			continue
+		if not active and not manager.process_command(upkeep, {"player_index": 0}):
+			failures.append("Freyja could not finish upkeep after the Doorway choices")
+		if warriors[0].current_zone != player.abyss_zone or warriors[1].current_zone != player.graveyard_zone \
+				or warriors[0].has_type("Spirit") or warriors[1].has_type("Spirit") \
+				or other_casualty.current_zone != player.graveyard_zone or game.has_pending_doorway_choice() \
+				or not manager.get_pending_ui_interaction_entries().is_empty():
+			failures.append("%s left warrior expiration or a Doorway choice unfinished" % freyja.card_name)
 
 func _check_bot_reveal_defense(failures: PackedStringArray) -> void:
 	var game := _new_fixture_game()
