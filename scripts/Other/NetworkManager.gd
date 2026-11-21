@@ -75,6 +75,7 @@ var _managed_multiplayer_api: MultiplayerAPI = null
 var _registered_multiplayer_root_path: NodePath = NodePath("")
 var _suppress_disconnect_events_until_msec: int = 0
 var _client_websocket_url: String = ""
+var _client_punch_local_port: int = 0
 var _websocket_mount: Node = null
 # NAT hole punching: public endpoints to keep open for spectators, keyed by
 # observer session id; plus the tick accumulator for the punch _process loop.
@@ -181,8 +182,9 @@ func create_server(port: int = 12345, assign_local_host_player: bool = true) -> 
 		_trace("server started on port %d path=%s" % [port, str(get_path())])
 	return err
 
-func create_client(address: String = "127.0.0.1", port: int = 12345) -> Error:
+func create_client(address: String = "127.0.0.1", port: int = 12345, punch_local_port: int = 0) -> Error:
 	_client_websocket_url = ""
+	_client_punch_local_port = 0
 	last_client_address = address
 	last_client_port = port
 	var api := _ensure_multiplayer_api()
@@ -190,8 +192,14 @@ func create_client(address: String = "127.0.0.1", port: int = 12345) -> Error:
 		_trace("create_client failed: multiplayer unavailable")
 		return ERR_UNAVAILABLE
 	peer = ENetMultiplayerPeer.new()
-	var err := (peer as ENetMultiplayerPeer).create_client(address, port)
+	var enet_peer := peer as ENetMultiplayerPeer
+	var err := enet_peer.create_client(address, port, 0, 0, 0, punch_local_port)
+	if err != OK and punch_local_port > 0:
+		# The probe's port may have been taken before ENet could bind it.
+		err = enet_peer.create_client(address, port)
 	if err == OK:
+		if punch_local_port > 0:
+			_client_punch_local_port = enet_peer.get_host().get_local_port()
 		api.multiplayer_peer = peer
 		is_server = false
 		print("Client connecting to ", address, ":", port)
@@ -205,6 +213,7 @@ func create_client(address: String = "127.0.0.1", port: int = 12345) -> Error:
 ## include the scheme. wss:// uses the engine's certificate verification.
 func create_client_websocket(url: String) -> Error:
 	_client_websocket_url = url
+	_client_punch_local_port = 0
 	last_client_address = url
 	last_client_port = -1
 	var api := _ensure_multiplayer_api()
@@ -251,10 +260,10 @@ func create_server_websocket(port: int, bind_address: String = "127.0.0.1") -> E
 		_trace("websocket create_server failed on port %d error=%d" % [port, err])
 	return err
 
-func create_match_client(address: String, port: int, websocket_url: String = "", prefer_websocket: bool = false) -> Error:
+func create_match_client(address: String, port: int, websocket_url: String = "", prefer_websocket: bool = false, punch_local_port: int = 0) -> Error:
 	if prefer_websocket and not websocket_url.is_empty():
 		return create_client_websocket(websocket_url)
-	var err := create_client(address, port)
+	var err := create_client(address, port, punch_local_port)
 	_client_websocket_url = websocket_url
 	return err
 
@@ -332,10 +341,11 @@ func reconnect_client(address: String = "", port: int = -1) -> Error:
 		connect_address = last_client_address
 	var connect_port := port if port > 0 else last_client_port
 	var websocket_url := connect_address if connect_address.begins_with("wss://") or connect_address.begins_with("ws://") else _client_websocket_url
+	var punch_local_port := _client_punch_local_port
 	disconnect_client()
 	if not websocket_url.is_empty():
 		return create_client_websocket(websocket_url)
-	return create_client(connect_address, connect_port)
+	return create_client(connect_address, connect_port, punch_local_port)
 
 # ---------------------------------------------------------------------------
 # NAT hole punching for spectating client-hosted matches
@@ -367,13 +377,15 @@ func begin_spectator_punch(observer_session_id: String, target_ip: String, targe
 	var punch_id := observer_session_id.strip_edges()
 	if punch_id.is_empty() or target_ip.strip_edges().is_empty() or target_port <= 0:
 		return ERR_INVALID_PARAMETER
+	var enet_connection := _get_bound_enet_connection()
+	if not is_server or enet_connection == null:
+		return ERR_UNAVAILABLE
 	_punch_targets[punch_id] = {
 		"ip": target_ip.strip_edges(),
 		"port": target_port,
 		"expires_msec": Time.get_ticks_msec() + int(PUNCH_TARGET_TTL_SECONDS * 1000.0),
 	}
-	# Fire the first punch on the next frame; the spectator may be dialing now.
-	_punch_elapsed = PUNCH_PACKET_INTERVAL_SECONDS
+	enet_connection.socket_send(target_ip.strip_edges(), target_port, PunchReflectorScript.make_marker(PunchReflectorScript.PUNCH_KIND_PACKET, ""))
 	return OK
 
 func clear_spectator_punch() -> void:

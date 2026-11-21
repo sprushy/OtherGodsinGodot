@@ -2188,6 +2188,16 @@ func _build_full_ladder_for_best_of(best_of: int) -> Array[Dictionary]:
 			return a_record_score > b_record_score
 		return a["name"].nocasecmp_to(b["name"]) < 0
 	)
+	var unique_ladder: Array[Dictionary] = []
+	var seen_display_names: Dictionary = {}
+	for row in ladder:
+		var display_name := str(row.get("name", "")).strip_edges().to_lower()
+		if not display_name.is_empty() and seen_display_names.has(display_name):
+			continue
+		if not display_name.is_empty():
+			seen_display_names[display_name] = true
+		unique_ladder.append(row)
+	ladder = unique_ladder
 	for index in range(ladder.size()):
 		ladder[index]["ladder_position"] = index + 1
 	return ladder
@@ -2871,6 +2881,11 @@ func _refresh_ranked_bot_deck_pool() -> void:
 			var saved_last_id := str(loaded.get("last_replayed_id", ""))
 			if saved_count == result_count and saved_last_id == last_result_id and _ranked_bot_deck_pool.load_state(_pool_state_path):
 				_pool_result_count = result_count
+				var community_bots := _load_all_community_bots()
+				for c_bot in community_bots:
+					_ranked_bot_deck_pool.ensure_community_bot(c_bot)
+				_ranked_bot_deck_pool._ensure_unique_deck_names()
+				_ranked_bot_deck_pool.save_state(_pool_state_path, result_count)
 				return
 	var community_bot_ids := _get_community_bot_ids()
 	if not _same_community_bot_ids(_known_community_bot_ids, community_bot_ids):

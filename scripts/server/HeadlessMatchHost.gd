@@ -104,7 +104,8 @@ func setup_transport(
 		network_manager.create_match_client(
 			server_ip, server_port,
 			str(client_match_info.get("match_websocket_url", "")),
-			bool(client_match_info.get("prefer_websocket", false))
+			bool(client_match_info.get("prefer_websocket", false)),
+			int(client_match_info.get("spectator_punch_local_port", 0))
 		)
 	else:
 		network_manager.is_server = true

@@ -613,9 +613,9 @@ the port.
     `spectate_listen`, the recorded endpoint is exactly what spectators must
     dial, for any NAT that keeps endpoint-independent UDP mappings.
   - An assigned spectator sends marker packets (kind `client`, tagged with the
-    match id and its observer session id) from its dialing ENet socket while
-    it is connecting, and reports readiness via
-    `LOCAL_BOT_MATCH_PUNCH_READY`.
+    match id and its observer session id) from the same local UDP port that
+    ENet will use. It reports readiness via `LOCAL_BOT_MATCH_PUNCH_READY`
+    and briefly waits for a punch from the host before starting ENet.
 - **Signaling** stays on the reliable lobby connection:
   - Punch-mode spectate reports (`via_punch`) are merged only when a fresh
     host bounce is on record; the resulting endpoint flows into the room list
@@ -626,9 +626,9 @@ the port.
     punches that endpoint from its ENet socket for ~60 s (re-punched on every
     spectator reconnect report).
 - **Dial**: the spectator connects as a normal ENet client to the advertised
-  public endpoint; the host punch opens its NAT on restricted routers before
-  the first connect packets arrive, and MatchClient's existing retry loop
-  re-bounces and re-reports if the first attempt races the punch.
+  public endpoint. If the punch is delayed, the client still starts ENet
+  after a short wait. Retries keep the same local port when available, bounce
+  the reflector again, and report readiness from the active socket.
 - Punching is best-effort: symmetric/port-preserving NATs on either side can
   still deny it, in which case the room stays unwatchable and the UPnP/LAN
   paths remain the reliable options. The reflector prunes old bounces and the

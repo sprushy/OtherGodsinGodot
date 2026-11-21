@@ -160,6 +160,15 @@ func refresh(results: Array[Dictionary]) -> void:
 func get_eliminated_bot_match_ids() -> Dictionary:
 	return _eliminated_bot_match_ids.duplicate()
 
+static func _merge_bot_records(target: Dictionary, source: Dictionary) -> void:
+	# Discard the phantom clone's record: do not sum wins/losses/draws or stars.
+	# The stronger target bot keeps its own record intact.
+	# Adopt the permanent canonical list_id from source if target was using a temporary match_ id.
+	var target_id := str(target.get("list_id", ""))
+	var source_id := str(source.get("list_id", ""))
+	if target_id.begins_with("match_") and not source_id.begins_with("match_") and not source_id.is_empty():
+		target["list_id"] = source_id
+
 func _ensure_unique_deck_names() -> void:
 	var decks: Array[Dictionary] = []
 	for god_name in _by_god:
@@ -174,22 +183,62 @@ func _ensure_unique_deck_names() -> void:
 	var needs_name: Array[Dictionary] = []
 
 	# Pass 1: Community bots (owner_name != "") are immutable anchors.
-	# Their author-given name must NEVER be changed or stolen.
+	# Consolidate any duplicate entries that claim the same author name.
+	var community_by_name: Dictionary = {}
+	var community_dups_to_purge: Array[Dictionary] = []
 	for entry: Dictionary in decks:
 		var deck: Dictionary = entry["deck"]
-		var list_id := str(deck.get("list_id", "")).strip_edges()
 		var owner_name := str(deck.get("owner_name", "")).strip_edges()
-		if not owner_name.is_empty():
-			var self_name := str(deck.get("self_play_name", "")).strip_edges()
-			var deck_name := str(deck.get("deck_name", "")).strip_edges()
-			var effective_name := deck_name
-			if _is_generic_bot_name(deck_name) and not self_name.is_empty() and not _is_generic_bot_name(self_name):
-				effective_name = self_name
-				deck["deck_name"] = effective_name
-			if not effective_name.is_empty():
-				used_names[effective_name.to_lower()] = true
+		if owner_name.is_empty():
+			continue
+		var self_name := str(deck.get("self_play_name", "")).strip_edges()
+		var deck_name := str(deck.get("deck_name", "")).strip_edges()
+		var effective_name := deck_name
+		if _is_generic_bot_name(deck_name) and not self_name.is_empty() and not _is_generic_bot_name(self_name):
+			effective_name = self_name
+			deck["deck_name"] = effective_name
+		if effective_name.is_empty() or _is_generic_bot_name(effective_name):
+			continue
+
+		var name_key := effective_name.to_lower()
+		if community_by_name.has(name_key):
+			var existing_entry: Dictionary = community_by_name[name_key]
+			var existing_deck: Dictionary = existing_entry["deck"]
+			var existing_stars := int(existing_deck.get("stars", 0))
+			var current_stars := int(deck.get("stars", 0))
+			if current_stars > existing_stars or (current_stars == existing_stars and _get_played_match_count(deck) > _get_played_match_count(existing_deck)):
+				_merge_bot_records(deck, existing_deck)
+				community_dups_to_purge.append(existing_entry)
+				community_by_name[name_key] = entry
+				var list_id := str(deck.get("list_id", "")).strip_edges()
 				if not list_id.is_empty():
 					_assigned_names_by_list_id[list_id] = effective_name
+			else:
+				_merge_bot_records(existing_deck, deck)
+				community_dups_to_purge.append(entry)
+				var ex_list_id := str(existing_deck.get("list_id", "")).strip_edges()
+				if not ex_list_id.is_empty():
+					_assigned_names_by_list_id[ex_list_id] = effective_name
+		else:
+			community_by_name[name_key] = entry
+			used_names[name_key] = true
+			var list_id := str(deck.get("list_id", "")).strip_edges()
+			if not list_id.is_empty():
+				_assigned_names_by_list_id[list_id] = effective_name
+
+	for dup in community_dups_to_purge:
+		var dup_god: String = str(dup["god_name"])
+		var dup_deck: Dictionary = dup["deck"]
+		var dup_id := str(dup_deck.get("list_id", ""))
+		var pool: Dictionary = _by_god.get(dup_god, {})
+		if not pool.is_empty():
+			if pool.get("challenger", {}).get("list_id", "") == dup_id:
+				pool["challenger"] = {}
+			var lists: Array = pool.get("lists", [])
+			for i in range(lists.size() - 1, -1, -1):
+				if lists[i].get("list_id", "") == dup_id:
+					lists.remove_at(i)
+		decks.erase(dup)
 
 	# Pass 2: Previously assigned names from _assigned_names_by_list_id
 	for entry: Dictionary in decks:
@@ -374,55 +423,72 @@ func ensure_community_bot(bot_data: Dictionary) -> void:
 		fp = _fingerprint(bot_data)
 
 	var lists: Array = pool.get("lists", [])
-	var canonical_index := -1
-	var to_remove_indices: Array[int] = []
+	var matching_indices: Array[int] = []
 	for i in range(lists.size()):
 		var entry: Dictionary = lists[i]
 		var entry_id := str(entry.get("list_id", "")).strip_edges()
 		var entry_owner := str(entry.get("owner_name", "")).strip_edges()
 		var entry_fp := str(entry.get("fingerprint", ""))
-		if entry_id == list_id:
-			canonical_index = i
-		elif not owner_name.is_empty() and entry_owner == owner_name and (not fp.is_empty() and entry_fp == fp):
-			to_remove_indices.append(i)
+		var entry_name := str(entry.get("deck_name", "")).strip_edges()
+		var entry_self := str(entry.get("self_play_name", "")).strip_edges()
 
-	if canonical_index >= 0:
-		var canonical: Dictionary = lists[canonical_index]
+		var is_match := false
+		if entry_id == list_id:
+			is_match = true
+		elif not owner_name.is_empty() and entry_owner == owner_name:
+			if not author_name.is_empty() and (entry_name.to_lower() == author_name.to_lower() or entry_self.to_lower() == author_name.to_lower()):
+				is_match = true
+			elif not raw_name.is_empty() and (entry_name.to_lower().contains(raw_name.to_lower()) or entry_self.to_lower().contains(raw_name.to_lower())):
+				is_match = true
+			elif not fp.is_empty() and entry_fp == fp:
+				is_match = true
+		elif not author_name.is_empty() and (entry_name.to_lower() == author_name.to_lower() or entry_self.to_lower() == author_name.to_lower()):
+			is_match = true
+
+		if is_match:
+			matching_indices.append(i)
+
+	if not matching_indices.is_empty():
+		# Pick the strongest entry among matches to preserve its accumulated rating
+		var best_idx: int = matching_indices[0]
+		for k in range(1, matching_indices.size()):
+			var candidate_idx: int = matching_indices[k]
+			var best_deck: Dictionary = lists[best_idx]
+			var cand_deck: Dictionary = lists[candidate_idx]
+			var cand_stars := int(cand_deck.get("stars", 0))
+			var best_stars := int(best_deck.get("stars", 0))
+			if cand_stars > best_stars or (cand_stars == best_stars and _get_played_match_count(cand_deck) > _get_played_match_count(best_deck)):
+				best_idx = candidate_idx
+
+		var canonical: Dictionary = lists[best_idx]
+		canonical["list_id"] = list_id
 		if not author_name.is_empty() and not _is_generic_bot_name(author_name):
 			canonical["deck_name"] = author_name
 		if not owner_name.is_empty():
 			canonical["owner_name"] = owner_name
 		if not fp.is_empty():
 			canonical["fingerprint"] = fp
-		for phantom_idx in to_remove_indices:
-			var phantom: Dictionary = lists[phantom_idx]
-			canonical["wins"] = int(canonical.get("wins", 0)) + int(phantom.get("wins", 0))
-			canonical["losses"] = int(canonical.get("losses", 0)) + int(phantom.get("losses", 0))
-			canonical["draws"] = int(canonical.get("draws", 0)) + int(phantom.get("draws", 0))
-			canonical["stars"] = maxi(int(canonical.get("stars", 0)), int(phantom.get("stars", 0)))
-		to_remove_indices.reverse()
-		for phantom_idx in to_remove_indices:
-			lists.remove_at(phantom_idx)
-	elif not to_remove_indices.is_empty():
-		var adopted: Dictionary = lists[to_remove_indices[0]]
-		adopted["list_id"] = list_id
-		if not author_name.is_empty() and not _is_generic_bot_name(author_name):
-			adopted["deck_name"] = author_name
-		adopted["owner_name"] = owner_name
-		if not fp.is_empty():
-			adopted["fingerprint"] = fp
-		to_remove_indices.remove_at(0)
-		to_remove_indices.reverse()
-		for phantom_idx in to_remove_indices:
-			lists.remove_at(phantom_idx)
+
+		matching_indices.erase(best_idx)
+		for dup_idx in matching_indices:
+			_merge_bot_records(canonical, lists[dup_idx])
+		matching_indices.sort()
+		matching_indices.reverse()
+		for dup_idx in matching_indices:
+			lists.remove_at(dup_idx)
 
 	var challenger: Dictionary = pool.get("challenger", {})
 	if not challenger.is_empty():
 		var ch_id := str(challenger.get("list_id", "")).strip_edges()
 		var ch_owner := str(challenger.get("owner_name", "")).strip_edges()
+		var ch_name := str(challenger.get("deck_name", "")).strip_edges()
+		var ch_self := str(challenger.get("self_play_name", "")).strip_edges()
 		var ch_fp := str(challenger.get("fingerprint", ""))
-		if ch_id == list_id or (not owner_name.is_empty() and ch_owner == owner_name and (not fp.is_empty() and ch_fp == fp)):
-			if canonical_index >= 0 or not to_remove_indices.is_empty():
+		var ch_is_dup := (ch_id == list_id) \
+			or (not owner_name.is_empty() and ch_owner == owner_name and (ch_name.to_lower() == author_name.to_lower() or ch_self.to_lower() == author_name.to_lower() or (not fp.is_empty() and ch_fp == fp))) \
+			or (not author_name.is_empty() and (ch_name.to_lower() == author_name.to_lower() or ch_self.to_lower() == author_name.to_lower()))
+		if ch_is_dup:
+			if not matching_indices.is_empty() or pool.get("lists", []).size() > 0:
 				pool["challenger"] = {}
 			else:
 				challenger["list_id"] = list_id

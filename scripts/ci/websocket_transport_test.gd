@@ -9,6 +9,7 @@ const MatchSupervisorScript = preload("res://scripts/server/MatchSupervisor.gd")
 const LobbyServerScript = preload("res://scripts/server/LobbyServer.gd")
 const MainMenuScript = preload("res://scripts/Other/MainMenu.gd")
 const LobbyProtocolScript = preload("res://scripts/network/LobbyProtocol.gd")
+const PunchReflectorScript = preload("res://scripts/network/PunchReflector.gd")
 
 class RecoveryLobbyClient extends LobbyClientScript:
 	var requests: Array[Dictionary] = []
@@ -44,6 +45,7 @@ func _initialize() -> void:
 func _run() -> void:
 	_check_lobby_endpoint_configuration()
 	await _check_stale_client_disconnect_events()
+	await _check_direct_spectator_punch()
 	await _check_failed_lobby_transport_cleanup()
 	await _check_lobby_auth_rejection_cleanup()
 	_check_detached_lobby_transport()
@@ -191,6 +193,56 @@ func _check_stale_client_disconnect_events() -> void:
 	_check(failures.is_empty(), "old disconnect notifications cannot fail a replacement transport")
 	network.disconnect_client()
 	network.get_parent().queue_free()
+	await process_frame
+
+func _check_direct_spectator_punch() -> void:
+	var host := _network_node("DirectSpectatorHost")
+	if host.create_server(0, false) != OK:
+		_check(false, "bind direct spectator host")
+		host.get_parent().queue_free()
+		return
+	var host_port: int = host.peer.get_host().get_local_port()
+	var reflector := PunchReflectorScript.new()
+	root.add_child(reflector)
+	var port_probe := PacketPeerUDP.new()
+	if port_probe.bind(0) != OK:
+		_check(false, "allocate reflector port")
+		host.get_parent().queue_free()
+		reflector.queue_free()
+		return
+	var reflector_port := port_probe.get_local_port()
+	port_probe.close()
+	if not reflector.setup(reflector_port):
+		_check(false, "bind reflector")
+		host.get_parent().queue_free()
+		reflector.queue_free()
+		return
+	var reported_ports: Array[int] = []
+	var report_ready := func() -> bool:
+		var bounce := reflector.get_bounce("client:direct-match:observer", 2.0)
+		if not bounce.is_empty():
+			reported_ports.append(int(bounce["port"]))
+			_check(host.begin_spectator_punch("observer", str(bounce["ip"]), int(bounce["port"])) == OK, "host punches the reported endpoint")
+		return true
+	var marker := PunchReflectorScript.make_marker(PunchReflectorScript.BOUNCE_KIND_CLIENT, "direct-match", "observer")
+	var local_port := await PunchReflectorScript.prime_spectator_socket(
+		self, "127.0.0.1", host_port, "127.0.0.1", reflector_port, marker, report_ready
+	)
+	_check(local_port > 0 and reported_ports == [local_port], "host punch completes rendezvous before the ENet dial")
+	var spectator := _network_node("DirectSpectatorClient")
+	_check(spectator.create_match_client("127.0.0.1", host_port, "", false, local_port) == OK, "start direct spectator client")
+	await _wait_for(func() -> bool: return spectator.peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED)
+	_check(spectator.peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED, "spectator connects directly")
+	_check(spectator.peer.get_host().get_local_port() == local_port, "ENet uses the port registered by the reflector")
+	_check(spectator.reconnect_client("127.0.0.1", host_port) == OK, "retry direct spectator connection")
+	await _wait_for(func() -> bool: return spectator.peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED)
+	_check(spectator.peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED, "spectator reconnects directly")
+	_check(spectator.peer.get_host().get_local_port() == local_port, "spectator retries keep the punched port")
+	spectator.disconnect_client()
+	host.disconnect_client()
+	spectator.get_parent().queue_free()
+	host.get_parent().queue_free()
+	reflector.queue_free()
 	await process_frame
 
 func _check_failed_lobby_transport_cleanup() -> void:

@@ -17,6 +17,7 @@ const BOUNCE_KIND_HOST := "host"
 const BOUNCE_KIND_CLIENT := "client"
 const PUNCH_KIND_PACKET := "punch"
 const MARKER_REGISTRY_LIMIT := 64
+const SPECTATOR_PRIME_ATTEMPTS := 4
 
 var bound_port: int = 0
 
@@ -32,6 +33,40 @@ static func make_marker(bounce_kind: String, match_id: String, observer_session_
 	if not observer_session_id.strip_edges().is_empty():
 		marker["observer"] = observer_session_id.strip_edges()
 	return JSON.stringify(marker).to_utf8_buffer()
+
+## Open the UDP route before ENet starts its handshake. The temporary socket
+## hands its local port to ENet even if the host's punch is delayed.
+static func prime_spectator_socket(
+	tree: SceneTree, host_ip: String, host_port: int, reflector_host: String, reflector_port: int,
+	marker: PackedByteArray, report_ready: Callable
+) -> int:
+	if host_ip.is_empty() or host_port <= 0:
+		return 0
+	var socket := PacketPeerUDP.new()
+	if socket.bind(0) != OK:
+		return 0
+	var local_port := socket.get_local_port()
+	var punch := make_marker(PUNCH_KIND_PACKET, "")
+	for _attempt in range(SPECTATOR_PRIME_ATTEMPTS):
+		if socket.set_dest_address(host_ip, host_port) == OK:
+			socket.put_packet(punch)
+		if socket.set_dest_address(reflector_host, reflector_port) != OK or socket.put_packet(marker) != OK:
+			break
+		# Give the UDP marker a chance to reach the reflector before lookup.
+		await tree.create_timer(0.1, true, false, true).timeout
+		if not report_ready.call():
+			break
+		await tree.create_timer(0.35, true, false, true).timeout
+		var got_host_punch := false
+		for _packet_index in range(mini(socket.get_available_packet_count(), 16)):
+			if socket.get_packet() == punch and socket.get_packet_port() == host_port \
+					and socket.get_packet_ip().trim_prefix("::ffff:") == host_ip.trim_prefix("::ffff:"):
+				got_host_punch = true
+				break
+		if got_host_punch:
+			break
+	socket.close()
+	return local_port
 
 static func is_punch_marker(marker) -> bool:
 	return (marker is Dictionary) and bool((marker as Dictionary).get(PUNCH_MARKER_KEY, false))

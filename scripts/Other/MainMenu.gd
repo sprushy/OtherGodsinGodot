@@ -9798,6 +9798,9 @@ func _try_apply_match_spectator(match_id: String, observer_session_id: String, o
 	if not mock_game.apply_match_spectator(match_id, observer_session_id, observer_match_token, visible_player_indices):
 		return false
 	if lobby_client != null and lobby_client.is_authenticated():
+		if _local_bot_spectate_punch.get("match_id") == match_id:
+			_local_bot_spectate_punch["next_bounce_msec"] = 0
+			_poll_local_bot_spectate_punch()
 		lobby_client.ack_match_spectator(match_id, observer_session_id)
 	return true
 
@@ -9936,13 +9939,17 @@ func _start_local_bot_spectate_punch(match_id: String) -> void:
 func _poll_local_bot_spectate_punch() -> void:
 	if _local_bot_spectate_punch.is_empty():
 		return
-	if lobby_client == null or not lobby_client.is_authenticated() \
-			or lobby_client.get_instance_id() != int(_local_bot_spectate_punch.get("client_id", 0)) \
-			or lobby_client.current_session_id != str(_local_bot_spectate_punch.get("session_id", "")):
+	if lobby_client == null or lobby_client.get_instance_id() != int(_local_bot_spectate_punch.get("client_id", 0)):
+		_local_bot_spectate_punch = {}
+		return
+	if not lobby_client.is_authenticated():
+		return
+	if lobby_client.current_session_id != str(_local_bot_spectate_punch.get("session_id", "")):
 		_local_bot_spectate_punch = {}
 		return
 	var reflector_port := int(lobby_client.current_punch_reflector_port)
-	if reflector_port <= 0 or _current_lobby_ip.strip_edges().is_empty():
+	var reflector_host := _get_punch_reflector_host()
+	if reflector_port <= 0 or reflector_host.is_empty():
 		return
 	var mock_game := get_node_or_null("GameContainer/MockGame")
 	if mock_game == null or mock_game.network_manager == null:
@@ -9954,7 +9961,7 @@ func _poll_local_bot_spectate_punch() -> void:
 		_local_bot_spectate_punch["next_bounce_msec"] = now_msec + (
 			SPECTATE_PUNCH_KEEPALIVE_INTERVAL_MSEC if submitted else SPECTATE_PUNCH_BOUNCE_INTERVAL_MSEC
 		)
-		mock_game.network_manager.send_punch_bounce(_current_lobby_ip, reflector_port, match_id, PunchReflectorScript.BOUNCE_KIND_HOST)
+		mock_game.network_manager.send_punch_bounce(reflector_host, reflector_port, match_id, PunchReflectorScript.BOUNCE_KIND_HOST)
 	if submitted:
 		return
 	if now_msec >= int(_local_bot_spectate_punch.get("next_submit_msec", 0)):
@@ -9966,6 +9973,15 @@ func _poll_local_bot_spectate_punch() -> void:
 		_local_bot_spectate_punch["submitted"] = attempts >= SPECTATE_PUNCH_SUBMIT_ATTEMPTS
 		lobby_client.submit_local_bot_match_spectate_info(match_id, true, "", 0, true)
 
+func _get_punch_reflector_host() -> String:
+	var address := _current_lobby_ip.strip_edges()
+	if not (address.begins_with("ws://") or address.begins_with("wss://")):
+		return address
+	var authority := address.get_slice("://", 1).get_slice("/", 0)
+	if authority.begins_with("["):
+		return authority.get_slice("]", 0).trim_prefix("[")
+	return authority.get_slice(":", 0)
+
 ## For punch-mode spectator assignments: while the match client is connecting,
 ## bounce the lobby's reflector from the ENet client socket itself so the host
 ## can punch this exact endpoint (and re-punch after every reconnect).
@@ -9973,7 +9989,7 @@ func _arrange_match_punch_watch(match_info: Dictionary) -> void:
 	var reflector_port := int(match_info.get("punch_reflector_port", 0))
 	if not bool(match_info.get("spectate_via_punch", false)) \
 			or reflector_port <= 0 \
-			or _current_lobby_ip.strip_edges().is_empty():
+			or _get_punch_reflector_host().is_empty():
 		return
 	var observer_session_id := str(match_info.get("observer_session_id", "")).strip_edges()
 	var match_id := str(match_info.get("match_id", "")).strip_edges()
@@ -9987,6 +10003,21 @@ func _arrange_match_punch_watch(match_info: Dictionary) -> void:
 		"next_bounce_msec": 0,
 		"next_report_msec": 0,
 	}
+
+func _prime_match_punch_socket(host_ip: String, host_port: int) -> int:
+	if not _has_active_lobby_connection():
+		return 0
+	var match_id := str(_match_punch_watch["match_id"])
+	var observer_id := str(_match_punch_watch["observer_session_id"])
+	var report_ready := func() -> bool:
+		if not _has_active_lobby_connection() or lobby_client.current_session_id != observer_id:
+			return false
+		lobby_client.submit_match_spectator_punch_ready(match_id, observer_id)
+		return true
+	return await PunchReflectorScript.prime_spectator_socket(
+		get_tree(), host_ip, host_port, _get_punch_reflector_host(), int(_match_punch_watch["reflector_port"]),
+		PunchReflectorScript.make_marker(PunchReflectorScript.BOUNCE_KIND_CLIENT, match_id, observer_id), report_ready
+	)
 
 func _poll_match_punch_watch() -> void:
 	if _match_punch_watch.is_empty():
@@ -10022,7 +10053,7 @@ func _poll_match_punch_watch() -> void:
 	# lobby's relay lookup (client:<match>:<observer>) never matches, so the host
 	# never learns this spectator's endpoint and never punches it.
 	var bounce_err: Error = mock_game.network_manager.send_punch_bounce(
-		_current_lobby_ip, reflector_port, match_id, PunchReflectorScript.BOUNCE_KIND_CLIENT, observer_session_id)
+		_get_punch_reflector_host(), reflector_port, match_id, PunchReflectorScript.BOUNCE_KIND_CLIENT, observer_session_id)
 	if bounce_err != OK:
 		_match_punch_watch["next_bounce_msec"] = now_msec + MATCH_PUNCH_WATCH_BOUNCE_INTERVAL_MSEC
 		return
@@ -10039,6 +10070,9 @@ func _on_match_spectator_punch_requested(match_id: String, observer_session_id: 
 		return
 	var mock_game := get_node_or_null("GameContainer/MockGame")
 	if mock_game == null or mock_game.network_manager == null:
+		return
+	var active_match: Dictionary = mock_game.get("_current_match_info")
+	if active_match.get("match_id") != match_id:
 		return
 	var network_manager = mock_game.network_manager
 	if int(network_manager.get("last_bound_port")) <= 0:
@@ -10115,7 +10149,9 @@ func _launch_assigned_match(
 	# The lobby verifies player-host listeners before assigning the opponent;
 	# dedicated matches are likewise assigned only after the server is ready.
 	# Keep the short grace period only for the unverified in-process handoff.
-	if not _uses_dedicated_match_server(match_info) \
+	if not _match_punch_watch.is_empty() and match_info.get("match_id") == _match_punch_watch["match_id"]:
+		match_info["spectator_punch_local_port"] = await _prime_match_punch_socket(server_ip, match_port)
+	elif not _uses_dedicated_match_server(match_info) \
 			and str(match_info.get("server_mode", "")) != MatchSessionScript.SERVER_MODE_PLAYER_HOST:
 		await get_tree().create_timer(0.4).timeout
 	await get_node("GameContainer/MockGame").start_game(false, true, server_ip, match_port, match_info)
