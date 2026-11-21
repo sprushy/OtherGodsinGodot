@@ -63,7 +63,7 @@ const KEYWORD_HINTS = {
 	"Slay": "This effect triggers when this card destroys another creature in combat.",
 	"Slain": "This card was destroyed in combat and sent to the graveyard.",
 	"Trollskap": "If this card is destroyed by an effect, return it to your hand instead.",
-	"Champion's Call": "Summon this god's matching Active God. You may Shelve cards from your hand to pay 4 mana each toward its summon cost.",
+	"Champion's Call": "Summon this god's matching Active God. You may Shelve cards from your hand to pay 4 mana each toward its summon cost. Halve the Follower damage dealt by the Active God summoned this way.",
 	"Brood Slots": "Instead of powers, these slots can hold face-up Ancient Demons or Dragons up to the listed total level.",
 	"Stone Infant": "Token creature with 17 STR, 17 RES, 1 SPD, and the types Token, Human, Stone, and Golem.",
 	"Stone Skin": "This creature cannot be sent to the graveyard by combat destruction.",

@@ -289,6 +289,7 @@ var _auth_onboarding_game_updates_toggle: CheckButton = null
 var _auth_onboarding_continue_button: Button = null
 var _settings_button: Button = null
 var _settings_overlay: Control = null
+var _settings_music_mute_toggle: CheckButton = null
 var _settings_account_status_label: Label = null
 var _settings_auto_login_toggle: CheckButton = null
 var _settings_save_password_toggle: CheckButton = null
@@ -447,7 +448,9 @@ var _match_loading_lobby_button: Button = null
 var _match_loading_hints: Array[String] = []
 var _match_loading_uses_tap_controls: bool = false
 var _startup_music_player: AudioStreamPlayer = null
+var _audio_mute_buttons: HBoxContainer = null
 var _sound_mute_button: Button = null
+var _music_mute_button: Button = null
 var _music_muted: bool = false
 var _all_sound_muted: bool = false
 var _startup_menu_fade_started: bool = false
@@ -475,9 +478,9 @@ func _ready() -> void:
 	_fit_to_viewport()
 	if OS.is_debug_build():
 		_build_server_version_overlay()
-	_build_sound_mute_button()
+	_build_audio_mute_buttons()
 	if not OS.is_debug_build() and multiplayer_container != null:
-		multiplayer_container.visibility_changed.connect(_refresh_sound_mute_button)
+		multiplayer_container.visibility_changed.connect(_refresh_audio_mute_buttons)
 	get_viewport().size_changed.connect(_fit_to_viewport)
 	if ip_line_edit != null:
 		ip_line_edit.visible = false
@@ -1203,38 +1206,55 @@ func _apply_music_mute_state() -> void:
 			if _startup_splash_animation_finished and not _startup_music_player.playing:
 				_startup_music_player.play()
 			_startup_music_player.stream_paused = false
-	_refresh_sound_mute_button()
+	_refresh_audio_mute_buttons()
+	if is_instance_valid(_settings_music_mute_toggle):
+		_settings_music_mute_toggle.set_pressed_no_signal(_music_muted)
 	if is_inside_tree():
 		get_tree().call_group("music_mute_observers", "_on_music_mute_changed", _music_muted)
 		get_tree().call_group("music_mute_observers", "_on_all_sound_mute_changed", _all_sound_muted)
 
-func _build_sound_mute_button() -> void:
-	if _sound_mute_button != null and is_instance_valid(_sound_mute_button):
-		_refresh_sound_mute_button()
+func _build_audio_mute_buttons() -> void:
+	if is_instance_valid(_audio_mute_buttons):
+		_refresh_audio_mute_buttons()
 		return
-	var button := Button.new()
-	button.name = "SoundMuteButton"
-	button.custom_minimum_size = Vector2(40.0, 28.0)
-	button.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
-	button.offset_left = 16.0
-	button.offset_top = -36.0
-	button.offset_right = 56.0
-	button.offset_bottom = -8.0
-	button.z_index = 2300
-	button.mouse_filter = Control.MOUSE_FILTER_STOP
-	button.pressed.connect(toggle_all_sound_mute)
-	add_child(button)
-	_sound_mute_button = button
-	_refresh_sound_mute_button()
+	_audio_mute_buttons = HBoxContainer.new()
+	_audio_mute_buttons.name = "AudioMuteButtons"
+	_audio_mute_buttons.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
+	_audio_mute_buttons.offset_left = 16.0
+	_audio_mute_buttons.offset_top = -36.0
+	_audio_mute_buttons.offset_bottom = -8.0
+	_audio_mute_buttons.z_index = 2300
+	_audio_mute_buttons.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_audio_mute_buttons.add_theme_constant_override("separation", 8)
 
-func _refresh_sound_mute_button() -> void:
-	if _sound_mute_button == null or not is_instance_valid(_sound_mute_button):
+	_sound_mute_button = Button.new()
+	_sound_mute_button.name = "SoundMuteButton"
+	_sound_mute_button.pressed.connect(toggle_all_sound_mute)
+
+	_music_mute_button = Button.new()
+	_music_mute_button.name = "MusicMuteButton"
+	_music_mute_button.text = String.chr(0x266A)
+	_music_mute_button.accessibility_name = "Mute music"
+	_music_mute_button.toggle_mode = true
+	_music_mute_button.toggled.connect(set_music_muted)
+
+	for button: Button in [_sound_mute_button, _music_mute_button]:
+		button.custom_minimum_size = Vector2(40.0, 28.0)
+		button.mouse_filter = Control.MOUSE_FILTER_STOP
+		_audio_mute_buttons.add_child(button)
+	add_child(_audio_mute_buttons)
+	_refresh_audio_mute_buttons()
+
+func _refresh_audio_mute_buttons() -> void:
+	if not is_instance_valid(_audio_mute_buttons):
 		return
 	_sound_mute_button.text = String.chr(0x1F507) if _all_sound_muted else String.chr(0x1F50A)
 	_sound_mute_button.tooltip_text = "Unmute all sound" if _all_sound_muted else "Mute all sound"
 	_sound_mute_button.modulate = Color(0.72, 0.76, 0.84, 0.96) if _all_sound_muted else Color(1, 1, 1, 0.96)
+	_music_mute_button.set_pressed_no_signal(_music_muted)
+	_music_mute_button.tooltip_text = "Unmute music" if _music_muted else "Mute music"
 	var main_menu_visible: bool = menu_container != null and menu_container.visible and not _is_multiplayer_screen_active()
-	_sound_mute_button.visible = not _is_deck_builder_open() and (OS.is_debug_build() or not main_menu_visible)
+	_audio_mute_buttons.visible = not _is_deck_builder_open() and (OS.is_debug_build() or not main_menu_visible)
 
 func _apply_main_menu_text_sizing() -> void:
 	if menu_container != null:
@@ -1998,7 +2018,7 @@ func show_menu() -> void:
 	menu_container.visible = true
 	_layout_recent_activity_panel()
 	_refresh_server_version_overlay_visibility()
-	_refresh_sound_mute_button()
+	_refresh_audio_mute_buttons()
 
 func show_game() -> void:
 	_set_startup_splash_background_visible(false)
@@ -2008,7 +2028,7 @@ func show_game() -> void:
 	get_tree().call_group("combat_mock_game", "_sync_drought_weather_visuals")
 	_hide_multiplayer_deck_popup()
 	_refresh_server_version_overlay_visibility()
-	_refresh_sound_mute_button()
+	_refresh_audio_mute_buttons()
 
 func _set_startup_splash_background_visible(background_visible: bool) -> void:
 	if _startup_splash_background != null and is_instance_valid(_startup_splash_background):
@@ -11833,6 +11853,7 @@ func _open_settings_overlay() -> void:
 		Callable(self, "_get_settings_menu_number_value"),
 		Callable(self, "_set_settings_menu_number_value")
 	))
+	_settings_music_mute_toggle = created_settings_toggles.get("%s/%s" % [AUDIO_SETTINGS_SECTION, MUSIC_MUTED_KEY]) as CheckButton
 	settings_tabs.add_child(GameSettingsTabsScript.build_god_tab(
 		Callable(self, "_get_settings_menu_value"),
 		Callable(self, "_set_settings_menu_value"),
@@ -11897,6 +11918,7 @@ func _close_settings_overlay() -> void:
 	if _settings_overlay != null and is_instance_valid(_settings_overlay):
 		_settings_overlay.queue_free()
 	_settings_overlay = null
+	_settings_music_mute_toggle = null
 	_settings_account_status_label = null
 	_settings_auto_login_toggle = null
 	_settings_save_password_toggle = null

@@ -1521,12 +1521,13 @@ func _plan_god_manifestation(attack: Dictionary = {}, danger: int = -1) -> Dicti
 		shelve_penalty += 900 + _get_hand_value(card) * 14
 	var cost := game_manager.get_creature_summon_mana_cost(bot_player, manifestation, god)
 	var mana_paid := maxi(0, cost - shelve_count * GodCard.CHAMPIONS_CALL_SHELVE_MANA_VALUE)
+	var preview := _preview_board_creature(manifestation, zone) as ActiveGodCard
+	preview.summoned_by_champions_call = true
 	var score: int
 	var lethal := false
 	if projects_combat:
 		# Champion's Call pays a different price from a normal summon. Price the
 		# attack it actually gives us, including the defender's possible replies.
-		var preview := _preview_board_creature(manifestation, zone)
 		if zone.zone_type != Zone.ZoneType.FRONTLINE \
 				or game_manager.turn_number <= 1 or game_manager.has_resolved_attack_this_turn \
 				or game_manager.attack_restrictions.has(bot_player) \
@@ -1552,7 +1553,7 @@ func _plan_god_manifestation(attack: Dictionary = {}, danger: int = -1) -> Dicti
 				manifestation, zone, false, cleared, {}, false, mana_left, choices.slice(0, shelve_count), true
 			)
 	else:
-		score = _score_god_manifestation(manifestation, mana_paid, mode)
+		score = _score_god_manifestation(preview, mana_paid, mode)
 	score -= shelve_penalty
 	# Champion's Call removes the base god from the game as it lands the
 	# manifestation, so a known entry answer (a Sap revealed by Light of
@@ -2196,6 +2197,7 @@ func _projected_champions_call(removed: Array) -> Dictionary:
 	# A defensive-only summon can switch stance with its fresh minor action.
 	attacker.current_zone = zone
 	attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
+	attacker.summoned_by_champions_call = true
 	return {"attacker": attacker, "cost": with_mana - mana_left}
 
 func _estimate_champions_call_loss(
@@ -5254,9 +5256,12 @@ func _forecast_incoming_combat(action: CardAction, stance: Card, defensive: bool
 	var result := _estimate_raw_attack_economy(action, stats, mode)
 	if defender is Askelladen and _can_askelladen_retreat(defender, action.attacker, stats):
 		return {"damage": 0, "casualties": [defender, action.attacker]}
-	var damage := int(result["bot_followers_lost"])
-	if action.halve_follower_damage or GameManager.combat_halves_follower_damage(action.attacker, defender, action.united_front_partner):
-		damage = GameManager.round_down_divide(damage, 2)
+	var damage_from_defender: bool = defender != null and (result.get("bot_loss_source") == defender \
+		or result.get("defensive_conversion_defender") == defender)
+	var halvings := int(action.halve_follower_damage) + GameManager.combat_follower_damage_halvings(
+		action.attacker, defender, action.united_front_partner, damage_from_defender
+	)
+	var damage := GameManager.apply_follower_damage_halvings(int(result["bot_followers_lost"]), halvings)
 	if (defender is MasmassuPriest or defender is Grindylow) and (projected_stealth or defender.is_stealth):
 		var targets := _get_reveal_removal_targets(defender)
 		var target := _choose_combat_reveal_removal(defender, targets, action, result["casualties"] + removed)
@@ -7020,10 +7025,9 @@ func _can_kill_with_all_attackers(attackers: Array[Card]) -> bool:
 	return total_damage >= opponent.followers + opponent.guard
 
 func _get_direct_follower_damage(attacker: Card) -> int:
-	var damage := _get_combat_strength(attacker)
-	if GameManager.combat_halves_follower_damage(attacker):
-		damage = GameManager.round_down_divide(damage, 2)
-	return damage
+	return GameManager.apply_follower_damage_halvings(
+		_get_combat_strength(attacker), GameManager.combat_follower_damage_halvings(attacker)
+	)
 
 func _get_best_stealth_attack(attackers: Array[Card], opposing_creatures: Array[Card]) -> Dictionary:
 	var best_attacker: Card = null
@@ -7259,9 +7263,7 @@ func _can_win_followers_after_modifiers(stats: Dictionary) -> bool:
 		if _has_committed_attack(attacker) or not _can_attack_followers_after_modifiers(attacker, stats):
 			continue
 		var damage := _get_combat_strength(attacker, null, stats.get(attacker, Vector3i.ZERO).x)
-		if GameManager.combat_halves_follower_damage(attacker):
-			damage = GameManager.round_down_divide(damage, 2)
-		total_damage += damage
+		total_damage += GameManager.apply_follower_damage_halvings(damage, GameManager.combat_follower_damage_halvings(attacker))
 	return total_damage >= opponent.followers + opponent.guard
 
 func _score_followers_attack(attacker: Card) -> int:
@@ -8085,9 +8087,9 @@ func _has_good_manifestation_attack(manifestation: Card, mode: Card.CreatureMode
 			return true
 	if not game_manager.is_followers_attack_blocked_by_active_structure(manifestation, opponent, []) \
 			and match_manager._get_possible_interceptors(manifestation, opponent).is_empty():
-		var damage := manifestation.get_effective_strength()
-		if manifestation.halves_follower_damage_inflicted():
-			damage = GameManager.round_down_divide(damage, 2)
+		var damage := GameManager.apply_follower_damage_halvings(
+			manifestation.get_effective_strength(), GameManager.combat_follower_damage_halvings(manifestation)
+		)
 		return damage > 0
 	return false
 
@@ -8306,9 +8308,9 @@ func _score_wheel_of_fire_interceptor_removal(target: Card) -> int:
 		if target in interceptors:
 			# Clearing the last interceptor can open a winning follower attack.
 			# Several remaining blockers make this a less immediate benefit.
-			var damage := attacker.get_effective_strength()
-			if attacker.halves_follower_damage_inflicted():
-				damage /= 2
+			var damage := GameManager.apply_follower_damage_halvings(
+				attacker.get_effective_strength(), GameManager.combat_follower_damage_halvings(attacker)
+			)
 			@warning_ignore("integer_division")
 			best_score = maxi(best_score, _score_follower_loss(opponent, damage) / interceptors.size())
 	return best_score
@@ -8350,21 +8352,26 @@ func _estimate_attack_economy(action: CardAction, modified_card: Card, str_delta
 
 func _estimate_projected_attack_economy(action: CardAction, stats: Dictionary, include_retreat: bool = true, projected_defender_mode: int = -1, projected_defender_stealth: bool = false) -> Dictionary:
 	var result := _estimate_raw_attack_economy(action, stats, projected_defender_mode)
-	var halve_follower_damage := false
+	var attack_halvings := 0
+	var defense_halvings := 0
+	var defender := _get_attack_defender_card(action)
 	if action != null:
-		var defender := _get_attack_defender_card(action)
 		# Only forecast passives on cards the bot can identify.
 		var known_attacker: Card = action.attacker if CardStrategy.visible(self, action.attacker) else null
 		var known_defender: Card = defender if CardStrategy.visible(self, defender) else null
 		var known_partner: Card = action.united_front_partner if CardStrategy.visible(self, action.united_front_partner) else null
-		halve_follower_damage = action.halve_follower_damage or GameManager.combat_halves_follower_damage(known_attacker, known_defender, known_partner)
+		var extra_halving := int(action.halve_follower_damage)
+		attack_halvings = extra_halving + GameManager.combat_follower_damage_halvings(known_attacker, known_defender, known_partner)
+		defense_halvings = extra_halving + GameManager.combat_follower_damage_halvings(known_attacker, known_defender, known_partner, true)
 	for player in [bot_player, opponent]:
 		if player == null:
 			continue
 		var loss_key := "bot_followers_lost" if player == bot_player else "opponent_followers_lost"
-		var amount := int(result[loss_key])
-		if halve_follower_damage:
-			amount = GameManager.round_down_divide(amount, 2)
+		var source_key := "bot_loss_source" if player == bot_player else "opponent_loss_source"
+		var damage_from_defender: bool = defender != null and (result.get(source_key) == defender \
+			or (result.get("defensive_conversion_defender") == defender and player == action.attacker.get_controller()))
+		var halvings := defense_halvings if damage_from_defender else attack_halvings
+		var amount := GameManager.apply_follower_damage_halvings(int(result[loss_key]), halvings)
 		if not player.followers_enabled or game_manager.has_turn_follower_loss_prevention(player):
 			amount = 0
 		result["bot_damage_before_guard" if player == bot_player else "opponent_damage_before_guard"] = amount
@@ -8376,7 +8383,6 @@ func _estimate_projected_attack_economy(action: CardAction, stats: Dictionary, i
 		result = _estimate_retreat_economy(action, result, stats)
 	if action != null and action.type == CardAction.Type.ATTACK:
 		_add_deck_combat_rewards(action, result)
-		var defender := _get_attack_defender_card(action)
 		for combatant: Card in [action.attacker, action.united_front_partner, defender]:
 			if combatant == null or combatant.get_controller() != bot_player or combatant.abilities_suppressed_by_effects() \
 					or not (combatant.is_stealth or (combatant == defender and projected_defender_stealth)):

@@ -2280,11 +2280,15 @@ func _finish_followers_attack(action: CardAction, defending_player: Player) -> v
 	game_manager.set_temporary_combat_follower_damage_halved(action.halve_follower_damage)
 	var follower_damage := game_manager.resolve_followers_attack(active_attackers, defending_player)
 	game_manager.set_temporary_combat_follower_damage_halved(false)
-	last_resolution_text = "%s attacks %s's followers for %d!" % [
-		action.attacker.card_name,
+	last_resolution_text = "%s %s %s's followers for %d!" % [
+		_format_card_name_list(active_attackers),
+		"attack" if active_attackers.size() > 1 else "attacks",
 		defending_player.player_name,
 		follower_damage
 	]
+	var feedback := game_manager.consume_player_feedback().strip_edges()
+	if feedback != "":
+		last_resolution_text += " " + feedback
 
 ## Headless combat resolution (no retreat dialog needed).
 ## Called by _resolve_attack when no Askelladen can retreat.
@@ -3199,7 +3203,6 @@ func _build_pending_attack_action() -> CardAction:
 	action.target = pending_attack_target
 	for interceptor in _get_possible_interceptors(selected_attacker, pending_attack_target):
 		action.offered_interceptor_uids.append(interceptor.uid)
-	action.halve_follower_damage = selected_attacker != null and selected_attacker.halves_follower_damage_inflicted()
 	return action
 
 func _offer_newly_eligible_interceptors(action: CardAction) -> bool:

@@ -216,7 +216,7 @@ func resolve_champions_call(
 ) -> String:
 	if game_manager == null or card_owner == null:
 		return card_name + " cannot use Champion's Call right now."
-	var manifestation := get_champions_call_candidate(true)
+	var manifestation := get_champions_call_candidate(true) as ActiveGodCard
 	if manifestation == null:
 		return card_name + " found no matching Active God to summon."
 	if summon_zone == null:
@@ -240,9 +240,10 @@ func resolve_champions_call(
 	for card in shelved_cards:
 		game_manager.send_to_deck_bottom_with_hook(card)
 
-	var active_god := manifestation as ActiveGodCard
-	if active_god != null:
-		active_god.set_stored_normal_god(self)
+	var previous_normal_god := manifestation.get_stored_normal_god()
+	var previously_summoned_by_champions_call := manifestation.summoned_by_champions_call
+	manifestation.set_stored_normal_god(self)
+	manifestation.summoned_by_champions_call = true
 
 	var summon_mode := Card.CreatureMode.DEFENSIVE
 	if summon_mode_name == "aggressive":
@@ -261,6 +262,8 @@ func resolve_champions_call(
 		true
 	)
 	if not summoned:
+		manifestation.set_stored_normal_god(previous_normal_god)
+		manifestation.summoned_by_champions_call = previously_summoned_by_champions_call
 		return card_name + " could not summon its Active God."
 
 	if reduced_mana > 0 and not manifestation.pay_costs_with_mana_cost(card_owner, reduced_mana, game_manager):

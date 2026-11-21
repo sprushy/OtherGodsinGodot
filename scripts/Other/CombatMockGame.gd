@@ -1119,7 +1119,7 @@ const CENTER_ACTION_BUTTON_HEIGHT := 36.0
 const CENTER_ACTION_PANEL_RIGHT_OVERHANG := 10.0
 const PRIORITY_CONTROL_BUTTON_SIZE := Vector2(36.0, 30.0)
 const PRIORITY_AUTO_PASS_BUTTON_SIZE := Vector2(42.0, 30.0)
-const SOUND_MUTE_BUTTON_WIDTH := 40.0
+const AUDIO_MUTE_BUTTON_WIDTH := 40.0
 const FORFEIT_BUTTON_WIDTH := 112.0
 const FORFEIT_MATCH_BUTTON_WIDTH := 144.0
 const OBSERVER_PERSPECTIVE_BUTTON_WIDTH := 132.0
@@ -2728,7 +2728,7 @@ func _ready() -> void:
 	right_bottom_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_forfeit_button_default_text = forfeit_button.text
 	forfeit_button.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-	forfeit_button.offset_left = CORNER_ACTION_MARGIN + SOUND_MUTE_BUTTON_WIDTH + CORNER_ACTION_GAP
+	forfeit_button.offset_left = CORNER_ACTION_MARGIN + 2.0 * (AUDIO_MUTE_BUTTON_WIDTH + CORNER_ACTION_GAP)
 	forfeit_button.offset_top = -36.0
 	forfeit_button.offset_right = forfeit_button.offset_left + FORFEIT_BUTTON_WIDTH
 	forfeit_button.offset_bottom = -8.0
@@ -9805,7 +9805,7 @@ func _get_follower_control_avoid_rects() -> Array[Rect2]:
 	_append_follower_control_avoid_rect(rects, _priority_controls_panel)
 	var tree := get_tree()
 	if tree != null and tree.root != null:
-		_append_follower_control_avoid_rect(rects, tree.root.find_child("SoundMuteButton", true, false) as Control)
+		_append_follower_control_avoid_rect(rects, tree.root.find_child("AudioMuteButtons", true, false) as Control)
 	return rects
 
 func _avoid_follower_control_rects(point: Vector2, bounds: Rect2, side: float, avoid_rects: Array[Rect2]) -> Vector2:

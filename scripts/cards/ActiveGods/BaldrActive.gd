@@ -37,11 +37,11 @@ func get_self_graveyard_replacement_zone(
 		return null
 	return current_zone
 
-func halves_follower_damage_inflicted() -> bool:
-	return _passives_are_active()
-
-func halves_follower_damage_in_combat() -> bool:
-	return _passives_are_active()
+func get_combat_follower_damage_halving_sources(inflicts_damage: bool) -> PackedStringArray:
+	var sources := super.get_combat_follower_damage_halving_sources(inflicts_damage)
+	if _passives_are_active():
+		sources.append("Divine Resilience")
+	return sources
 
 func converts_follower_damage_to_conversion(_game_manager: GameManager = null) -> bool:
 	return _passives_are_active()

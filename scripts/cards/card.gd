@@ -1535,12 +1535,8 @@ func can_intercept_regardless_of_speed(_protected_target) -> bool:
 func has_reach(_protected_target) -> bool:
 	return false
 
-func halves_follower_damage_inflicted() -> bool:
-	return false
-
-func halves_follower_damage_in_combat() -> bool:
-	# Applies to both sides of combat, including when this card intercepts.
-	return false
+func get_combat_follower_damage_halving_sources(_inflicts_damage: bool) -> PackedStringArray:
+	return PackedStringArray()
 
 func get_tonal_extraction_spirit_profile() -> Dictionary:
 	return {}

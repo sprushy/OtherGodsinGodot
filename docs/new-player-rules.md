@@ -273,7 +273,7 @@ Your God often has a passive identity and sometimes an activated ability.
 
 God abilities can shape the entire deck. A God that rewards Warriors wants many Warriors. A God that unlocks a special Active God wants a deck that can pay or enable that plan.
 
-If your God has Champion's Call, it can summon that God's matching Active God. Shelving cards from your hand can help pay toward that summon cost when the ability says so.
+If your God has Champion's Call, it can summon that God's matching Active God. Shelving cards from your hand can help pay toward that summon cost when the ability says so. Halve the Follower damage dealt by the Active God summoned this way.
 
 ## 17. Attack Basics
 
@@ -295,11 +295,13 @@ Legal targets usually include:
 
 Reserve Creatures are protected from many direct melee attacks. Use lane position, abilities, or effects to get around defensive setups.
 
+Each applicable halving effect divides Follower damage by 2. Round down after applying all halving effects, before Guard. For example, 31 Follower damage with two halving effects becomes 7 (31 ÷ 2 ÷ 2, rounded down).
+
 ## 18. United Front Attacks
 
 If you have another eligible Creature, two Creatures can attack together as a United Front.
 
-The attacking Creatures combine their Strength for that attack. If the attack's Follower damage is halved, halve the total damage and round down once. This helps break through a large defender or deal a large burst of Follower damage.
+The attacking Creatures combine their Strength for that attack. Apply any Follower damage halving effects to the combined damage.
 
 Use United Front when:
 

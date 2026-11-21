@@ -1103,6 +1103,32 @@ func _check_ranked_bot_manifestations(failures: PackedStringArray) -> void:
 				match_manager.advance_priority()
 			if shelve.current_zone != player.deck_zone or valuable.current_zone != player.hand_zone or player.mana != 0:
 				failures.append("Champion's Call did not shelve the lower-value card and pay the rest in mana")
+			var summoned_creatures := bot._get_board_creatures(player)
+			var active_god: ActiveGodCard = null if summoned_creatures.is_empty() else summoned_creatures[0] as ActiveGodCard
+			if active_god == null or not active_god.summoned_by_champions_call:
+				failures.append("Champion's Call did not mark its summoned Active God")
+			else:
+				var active_copy := GameState.deserialize_embedded_card(GameState.serialize_embedded_card(active_god)) as ActiveGodCard
+				if active_copy == null or not active_copy.summoned_by_champions_call:
+					failures.append("Champion's Call summon provenance was lost during serialization")
+				active_god.strength = 31
+				opponent.followers = 50
+				opponent.guard = 2
+				match_manager.selected_attacker = active_god
+				match_manager.pending_attack_target = opponent
+				var attack := match_manager._build_pending_attack_action()
+				var projected := bot._estimate_projected_attack_economy(attack, {}, false)
+				match_manager._finish_followers_attack(attack, opponent)
+				var expected_loss := 5 if god is Thor else 13
+				var before_guard := expected_loss + 2
+				var expected_math := "31 STR (%s) ÷ 2 (Champion's Call)" % active_god.card_name
+				if god is Thor:
+					expected_math += " ÷ 2 (Patron's Hand)"
+				expected_math += " → %d (rounded down) − 2 (Guard) = %d" % [before_guard, expected_loss]
+				if opponent.followers != 50 - expected_loss or opponent.guard != 0 \
+						or int(projected["opponent_followers_lost"]) != expected_loss \
+						or not match_manager.last_resolution_text.contains("(" + expected_math):
+					failures.append("Champion's Call did not apply and log the expected halving and Guard for %s" % active_god.card_name)
 		elif god is TiamatThePrimordial:
 			player.mana = TiamatActive.new().mana_cost
 			var birth_target := Asakku.new()
@@ -1191,6 +1217,8 @@ func _check_combat_rounding(failures: PackedStringArray) -> void:
 	var game := _new_fixture_game()
 	var player := _new_fixture_player()
 	var opponent := _new_fixture_player()
+	player.player_name = "Attacker"
+	opponent.player_name = "Defender"
 	game.players.assign([player, opponent])
 	game.current_player = player
 	game.other_player = opponent
@@ -1219,8 +1247,17 @@ func _check_combat_rounding(failures: PackedStringArray) -> void:
 	opponent.guard = 1
 	var projected := bot._estimate_projected_attack_economy(action, {}, false)
 	manager._finish_followers_attack(action, opponent)
-	if opponent.followers != 6 or opponent.guard != 0 or int(projected["opponent_followers_lost"]) != 4:
+	var attacker_label := "Robotic Footsoldier at Attacker's Front Line position 1"
+	var partner_label := "Robotic Footsoldier at Attacker's Front Line position 2"
+	var united_front_math := "5 STR (%s) + 5 STR (%s) → 10 ÷ 2 (attack effect)" % [attacker_label, partner_label]
+	if opponent.followers != 6 or opponent.guard != 0 or int(projected["opponent_followers_lost"]) != 4 \
+			or not manager.last_resolution_text.contains(united_front_math):
 		failures.append("United Front did not combine 5 and 5 Strength before halving and spending Guard")
+	opponent.guard = 8
+	manager._finish_followers_attack(action, opponent)
+	if opponent.followers != 6 or opponent.guard != 3 \
+			or not manager.last_resolution_text.contains("5 (rounded down) − 5 (Guard) = 0"):
+		failures.append("Follower damage log did not show how much Guard was spent to block all damage")
 
 	var tez := TezcatlipocaActive.new()
 	tez.card_owner = player
@@ -1241,6 +1278,26 @@ func _check_combat_rounding(failures: PackedStringArray) -> void:
 		if converted != expected or opponent.guard != 0 or opponent.followers != followers - expected \
 				or player.followers != previous_followers + expected or int(projected["opponent_followers_lost"]) != expected:
 			failures.append("The Smoking Mirror miscalculated conversion against %d followers and 2 Guard" % followers)
+		if not game.consume_player_feedback().contains("(11 STR (%s) − 2 (Guard) = 9)" % tez.card_name):
+			failures.append("Follower damage log did not show Guard applied without any halving effects")
+
+	var defender := RoboticFootsoldier.new()
+	defender.card_owner = opponent
+	defender.creature_mode = Card.CreatureMode.DEFENSIVE
+	defender.strength = 3
+	defender.resilience = 10
+	opponent.frontline_zones[0].add_card(defender)
+	var defender_label := "Robotic Footsoldier at Defender's Front Line position 1"
+	game.resolve_combat_with_continuation(attacker, defender)
+	if not game.consume_player_feedback().contains("(10 RES (%s) − 5 STR (%s) → 5)" % [defender_label, attacker_label]):
+		failures.append("Follower damage log did not name the creatures in the RES and STR calculation")
+	defender.creature_mode = Card.CreatureMode.AGGRESSIVE
+	opponent.followers = 10
+	game.capture_committed_combat_snapshot(attacker, defender)
+	game.resolve_combat_with_continuation(attacker, defender)
+	if opponent.followers != 8 \
+			or not game.consume_player_feedback().contains("(5 STR (%s) − 3 STR (%s) → 2)" % [attacker_label, defender_label]):
+		failures.append("Follower damage log did not show the STR difference in committed combat")
 
 func _check_bot_follower_valuation(failures: PackedStringArray) -> void:
 	var game := _new_fixture_game()

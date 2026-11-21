@@ -99,8 +99,11 @@ func can_intercept_regardless_of_speed(protected_target) -> bool:
 		and protected_card.get_controller() == controller \
 		and protected_card.has_type("Human")
 
-func halves_follower_damage_inflicted() -> bool:
-	return not abilities_suppressed()
+func get_combat_follower_damage_halving_sources(inflicts_damage: bool) -> PackedStringArray:
+	var sources := super.get_combat_follower_damage_halving_sources(inflicts_damage)
+	if inflicts_damage and not abilities_suppressed():
+		sources.append("Patron's Hand")
+	return sources
 
 func on_summon(game_manager: GameManager) -> void:
 	apply_passive_to_board(game_manager)
