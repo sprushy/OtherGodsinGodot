@@ -690,6 +690,7 @@ func _score_priority_card(card: Card, action: CardAction, danger: int) -> Dictio
 		elif (card is Dromi or card is Gleipnir) and target != null and score > CardStrategy.BAD \
 				and CardStrategy.adds_attack_lock_next_turn(self, target):
 			score += _follower_safety_gain(danger, {"disable_attacker": target})
+		score -= CardStrategy.sweeper_hold_value(card)
 		if score > int(best["score"]):
 			best = {"score": score, "target": target}
 	return best
@@ -3758,28 +3759,32 @@ func _try_prepare_strategy_card() -> bool:
 			prepared_types.append(CardStrategy.key(card))
 	var best_card: Card = null
 	var best_score := 0
+	var spells_need_preparation := game_manager.spells_must_be_prepared()
 	for card in bot_player.hand_zone.cards:
-		if game_manager.spells_must_be_prepared() and card is SpellCard \
-				and (card is ApollyonsDemiurge or card is DeucalionsInfants):
-			if CardStrategy.key(card) not in prepared_types and game_manager.can_prepare_card(bot_player, card, zone):
-				var danger := _forecast_incoming_follower_loss()
-				var plan := _plan_demiurge(card, danger, true) if card is ApollyonsDemiurge else _plan_deucalions_infants(card, danger, true)
-				if int(plan.get("score", 0)) > best_score:
-					best_card = card
-					best_score = int(plan["score"])
-			continue
-		if not CardStrategy.supported(card) or not (card is HexCard or card is CharmCard or (card is SpellCard and game_manager.spells_must_be_prepared())) or CardStrategy.key(card) in prepared_types:
+		if not CardStrategy.supported(card) or CardStrategy.key(card) in prepared_types \
+				or not (card is HexCard or card is CharmCard or (card is SpellCard and spells_need_preparation)):
 			continue
 		if not game_manager.can_prepare_card(bot_player, card, zone):
 			continue
-		var score := CardStrategy.preparation_score(self, card) - CardStrategy.mana_penalty(self, _get_play_cost(card, true))
-		if card is SpellCard:
-			var target := CardStrategy.best_target(self, card, CardStrategy.targets(self, card))
-			score = CardStrategy.effect_score(self, card, target) - CardStrategy.mana_penalty(self, _get_play_cost(card, true))
+		var score: int
+		if card is ApollyonsDemiurge or card is DeucalionsInfants:
+			var danger := _forecast_incoming_follower_loss()
+			var plan := _plan_demiurge(card, danger, true) if card is ApollyonsDemiurge else _plan_deucalions_infants(card, danger, true)
+			score = int(plan.get("score", 0))
+		else:
+			if card is SpellCard:
+				var target := CardStrategy.best_target(self, card, CardStrategy.targets(self, card))
+				score = CardStrategy.effect_score(self, card, target)
+			else:
+				score = CardStrategy.preparation_score(self, card)
+			score -= CardStrategy.mana_penalty(self, _get_play_cost(card, true))
+		if score <= best_score:
+			continue
+		score -= CardStrategy.preparation_removal_penalty(self, card)
 		if score > best_score:
 			best_card = card
 			best_score = score
-	return _submit_prepare_card(best_card, zone) if best_card != null else false
+	return _submit_prepare_card(best_card, zone, true) if best_card != null else false
 
 func _plan_strategy_support(danger: int = -1) -> Dictionary:
 	var best_card: Card = null
@@ -5792,9 +5797,7 @@ func _score_known_entry_trade(reply: Dictionary, mana_left: int, unavailable: Ar
 func _known_hex_trade_credit(response: Card, victims: Array, mana_left: int, unavailable: Array = []) -> int:
 	var cost := game_manager.get_prepared_card_activation_mana_cost(opponent, response) if response.is_prepared \
 		else game_manager.get_card_play_mana_cost(opponent, response, false)
-	var credit := ECON_CARD_VALUE + int(cost * ECON_MANA_VALUE * 0.5)
-	if response is TheInferno or response is TheDeluge:
-		credit += int(ECON_CARD_VALUE * 0.5)
+	var credit := ECON_CARD_VALUE + int(cost * ECON_MANA_VALUE * 0.5) + CardStrategy.sweeper_hold_value(response)
 	var bodies := 0
 	for victim: Card in victims:
 		if victim is CreatureCard and not victim is ActiveGodCard and not victim.is_token and _get_card_loss_owner(victim) == bot_player:
@@ -6016,10 +6019,12 @@ func _submit_intercept_decision(interceptor_uid: String) -> bool:
 		"interceptor_uid": interceptor_uid,
 	})
 
-func _submit_prepare_card(card: Card, zone: Zone) -> bool:
+func _submit_prepare_card(card: Card, zone: Zone, removal_risk_scored: bool = false) -> bool:
 	if card == null or zone == null or game_manager == null:
 		return false
 	if not game_manager.can_prepare_card(bot_player, card, zone):
+		return false
+	if not removal_risk_scored and CardStrategy.preparation_removal_penalty(self, card) > 0:
 		return false
 	return _submit_action({
 		"type": "prepare_card",

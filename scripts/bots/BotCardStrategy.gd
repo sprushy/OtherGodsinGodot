@@ -1638,7 +1638,7 @@ static func structure_score(bot, structure: Card, excluded: Array = []) -> int:
 		_: return BAD
 	return gain - CARD_VALUE - mana_penalty(bot, activation_cost(bot, structure))
 
-static func _known_profitable_magic_removal(bot, card: Card) -> bool:
+static func preparation_removal_penalty(bot, card: Card) -> int:
 	var game: GameManager = bot.game_manager
 	var opponent: Player = bot.opponent
 	var mana := opponent.mana + game.get_automatic_upkeep_mana_gain(opponent, game.turn_number + 1) \
@@ -1649,7 +1649,8 @@ static func _known_profitable_magic_removal(bot, card: Card) -> bool:
 			continue
 		if source is Lailoken and source in field and source.is_stealth \
 				and source.is_publicly_identified(game) and not source.abilities_suppressed_by_effects():
-			return true
+			return 1700
+		# A spent one-for-one removal card such as Divine Lightning is an even trade.
 		if not source is OccultSingularity \
 				or bot._status_persists_to_next_turn(source, "activation_locked"):
 			continue
@@ -1657,7 +1658,7 @@ static func _known_profitable_magic_removal(bot, card: Card) -> bool:
 			else game.get_card_play_mana_cost(opponent, source, false)
 		if cost > mana or (source.current_zone != opponent.hand_zone and not source.is_prepared):
 			continue
-		# Price the spell and include Reflection as a prospective casualty.
+		# Price the spell and include the candidate as a prospective casualty.
 		var net_loss := value(bot, card) - CARD_VALUE - cost * MANA_VALUE
 		for doomed: Card in game.get_field_cards():
 			if doomed == source:
@@ -1670,8 +1671,12 @@ static func _known_profitable_magic_removal(bot, card: Card) -> bool:
 			if source._is_doomed_card(doomed, game) and not game.is_immune_to_source(doomed, source):
 				net_loss += value(bot, doomed) if doomed.get_controller() == bot.bot_player else -value(bot, doomed)
 		if net_loss > 0:
-			return true
-	return false
+			return 1700
+	return 0
+
+static func sweeper_hold_value(card: Card) -> int:
+	@warning_ignore("integer_division")
+	return CARD_VALUE / 2 if card is TheInferno or card is TheDeluge else 0
 
 static func preparation_score(bot, card: Card) -> int:
 	var id := key(card)
@@ -1685,7 +1690,7 @@ static func preparation_score(bot, card: Card) -> int:
 				continue
 			if bot._get_direct_follower_damage(attacker) > 0:
 				score = maxi(score, target_score(bot, card, attacker))
-		return score - (1700 if _known_profitable_magic_removal(bot, card) else 0)
+		return score
 	if card is ShroudOfTheAncients:
 		@warning_ignore("integer_division")
 		var score := maxi(0, shroud_gain(bot, card) / 2)
