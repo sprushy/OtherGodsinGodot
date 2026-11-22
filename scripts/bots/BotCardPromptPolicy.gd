@@ -89,7 +89,7 @@ static func build_command(bot, type: String, data: Dictionary) -> Dictionary:
 				var gain: int = Strategy.conjure_home_fetch_value(bot, target, danger, [source])
 				var loss: int = bot._get_card_economic_value(source)
 				if not bot.game_manager.can_player_add_to_hand_now(bot.bot_player) \
-						or gain + bot._follower_safety_gain(danger, {"removed": [source]}) <= loss:
+						or gain + bot._follower_safety_gain(danger, {"removed": [source]}, bot.bot_player.mana) <= loss:
 					command["target_uid"] = ""
 		return command
 	match type:

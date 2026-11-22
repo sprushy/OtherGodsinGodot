@@ -58,6 +58,7 @@ func run() -> bool:
 	_check_command_authority(failures)
 	_check_combat_rounding(failures)
 	_check_heroic_stand_combat_count(failures)
+	_check_bot_locked_board_forecast(failures)
 	_check_reveal_before_tactical_retreat(failures)
 	_check_united_front_doorway(failures)
 	_check_guan_yu_manoeuvre_and_slay(failures)
@@ -109,6 +110,8 @@ func run() -> bool:
 	_check_bot_hermes_speed(failures)
 	_check_aspect_shift(failures)
 	_check_bot_aspect_shift(failures)
+	_check_bot_call_of_the_crossing_safety(failures)
+	_check_bot_combat_mana_budget(failures)
 	_check_aphrodite_aspect_shift(failures)
 	_check_bot_violent_delights_upkeep(failures)
 	_check_bot_shift_and_extraction(failures)
@@ -1599,6 +1602,30 @@ func _check_heroic_stand_combat_count(failures: PackedStringArray) -> void:
 		manager.advance_priority()
 	if charm.current_zone != player.graveyard_zone or player.mana != HeroicStand.MANA_GAIN:
 		failures.append("Bot's prepared Heroic Stand did not resolve for seven mana")
+
+func _check_bot_locked_board_forecast(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.setup_game()
+	game.turn_number = 2
+	var attacker := BrownBear.new()
+	attacker.card_owner = player
+	attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
+	attacker.strength = 1
+	player.frontline_zones[0].add_card(attacker)
+	opponent.guard = 1
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	if not manager.can_attack(attacker) or not bot._locked_board_state():
+		failures.append("Locked board fixture did not have a legal attack absorbed by Guard")
+	if not (bot._posture_cache["value"] as Dictionary).is_empty():
+		failures.append("Locked board forecast re-entered strategic posture evaluation")
+	if bot._strategy_posture().get("posture", "") != "locked_ahead":
+		failures.append("Strategic posture did not use the computed board lock")
+	bot.detach()
 
 func _check_combat_rounding(failures: PackedStringArray) -> void:
 	var game := _new_fixture_game()
@@ -3550,7 +3577,8 @@ func _check_aphrodite_aspect_shift(failures: PackedStringArray) -> void:
 		failures.append("A Veil of Night attacker did not expose its inferable Resilience after combat")
 	player.followers = 100
 	GameState.apply_to_manager(GameState.serialize(game), game)
-	shift = bot._plan_aspect_shift([], {}, bot._forecast_incoming_follower_loss(), {}, player.mana)
+	danger = bot._forecast_incoming_follower_loss()
+	shift = bot._plan_aspect_shift([], {}, danger, {}, player.mana)
 	if shift.get("command", {}).get("type") != "activate_power" or not bot._take_main_phase_action():
 		failures.append("Bot did not restore Aphrodite Areia for a qualifying Violent Delights capture")
 		return
@@ -3561,6 +3589,16 @@ func _check_aphrodite_aspect_shift(failures: PackedStringArray) -> void:
 	if not player.god_zone.cards[0] is AphroditeAreia or restored_power == null or not restored_power.is_face_down \
 			or restored_attacker == null or not restored_attacker.will_reveal_in_combat() or player.mana != 12:
 		failures.append("Aspect Shift did not restore Aphrodite Areia and end Veil of Night after a state round trip")
+		return
+	var capture_target := game.get_card_by_uid(enemy.uid)
+	if capture_target == null or not bot._take_main_phase_action():
+		failures.append("Bot did not follow the shift with Violent Delights")
+		return
+	for _step in range(8):
+		manager.advance_priority()
+	if capture_target.get_controller() != player or not capture_target.is_enslaved() \
+			or player.mana != 12 - AphroditeAreia.ACTIVATION_COST:
+		failures.append("Violent Delights did not capture the attacker after the shift")
 
 func _check_bot_aspect_shift(failures: PackedStringArray) -> void:
 	var game := _new_fixture_game()
@@ -3658,6 +3696,152 @@ func _check_bot_aspect_shift(failures: PackedStringArray) -> void:
 		manager.advance_priority()
 	if attacker.get_effective_speed() != 4 or player.mana != 0:
 		failures.append("Shifting for Wings of the Departed did not produce the planned speed boost")
+	bot.detach()
+
+func _check_bot_call_of_the_crossing_safety(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.setup_game()
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	player.followers = 5
+	var hermes := Hermes.new()
+	hermes.card_owner = player
+	player.god_zone.add_card(hermes)
+	var shift := AspectShift.new()
+	shift.card_owner = player
+	player.power_zones[0].add_card(shift)
+	var ghost := Edimmu.new()
+	ghost.card_owner = player
+	player.deck_zone.add_card(ghost)
+	var sap := Sap.new()
+	sap.card_owner = player
+	sap.is_face_down = true
+	sap.is_prepared = true
+	player.reserve_zones[0].add_card(sap)
+	game.prepared_hexes[sap] = game.turn_number - 1
+	var thor := Thor.new()
+	thor.card_owner = opponent
+	opponent.god_zone.add_card(thor)
+	opponent.mana = ThorActive.new().mana_cost
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var crossing := shift.make_hades_aspect() as HermesPsychopompus
+	player.mana = shift.get_unlock_mana_cost(game) + crossing.get_ghost_mana_cost(ghost)
+	var danger := bot._forecast_incoming_follower_loss()
+	if danger != 0 or bot._forecast_incoming_follower_loss({"mana_left": 0}) < player.followers:
+		failures.append("Call of the Crossing fixture did not have a lethal Champion's Call stopped by Sap")
+	elif not bot._plan_aspect_shift([], {}, danger, {}, player.mana).is_empty():
+		failures.append("Bot planned to shift and summon without leaving mana for Sap against Champion's Call")
+	player.mana += game.get_prepared_card_activation_mana_cost(player, sap)
+	var funded := bot._plan_aspect_shift([], {}, bot._forecast_incoming_follower_loss(), {}, player.mana)
+	if funded.get("command", {}).get("power_uid") != shift.uid:
+		failures.append("Bot passed up Call of the Crossing with mana left for Sap against Champion's Call")
+
+	var sap_cost := game.get_prepared_card_activation_mana_cost(player, sap)
+	var mead := MeadOfPoetry.new()
+	mead.card_owner = player
+	mead.is_prepared = true
+	mead.is_face_down = true
+	player.reserve_zones[2].add_card(mead)
+	game.prepared_charms[mead] = game.turn_number - 1
+	player.mana -= sap_cost
+	if bot._ready_brew_mana_gain() <= 0 or not bot._plan_aspect_shift([], {}, 0, {}, player.mana + MeadOfPoetry.MANA_GAIN).is_empty():
+		failures.append("Call of the Crossing counted Mead without planning to brew it")
+	game.prepared_charms.erase(mead)
+	player.reserve_zones[2].remove_card(mead)
+	player.mana = sap_cost
+	var setup := {"score": BotCardStrategyScript.CARD_VALUE}
+	var unsafe_setup := bot._plan_removal_setup(setup, [], {}, 0, [], sap_cost, null, false)
+	var safe_setup := bot._plan_removal_setup(setup, [], {}, 0, [], 0, null, false)
+	if int(unsafe_setup["score"]) >= 0 or int(safe_setup["score"]) != int(setup["score"]):
+		failures.append("Removal setup safety did not account for spending the mana reserved for Sap")
+	var refunded_setup := bot._plan_removal_setup(setup.merged({"mana_refund": 1}), [], {}, 0, [], sap_cost, null, false)
+	if int(refunded_setup["score"]) != int(setup["score"]):
+		failures.append("Removal setup safety missed mana refunded in time to pay for Sap")
+
+	var demiurge := ApollyonsDemiurge.new()
+	demiurge.card_owner = player
+	player.hand_zone.add_card(demiurge)
+	var demon := SulakTheUnclean.new()
+	demon.card_owner = player
+	demon.add_status_effect("cannot_intercept", "Preflight")
+	player.deck_zone.add_card(demon, Zone.DeckPlacement.PRIMED)
+	player.deck_zone.add_card(CreatureCard.new())
+	player.mana = sap_cost
+	var unsafe_mill := bot._plan_demiurge(demiurge, 0, true)
+	player.mana += sap_cost
+	var safe_mill := bot._plan_demiurge(demiurge, 0, true)
+	if not unsafe_mill.is_empty() or safe_mill.get("command", {}).get("x_value") != 1:
+		failures.append("Apollyon's Demiurge did not leave mana for Sap when choosing X")
+
+	var blocker := CreatureCard.new()
+	blocker.card_owner = player
+	blocker.creature_mode = Card.CreatureMode.DEFENSIVE
+	blocker.resilience = 40
+	blocker.speed = 3
+	player.frontline_zones[0].add_card(blocker)
+	var fodder := CreatureCard.new()
+	fodder.card_owner = player
+	fodder.creature_mode = Card.CreatureMode.DEFENSIVE
+	fodder.strength = 25
+	fodder.add_status_effect("cannot_intercept", "Preflight")
+	player.reserve_zones[1].add_card(fodder)
+	var recruit := CreatureCard.new()
+	recruit.card_owner = player
+	recruit.mana_cost = 2
+	recruit.sacrifice_cost = 1
+	recruit.add_status_effect("cannot_intercept", "Preflight")
+	player.hand_zone.add_card(recruit)
+	var zone := player.frontline_zones[1]
+	player.mana = recruit.mana_cost
+	var protect_blocker := bot._build_creature_play_command(recruit, zone, Card.CreatureMode.DEFENSIVE, 0, true)
+	player.mana += sap_cost
+	var use_sap := bot._build_creature_play_command(recruit, zone, Card.CreatureMode.DEFENSIVE, 0, true)
+	if protect_blocker.get("sacrifice_uids", []) != [fodder.uid] or use_sap.get("sacrifice_uids", []) != [blocker.uid]:
+		failures.append("Summon sacrifice selection did not keep the blocker when the summon spent Sap's mana")
+	bot.detach()
+
+func _check_bot_combat_mana_budget(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.setup_game()
+	game.turn_number = 3
+	var beast := PictishBeast.new()
+	beast.card_owner = player
+	beast.is_stealth = true
+	beast.is_face_down = true
+	player.frontline_zones[0].add_card(beast)
+	var asakku := Asakku.new()
+	asakku.card_owner = player
+	player.reserve_zones[0].add_card(asakku)
+	var target := CreatureCard.new()
+	target.card_owner = opponent
+	target.resilience = 1
+	opponent.frontline_zones[0].add_card(target)
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var attacks := bot._get_attack_candidates(beast, null, false, null, 0, null, {}, null, target)
+	if attacks.is_empty():
+		failures.append("Combat mana fixture could not forecast the attack")
+		return
+	attacks[0]["mana_cost"] = 1
+	var funded := bot._plan_combat(attacks, [], null, 0, null, 1)
+	if funded.get("mana", -1) != PictishBeast.MANA_PER_BEAST + 2 or funded.get("mana_required", -1) != 1 \
+			or not bot._plan_combat(attacks, [], null, 0, null, 0).is_empty():
+		failures.append("Combat budget missed Mana Boon or Offering, or spent them before the attack")
+	var cancelled: Dictionary = attacks[0]["base"].duplicate()
+	cancelled.erase("mana_boon_sources")
+	cancelled.erase("offering_victims")
+	attacks[0]["replies"][VoidShield.new()] = cancelled
+	if bot._plan_combat(attacks, [], null, 0, null, 1).get("mana", -1) != 0:
+		failures.append("Combat budget relied on mana an opposing response could prevent")
 	bot.detach()
 
 func _check_bot_violent_delights_upkeep(failures: PackedStringArray) -> void:
@@ -4720,11 +4904,11 @@ func _check_bot_next_turn_lethal(failures: PackedStringArray) -> void:
 	if flame.get("source_uid") != pyre.uid or flame.get("target_uid") != weak.uid:
 		failures.append("Ancient Pyre did not consider destroying its own exposed creature")
 	weak.resilience += 1
-	if bot._effect_follower_safety_gain(pyre, weak, danger) != 0:
+	if bot._effect_follower_safety_gain(pyre, weak, danger, player.mana - AncientPyre.ACTIVATION_COST) != 0:
 		failures.append("Ancient Pyre was credited with destroying a creature above its damage threshold")
 	weak.resilience -= 1
 	weak.add_status_effect("berserker_mead_guard", "Preflight")
-	if bot._effect_follower_safety_gain(pyre, weak, danger) != 0:
+	if bot._effect_follower_safety_gain(pyre, weak, danger, player.mana - AncientPyre.ACTIVATION_COST) != 0:
 		failures.append("Ancient Pyre was credited with destroying a protected creature")
 	weak.remove_status_effects_by_name("berserker_mead_guard")
 	player.frontline_zones[2].remove_card(pyre)
