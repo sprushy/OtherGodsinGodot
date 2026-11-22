@@ -2605,8 +2605,8 @@ func resolve_combat(attacker: Card, defender: Card, continue_callback: Callable 
 				var void_attacker := _should_class_rend(defender, attacker)
 				var void_defender := _should_class_rend(attacker, defender)
 				var simultaneous_casualties := _get_simultaneous_combat_casualties(attacker, defender)
-				_combat_kill_routed(defender, attacker, void_attacker, simultaneous_casualties)
-				_combat_kill_routed(attacker, defender, void_defender, simultaneous_casualties)
+				_combat_kill_routed(defender, attacker, void_attacker, simultaneous_casualties, defender_controller, attacker_controller)
+				_combat_kill_routed(attacker, defender, void_defender, simultaneous_casualties, attacker_controller, defender_controller)
 		else:	# Defensive stance - real RES determines kill; Giant's Disdain only reduces the opposing attack stat.
 			var vs_defense_bonus := 0
 			for equip in attacker.equipment:
@@ -2674,6 +2674,8 @@ func resolve_united_front_combat(
 		return
 	var primary: Card = active_attackers[0]
 	var support: Card = active_attackers[1]
+	var primary_controller := primary.get_controller()
+	var support_controller := support.get_controller()
 	if is_attack_blocked_by_active_structure(primary, defender, [support]):
 		print(primary.card_name + " and " + support.card_name + " cannot engage " + defender.card_name + ".")
 		if continue_callback.is_valid():
@@ -2682,7 +2684,7 @@ func resolve_united_front_combat(
 	_record_combat_participation(primary, defender, support)
 	_begin_declared_combat(primary, defender)
 	_begin_declared_combat(support, defender)
-	var attacker_controller := primary.get_controller()
+	var attacker_controller := primary_controller
 	var defender_controller := defender.get_controller()
 	var attack_damage_recipient := attacker_controller if _temporary_combat_follower_damage_reversed else defender_controller
 	var defense_damage_recipient := defender_controller if _temporary_combat_follower_damage_reversed else attacker_controller
@@ -2780,9 +2782,9 @@ func resolve_united_front_combat(
 				print("	Tie! Both united attackers and the defender are destroyed")
 				var simultaneous_casualties := _get_simultaneous_combat_casualties(primary, defender, support)
 				_combat_kill_sequence_deferred([
-					{"killer": defender, "victim": primary, "do_void": _should_class_rend(defender, primary), "suppress_ally_kill_sources": simultaneous_casualties},
-					{"killer": defender, "victim": support, "do_void": _should_class_rend(defender, support), "suppress_ally_kill_sources": simultaneous_casualties},
-					{"killer": primary, "victim": defender, "do_void": _should_class_rend(primary, defender), "suppress_ally_kill_sources": simultaneous_casualties},
+					{"killer": defender, "victim": primary, "do_void": _should_class_rend(defender, primary), "suppress_ally_kill_sources": simultaneous_casualties, "killer_controller": defender_controller, "victim_controller": primary_controller},
+					{"killer": defender, "victim": support, "do_void": _should_class_rend(defender, support), "suppress_ally_kill_sources": simultaneous_casualties, "killer_controller": defender_controller, "victim_controller": support_controller},
+					{"killer": primary, "victim": defender, "do_void": _should_class_rend(primary, defender), "suppress_ally_kill_sources": simultaneous_casualties, "killer_controller": primary_controller, "victim_controller": defender_controller},
 				], finish)
 				return
 		else:
@@ -2831,8 +2833,8 @@ func resolve_united_front_combat(
 		return
 	if both_attackers_defeated:
 		_combat_kill_sequence_deferred([
-			{"killer": defender, "victim": primary, "do_void": _should_class_rend(defender, primary)},
-			{"killer": defender, "victim": support, "do_void": _should_class_rend(defender, support)},
+			{"killer": defender, "victim": primary, "do_void": _should_class_rend(defender, primary), "killer_controller": defender_controller, "victim_controller": primary_controller},
+			{"killer": defender, "victim": support, "do_void": _should_class_rend(defender, support), "killer_controller": defender_controller, "victim_controller": support_controller},
 		], finish)
 		return
 	finish.call()
@@ -2947,8 +2949,8 @@ func resolve_combat_with_continuation(
 				print("	Tie! Both creatures destroyed")
 				var simultaneous_casualties := _get_simultaneous_combat_casualties(attacker, defender)
 				return _combat_kill_sequence_deferred([
-					{"killer": defender, "victim": attacker, "do_void": _should_class_rend(defender, attacker), "suppress_ally_kill_sources": simultaneous_casualties},
-					{"killer": attacker, "victim": defender, "do_void": _should_class_rend(attacker, defender), "suppress_ally_kill_sources": simultaneous_casualties},
+					{"killer": defender, "victim": attacker, "do_void": _should_class_rend(defender, attacker), "suppress_ally_kill_sources": simultaneous_casualties, "killer_controller": defender_controller, "victim_controller": attacker_controller},
+					{"killer": attacker, "victim": defender, "do_void": _should_class_rend(attacker, defender), "suppress_ally_kill_sources": simultaneous_casualties, "killer_controller": attacker_controller, "victim_controller": defender_controller},
 				], finish)
 			var vs_defense_bonus := 0
 			for equip in attacker.equipment:
@@ -3116,9 +3118,9 @@ func _resolve_committed_combat_snapshot(
 				return true
 			var kills: Array[Dictionary] = []
 			if attacker.current_zone != null and attacker.current_zone.is_board_zone():
-				kills.append({"killer": defender, "victim": attacker})
+				kills.append({"killer": defender, "victim": attacker, "killer_controller": defender_controller, "victim_controller": attacker_controller})
 			if defender.current_zone != null and defender.current_zone.is_board_zone():
-				kills.append({"killer": attacker, "victim": defender})
+				kills.append({"killer": attacker, "victim": defender, "killer_controller": attacker_controller, "victim_controller": defender_controller})
 			_combat_kill_sequence_deferred(kills, finish)
 			return true
 		var attacker_str_vs_res := int(snapshot.get("attacker_str_vs_res", attacker_str))
@@ -3153,20 +3155,29 @@ func _resolve_committed_combat_snapshot(
 func _combat_kill_deferred(killer: Card, victim: Card, continue_callback: Callable = Callable()) -> bool:
 	return _combat_kill_routed_deferred(killer, victim, _should_class_rend(killer, victim), continue_callback)
 
+# Simultaneous kills are resolved one at a time. Pass the controllers captured before
+# the trade so a borrowed attacker that dies first still gets credit for its own kill
+# instead of falling back to its printed owner.
 func _combat_kill_routed_deferred(
 	killer: Card,
 	victim: Card,
 	do_void: bool,
 	continue_callback: Callable = Callable(),
-	suppress_ally_kill_sources: Array = []
+	suppress_ally_kill_sources: Array = [],
+	killer_controller_override: Player = null,
+	victim_controller_override: Player = null
 ) -> bool:
 	if _prevent_warded_combat_destruction(killer, victim):
 		if continue_callback.is_valid():
 			continue_callback.call()
 		return true
 	_expect_match_destruction(victim, killer, true)
-	var killer_controller := killer.get_controller() if killer != null else null
-	var victim_controller := victim.get_controller()
+	var killer_controller: Player = killer_controller_override
+	if killer_controller == null and killer != null:
+		killer_controller = killer.get_controller()
+	var victim_controller: Player = victim_controller_override
+	if victim_controller == null and victim != null:
+		victim_controller = victim.get_controller()
 	var bypass_combat_survival := killer != null and killer.can_destroy_combat_protected_creatures(victim)
 	var finish := func() -> void:
 		var victim_counts_as_creature_kill := victim != null and victim.card_type == Card.CardType.CREATURE and not victim.is_petrified()
@@ -3228,7 +3239,9 @@ func _combat_kill_sequence_deferred(kills: Array[Dictionary], continue_callback:
 		kill.get("victim", null),
 		kill.get("do_void", false) == true,
 		continue_sequence,
-		kill.get("suppress_ally_kill_sources", [])
+		kill.get("suppress_ally_kill_sources", []),
+		kill.get("killer_controller", null) as Player,
+		kill.get("victim_controller", null) as Player
 	)
 
 func _notify_after_combat(attacker: Card, defender: Card) -> void:
@@ -3774,12 +3787,23 @@ func _get_effect_class_rend_source(source: Card, victim: Card, combat_death: boo
 	return source if controller != null and _class_rend_active(controller, victim) else null
 
 # Executes a combat kill with a pre-determined void flag (avoids mid-sequence zone-state drift).
-func _combat_kill_routed(killer: Card, victim: Card, do_void: bool, suppress_ally_kill_sources: Array = []) -> void:
+func _combat_kill_routed(
+	killer: Card,
+	victim: Card,
+	do_void: bool,
+	suppress_ally_kill_sources: Array = [],
+	killer_controller_override: Player = null,
+	victim_controller_override: Player = null
+) -> void:
 	if _prevent_warded_combat_destruction(killer, victim):
 		return
 	_expect_match_destruction(victim, killer, true)
-	var killer_controller := killer.get_controller() if killer != null else null
-	var victim_controller := victim.get_controller()
+	var killer_controller: Player = killer_controller_override
+	if killer_controller == null and killer != null:
+		killer_controller = killer.get_controller()
+	var victim_controller: Player = victim_controller_override
+	if victim_controller == null and victim != null:
+		victim_controller = victim.get_controller()
 	var bypass_combat_survival := killer != null and killer.can_destroy_combat_protected_creatures(victim)
 	var finish := func() -> void:
 		var victim_counts_as_creature_kill := victim != null and victim.card_type == Card.CardType.CREATURE and not victim.is_petrified()

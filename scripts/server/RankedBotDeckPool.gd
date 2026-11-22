@@ -5,7 +5,7 @@ const ServerPathsScript = preload("res://scripts/server/ServerPaths.gd")
 const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
 const LISTS_PER_GOD := 14
 const EARLY_RETIREMENT_GAMES := 60
-const EXPLORATION_CHANCE := 0.25
+const EXPLORATION_CHANCE := 0.20
 # How many of the worst bots per god are kept as quarantined bad bots for
 # forced matchmaking (Iron V and post-loss Iron/Bronze pairing).
 const QUARANTINED_PER_GOD := 1
@@ -844,7 +844,6 @@ func select_self_play_pair(busy_list_ids: Dictionary, rng: RandomNumberGenerator
 	if restrict_first and eligible_first.is_empty():
 		return []
 	var pairs_by_gap: Dictionary = {}
-	var trials_by_gap: Dictionary = {}
 	for i in available.size():
 		var first := available[i]
 		var first_id := str(first["list_id"])
@@ -859,8 +858,6 @@ func select_self_play_pair(busy_list_ids: Dictionary, rng: RandomNumberGenerator
 			var gap := absi(_league_for_stars(int(first["stars"])) - _league_for_stars(int(second["stars"])))
 			var pair := [first, second]
 			_append_to_gap_bucket(pairs_by_gap, gap, pair)
-			if _by_god[first["god_name"]]["challenger"] == first or _by_god[second["god_name"]]["challenger"] == second:
-				_append_to_gap_bucket(trials_by_gap, gap, pair)
 	# Prefer pairs inside the league band, then the closest available gap.
 	var selected_gaps: Array = []
 	for gap in range(0, MATCHMAKING_LEAGUE_TIER_WINDOW + 1):
@@ -869,12 +866,9 @@ func select_self_play_pair(busy_list_ids: Dictionary, rng: RandomNumberGenerator
 	if selected_gaps.is_empty() and not pairs_by_gap.is_empty():
 		selected_gaps.append(_closest_gap(pairs_by_gap))
 	var candidates: Array = []
-	var trials: Array = []
 	for gap in selected_gaps:
 		candidates.append_array(pairs_by_gap[gap])
-		if trials_by_gap.has(gap):
-			trials.append_array(trials_by_gap[gap])
-	if candidates.is_empty() or (trials.is_empty() and rng.randf() < EXPLORATION_CHANCE):
+	if candidates.is_empty() or rng.randf() < EXPLORATION_CHANCE:
 		if restrict_first:
 			return [eligible_first[rng.randi_range(0, eligible_first.size() - 1)].duplicate(true)]
 		return []

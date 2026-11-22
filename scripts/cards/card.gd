@@ -1702,7 +1702,9 @@ func has_veil_of_night() -> bool:
 	return god != null and not god.abilities_suppressed() and not god.is_face_down and not god.is_sleeping
 
 func will_reveal_in_combat() -> bool:
-	return is_stealth and not has_veil_of_night()
+	# Veil of Night removes the speed penalty for hidden creatures, but combat
+	# results make their identity inferable, so they still reveal in combat.
+	return is_stealth
 
 func reveal_from_combat(game_manager: GameManager) -> void:
 	if will_reveal_in_combat():

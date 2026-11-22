@@ -5632,8 +5632,7 @@ func _forecast_incoming_combat(action: CardAction, stance: Card, defensive: bool
 		action.attacker, defender, action.united_front_partner, damage_from_defender
 	)
 	var damage := GameManager.apply_follower_damage_halvings(int(result["bot_followers_lost"]), halvings)
-	if (defender is MasmassuPriest or defender is Grindylow) and (projected_stealth or defender.is_stealth) \
-			and not defender.has_veil_of_night():
+	if (defender is MasmassuPriest or defender is Grindylow) and (projected_stealth or defender.is_stealth):
 		var targets := _get_reveal_removal_targets(defender)
 		var target := _choose_combat_reveal_removal(defender, targets, action, result["casualties"] + removed)
 		if target != null:
@@ -6869,9 +6868,6 @@ func _build_creature_play_command(card: Card, zone: Zone, mode: Card.CreatureMod
 func _stealth_would_forfeit_value(card: Card) -> bool:
 	if card == null:
 		return false
-	if card.has_veil_of_night() and not card.abilities_suppressed_by_effects() \
-			and "[b]Reveal[/b]" in card.ability_text:
-		return true
 	var card_key := CardStrategy.key(card)
 	if card_key in CardStrategy.BOARD_ABILITIES:
 		return true
@@ -8825,11 +8821,6 @@ func _estimate_projected_attack_economy(action: CardAction, stats: Dictionary, i
 		for combatant: Card in [action.attacker, action.united_front_partner, defender]:
 			if combatant == null or combatant.get_controller() != bot_player \
 					or not (combatant.is_stealth or (combatant == defender and projected_defender_stealth)):
-				continue
-			if combatant.has_veil_of_night():
-				if combatant != defender and combatant not in result["casualties"] \
-						and not combatant.is_publicly_identified(game_manager):
-					result["concealment_value"] = int(result.get("concealment_value", 0)) + VEIL_CONCEALMENT_VALUE
 				continue
 			if combatant.abilities_suppressed_by_effects():
 				continue

@@ -1590,8 +1590,15 @@ func _check_heroic_stand_combat_count(failures: PackedStringArray) -> void:
 	end_turn.source_player = opponent
 	end_turn.event_name = "end_turn"
 	game.action_stack.append(end_turn)
-	if bot._choose_priority_response() != charm:
+	if bot._choose_priority_response() != charm or not bot._submit_priority_response(charm):
 		failures.append("Bot did not use a prepared Heroic Stand on the opponent's turn")
+		return
+	for _step in range(8):
+		if charm.current_zone == player.graveyard_zone:
+			break
+		manager.advance_priority()
+	if charm.current_zone != player.graveyard_zone or player.mana != HeroicStand.MANA_GAIN:
+		failures.append("Bot's prepared Heroic Stand did not resolve for seven mana")
 
 func _check_combat_rounding(failures: PackedStringArray) -> void:
 	var game := _new_fixture_game()
@@ -3494,7 +3501,7 @@ func _check_aphrodite_aspect_shift(failures: PackedStringArray) -> void:
 			or bot._should_summon_creature_stealthily(defender, player.reserve_zones[1], Card.CreatureMode.DEFENSIVE):
 		failures.append("Bot did not adjust stealth summoning to Veil of Night and Reveal triggers")
 	skotia.is_muted = true
-	if defender.get_effective_speed() != 3 or not defender.will_reveal_in_combat():
+	if defender.get_effective_speed() != 3:
 		failures.append("Muting Aphrodite Skotia did not suppress Veil of Night")
 	skotia.is_muted = false
 	game._begin_declared_combat(enemy, defender)
@@ -3508,11 +3515,17 @@ func _check_aphrodite_aspect_shift(failures: PackedStringArray) -> void:
 	attack.target = player
 	attack.interceptor = defender
 	manager._resolve_attack(attack)
-	if not defender.is_stealth or not defender.is_face_down or defender.get_effective_strength() != defender.strength \
-			or defender.card_name in manager.last_resolution_text:
-		failures.append("A hidden defender revealed or triggered its Reveal ability under Veil of Night")
-	defender.reveal_from_stealth(game)
-	if defender.is_stealth or defender.get_effective_strength() <= defender.strength:
+	if defender.is_stealth or defender.is_face_down:
+		failures.append("A Veil of Night defender did not reveal in combat despite an inferable combat result")
+	if defender.get_effective_strength() != defender.strength:
+		failures.append("A Veil of Night defender triggered a Reveal ability from combat")
+	var outside_reveal := SulakTheUnclean.new()
+	outside_reveal.card_owner = player
+	outside_reveal.is_stealth = true
+	outside_reveal.is_face_down = true
+	player.reserve_zones[1].add_card(outside_reveal)
+	outside_reveal.reveal_from_stealth(game)
+	if outside_reveal.is_stealth or outside_reveal.get_effective_strength() <= outside_reveal.strength:
 		failures.append("Veil of Night blocked a reveal outside combat")
 	defender.clear_buffs_from(SulakTheUnclean.SURPRISE_BUFF_SOURCE)
 	var attacker := CreatureCard.new()
@@ -3528,8 +3541,8 @@ func _check_aphrodite_aspect_shift(failures: PackedStringArray) -> void:
 	victim.creature_mode = Card.CreatureMode.DEFENSIVE
 	opponent.frontline_zones[1].add_card(victim)
 	game.creature_attack(attacker, victim)
-	if not attacker.is_stealth or not attacker.is_face_down or victim.current_zone != opponent.graveyard_zone:
-		failures.append("Veil of Night did not keep a hidden attacker concealed through combat")
+	if attacker.is_stealth or attacker.is_face_down or victim.current_zone != opponent.graveyard_zone:
+		failures.append("A Veil of Night attacker did not reveal in combat despite an inferable combat result")
 	player.followers = 100
 	GameState.apply_to_manager(GameState.serialize(game), game)
 	shift = bot._plan_aspect_shift([], {}, bot._forecast_incoming_follower_loss(), {}, player.mana)
