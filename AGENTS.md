@@ -4,7 +4,7 @@ Read this first on a fresh thread, then inspect the files relevant to the user's
 
 ## Project Shape
 
-- Engine target is Godot 4.6.x. CI uses Godot 4.6.1 in `.github/workflows/windows-release.yml`.
+- Engine target is Godot 4.7 stable. The CI/export runtime marker is stored in `.godot-version` and loaded by `.github/workflows/windows-release.yml`; debug/editor runs should use the same Godot version as the deployed server to avoid scene RPC checksum mismatches.
 - Main configured scene is `res://scenes/main_3d.tscn`, which runs `scripts/three_d/Main3D.gd`.
 - `Main3D.gd` embeds `res://scenes/mainfork.tscn` into a viewport/flat 2D canvas. Server-mode launches bypass the 3D shell and load the original scene directly.
 - `scripts/Other/MainMenu.gd` owns the menu, embedded game selection, deck builder entry, practice Thor mode, update prompts, smoke modes, and lobby UI flow.
@@ -18,8 +18,8 @@ Read this first on a fresh thread, then inspect the files relevant to the user's
 - `scripts/Other/GameState.gd` serializes/deserializes full match state. It masks opponent hands and hidden board cards for network clients and spectators.
 - `scripts/Other/GameEventBroadcaster.gd` listens to authoritative signals and sends personalized `full_state` and prompt events.
 - `scripts/Other/NetworkManager.gd` wraps ENet RPC, player peer IDs, spectators, command submission, match join, and game-event broadcasts.
-- `scripts/Other/GameInput.gd`, `LocalGameInput.gd`, `NetworkedGameInput.gd`, and `scripts/bots/BotGameInput.gd` are the input boundary. Prefer submitting commands through `GameInput` instead of reaching into UI methods.
-- `scripts/Other/Player.gd` defines player zones: hand, deck, graveyard, abyss, god slot, 3 power slots, 5 frontline lanes, and 5 reserve lanes.
+- `scripts/Other/GameInput.gd`, `InProcessGameInput.gd`, `NetworkedGameInput.gd`, and `scripts/bots/BotGameInput.gd` are the input boundary. Every implementation submits commands to `MatchManager`; prefer this boundary instead of reaching into UI methods.
+- `scripts/Other/player.gd` defines player zones: hand, deck, graveyard, abyss, god slot, 3 power slots, 5 frontline lanes, and 5 reserve lanes. Keep this path lowercase; opening it as `Player.gd` can make Godot load a duplicate global class on Windows.
 - `scripts/Other/CardAction.gd` is the stack/action envelope for spells, abilities, attacks, charms, and event-style triggers.
 
 ## Cards And Catalog
@@ -31,6 +31,7 @@ Read this first on a fresh thread, then inspect the files relevant to the user's
 - `scripts/cards/CardCatalog.gd` has an explicit `CARD_SCRIPT_PATHS` list. When adding a card script, add it there or the deck builder/catalog will not reliably see it.
 - Card art is mostly under `images/card_art/...`; Godot `.import` files are tracked. Avoid deleting import artifacts casually.
 - Deck construction rules are in `docs/new-player-rules.md` and enforced in `Player.validate_deck()` and `scripts/server/DeckValidator.gd`: 1 God, up to 3 Powers, at least 35 regular cards, normal copy/legendary limits, and power/culture restrictions.
+- Keep `Slain` distinct from `destroyed in combat` in card text and rules logic. `Slain` requires combat destruction and arrival in the Graveyard. Combat destruction also covers cases where the victim is sent to the Abyss, such as Asag's Class Rend. Use `Cannot be Slain` for Stone Skin and `Cannot be destroyed in combat` for protection that also covers those Abyss cases.
 
 ## Lobby, Server, And Persistence
 
@@ -51,7 +52,11 @@ Read this first on a fresh thread, then inspect the files relevant to the user's
 
 ## Verification
 
-Use targeted Godot probes or smoke runs when possible. The helper script resolves `godot.exe`, sets portable Godot appdata under `.godot_portable`, and disables the MCP plugin:
+Do not run visual testing, launch previews for visual QA, or automate the UI to inspect appearance unless the user explicitly asks. This applies to UI and animation changes too; use relevant nonvisual checks when needed.
+
+Prefer existing smoke runs only when they are already maintained and clearly relevant. Do not create new ad hoc Godot probe scripts for gameplay debugging unless the user explicitly asks; the user prefers to test these interactions manually because local probes have been inconsistent.
+
+The helper script resolves `godot.exe`, sets portable Godot appdata under `.godot_portable`, and disables the MCP plugin:
 
 ```powershell
 powershell.exe -ExecutionPolicy Bypass -File scripts\tmp\run_practice_smoke.ps1 -Role practice_thor
@@ -77,7 +82,7 @@ powershell.exe -ExecutionPolicy Bypass -File scripts\tmp\run_lobby_smoke.ps1
 
 `docs/lobby-manual-smoke-test.md` notes that the automated cross-process lobby smoke has Godot editor-script RPC limitations, so a real two-window test is still the strongest proof for that flow.
 
-CI export presets are `Windows Desktop`, `Windows Dedicated Server`, and `macOS` in `export_presets.cfg`.
+CI export presets are `Windows Desktop`, `Windows Dedicated Server`, `macOS`, `iOS`, and `Android` in `export_presets.cfg`. The iOS job exports an unsigned Xcode project; the manual iPad signing flow is documented in `docs/ios-ipad-release.md`. Android APK builds and signing setup are documented in `docs/android-release.md`; without release signing secrets CI produces a separate preview app as a workflow artifact.
 
 ## Working Habits For This Repo
 
@@ -85,7 +90,8 @@ CI export presets are `Windows Desktop`, `Windows Dedicated Server`, and `macOS`
 - Prefer small, targeted edits. This project has large controller files, so avoid broad cleanups mixed with behavior changes.
 - Use Godot `res://` paths in GDScript/resources.
 - Preserve Godot's tab-indented GDScript style in existing files.
-- Do not hand-edit `.godot/` cache files. Treat `scripts/tmp` as probe/smoke territory and avoid committing new logs unless the user asked for evidence artifacts.
+- Do not hand-edit `.godot/` cache files. Treat `scripts/tmp` as smoke/scratch territory and avoid adding new probe scripts or committing new logs unless the user asked for evidence artifacts.
 - If touching networking, remember the server sends personalized full-state snapshots for privacy. Do not replace that with a shared snapshot unless hand privacy/hidden board privacy is handled.
 - If touching prompts or priority, inspect both `GameManager` and `MatchManager`; many UI prompts are now serialized through `PromptRouter`/`GameEventBroadcaster`, but older UI paths still exist in `CombatMockGame.gd`.
+- If the active player attempts a normal turn action during their own priority, including a drag-to-attack, queue the intended action and pass their priority. Resume it once the opponent passes and the stack clears, if the action is still legal. An opponent response cancels the queued action. Legal at-speed responses use the current priority window.
 - If touching deck/card availability, update both catalog/deck validation paths and any relevant deck-builder UI assumptions.

@@ -2,8 +2,9 @@ extends PowerCard
 class_name Breidablik
 
 const UNLOCK_COST := 3
+const HARBOR_MANA_COST := 1
 const RETURN_MANA_COST := 1
-const FOLLOWERS_PER_LEVEL := 3
+const FOLLOWERS_PER_LEVEL := 2
 
 var stored_priests: Array[Card] = []
 var stored_priest_origins: Dictionary = {}
@@ -19,14 +20,27 @@ func _init() -> void:
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
 	targets = true
-	ability_text = "Peaceful Runes: You may [b]Harbor[/b] a friendly Priest that hasn't attacked this turn.\nEnd of turn: gain followers equal to 3x the level of the harbored Priests.\n[b]Upkeep[/b]: Pay 1 mana to return a harbored Priest to the field.\nIf this card is flipped, return all harbored Priests to the field."
+	ability_text = "Peaceful Runes: Pay %d mana to [b]Harbor[/b] a friendly Priest that hasn't attacked this turn.\nEnd of turn: gain followers equal to %dx the level of the harbored Priests.\n[b]Upkeep[/b]: You may repeatedly pay %d mana to return a harbored Priest to the field.\nIf Breidablik is flipped, return all harbored Priests to the field." % [HARBOR_MANA_COST, FOLLOWERS_PER_LEVEL, RETURN_MANA_COST]
 	artist = "Lorinda Tomko"
 	art_path = "res://images/card_art/powers/breidablik.jpg"
 
 func can_activate(game_manager: GameManager) -> bool:
 	if is_face_down or is_muted or is_activation_locked(game_manager) or card_owner != game_manager.current_player:
 		return false
-	return not get_valid_field_priests(game_manager).is_empty() or can_return_priest(game_manager)
+	if game_manager != null and game_manager._has_pending_stack_action_for_card(self):
+		return false
+	return can_harbor_priest(game_manager) or can_return_priest(game_manager)
+
+func get_activation_failure_reason(game_manager: GameManager) -> String:
+	if game_manager != null and game_manager._has_pending_stack_action_for_card(self):
+		return card_name + " is already waiting to resolve."
+	return super.get_activation_failure_reason(game_manager)
+
+func can_harbor_priest(game_manager: GameManager) -> bool:
+	return game_manager != null \
+		and card_owner != null \
+		and card_owner.mana >= get_activation_mana_cost(HARBOR_MANA_COST, game_manager) \
+		and not get_valid_field_priests(game_manager).is_empty()
 
 func get_valid_field_priests(_game_manager: GameManager) -> Array[Card]:
 	var valid_priests: Array[Card] = []
@@ -35,6 +49,22 @@ func get_valid_field_priests(_game_manager: GameManager) -> Array[Card]:
 			if _can_store_priest(card):
 				valid_priests.append(card)
 	return valid_priests
+
+func get_valid_field_priest_by_uid(priest_uid: String) -> Card:
+	var cleaned_uid := str(priest_uid).strip_edges()
+	if cleaned_uid == "":
+		return null
+	for priest in get_valid_field_priests(null):
+		if priest != null and str(priest.uid).strip_edges() == cleaned_uid:
+			return priest
+	return null
+
+func resolve_harbor_target(target: Card) -> Card:
+	if target == null:
+		return null
+	if _can_store_priest(target):
+		return target
+	return get_valid_field_priest_by_uid(target.uid)
 
 func get_stored_priests() -> Array[Card]:
 	var copy: Array[Card] = []
@@ -88,17 +118,44 @@ func apply_serialized_state(state: Dictionary) -> void:
 func can_return_priest(game_manager: GameManager) -> bool:
 	return return_window_open \
 		and game_manager != null \
+		and card_owner != null \
+		and game_manager.has_resolved_turn_upkeep() \
 		and game_manager.current_player == card_owner \
 		and card_owner.mana >= get_activation_mana_cost(RETURN_MANA_COST, game_manager) \
 		and not stored_priests.is_empty() \
 		and not _get_open_field_zones().is_empty()
 
+func get_activation_cost_hover_data(game_manager: GameManager = null) -> Dictionary:
+	if can_return_priest(game_manager):
+		return {
+			"base_cost": RETURN_MANA_COST,
+			"cost_kind": Card.COST_KIND_POWER_ACTIVATION,
+			"label": "Return Cost",
+		}
+	if can_harbor_priest(game_manager):
+		return {
+			"base_cost": HARBOR_MANA_COST,
+			"cost_kind": Card.COST_KIND_POWER_ACTIVATION,
+			"label": "Harbor Cost",
+		}
+	return {}
+
 func activate(game_manager: GameManager, target: Card = null) -> void:
-	if target == null or target not in get_valid_field_priests(game_manager):
-		print(card_name + ": Invalid Priest target.")
-		return
-	_store_priest(target)
-	print(card_name + ": " + target.card_name + " was placed under this card.")
+	harbor_priest(game_manager, target)
+
+func harbor_priest(game_manager: GameManager, target: Card) -> bool:
+	if not can_harbor_priest(game_manager):
+		return false
+	var resolved_target := resolve_harbor_target(target)
+	if resolved_target == null:
+		return false
+	if not spend_activation_mana(HARBOR_MANA_COST, game_manager):
+		return false
+	_store_priest(resolved_target, game_manager)
+	if game_manager != null:
+		game_manager.note_player_feedback("%s harbored %s." % [card_name, resolved_target.card_name])
+	print(card_name + ": " + resolved_target.card_name + " was placed under this card.")
+	return true
 
 func return_priest(game_manager: GameManager, priest: Card) -> bool:
 	if not can_return_priest(game_manager):
@@ -114,12 +171,16 @@ func return_priest(game_manager: GameManager, priest: Card) -> bool:
 	stored_priests.erase(stored_priest)
 	stored_priest_origins.erase(stored_priest)
 	zone.add_card(stored_priest)
+	if zone.is_in_play_zone():
+		stored_priest.reset_board_leave_hooks()
 	stored_priest.is_face_down = false
 	stored_priest.is_stealth = false
 	stored_priest.wake_up()
 	stored_priest.reset_creature_action_state()
 	stored_priest.summoned_this_turn = false
-	return_window_open = false
+	if stored_priest.card_owner != null:
+		stored_priest.card_owner.card_moved.emit(stored_priest, null, zone)
+	return_window_open = can_return_priest(game_manager)
 	_emit_visual_state_changed()
 	return true
 
@@ -177,17 +238,31 @@ func _can_store_priest(card: Card) -> bool:
 		and card.current_zone.is_board_zone() \
 		and not card.has_attacked_this_turn
 
-func _store_priest(priest: Card) -> void:
+func _store_priest(priest: Card, game_manager: GameManager = null) -> void:
 	if priest == null or priest.current_zone == null:
 		return
+	var from_zone := priest.current_zone
 	stored_priest_origins[priest] = {
-		"zone_type": priest.current_zone.zone_type,
-		"zone_index": priest.current_zone.zone_index,
+		"zone_type": from_zone.zone_type,
+		"zone_index": from_zone.zone_index,
 	}
+	if from_zone.is_board_zone():
+		priest.last_board_zone_type = from_zone.zone_type
+		priest.last_board_zone_index = from_zone.zone_index
+		if priest.has_method("reset_activation_counter"):
+			priest.reset_activation_counter()
+		priest.remove_effects_expiring_after_combat()
 	for equipment_card in priest.equipment.duplicate():
 		equipment_card.unequip()
-	priest.current_zone.remove_card(priest)
+	if from_zone.is_in_play_zone():
+		priest.process_board_leave_hooks(game_manager)
+	from_zone.remove_card(priest)
+	priest.board_entry_order = -1
 	stored_priests.append(priest)
+	if priest.card_owner != null:
+		priest.card_owner.card_moved.emit(priest, from_zone, null)
+	if from_zone.is_in_play_zone():
+		priest.clear_board_leave_state()
 	_emit_visual_state_changed()
 
 func _return_all_stored_priests() -> void:
@@ -203,11 +278,15 @@ func _return_all_stored_priests() -> void:
 			continue
 		stored_priest_origins.erase(priest)
 		zone.add_card(priest)
+		if zone.is_in_play_zone():
+			priest.reset_board_leave_hooks()
 		priest.is_face_down = false
 		priest.is_stealth = false
 		priest.wake_up()
 		priest.reset_creature_action_state()
 		priest.summoned_this_turn = false
+		if priest.card_owner != null:
+			priest.card_owner.card_moved.emit(priest, null, zone)
 	stored_priests = unresolved
 	return_window_open = false
 	_emit_visual_state_changed()

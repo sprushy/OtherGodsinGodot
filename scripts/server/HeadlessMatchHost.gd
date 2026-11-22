@@ -5,11 +5,17 @@ class_name HeadlessMatchHost
 ## This keeps server responsibilities out of CombatMockGame's UI bootstrap.
 
 const PromptRouterScript = preload("res://scripts/server/PromptRouter.gd")
+const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
 const NETWORK_MANAGER_NODE_NAME := "MatchNetworkManager"
+const COMMAND_TYPES_ALLOWED_DURING_RECONNECT := {
+	"forfeit": true,
+	"forfeit_match": true,
+}
 
 signal game_event_received(event_type: String, data: Dictionary)
 signal peer_disconnected(peer_id: int)
 signal match_player_authenticated(player_index: int, session_id: String, was_reconnect: bool)
+signal series_command_received(command: Dictionary, sender_info: Dictionary)
 
 var game_manager: GameManager = null
 var match_manager: MatchManager = null
@@ -17,6 +23,7 @@ var prompt_router = null
 var network_manager: Node = null
 var game_event_broadcaster: GameEventBroadcaster = null
 var match_session = null
+var series_between_games: bool = false
 
 var _is_host: bool = false
 var _is_client: bool = false
@@ -35,7 +42,9 @@ func setup_transport(
 	is_client: bool = false,
 	server_ip: String = "127.0.0.1",
 	server_port: int = 12345,
-	assign_local_host_player: bool = true
+	assign_local_host_player: bool = true,
+	client_match_info: Dictionary = {},
+	shared_worker: bool = false
 ) -> Node:
 	_is_host = is_host
 	_is_client = is_client
@@ -46,24 +55,58 @@ func setup_transport(
 
 	if parent == null or parent.get_tree() == null:
 		return null
-	var transport_root: Node = parent.get_tree().root
-	var existing_transport := transport_root.get_node_or_null(NETWORK_MANAGER_NODE_NAME)
-	if existing_transport != null:
-		if existing_transport.get_parent() != null:
-			existing_transport.get_parent().remove_child(existing_transport)
-		existing_transport.queue_free()
+	var transport_root: Node = parent if shared_worker else parent.get_tree().root
+	var network_manager_name := NETWORK_MANAGER_NODE_NAME
+	if not shared_worker:
+		var existing_transport := transport_root.get_node_or_null(NETWORK_MANAGER_NODE_NAME)
+		if existing_transport != null:
+			if existing_transport.get_parent() != null:
+				existing_transport.get_parent().remove_child(existing_transport)
+			existing_transport.queue_free()
 
 	network_manager = nm_script.new()
-	network_manager.name = NETWORK_MANAGER_NODE_NAME
+	network_manager.name = network_manager_name
+	# Client-hosted bot challenges with spectating bind a real socket and must
+	# use the default multiplayer API scope, exactly like player-hosted matches.
+	var spectate_listen := is_host and server_port <= 0 and not shared_worker \
+		and bool(client_match_info.get("spectate_listen", false))
+	# In-process matches must not inherit the authenticated lobby's transport.
+	if shared_worker or (not is_client and (not is_host or (server_port <= 0 and not spectate_listen))):
+		network_manager.use_current_scene_relative_path = true
+	if shared_worker:
+		# The multiplayer scope is this match subtree, keeping server-side APIs
+		# isolated while preserving MatchNetworkManager as the RPC-relative path.
+		network_manager.managed_multiplayer_root_path = parent.get_path()
 	transport_root.add_child(network_manager)
 
 	if is_host:
-		if server_port <= 0:
+		if spectate_listen:
+			# Client-hosted bot challenge with spectating: bind a random
+			# ephemeral UDP port instead of staying purely in-process.
+			var rng := RandomNumberGenerator.new()
+			rng.randomize()
+			var bind_error: Error = ERR_CANT_CREATE
+			for attempt in range(8):
+				bind_error = network_manager.create_server(rng.randi_range(20000, 45000), assign_local_host_player)
+				if bind_error == OK:
+					break
+			if bind_error != OK:
+				_configure_in_process_authority(assign_local_host_player)
+		elif server_port <= 0:
 			_configure_in_process_authority(assign_local_host_player)
 		else:
 			network_manager.create_server(server_port, assign_local_host_player)
+			if network_manager.last_server_error == OK and match_session != null and not match_session.match_websocket_url.is_empty():
+				var ws_err: Error = network_manager.start_match_websocket_server(server_port)
+				if ws_err != OK:
+					network_manager.last_server_error = ws_err
 	elif is_client:
-		network_manager.create_client(server_ip, server_port)
+		network_manager.create_match_client(
+			server_ip, server_port,
+			str(client_match_info.get("match_websocket_url", "")),
+			bool(client_match_info.get("prefer_websocket", false)),
+			int(client_match_info.get("spectator_punch_local_port", 0))
+		)
 	else:
 		network_manager.is_server = true
 		network_manager.local_player_index = 0
@@ -72,19 +115,34 @@ func setup_transport(
 
 	if match_manager != null:
 		match_manager.network_manager = network_manager
-		match_manager.authoritative_match_flow_enabled = is_host
-		match_manager.allow_immediate_local_authoritative_stack_resolution = is_host \
-			and server_port <= 0 \
-			and match_session == null
-		network_manager.command_received.connect(func(command: Dictionary, sender_info: Dictionary) -> void:
-			match_manager.process_command(command, _resolve_command_sender_info(sender_info))
-		)
+		network_manager.command_received.connect(_on_command_received)
 
 	if is_host or is_client:
 		network_manager.game_event_received.connect(_on_game_event_received)
 		network_manager.peer_disconnected.connect(_on_peer_disconnected)
 
 	return network_manager
+
+func _on_command_received(command: Dictionary, sender_info: Dictionary) -> void:
+	if match_manager == null:
+		return
+	var command_type := str(command.get("type", "")).strip_edges()
+	if command_type == "submit_reinforcements":
+		series_command_received.emit(command, _resolve_command_sender_info(sender_info))
+		return
+	if match_session != null \
+			and match_session.is_waiting_for_reconnect() \
+			and not _is_command_allowed_during_reconnect(command_type):
+		if network_manager != null:
+			network_manager.reject_command(
+				int(sender_info.get("peer_id", -1)),
+				"Match paused while a player reconnects."
+			)
+		return
+	match_manager.process_command(command, _resolve_command_sender_info(sender_info))
+
+func _is_command_allowed_during_reconnect(command_type: String) -> bool:
+	return bool(COMMAND_TYPES_ALLOWED_DURING_RECONNECT.get(command_type, false))
 
 func _configure_in_process_authority(assign_local_host_player: bool) -> void:
 	if network_manager == null:
@@ -102,9 +160,11 @@ func enable_authoritative_broadcasts() -> void:
 		return
 	game_event_broadcaster = GameEventBroadcaster.new(game_manager, match_manager, network_manager, prompt_router)
 	if match_session == null:
-		network_manager.peer_connected.connect(_on_peer_connected)
+		if not network_manager.peer_connected.is_connected(_on_peer_connected):
+			network_manager.peer_connected.connect(_on_peer_connected)
 	else:
-		network_manager.match_join_requested.connect(_on_match_join_requested)
+		if not network_manager.match_join_requested.is_connected(_on_match_join_requested):
+			network_manager.match_join_requested.connect(_on_match_join_requested)
 
 func should_route_prompts_via_network() -> bool:
 	return network_manager != null and _is_host
@@ -156,14 +216,35 @@ func _on_match_join_requested(join_request: Dictionary, sender_info: Dictionary)
 		return
 	if observer_mode:
 		var observer_session_id := str(join_request.get("observer_session_id", "")).strip_edges()
+		var observer_match_token := str(join_request.get("observer_match_token", "")).strip_edges()
+		_refresh_spectator_visibility_from_launch_config()
+		var spectator_authenticated: bool = match_session.authenticate_spectator(
+			observer_session_id,
+			observer_match_token,
+			peer_id
+		)
+		# Bot self-play matches are public entries in the live bot-match list and
+		# contain no human seats or private hands. Keep watching them read-only,
+		# even if a dynamically issued spectator token was not refreshed yet.
+		if not spectator_authenticated and match_session.is_bot_self_play():
+			match_session.add_spectator_peer(peer_id)
+			spectator_authenticated = true
+		if not spectator_authenticated:
+			network_manager.deny_match_join(peer_id, "Observer authentication failed.")
+			return
 		var visible_player_indices: Array[int] = match_session.get_spectator_visible_player_indices(observer_session_id)
-		match_session.add_spectator_peer(peer_id)
+		if match_session.is_bot_self_play():
+			visible_player_indices = [0, 1]
+		network_manager.approve_match_join(peer_id, -1, match_session.to_spectator_match_info(observer_session_id))
 		network_manager.set_spectator_visible_player_indices(peer_id, visible_player_indices)
-		network_manager.approve_match_join(peer_id, -1, match_session.to_spectator_match_info())
+		if series_between_games:
+			network_manager.broadcast_event_to_peer(peer_id, "series_game_ended", {
+				"series": match_session.get_series_snapshot(),
+			})
 		var spectator_state := GameState.serialize(game_manager, GameState.SPECTATOR_VIEWER_INDEX, visible_player_indices)
 		network_manager.broadcast_event_to_peer(peer_id, "full_state", {
 			state = spectator_state,
-			action_message = "Observing live match.",
+			action_message = game_manager.get_game_result_message() if game_manager.is_game_over else "Observing live match.",
 		})
 		return
 	var was_reconnect: bool = match_session.is_session_waiting_for_reconnect(session_id)
@@ -179,11 +260,28 @@ func _on_match_join_requested(join_request: Dictionary, sender_info: Dictionary)
 			"player_index": player_index,
 			"session_id": session_id,
 		})
-	var state := GameState.serialize(game_manager, player_index)
-	network_manager.broadcast_event_to_peer(peer_id, "full_state", {
-		state = state,
-		action_message = "Connected! Syncing game state.",
-	})
+	if series_between_games:
+		return
+	game_event_broadcaster.send_player_state(peer_id, player_index, _get_match_join_state_message())
+
+func _get_match_join_state_message() -> String:
+	if game_manager != null and game_manager.is_game_over:
+		return game_manager.get_game_result_message()
+	return "Connected! Syncing game state."
+
+func _refresh_spectator_visibility_from_launch_config() -> void:
+	if match_session == null:
+		return
+	var config_path := str(match_session.launch_config_path).strip_edges()
+	if config_path.is_empty():
+		return
+	var config := JsonStoreScript.load_dictionary(config_path, {}, "HeadlessMatchHost")
+	var configured_visibility = config.get("spectator_visible_player_indices_by_session", {})
+	if configured_visibility is Dictionary:
+		match_session.spectator_visible_player_indices_by_session = (configured_visibility as Dictionary).duplicate(true)
+	var configured_tokens = config.get("spectator_match_tokens_by_session", {})
+	if configured_tokens is Dictionary:
+		match_session.spectator_match_tokens_by_session = (configured_tokens as Dictionary).duplicate(true)
 
 func _on_game_event_received(event_type: String, data: Dictionary) -> void:
 	game_event_received.emit(event_type, data)

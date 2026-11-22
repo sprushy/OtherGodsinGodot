@@ -13,7 +13,7 @@ func _init() -> void:
 	resilience = 10
 	strength = 13
 	sacrifice_cost = 0
-	ability_text = "[b]Shift[/b] ([b]Activate[/b], [b]Minor Action[/b], once per turn): Switch this card between Human, Servant, Mage, Witch and Animal, Avian, Aerial. When this card shifts, you may return it to your hand."
+	ability_text = "[b]Easy Transition[/b] ([b]Passive[/b]): Shifting is free for Erlqueen's Nightingale.\n[b]Shift[/b] ([b]Activate[/b]): Switch Erlqueen's Nightingale between Human, Servant, Mage, Witch and Animal, Avian, Aerial. When it shifts, you may return it to your hand."
 	flavor_text = ""
 	culture = "Norse"
 	artist = "Jessica Kings Via Tcg-Maker"
@@ -35,7 +35,7 @@ func can_activate(game_manager: GameManager) -> bool:
 		return false
 	if is_sleeping:
 		return false
-	return can_take_minor_creature_action() and can_use_shift_ability_this_turn()
+	return can_use_shift_ability_this_turn()
 
 func get_tonal_extraction_spirit_profile() -> Dictionary:
 	return {
@@ -57,7 +57,6 @@ func activate(game_manager: GameManager, target = null) -> void:
 	if not can_activate(game_manager):
 		return
 	shift_forms()
-	spend_minor_creature_action()
 	spend_shift_ability_use()
 	if return_to_hand_after_shift and card_owner != null:
 		card_owner.move_card(self, card_owner.hand_zone)
@@ -86,18 +85,11 @@ func apply_serialized_state(state: Dictionary) -> void:
 	card_types = _get_bird_form_types() if in_bird_form else _get_human_form_types()
 
 func get_hover_detail_lines(_viewer: Player = null) -> Array[String]:
+	var active_form := _get_bird_form_types() if in_bird_form else _get_human_form_types()
+	var inactive_form := _get_human_form_types() if in_bird_form else _get_bird_form_types()
 	return [
-		"[b]Shift Forms[/b]",
-		_current_form_hover_text(),
-		_inactive_form_hover_text(),
+		BaseCard.format_shapeshifter_form_summary(active_form, inactive_form),
 	]
-
-func _current_form_hover_text() -> String:
-	return "Current: " + ("Animal, Avian, Aerial" if in_bird_form else "Human, Servant, Mage, Witch")
-
-func _inactive_form_hover_text() -> String:
-	var inactive_form := "Human, Servant, Mage, Witch" if in_bird_form else "Animal, Avian, Aerial"
-	return "[color=#8a8a8a]Can shift to: %s[/color]" % inactive_form
 
 func can_return_to_hand_after_shift() -> bool:
 	return card_owner != null and current_zone != null and current_zone.is_board_zone()
@@ -109,7 +101,6 @@ func _get_human_form_types() -> Array[String]:
 	types.append("Mage")
 	types.append("Witch")
 	types.append("Shapeshifter")
-	types.append("Norse Creature")
 	return types
 
 func _get_bird_form_types() -> Array[String]:
@@ -118,5 +109,4 @@ func _get_bird_form_types() -> Array[String]:
 	types.append("Avian")
 	types.append("Aerial")
 	types.append("Shapeshifter")
-	types.append("Norse Creature")
 	return types

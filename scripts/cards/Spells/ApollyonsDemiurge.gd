@@ -44,14 +44,10 @@ func resolve_from_command(game_manager: GameManager, command: Dictionary) -> voi
 	# resolve_with_x pays x_cost when x_cost_already_paid=false
 	var demon_choices := resolve_with_x(game_manager, x_value, false)
 	var viable_choices := get_viable_milled_demon_choices(demon_choices)
-	if viable_choices.size() > 1:
+	if not viable_choices.is_empty():
 		_request_milled_demon_choice(game_manager, viable_choices, x_value)
 		if game_manager != null:
 			game_manager.note_player_feedback("Apollyon's Demiurge milled %d card(s). Choose a Demon to summon." % x_value)
-		return
-	if viable_choices.size() == 1:
-		if game_manager != null:
-			game_manager.note_player_feedback(_complete_demiurge_choice(game_manager, viable_choices[0], x_value))
 		return
 	if game_manager != null:
 		if demon_choices.is_empty():

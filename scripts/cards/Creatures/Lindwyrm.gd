@@ -11,7 +11,7 @@ const DEVOUR_STRENGTH_BONUS := 5
 func _init() -> void:
 	super._init()
 	card_name = "Lindwyrm"
-	card_types = ["Dragon", "Wyvern", "Norse Creature"]
+	card_types = ["Dragon", "Wyvern"]
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
 	level = 3
@@ -21,7 +21,7 @@ func _init() -> void:
 	resilience = 11
 	strength = 16
 	targets = true
-	ability_text = "[b]Devour[/b] ([b]Major Action[/b]): Destroy a creature at least 2 levels lower than this card. If you do, this card gains +1 Lvl, +1 Spd, +5 Res, and +5 Str."
+	ability_text = "[b]Devour[/b] ([b]Major Action[/b]): Destroy a creature at least 2 levels below Lindwyrm. If you do, Lindwyrm gains +1 LVL, +5 STR, +5 RES, and +1 SPD."
 	culture = "Norse"
 	artist = "Daniel Decena"
 	art_path = ART_PATH
@@ -125,10 +125,12 @@ func resolve_devour_activation(game_manager: GameManager, target: Card, continue
 		_emit_devour_result(continue_callback, target.get_target_log_display_name(game_manager.get_feedback_viewer()) + " is immune to " + card_name + "'s creature abilities this turn.")
 		return
 
-	var devoured_name := target.get_target_log_display_name(game_manager.get_feedback_viewer())
+	var viewer := game_manager.get_feedback_viewer()
+	var devoured_name := target.get_target_log_display_name(viewer)
 	game_manager.request_send_to_graveyard(target, func() -> void:
-		var left_board := target.current_zone == null or not target.current_zone.is_board_zone()
-		if left_board:
+		var destroyed := game_manager.reached_public_destroyed_destination(target)
+		if destroyed:
+			var resolved_name := game_manager.get_resolved_destruction_log_name(target, viewer, devoured_name)
 			add_buff(
 				DEVOUR_BUFF_SOURCE,
 				DEVOUR_STRENGTH_BONUS,
@@ -144,7 +146,7 @@ func resolve_devour_activation(game_manager: GameManager, target: Card, continue
 				continue_callback,
 				"%s devoured %s and gained +%d Lvl, +%d Spd, +%d Res, and +%d Str." % [
 					card_name,
-					devoured_name,
+					resolved_name,
 					DEVOUR_LEVEL_BONUS,
 					DEVOUR_SPEED_BONUS,
 					DEVOUR_RESILIENCE_BONUS,

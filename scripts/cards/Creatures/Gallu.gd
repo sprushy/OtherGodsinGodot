@@ -6,7 +6,7 @@ const ART_PATH := "res://images/card_art/creatures/gallu.jpg"
 func _init() -> void:
 	super._init()
 	card_name = "Gallu"
-	card_types = ["Demon", "Ancient Creature"]
+	card_types = ["Demon"]
 	level = 3
 	mana_cost = 0
 	sacrifice_cost = 0

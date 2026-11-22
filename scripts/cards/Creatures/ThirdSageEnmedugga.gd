@@ -7,7 +7,7 @@ const GOOD_FORTUNE_STATUS := "third_sage_good_fortune"
 func _init() -> void:
 	super._init()
 	card_name = "Third Sage Enmedugga"
-	card_types = ["Mer", "Mage", "Priest", "Sage", "Ancient Creature", "Targeting"]
+	card_types = ["Mer", "Mage", "Priest", "Sage", "Targeting"]
 	level = 3
 	mana_cost = 0
 	sacrifice_cost = 0
@@ -15,7 +15,7 @@ func _init() -> void:
 	resilience = 21
 	strength = 21
 	targets = true
-	ability_text = "[b]Good Fortune[/b] ([b]Impact[/b]): Choose a Mer Sage. It cannot be targeted by spells or creature abilities for as long as this card remains face-up on the field."
+	ability_text = "[b]Good Fortune[/b] ([b]Impact[/b]): Choose a Mer Sage. It cannot be targeted by spells or creature abilities for as long as Third Sage Enmedugga remains face-up on the field."
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricardo Zoppello"
@@ -62,21 +62,23 @@ func resolve_good_fortune_impact(game_manager: GameManager, target: Card) -> Str
 	_clear_existing_good_fortune_marks(game_manager)
 	target.add_status_effect(
 		GOOD_FORTUNE_STATUS,
-		"Good Fortune",
+		card_name,
 		self,
 		get_controller(),
 		{
 			"ward_kind": "spells",
+			"ability_name": "Good Fortune",
 			"source_board_entry_order": board_entry_order,
 		}
 	)
 	target.add_status_effect(
 		GOOD_FORTUNE_STATUS,
-		"Good Fortune",
+		card_name,
 		self,
 		get_controller(),
 		{
 			"ward_kind": "creature_abilities",
+			"ability_name": "Good Fortune",
 			"source_board_entry_order": board_entry_order,
 		}
 	)

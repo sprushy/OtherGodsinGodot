@@ -6,7 +6,7 @@ const ART_PATH := "res://images/card_art/creatures/NergalLionEdit.png"
 func _init() -> void:
 	super._init()
 	card_name = "Nergal Lion"
-	card_types = ["Divine Acolyte", "Demon", "Pyro", "Aerial", "Ancient Creature", "Targeting"]
+	card_types = ["Divine Acolyte", "Demon", "Pyro", "Aerial", "Targeting"]
 	level = 5
 	mana_cost = 7
 	speed = 2
@@ -16,7 +16,7 @@ func _init() -> void:
 	artist = "Ricardo Zoppello"
 	art_path = ART_PATH
 	targets = true
-	ability_text = "[b]Immolate[/b] ([b]Impact[/b]): Place a [b]Destruction[/b] card that can destroy a physical card from your graveyard face-down on your field. When it is activated, you do not have to pay its cost."
+	ability_text = "[b]Immolate[/b] ([b]Impact[/b]): Prepare a [b]Destruction[/b] card from your Graveyard that can destroy a physical card. Its mana cost is 0."
 
 func on_impact(game_manager: GameManager) -> void:
 	var valid_targets := get_valid_immolate_targets(game_manager)
@@ -38,6 +38,8 @@ func on_impact(game_manager: GameManager) -> void:
 	game_manager.decision_requested.emit(get_controller(), "nergal_lion_impact", {
 		"source_uid": uid,
 		"target_uids": target_uids,
+		"queue_with_priority": true,
+		"event_name": "nergal_lion_impact",
 	})
 
 func get_valid_immolate_targets(_game_manager: GameManager = null) -> Array[Card]:
@@ -72,8 +74,12 @@ func resolve_immolate_impact(game_manager: GameManager, target: Card, target_zon
 	if controller == null:
 		return card_name + " has no controller for Immolate."
 
+	if target != null and game_manager != null:
+		var live_target := game_manager.get_card_by_uid(str(target.uid).strip_edges())
+		if live_target != null:
+			target = live_target
 	var valid_targets := get_valid_immolate_targets(game_manager)
-	if target == null or target not in valid_targets:
+	if target == null or not _contains_card_uid(valid_targets, target.uid):
 		return card_name + " found no valid destruction card to immolate."
 
 	var valid_zones := get_valid_immolate_zones()
@@ -88,6 +94,14 @@ func resolve_immolate_impact(game_manager: GameManager, target: Card, target_zon
 	target.is_prepared = true
 	target.is_face_down = true
 	target.is_stealth = false
+	target.remove_status_effects_by_name("publicly_revealed")
+	target.add_status_effect(
+		"publicly_revealed",
+		card_name,
+		self,
+		controller,
+		{"remove_when_leaves_board": true}
+	)
 	target.set_meta("prepared_activation_cost_waived", true)
 	target.set_meta("prepared_activation_cost_waiver_source", card_name)
 	target.set_meta("prepared_activation_cost_waiver_source_card", self)
@@ -116,10 +130,19 @@ func _is_valid_immolate_target(card: Card, controller: Player) -> bool:
 		return false
 	return _can_destroy_physical_card(card)
 
+func _contains_card_uid(cards: Array[Card], target_uid: String) -> bool:
+	var normalized_uid := target_uid.strip_edges()
+	if normalized_uid == "":
+		return false
+	for candidate in cards:
+		if candidate != null and str(candidate.uid).strip_edges() == normalized_uid:
+			return true
+	return false
+
 func _is_destruction_card(card: Card) -> bool:
 	if card == null:
 		return false
-	for type_name in card.card_types:
+	for type_name in card.get_subtypes():
 		if str(type_name).to_lower().contains("destruction"):
 			return true
 	return false

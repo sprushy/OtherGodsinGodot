@@ -115,7 +115,12 @@ func _try_load_saved_player_practice_deck(player: Player, player_practice_deck: 
 	if submitted_cards.is_empty():
 		return false
 	var deck_builder := DeckBuilderScript.new()
-	return deck_builder.build_deck(player, submitted_cards, player_practice_deck.get("special_setup", {}))
+	if not deck_builder.build_deck(player, submitted_cards, player_practice_deck.get("special_setup", {})):
+		return false
+	var reinforcement_counts = player_practice_deck.get("reinforcements", {})
+	if reinforcement_counts is Dictionary:
+		player.record_starting_creature_typings(CardCatalogScript.make_cards_from_counts(reinforcement_counts))
+	return true
 
 func _add_practice_god(player: Player, god: GodCard, game_manager: GameManager) -> void:
 	if player == null or god == null:

@@ -1,0 +1,15 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/ui/ManaWellVisual.gd" id="1_script"]
+[ext_resource type="Texture2D" path="res://images/ui/zones/mana_well_story_snow_activated_hatch.png" id="2_art"]
+
+[node name="ManaWellVisual" type="TextureRect"]
+custom_minimum_size = Vector2(128, 128)
+offset_right = 512.0
+offset_bottom = 512.0
+mouse_filter = 2
+texture_filter = 2
+script = ExtResource("1_script")
+texture = ExtResource("2_art")
+expand_mode = 1
+stretch_mode = 5

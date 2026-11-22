@@ -19,6 +19,8 @@ var attacker: Card
 var united_front_partner: Card = null
 var attack_speed_override: int = -1
 var interceptor: Card   # may be null
+# Authority-only history; do not serialize hidden interception choices to opponents.
+var offered_interceptor_uids: Array[String] = []
 var halve_follower_damage: bool = false
 
 # SPELL / ABILITY / EVENT specific
@@ -59,7 +61,7 @@ func to_dict(game_manager: GameManager) -> Dictionary:
 		"united_front_partner_uid": united_front_partner.get("uid") if united_front_partner != null else "",
 		"attack_speed_override": attack_speed_override,
 		"interceptor_uid": interceptor.get("uid") if interceptor != null else "",
-		"halve_follower_damage": halve_follower_damage,
+		"extra_follower_damage_halving": halve_follower_damage,
 		# Event specific
 		"event_name": event_name,
 		"event_speed": event_speed,
@@ -112,13 +114,21 @@ static func from_dict(dict: Dictionary, game_manager: GameManager) -> CardAction
 	action.united_front_partner = game_manager.get_card_by_uid(dict.get("united_front_partner_uid", ""))
 	action.attack_speed_override = dict.get("attack_speed_override", -1)
 	action.interceptor = game_manager.get_card_by_uid(dict.get("interceptor_uid", ""))
-	action.halve_follower_damage = bool(dict.get("halve_follower_damage", false))
+	# Older snapshots stored a copy of the attacker's innate halving, now read from the card.
+	action.halve_follower_damage = bool(dict.get("extra_follower_damage_halving", false))
 	
 	# Event specific
 	action.event_name = dict.get("event_name", "")
 	action.event_speed = dict.get("event_speed", 0)
 	action.event_data = dict.get("event_data", {})
 	action.display_zone = _dict_to_zone(dict.get("display_zone", {}), game_manager)
+	var visible_card_data = dict.get("visible_card", null)
+	if visible_card_data is Dictionary and not (visible_card_data as Dictionary).is_empty():
+		var visible_card := GameState.deserialize_embedded_card(visible_card_data as Dictionary)
+		if visible_card != null:
+			visible_card.card_owner = action.source_player
+			visible_card.current_zone = action.display_zone
+			action.card = visible_card
 	
 	return action
 

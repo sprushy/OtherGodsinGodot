@@ -14,13 +14,15 @@ func _init() -> void:
 	culture = "Norse"
 	targets = true
 	flavor_text = ""
-	ability_text = "Patriarch Rule\nRunic Knowledge ([b]Activate[/b]): [b]Void[/b] a Runic or an \"of Odin\" card from your hand, field, or grave. Name the top card of your deck and reveal it; if you are correct, draw it. If not, lose 15 followers and [b]Shelve[/b] it."
+	ability_text = "Patriarch Rule\nRunic Knowledge ([b]Activate[/b], once per turn): [b]Void[/b] a Runic or an \"of Odin\" card from your hand, field, or grave. Name the top card of your deck and reveal it; if you are correct, draw it. If not, lose 15 followers and [b]Shelve[/b] it."
 	artist = "User-provided"
 	art_path = ART_PATH
 	paragon_of_champions = "Ecstasy, Death"
 
 func can_activate(game_manager: GameManager) -> bool:
 	if not can_use_god_power(game_manager):
+		return false
+	if is_used:
 		return false
 	if card_owner == null or card_owner.deck_zone == null or card_owner.deck_zone.cards.is_empty():
 		return false
@@ -33,6 +35,8 @@ func get_activation_failure_reason(game_manager: GameManager) -> String:
 		return card_name + " is muted."
 	if card_owner != game_manager.current_player:
 		return "It is not " + card_name + "'s turn to act."
+	if is_used:
+		return "Runic Knowledge has already been used this turn."
 	if card_owner == null or card_owner.deck_zone == null or card_owner.deck_zone.cards.is_empty():
 		return "Runic Knowledge needs a card on top of your deck."
 	if get_valid_runic_knowledge_offerings().is_empty():
@@ -93,6 +97,7 @@ func activate_with_data(game_manager: GameManager, offering_card: Card, named_ca
 	if not _void_offering_card(game_manager, offering_card):
 		game_manager.note_player_feedback("Runic Knowledge fizzles: %s could not be voided." % offering_card.card_name)
 		return
+	is_used = true
 
 	var top_card := _get_top_deck_card()
 	if top_card == null:
@@ -100,6 +105,9 @@ func activate_with_data(game_manager: GameManager, offering_card: Card, named_ca
 		return
 
 	var revealed_name := top_card.card_name
+	# The reveal is public knowledge, so shelving it on a wrong guess must keep
+	# the identity known to both players.
+	card_owner.deck_zone.reveal_deck_card(top_card)
 	var guessed_correctly := _guess_matches_top_card(guessed_name, top_card)
 	var feedback := "Runic Knowledge voided %s and revealed %s." % [
 		offering_card.card_name,
@@ -110,9 +118,10 @@ func activate_with_data(game_manager: GameManager, offering_card: Card, named_ca
 		if top_card.current_zone == card_owner.hand_zone:
 			feedback += " The guess was correct, so you draw it."
 		else:
+			card_owner.deck_zone.reveal_deck_card(top_card)
 			feedback += " The guess was correct, but it could not be drawn."
 	else:
-		card_owner.lose_followers(FOLLOWER_PENALTY)
+		card_owner.lose_followers(FOLLOWER_PENALTY, self)
 		game_manager.send_to_deck_bottom_with_hook(top_card)
 		feedback += " The guess \"%s\" was wrong, so you lose %d followers and shelve it." % [
 			guessed_name,
@@ -121,6 +130,9 @@ func activate_with_data(game_manager: GameManager, offering_card: Card, named_ca
 
 	game_manager.note_player_feedback(feedback)
 	notify_power_activated(game_manager, top_card)
+
+func on_turn_upkeep(_game_manager: GameManager) -> void:
+	is_used = false
 
 func resolve_from_command(game_manager: GameManager, command: Dictionary) -> void:
 	if game_manager == null:

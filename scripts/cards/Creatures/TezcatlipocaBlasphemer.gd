@@ -6,7 +6,7 @@ const ART_PATH := "res://images/card_art/creatures/TezBlasphemerEdit.png"
 func _init() -> void:
 	super._init()
 	card_name = "Tezcatlipoca Blasphemer"
-	card_types = ["Mage", "Shaman", "Priest", "Nahuatl Creature"]
+	card_types = ["Mage", "Shaman", "Priest"]
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
 	level = 1
@@ -95,10 +95,6 @@ func activate(game_manager: GameManager, target_data = null) -> void:
 
 	var target := _resolve_target_from_activation_data(game_manager, target_data)
 	var sacrifice := _resolve_sacrifice_from_activation_data(game_manager, target_data)
-	if sacrifice == null:
-		var valid_sacrifices := get_valid_blood_magic_sacrifices()
-		if valid_sacrifices.size() == 1:
-			sacrifice = valid_sacrifices[0]
 
 	var result := begin_blood_magic_activation(game_manager, target, sacrifice)
 	if game_manager != null and result.strip_edges() != "":
@@ -123,7 +119,8 @@ func begin_blood_magic_activation(game_manager: GameManager, target: Card, sacri
 		sacrifice_name,
 		target_name
 	)
-	game_manager.request_send_to_graveyard(sacrifice, continue_callback, false, true)
+	sacrifice.set_meta("creature_sacrifice_in_progress", true)
+	game_manager.request_send_to_graveyard(sacrifice, continue_callback, false, true, false, self)
 	return ""
 
 func _continue_blood_magic_after_sacrifice(
@@ -136,13 +133,22 @@ func _continue_blood_magic_after_sacrifice(
 	if game_manager == null:
 		return
 
-	var paid := sacrifice == null or sacrifice.current_zone == null or not sacrifice.current_zone.is_board_zone()
+	var paid := sacrifice == null or game_manager.reached_public_destroyed_destination(sacrifice)
+	if sacrifice != null:
+		sacrifice.remove_meta("creature_sacrifice_in_progress")
 	if not paid:
 		if sacrifice == self:
 			game_manager.note_player_feedback("%s could not sacrifice itself for Blood Magic." % card_name)
 		else:
 			game_manager.note_player_feedback("%s could not sacrifice %s for Blood Magic." % [card_name, sacrifice_name])
 		return
+	if sacrifice != null:
+		game_manager.note_creature_sacrifice(sacrifice)
+		sacrifice_name = game_manager.get_resolved_destruction_log_name(
+			sacrifice,
+			game_manager.get_feedback_viewer(),
+			sacrifice_name
+		)
 
 	var valid_targets := get_valid_targets(game_manager)
 	if target == null or target not in valid_targets:
@@ -172,7 +178,7 @@ func _continue_blood_magic_after_sacrifice(
 		sacrifice_name,
 		target_name
 	)
-	game_manager.request_send_to_graveyard(target, finish_callback, false, true)
+	game_manager.request_send_to_graveyard(target, finish_callback, false, true, false, self)
 
 func _finish_blood_magic_after_destroy(
 	game_manager: GameManager,
@@ -182,7 +188,7 @@ func _finish_blood_magic_after_destroy(
 ) -> void:
 	if game_manager == null:
 		return
-	var destroyed := target == null or target.current_zone == null or not target.current_zone.is_board_zone()
+	var destroyed := target == null or game_manager.reached_public_destroyed_destination(target)
 	if not destroyed:
 		game_manager.note_player_feedback("%s sacrificed %s, but failed to destroy %s with Blood Magic." % [
 			card_name,
@@ -190,6 +196,11 @@ func _finish_blood_magic_after_destroy(
 			target_name
 		])
 		return
+	target_name = game_manager.get_resolved_destruction_log_name(
+		target,
+		game_manager.get_feedback_viewer(),
+		target_name
+	)
 	game_manager.note_player_feedback("%s sacrificed %s to destroy %s with Blood Magic." % [
 		card_name,
 		sacrifice_name,

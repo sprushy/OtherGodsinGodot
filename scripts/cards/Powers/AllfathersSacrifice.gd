@@ -11,7 +11,7 @@ func _init() -> void:
 	mana_cost = UNLOCK_COST
 	card_types = ["Searching", "Spells"]
 	culture = "Norse"
-	ability_text = "[b]Unlock[/b] (5): Searching - Spells - Lose 12 followers. [b]Search[/b] a spell. [b]Prime[/b] it."
+	ability_text = "[b]Unlock[/b] (5)\n[b]Activate[/b]: Lose 12 Followers. [b]Prime[/b] a Spell."
 	art_path = ART_PATH
 
 func can_activate(game_manager: GameManager) -> bool:
@@ -51,8 +51,8 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 		print(card_name + ": Chosen spell is no longer in deck.")
 		return
 
-	player.lose_followers(FOLLOWER_COST)
+	player.lose_followers(FOLLOWER_COST, self)
 	player.deck_zone.cards.erase(target)
-	player.deck_zone.cards.shuffle()
-	player.deck_zone.cards.insert(0, target)
+	player.deck_zone.shuffle_deck()
+	player.deck_zone.prime_card(target)
 	print(card_name + ": Shuffled deck, moved " + target.card_name + " to the top.")

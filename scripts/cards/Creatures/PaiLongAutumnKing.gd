@@ -2,22 +2,24 @@ extends CreatureCard
 class_name PaiLongAutumnKing
 
 const ART_PATH := "res://images/card_art/creatures/TheDragonKingEdit.png"
+const ALT_ART_PATH := "res://images/card_art/creatures/pai_long_autumn_king_alt.png"
 
 func _init() -> void:
 	super._init()
 	card_name = "Pai Long, Autumn King"
-	card_types = ["Dragon", "Long", "Mage", "Aerial", "Tian Creature"]
+	card_types = ["Dragon", "Long", "Mage", "King", "Aerial"]
 	level = 6
 	mana_cost = 9
 	sacrifice_cost = 0
 	speed = 3
 	resilience = 25
 	strength = 36
-	ability_text = "[b]Stormcloud[/b] ([b]Impact[/b]): Add a [b]Weather[/b] charm from your deck to your hand.\n[b]Weather King[/b] ([b]Passive[/b]): This card is immune to weather effects that do not increase its stats."
+	ability_text = "[b]Stormcloud[/b] ([b]Impact[/b]): [b]Acquire[/b] a [b]Weather[/b] spell.\n[b]Weather King[/b] ([b]Passive[/b]): Pai Long is immune to weather effects that do not increase its stats."
 	flavor_text = ""
 	culture = "Tian"
 	artist = "David Revoy"
 	art_path = ART_PATH
+	art_variants = [ART_PATH, ALT_ART_PATH]
 
 func on_impact(game_manager: GameManager) -> void:
 	var valid_targets := get_valid_targets(game_manager)
@@ -54,7 +56,7 @@ func resolve_stormcloud_impact(game_manager: GameManager, target: Card) -> Strin
 		return card_name + " has no controller for Stormcloud."
 	var valid_targets := get_valid_targets(game_manager)
 	if target == null or target not in valid_targets:
-		return card_name + " found no valid Weather charm to add."
+		return card_name + " found no valid Weather spell to add."
 
 	controller.move_card(target, controller.hand_zone)
 	if target.current_zone != controller.hand_zone:
@@ -71,13 +73,13 @@ func resolve_stormcloud_cancel(_game_manager: GameManager) -> String:
 	var controller := get_controller()
 	if controller != null:
 		_shuffle_deck(controller)
-	return "%s searched the deck but took no Weather charm." % card_name
+	return "%s searched the deck but took no Weather spell." % card_name
 
 func resolve_no_weather_targets() -> String:
 	var controller := get_controller()
 	if controller != null:
 		_shuffle_deck(controller)
-	return "%s searched the deck but found no Weather charms." % card_name
+	return "%s searched the deck but found no Weather spells." % card_name
 
 func blocks_weather_effect(source_card: Card, str_bonus: int = 0, res_bonus: int = 0, spd_bonus: int = 0) -> bool:
 	if not _weather_king_is_active():
@@ -103,12 +105,12 @@ func _weather_king_is_active() -> bool:
 func _shuffle_deck(controller: Player) -> void:
 	if controller == null or controller.deck_zone == null:
 		return
-	controller.deck_zone.cards.shuffle()
+	controller.deck_zone.shuffle_deck()
 
 func _is_valid_weather_target(card: Card, controller: Player) -> bool:
 	return card != null \
 		and controller != null \
 		and card.current_zone == controller.deck_zone \
-		and card.card_type == Card.CardType.CHARM \
+		and card.card_type == Card.CardType.SPELL \
 		and card.has_type("Weather")
 

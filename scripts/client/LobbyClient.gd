@@ -4,10 +4,25 @@ class_name LobbyClient
 const LobbyProtocolScript = preload("res://scripts/network/LobbyProtocol.gd")
 const AppReleaseInfoScript = preload("res://scripts/client/AppReleaseInfo.gd")
 const NetworkManagerScript = preload("res://scripts/Other/NetworkManager.gd")
+const WebSocketEndpointsScript = preload("res://scripts/network/WebSocketEndpoints.gd")
 const LOBBY_EVENT_TYPE := "__lobby_event__"
 const CONNECT_ATTEMPT_TIMEOUT_SECONDS := 5.0
 const INITIAL_AUTH_RETRY_INTERVAL_SECONDS := 0.1
 const INITIAL_AUTH_MAX_ATTEMPTS := 30
+const AUTH_RESPONSE_TIMEOUT_SECONDS := 8.0
+# After an authenticated lobby connection drops, retry automatically with the
+# saved reconnect token before giving up. The server keeps room membership for
+# ROOM_MEMBER_RECONNECT_GRACE_SECONDS (5 minutes), so this budget restores the
+# player's seat rather than booting them back to sign-in on a brief outage.
+const AUTO_RECONNECT_MAX_ATTEMPTS := 6
+const AUTO_RECONNECT_BACKOFF_SECONDS := [1.0, 2.0, 4.0, 8.0, 12.0]
+const AUTO_RECONNECT_BACKOFF_MAX_SECONDS := 12.0
+const ALLOW_INSECURE_ACCOUNT_AUTH_ENV := "OTHERGODS_ALLOW_INSECURE_ACCOUNT_AUTH"
+const ALLOW_INSECURE_ACCOUNT_AUTH_SETTING := "application/config/allow_insecure_account_auth"
+# OTHERGODS_LOBBY_TRANSPORT=enet|ws pins a transport for testing.
+# A configured TLS endpoint is preferred over UDP on restrictive networks.
+const TRANSPORT_OVERRIDE_ENV := "OTHERGODS_LOBBY_TRANSPORT"
+const TRANSPORT_PERSIST_PATH := "user://lobby_transport.cfg"
 
 signal connected_to_lobby()
 signal server_version_updated(version: String)
@@ -23,127 +38,350 @@ signal room_list_updated(rooms: Array)
 signal room_snapshot_updated(snapshot: Dictionary)
 signal room_error(message: String)
 signal match_assigned(match_info: Dictionary)
+signal local_bot_match_assigned(match_info: Dictionary)
+signal local_bot_match_confirmed(success: bool, ranked_result: Dictionary, message: String)
+signal match_spectator_approved(match_id: String, observer_session_id: String, observer_match_token: String, visible_player_indices: Array)
+signal match_spectator_punch_requested(match_id: String, observer_session_id: String, punch_ip: String, punch_port: int)
+signal match_spectator_punch_relayed(match_id: String)
+signal request_next_received(requester_name: String)
+signal request_next_result(message: String)
 signal account_deck_list_received(decks: Array, preferred_deck_id: String)
 signal account_deck_saved(deck: Dictionary)
 signal account_deck_deleted(deck_id: String)
 signal profile_summary_received(summary: Dictionary)
+signal rank_badge_result(success: bool, message: String)
+signal bot_ladder_received(summary: Dictionary)
+signal bot_deck_received(list_id: String, deck: Dictionary)
+signal bot_match_history_received(history: Dictionary)
+signal bot_work_assignment_received(job: Dictionary)
+signal bot_work_result_received(job_id: String, success: bool, message: String)
 signal friends_state_received(state: Dictionary)
+signal account_settings_updated(account: Dictionary)
+signal password_reset_result(completed: bool, success: bool, message: String)
+signal issue_report_result(success: bool, message: String)
+signal bot_proposal_result(success: bool, message: String)
+signal bot_deck_submission_result(success: bool, message: String, bot: Dictionary)
+signal my_bots_received(bots: Array)
+signal bot_deleted(success: bool, message: String, bot_id: String)
+signal bot_quarantined(success: bool, message: String, bot_id: String, quarantined: bool)
+signal players_online_received(players: Array)
+signal bot_league_result_received(result: Dictionary)
+signal bot_league_status_received(status: Dictionary)
+signal league_round_robin_result_received(result: Dictionary)
+signal clear_league_bots_result_received(result: Dictionary)
+signal rebuild_league_records_result_received(result: Dictionary)
+signal dump_bot_deck_results_result_received(result: Dictionary)
 signal connection_failed(message: String)
 signal disconnected_from_lobby()
+signal match_host_viability_requested()
+signal lobby_auto_reconnect_started(attempt: int, max_attempts: int)
+signal lobby_auto_reconnect_failed()
 
 var current_session_id: String = ""
 var current_reconnect_token: String = ""
 var current_player_name: String = "Player"
 var current_profile_id: String = ""
 var current_account_id: String = ""
+var current_email: String = ""
 var current_username: String = ""
 var current_auth_mode: String = "login"
+var current_accepts_game_updates: bool = false
 var current_server_version: String = ""
+var supports_bot_ladder: bool = false
+var supports_ladder_pages: bool = false
+var supports_ladder_filter: bool = false
+var can_see_players_online: bool = false
+var can_host_top_50_bot_matches: bool = false
+var can_view_quarantined_bots: bool = false
 var current_allow_friend_observers_to_see_cards: bool = true
 var current_active_match_info: Dictionary = {}
 var current_room_snapshot: Dictionary = {}
 var current_preferred_account_deck_id: String = ""
+var current_punch_reflector_port: int = 0
 var trace_network: bool = false
 var trace_file_path: String = ""
 var multiplayer_mount_path: NodePath = NodePath("")
 var use_default_multiplayer: bool = false
 var network_manager: Node = null
 var _is_authenticated: bool = false
+var _account_deck_save_requests: Dictionary = {}
 
+var _pending_account_email: String = ""
+var _pending_account_username: String = ""
+var _pending_accepts_game_updates: bool = false
 var _pending_player_name: String = "Player"
 var _pending_session_id: String = ""
 var _pending_reconnect_token: String = ""
 var _pending_profile_id: String = ""
 var _pending_auth_mode: String = "login"
 var _pending_password: String = ""
+var _pending_recovery_token: String = ""
 var _connect_attempt_serial: int = 0
 var _initial_auth_attempt_serial: int = 0
+var _auth_response_serial: int = 0
 var _transport_connected_signal_received: bool = false
 var _ignore_network_events: bool = false
+var _reconnect_fallback_attempted: bool = false
+var _password_auth_allowed_for_current_connection: bool = true
+var _auto_reconnect_active: bool = false
+var _auto_reconnect_attempt: int = 0
+var _auto_reconnect_serial: int = 0
+var _auto_reconnect_session_id: String = ""
+var _auto_reconnect_token: String = ""
+var _auto_reconnect_profile_id: String = ""
+var _last_server_address: String = ""
+var _last_server_port: int = LobbyProtocolScript.PORT
+var _transport_attempts: Array[Dictionary] = []
+var _transport_attempt_index: int = -1
+var _last_transport_failure_was_timeout: bool = false
 
 func _ready() -> void:
 	_ensure_network_manager()
 
 func connect_to_server(
 	address: String,
-	player_name: String = "Player",
+	account_email: String = "",
 	session_id: String = "",
 	reconnect_token: String = "",
 	port: int = LobbyProtocolScript.PORT,
 	profile_id: String = "",
 	auth_mode: String = "login",
-	password: String = ""
+	password: String = "",
+	account_username: String = "",
+	accepts_game_updates: bool = false,
+	recovery_token: String = ""
 ) -> Error:
 	_cancel_initial_auth_request()
+	_cancel_auth_response_timeout()
+	if not _auto_reconnect_active:
+		_auto_reconnect_attempt = 0
 	_transport_connected_signal_received = false
 	_ignore_network_events = false
+	_reconnect_fallback_attempted = false
 	_is_authenticated = false
+	_account_deck_save_requests.clear()
 	current_session_id = ""
 	current_reconnect_token = ""
 	current_profile_id = ""
 	current_account_id = ""
+	current_email = ""
 	current_username = ""
 	current_auth_mode = "login"
+	current_accepts_game_updates = false
 	current_allow_friend_observers_to_see_cards = true
 	current_room_snapshot = {}
 	current_active_match_info = {}
 	current_preferred_account_deck_id = ""
 	_set_current_server_version("")
-	_pending_player_name = player_name.strip_edges()
-	if _pending_player_name.is_empty():
-		_pending_player_name = "Player"
+	_pending_account_email = account_email.strip_edges()
+	_pending_account_username = account_username.strip_edges()
+	_pending_accepts_game_updates = accepts_game_updates
 	_pending_session_id = session_id.strip_edges()
 	_pending_reconnect_token = reconnect_token.strip_edges()
 	_pending_profile_id = profile_id.strip_edges()
 	_pending_auth_mode = auth_mode.strip_edges().to_lower()
-	if not _pending_auth_mode in ["login", "register"]:
+	if not _pending_auth_mode in ["login", "register", "claim_legacy_account", "request_password_reset", "reset_password"]:
 		_pending_auth_mode = "login"
+	_pending_player_name = _pending_account_username
+	if _pending_player_name.is_empty():
+		_pending_player_name = "Player" if _pending_auth_mode == "login" else _display_name_from_email(_pending_account_email)
 	_pending_password = password
+	_pending_recovery_token = recovery_token.strip_edges().to_lower()
 
 	var connect_address: String = address.strip_edges()
 	if connect_address.is_empty():
 		connect_address = "127.0.0.1"
+	_last_server_address = connect_address
+	_last_server_port = port
+	_password_auth_allowed_for_current_connection = _can_send_password_auth_to_address(connect_address)
 
 	_ensure_network_manager()
 	if network_manager == null:
 		connection_failed.emit("Could not initialize lobby network transport.")
 		return ERR_UNAVAILABLE
-	var connect_err = network_manager.create_client(connect_address, port)
-	if connect_err == OK:
-		_arm_connect_attempt_timeout()
-	return connect_err
+	_transport_attempts = _build_transport_attempts(connect_address, port)
+	if _pending_auth_mode in ["request_password_reset", "reset_password"]:
+		var secure_attempts: Array[Dictionary] = []
+		for attempt in _transport_attempts:
+			if str(attempt.get("url", "")).begins_with("wss://") or _is_loopback_address(connect_address):
+				secure_attempts.append(attempt)
+		_transport_attempts = secure_attempts
+		if _transport_attempts.is_empty():
+			connection_failed.emit("Password recovery requires a secure WSS lobby connection.")
+			return ERR_UNAVAILABLE
+	_transport_attempt_index = -1
+	_last_transport_failure_was_timeout = false
+	return _start_next_transport_attempt()
+
+## Build the ordered transport attempts for reaching the lobby. An explicit
+## non-default port (local/private server) keeps the old single-ENet behavior
+## unless a transport override or explicit WebSocket URL is supplied.
+func _build_transport_attempts(address: String, requested_port: int) -> Array[Dictionary]:
+	var attempts: Array[Dictionary] = []
+	var transport_override := OS.get_environment(TRANSPORT_OVERRIDE_ENV).strip_edges().to_lower()
+	if WebSocketEndpointsScript.is_websocket_url(address):
+		attempts.append(_websocket_attempt(address))
+		return attempts
+	if transport_override == NetworkManagerScript.TRANSPORT_ENET:
+		attempts.append({
+			"transport": NetworkManagerScript.TRANSPORT_ENET,
+			"port": requested_port,
+		})
+		return attempts
+	if transport_override == NetworkManagerScript.TRANSPORT_WEBSOCKET or transport_override == "ws":
+		if not WebSocketEndpointsScript.lobby_url(address).is_empty():
+			attempts.append(_websocket_attempt(address))
+		return attempts
+	if requested_port != LobbyProtocolScript.PORT:
+		attempts.append({
+			"transport": NetworkManagerScript.TRANSPORT_ENET,
+			"port": requested_port,
+		})
+		return attempts
+	var has_websocket_endpoint := not WebSocketEndpointsScript.lobby_url(address).is_empty()
+	var prefer_websocket := has_websocket_endpoint and (
+		_load_preferred_transport() == NetworkManagerScript.TRANSPORT_WEBSOCKET
+		or not WebSocketEndpointsScript.public_base_url().is_empty()
+		or not _can_send_password_auth_to_address(address)
+	)
+	if prefer_websocket:
+		attempts.append(_websocket_attempt(address))
+	if _can_send_password_auth_to_address(address):
+		attempts.append({
+			"transport": NetworkManagerScript.TRANSPORT_ENET,
+			"port": LobbyProtocolScript.PORT,
+		})
+	if has_websocket_endpoint and not prefer_websocket:
+		attempts.append(_websocket_attempt(address))
+	return attempts
+
+func _websocket_attempt(address: String) -> Dictionary:
+	return {
+		"transport": NetworkManagerScript.TRANSPORT_WEBSOCKET,
+		"url": WebSocketEndpointsScript.lobby_url(address),
+	}
+
+func _start_next_transport_attempt() -> Error:
+	_transport_attempt_index += 1
+	if _transport_attempt_index >= _transport_attempts.size():
+		return _finish_transport_ladder_failure()
+	var attempt := _transport_attempts[_transport_attempt_index]
+	var transport := str(attempt.get("transport", ""))
+	var connect_err: Error = ERR_UNAVAILABLE
+	if transport == NetworkManagerScript.TRANSPORT_WEBSOCKET:
+		var url := str(attempt.get("url", ""))
+		_password_auth_allowed_for_current_connection = url.begins_with("wss://") \
+			or _can_send_password_auth_to_address(_last_server_address)
+		if _password_auth_would_be_sent_immediately() and not _password_auth_allowed_for_current_connection:
+			return _advance_transport_attempt(false)
+		_trace("connect attempt %d/%d transport=websocket url=%s" % [
+			_transport_attempt_index + 1,
+			_transport_attempts.size(),
+			url,
+		])
+		connect_err = network_manager.create_client_websocket(url)
+	else:
+		_password_auth_allowed_for_current_connection = _can_send_password_auth_to_address(_last_server_address)
+		if _password_auth_would_be_sent_immediately() and not _password_auth_allowed_for_current_connection:
+			return _advance_transport_attempt(false)
+		var attempt_port := int(attempt.get("port", 0))
+		_trace("connect attempt %d/%d transport=enet host=%s port=%d" % [
+			_transport_attempt_index + 1,
+			_transport_attempts.size(),
+			_last_server_address,
+			attempt_port,
+		])
+		connect_err = network_manager.create_client(_last_server_address, attempt_port)
+	if connect_err != OK:
+		return _advance_transport_attempt(false)
+	_arm_connect_attempt_timeout()
+	return OK
+
+func _advance_transport_attempt(was_timeout: bool) -> Error:
+	_last_transport_failure_was_timeout = was_timeout
+	if network_manager != null:
+		network_manager.disconnect_client()
+	_transport_connected_signal_received = false
+	return _start_next_transport_attempt()
+
+func _has_more_transport_attempts() -> bool:
+	return _transport_attempt_index + 1 < _transport_attempts.size()
+
+func _finish_transport_ladder_failure() -> Error:
+	_transport_attempt_index = _transport_attempts.size()
+	if _auto_reconnect_active:
+		_transport_connected_signal_received = false
+		_continue_auto_reconnect()
+		return ERR_UNAVAILABLE
+	disconnect_from_server()
+	var message := "The lobby connection timed out." if _last_transport_failure_was_timeout else "The lobby connection failed."
+	if _last_server_port == LobbyProtocolScript.PORT \
+			and WebSocketEndpointsScript.lobby_url(_last_server_address).is_empty() \
+			and OS.get_environment(TRANSPORT_OVERRIDE_ENV).strip_edges().to_lower() != NetworkManagerScript.TRANSPORT_ENET:
+		message += " This build has no secure WebSocket endpoint configured for restricted networks."
+	connection_failed.emit(message)
+	return ERR_UNAVAILABLE
+
+func _load_preferred_transport() -> String:
+	var config := ConfigFile.new()
+	if config.load(TRANSPORT_PERSIST_PATH) != OK:
+		return ""
+	return str(config.get_value("lobby", "preferred_transport", "")).strip_edges()
+
+func _remember_transport_preference() -> void:
+	if _transport_attempt_index < 0 or _transport_attempt_index >= _transport_attempts.size():
+		return
+	var transport := str(_transport_attempts[_transport_attempt_index].get("transport", ""))
+	if transport.is_empty():
+		return
+	if transport == _load_preferred_transport():
+		return
+	var config := ConfigFile.new()
+	config.set_value("lobby", "preferred_transport", transport)
+	config.save(TRANSPORT_PERSIST_PATH)
+	_trace("remembered working transport: %s" % transport)
 
 func disconnect_from_server() -> void:
 	_ignore_network_events = true
 	_cancel_connect_attempt_timeout()
 	_cancel_initial_auth_request()
+	_cancel_auth_response_timeout()
+	_cancel_auto_reconnect()
 	_transport_connected_signal_received = false
 	_is_authenticated = false
+	_account_deck_save_requests.clear()
 	current_session_id = ""
 	current_reconnect_token = ""
 	current_profile_id = ""
 	current_account_id = ""
+	current_email = ""
 	current_username = ""
 	current_auth_mode = "login"
+	current_accepts_game_updates = false
 	current_allow_friend_observers_to_see_cards = true
 	current_room_snapshot = {}
 	current_active_match_info = {}
 	current_preferred_account_deck_id = ""
 	_pending_player_name = "Player"
+	_pending_account_email = ""
+	_pending_account_username = ""
+	_pending_accepts_game_updates = false
 	_pending_session_id = ""
 	_pending_reconnect_token = ""
 	_pending_profile_id = ""
 	_pending_auth_mode = "login"
 	_pending_password = ""
+	_pending_recovery_token = ""
+	_reconnect_fallback_attempted = false
 	_set_current_server_version("")
 	if network_manager != null:
 		network_manager.disconnect_client()
 
 func is_transport_connected() -> bool:
+	if not is_instance_valid(network_manager) or not network_manager.is_inside_tree():
+		return false
 	if _transport_connected_signal_received and not _ignore_network_events:
 		return true
-	if network_manager == null:
-		return false
 	var multiplayer_api: MultiplayerAPI = network_manager.multiplayer
 	if multiplayer_api == null:
 		return false
@@ -157,20 +395,67 @@ func is_authenticated() -> bool:
 		and is_transport_connected() \
 		and not current_session_id.strip_edges().is_empty()
 
-func create_room(is_ranked: bool = true) -> void:
-	_send_request(LobbyProtocolScript.CREATE_ROOM, {"is_ranked": is_ranked})
+func restore_lobby_session() -> bool:
+	if not is_authenticated() or current_reconnect_token.strip_edges().is_empty():
+		return false
+	network_manager.disconnect_client()
+	_on_server_disconnected()
+	return true
+
+func create_room(is_ranked: bool = true, best_of: int = 1) -> void:
+	var normalized_best_of := 3 if best_of == 3 else 1
+	var match_format := "bo%d_%s" % [normalized_best_of, "rated" if is_ranked else "unrated"]
+	_send_request(LobbyProtocolScript.CREATE_ROOM, {
+		"is_ranked": is_ranked,
+		"best_of": normalized_best_of,
+		"match_format": match_format,
+	})
 
 func list_rooms() -> void:
 	_send_request(LobbyProtocolScript.LIST_ROOMS)
 
+## Roster request. The lobby answers for debug/editor builds and for admin
+## accounts (can_see_players_online, set during login). Release servers
+## silently ignore it for everyone else.
+func request_players_online() -> void:
+	if not is_authenticated():
+		return
+	if not can_see_players_online:
+		return
+	_send_request(LobbyProtocolScript.REQUEST_PLAYERS_ONLINE)
+
 func join_room(room_id: String) -> void:
 	_send_request(LobbyProtocolScript.JOIN_ROOM, {"room_id": room_id.strip_edges().to_upper()})
+
+func rejoin_room(room_id: String) -> void:
+	_send_request(LobbyProtocolScript.REJOIN_ROOM, {"room_id": room_id.strip_edges().to_upper()})
 
 func observe_room(room_id: String) -> void:
 	_send_request(LobbyProtocolScript.OBSERVE_ROOM, {"room_id": room_id.strip_edges().to_upper()})
 
+func request_next(match_id: String) -> void:
+	if is_authenticated():
+		_send_request(LobbyProtocolScript.REQUEST_NEXT, {"match_id": match_id})
+
 func leave_room() -> void:
 	_send_request(LobbyProtocolScript.LEAVE_ROOM)
+
+## Report whether this client can host a player-hosted (listen-server) match.
+## viable=true requires a reachable_ip and reachable_port (the host's UPnP-mapped
+## public endpoint). The lobby uses this to decide whether an unranked match can
+## be player-hosted instead of using the dedicated server.
+func report_host_viability(
+	viable: bool,
+	reachable_ip: String = "",
+	reachable_port: int = 0,
+	bind_port: int = 0
+) -> void:
+	_send_request(LobbyProtocolScript.REPORT_HOST_VIABILITY, {
+		"viable": bool(viable),
+		"reachable_ip": str(reachable_ip).strip_edges(),
+		"reachable_port": int(reachable_port),
+		"bind_port": int(bind_port),
+	})
 
 func set_ready(is_ready: bool) -> void:
 	_send_request(LobbyProtocolScript.SET_READY, {"is_ready": is_ready})
@@ -179,7 +464,9 @@ func submit_deck(
 	deck_name: String = "",
 	cards: Dictionary = {},
 	deck_id: String = "",
-	special_setup: Dictionary = {}
+	special_setup: Dictionary = {},
+	reinforcements: Dictionary = {},
+	is_purpose_deck: bool = false
 ) -> void:
 	var payload: Dictionary = {
 		"deck_id": deck_id.strip_edges(),
@@ -190,7 +477,43 @@ func submit_deck(
 		payload["cards"] = cards.duplicate(true)
 	if not special_setup.is_empty():
 		payload["special_setup"] = special_setup.duplicate(true)
+	if not reinforcements.is_empty():
+		payload["reinforcements"] = reinforcements.duplicate(true)
+	if is_purpose_deck:
+		# Top-level flag survives deck-store sanitization (which strips special_setup
+		# to only art-variant keys) and lets the server bypass construction validation
+		# for campaign/scenario/smoke decks. Never set for normal matchmaking decks.
+		payload["is_purpose_deck"] = true
 	_send_request(LobbyProtocolScript.SELECT_DECK, payload)
+
+func submit_local_bot_match_result(payload: Dictionary) -> void:
+	_send_request(LobbyProtocolScript.LOCAL_BOT_MATCH_RESULT, payload.duplicate(true))
+
+func submit_local_bot_match_spectate_info(match_id: String, viable: bool, spectate_ip: String, spectate_port: int, via_punch: bool = false, lan_ip: String = "", lan_port: int = 0, relay_enabled: bool = false) -> void:
+	_send_request(LobbyProtocolScript.LOCAL_BOT_MATCH_SPECTATE_INFO, {
+		"match_id": match_id.strip_edges(),
+		"viable": viable,
+		"spectate_ip": spectate_ip.strip_edges(),
+		"spectate_port": spectate_port,
+		"via_punch": via_punch,
+		"lan_ip": lan_ip.strip_edges(),
+		"lan_port": lan_port,
+		"relay_enabled": relay_enabled,
+	})
+
+## Announce that this spectator bounced the punch reflector from its live
+## matchmaking socket, so the lobby can hand the host our public endpoint.
+func submit_match_spectator_punch_ready(match_id: String, observer_session_id: String) -> void:
+	_send_request(LobbyProtocolScript.LOCAL_BOT_MATCH_PUNCH_READY, {
+		"match_id": match_id.strip_edges(),
+		"observer_session_id": observer_session_id.strip_edges(),
+	})
+
+func ack_match_spectator(match_id: String, observer_session_id: String) -> void:
+	_send_request(LobbyProtocolScript.MATCH_SPECTATOR_ACK, {
+		"match_id": match_id.strip_edges(),
+		"observer_session_id": observer_session_id.strip_edges(),
+	})
 
 func request_account_decks() -> void:
 	_send_request(LobbyProtocolScript.REQUEST_ACCOUNT_DECKS)
@@ -199,14 +522,24 @@ func save_account_deck(
 	deck_name: String,
 	cards: Dictionary,
 	deck_id: String = "",
-	special_setup: Dictionary = {}
+	special_setup: Dictionary = {},
+	reinforcements: Dictionary = {}
 ) -> void:
+	if not is_authenticated():
+		return
+	var resolved_deck_id := deck_id.strip_edges()
+	if not resolved_deck_id.is_empty():
+		_account_deck_save_requests[resolved_deck_id] = int(_account_deck_save_requests.get(resolved_deck_id, 0)) + 1
 	_send_request(LobbyProtocolScript.SAVE_ACCOUNT_DECK, {
 		"deck_name": deck_name.strip_edges(),
-		"deck_id": deck_id.strip_edges(),
+		"deck_id": resolved_deck_id,
 		"cards": cards.duplicate(true),
+		"reinforcements": reinforcements.duplicate(true),
 		"special_setup": special_setup.duplicate(true),
 	})
+
+func has_unconfirmed_account_deck_saves(deck_id: String) -> bool:
+	return _account_deck_save_requests.has(deck_id)
 
 func delete_account_deck(deck_id: String) -> void:
 	_send_request(LobbyProtocolScript.DELETE_ACCOUNT_DECK, {
@@ -228,6 +561,137 @@ func set_allow_friend_observers_to_see_cards(allowed: bool) -> void:
 func request_profile_summary() -> void:
 	_send_request(LobbyProtocolScript.REQUEST_PROFILE_SUMMARY)
 
+func set_rank_badge(best_of: int, league: int, portrait: Dictionary) -> void:
+	_send_request(LobbyProtocolScript.SET_RANK_BADGE, {"best_of": best_of, "league": league, "portrait": portrait})
+
+func request_ladder(best_of: int, page: int, request_id: int, search_query: String = "",
+		player_type: String = LobbyProtocolScript.LADDER_FILTER_EVERYONE, quarantined_only: bool = false) -> void:
+	if not is_authenticated() or (quarantined_only and not can_view_quarantined_bots):
+		return
+	if supports_ladder_pages:
+		var payload := {
+			"best_of": best_of, "page": page, "request_id": request_id,
+			"search_query": search_query.strip_edges().substr(0, 64),
+			"player_type": player_type,
+		}
+		if quarantined_only:
+			payload["quarantined_only"] = true
+		_send_request(LobbyProtocolScript.REQUEST_BOT_LADDER, payload)
+	elif supports_bot_ladder:
+		_send_request(LobbyProtocolScript.REQUEST_BOT_LADDER)
+
+func request_bot_deck(list_id: String, quarantined_only: bool = false) -> void:
+	if is_authenticated() and supports_bot_ladder and (not quarantined_only or can_view_quarantined_bots):
+		var payload := {"list_id": list_id}
+		if quarantined_only:
+			payload["quarantined_only"] = true
+		_send_request(LobbyProtocolScript.REQUEST_BOT_DECK, payload)
+
+func request_bot_match_history(before_match_id: String = "") -> void:
+	if is_authenticated() and supports_bot_ladder:
+		_send_request(LobbyProtocolScript.REQUEST_BOT_MATCH_HISTORY, {"before_match_id": before_match_id})
+
+func request_bot_work(bot_id: String = "", excluded_list_ids: Array = [], top_50: bool = false, best_of: int = 1) -> void:
+	if is_authenticated():
+		var payload := {"bot_id": bot_id, "excluded_list_ids": excluded_list_ids}
+		if top_50:
+			payload["top_50"] = true
+		if best_of == 3:
+			payload["best_of"] = 3
+		_send_request(LobbyProtocolScript.REQUEST_BOT_WORK, payload)
+
+func request_seed_bot_league(count_per_god: int = 10) -> void:
+	if is_authenticated():
+		_send_request(LobbyProtocolScript.SEED_BOT_LEAGUE, {"count_per_god": clampi(count_per_god, 1, 64)})
+
+func request_finalize_bot_league() -> void:
+	if is_authenticated():
+		_send_request(LobbyProtocolScript.FINALIZE_BOT_LEAGUE, {})
+
+func request_bot_league_status() -> void:
+	if is_authenticated():
+		_send_request(LobbyProtocolScript.REQUEST_BOT_LEAGUE_STATUS, {})
+
+func request_league_round_robin(matches_per_bot: int = 50) -> void:
+	if is_authenticated():
+		_send_request(LobbyProtocolScript.RUN_LEAGUE_ROUND_ROBIN, {"matches_per_bot": clampi(matches_per_bot, 1, 500)})
+
+func request_clear_league_bots() -> void:
+	if is_authenticated():
+		_send_request(LobbyProtocolScript.CLEAR_LEAGUE_BOTS, {})
+
+func request_rebuild_league_records() -> void:
+	if is_authenticated():
+		_send_request(LobbyProtocolScript.REBUILD_LEAGUE_RECORDS, {})
+
+func request_dump_bot_deck_results() -> void:
+	if is_authenticated():
+		_send_request(LobbyProtocolScript.DUMP_BOT_DECK_RESULTS, {})
+
+func report_bot_work_started(job_id: String, turn_count: int = 0) -> void:
+	if is_authenticated():
+		_send_request(LobbyProtocolScript.REPORT_BOT_WORK_STARTED, {
+			"job_id": job_id,
+			"turn_count": maxi(0, turn_count),
+		})
+
+func cancel_bot_work(job_id: String) -> void:
+	if is_authenticated():
+		_send_request(LobbyProtocolScript.CANCEL_BOT_WORK, {"job_id": job_id})
+
+func submit_bot_work_result(job_id: String, winner_index: int, turns: int) -> void:
+	if is_authenticated():
+		_send_request(LobbyProtocolScript.SUBMIT_BOT_WORK_RESULT, {
+			"job_id": job_id,
+			"winner_index": winner_index,
+			"turns": turns,
+		})
+
+func submit_issue_report(expected: String, actual: String, screenshot_jpeg: String = "") -> void:
+	if not is_authenticated():
+		issue_report_result.emit(false, "Connect to the lobby and sign in before submitting a report.")
+		return
+	_send_request(LobbyProtocolScript.SUBMIT_ISSUE_REPORT, {
+		"expected": expected,
+		"actual": actual,
+		"screenshot_jpeg": screenshot_jpeg,
+		"client_version": AppReleaseInfoScript.get_display_version(),
+		"platform": OS.get_name(),
+	})
+
+func submit_bot_proposal(strategy: String, deck_text: String, deck_code: String) -> void:
+	if not is_authenticated():
+		bot_proposal_result.emit(false, "Connect to the lobby and sign in before submitting a bot suggestion.")
+		return
+	_send_request(LobbyProtocolScript.SUBMIT_BOT_PROPOSAL, {
+		"strategy": strategy,
+		"deck_text": deck_text,
+		"deck_code": deck_code,
+		"client_version": AppReleaseInfoScript.get_display_version(),
+		"platform": OS.get_name(),
+	})
+
+func submit_bot_deck(deck: Dictionary) -> void:
+	if not is_authenticated():
+		bot_deck_submission_result.emit(false, "Connect to the lobby and sign in before submitting a bot.", {})
+		return
+	_send_request(LobbyProtocolScript.SUBMIT_BOT_DECK, {"deck": deck})
+
+func request_my_bots() -> void:
+	if is_authenticated():
+		_send_request(LobbyProtocolScript.REQUEST_MY_BOTS)
+
+func delete_bot(bot_id: String) -> void:
+	if is_authenticated():
+		_send_request(LobbyProtocolScript.DELETE_BOT, {"bot_id": bot_id})
+
+func set_bot_quarantined(bot_id: String, quarantined: bool) -> void:
+	if is_authenticated():
+		_send_request(LobbyProtocolScript.QUARANTINE_BOT, {
+			"bot_id": bot_id,
+			"quarantined": quarantined,
+		})
+
 func request_friends() -> void:
 	_send_request(LobbyProtocolScript.REQUEST_FRIENDS)
 
@@ -246,12 +710,14 @@ func send_deck_to_friend(
 	username: String,
 	deck_name: String,
 	cards: Dictionary,
-	special_setup: Dictionary = {}
+	special_setup: Dictionary = {},
+	reinforcements: Dictionary = {}
 ) -> void:
 	_send_request(LobbyProtocolScript.SEND_DECK_TO_FRIEND, {
 		"username": username.strip_edges(),
 		"deck_name": deck_name.strip_edges(),
 		"cards": cards.duplicate(true),
+		"reinforcements": reinforcements.duplicate(true),
 		"special_setup": special_setup.duplicate(true),
 	})
 
@@ -261,13 +727,47 @@ func respond_deck_share(share_id: String, accept: bool) -> void:
 		"accept": accept,
 	})
 
+func update_account_settings(
+	current_password: String = "",
+	new_email: String = "",
+	new_password: String = "",
+	accepts_game_updates: bool = false
+) -> void:
+	if (not current_password.is_empty() or not new_password.is_empty()) and not _password_auth_allowed_for_current_connection:
+		connection_failed.emit(_insecure_account_auth_message())
+		return
+	_send_request(LobbyProtocolScript.UPDATE_ACCOUNT_SETTINGS, {
+		"current_password": current_password,
+		"new_email": new_email.strip_edges(),
+		"new_password": new_password,
+		"accepts_game_updates": accepts_game_updates,
+	})
+
 func lobby_event(message: Dictionary) -> void:
 	var message_type: String = LobbyProtocolScript.get_type(message)
 	var payload: Dictionary = LobbyProtocolScript.get_payload(message)
-	_trace("received %s" % message_type)
+	if message_type == LobbyProtocolScript.ROOM_ERROR:
+		_trace("received %s: %s" % [message_type, str(payload.get("message", ""))])
+	else:
+		_trace("received %s" % message_type)
 
 	match message_type:
+		LobbyProtocolScript.PASSWORD_RESET_RESULT:
+			_cancel_initial_auth_request()
+			_cancel_auth_response_timeout()
+			_pending_password = ""
+			_pending_recovery_token = ""
+			password_reset_result.emit(bool(payload.get("completed", false)), bool(payload.get("success", false)), str(payload.get("message", "")))
 		LobbyProtocolScript.HELLO_OK:
+			supports_bot_ladder = bool(payload.get("supports_bot_ladder", false))
+			supports_ladder_pages = bool(payload.get("supports_ladder_pages", false))
+			supports_ladder_filter = bool(payload.get("supports_ladder_filter", false))
+			can_see_players_online = bool(payload.get("can_see_players_online", false))
+			can_host_top_50_bot_matches = bool(payload.get("can_host_top_50_bot_matches", false))
+			can_view_quarantined_bots = bool(payload.get("can_view_quarantined_bots", false))
+			_cancel_initial_auth_request()
+			_cancel_auth_response_timeout()
+			_finish_auto_reconnect()
 			_is_authenticated = true
 			_set_current_server_version(str(payload.get("server_version", "")))
 			current_session_id = str(payload.get("session_id", ""))
@@ -275,16 +775,27 @@ func lobby_event(message: Dictionary) -> void:
 			current_player_name = str(payload.get("player_name", _pending_player_name))
 			current_profile_id = str(payload.get("profile_id", _pending_profile_id))
 			current_account_id = str(payload.get("account_id", ""))
+			current_email = str(payload.get("email", _pending_account_email))
 			current_username = str(payload.get("username", current_player_name))
 			current_auth_mode = str(payload.get("auth_mode", _pending_auth_mode))
+			current_accepts_game_updates = bool(payload.get("accepts_game_updates", _pending_accepts_game_updates))
 			current_allow_friend_observers_to_see_cards = bool(payload.get("allow_friend_observers_to_see_cards", true))
 			var hello_room = payload.get("room", {})
 			current_room_snapshot = hello_room.duplicate(true) if hello_room is Dictionary else {}
 			var hello_active_match = payload.get("active_match_info", {})
-			current_active_match_info = hello_active_match.duplicate(true) if hello_active_match is Dictionary else {}
+			current_active_match_info = _prepare_match_info(hello_active_match)
 			current_preferred_account_deck_id = ""
 			login_succeeded.emit(current_session_id, current_reconnect_token, current_player_name)
 		LobbyProtocolScript.LOBBY_RECONNECT_OK:
+			supports_bot_ladder = bool(payload.get("supports_bot_ladder", false))
+			supports_ladder_pages = bool(payload.get("supports_ladder_pages", false))
+			supports_ladder_filter = bool(payload.get("supports_ladder_filter", false))
+			can_see_players_online = bool(payload.get("can_see_players_online", false))
+			can_host_top_50_bot_matches = bool(payload.get("can_host_top_50_bot_matches", false))
+			can_view_quarantined_bots = bool(payload.get("can_view_quarantined_bots", false))
+			_cancel_initial_auth_request()
+			_cancel_auth_response_timeout()
+			_finish_auto_reconnect()
 			_is_authenticated = true
 			_set_current_server_version(str(payload.get("server_version", "")))
 			current_session_id = str(payload.get("session_id", ""))
@@ -292,13 +803,15 @@ func lobby_event(message: Dictionary) -> void:
 			current_player_name = str(payload.get("player_name", _pending_player_name))
 			current_profile_id = str(payload.get("profile_id", _pending_profile_id))
 			current_account_id = str(payload.get("account_id", ""))
+			current_email = str(payload.get("email", _pending_account_email))
 			current_username = str(payload.get("username", current_player_name))
 			current_auth_mode = str(payload.get("auth_mode", _pending_auth_mode))
+			current_accepts_game_updates = bool(payload.get("accepts_game_updates", current_accepts_game_updates))
 			current_allow_friend_observers_to_see_cards = bool(payload.get("allow_friend_observers_to_see_cards", true))
 			var room = payload.get("room", {})
 			current_room_snapshot = room.duplicate(true) if room is Dictionary else {}
 			var active_match = payload.get("active_match_info", {})
-			current_active_match_info = active_match.duplicate(true) if active_match is Dictionary else {}
+			current_active_match_info = _prepare_match_info(active_match)
 			current_preferred_account_deck_id = ""
 			reconnect_succeeded.emit(
 				current_session_id,
@@ -309,27 +822,173 @@ func lobby_event(message: Dictionary) -> void:
 			)
 		LobbyProtocolScript.ROOM_LIST:
 			_set_current_server_version(str(payload.get("server_version", current_server_version)))
+			current_punch_reflector_port = int(payload.get("punch_reflector_port", 0))
 			room_list_updated.emit(payload.get("rooms", []))
 		LobbyProtocolScript.ROOM_SNAPSHOT:
 			_set_current_server_version(str(payload.get("server_version", current_server_version)))
 			current_room_snapshot = payload.duplicate(true)
+			# The live lobby now receives room transitions while the match is open.
+			# Drop the old assignment when that room returns to matchmaking.
+			if str(payload.get("room_id", "")) == str(current_active_match_info.get("room_id", "")) \
+					and str(payload.get("status", "")) != "in_match":
+				current_active_match_info.clear()
 			room_snapshot_updated.emit(payload)
 		LobbyProtocolScript.ROOM_ERROR:
-			room_error.emit(str(payload.get("message", "Unknown lobby error.")))
+			var error_message := str(payload.get("message", "Unknown lobby error."))
+			if not _is_authenticated:
+				if not is_transport_connected():
+					return
+				_cancel_initial_auth_request()
+				_cancel_auth_response_timeout()
+				# A server restart loses its in-memory sessions. Try account
+				# sign-in before emitting a terminal reconnect failure.
+				if _try_fallback_to_password_login():
+					return
+				if _auto_reconnect_active:
+					# The server rejected our reconnect credentials; retrying the
+					# same token can never succeed, so stop the retry series.
+					_trace("auto-reconnect rejected by server: %s" % error_message)
+					_emit_auto_reconnect_failure()
+				_trace("auth failed: %s" % error_message)
+				disconnect_from_server()
+				connection_failed.emit(error_message)
+				return
+			room_error.emit(error_message)
 		LobbyProtocolScript.MATCH_ASSIGNED:
-			current_active_match_info = payload.duplicate(true)
-			match_assigned.emit(payload)
+			var assignment := _prepare_match_info(payload)
+			if not bool(assignment.get("observer_mode", false)):
+				current_active_match_info = assignment
+			match_assigned.emit(assignment)
+		LobbyProtocolScript.LOCAL_BOT_MATCH_ASSIGNED:
+			if is_authenticated():
+				current_active_match_info = _prepare_match_info(payload)
+				local_bot_match_assigned.emit(current_active_match_info)
+		LobbyProtocolScript.LOCAL_BOT_MATCH_CONFIRMED:
+			if is_authenticated():
+				local_bot_match_confirmed.emit(
+					bool(payload.get("success", false)),
+					payload.get("ranked_result", {}) if payload.get("ranked_result", {}) is Dictionary else {},
+					str(payload.get("message", ""))
+				)
+		LobbyProtocolScript.MATCH_SPECTATOR_APPROVED:
+			if is_authenticated():
+				# The host may have missed the room list that carries the punch
+				# reflector port; an approval is the last reliable hint today.
+				current_punch_reflector_port = int(payload.get("punch_reflector_port", current_punch_reflector_port))
+				match_spectator_approved.emit(
+					str(payload.get("match_id", "")).strip_edges(),
+					str(payload.get("observer_session_id", "")).strip_edges(),
+					str(payload.get("observer_match_token", "")).strip_edges(),
+					payload.get("visible_player_indices", []) if payload.get("visible_player_indices", []) is Array else []
+				)
+		LobbyProtocolScript.MATCH_SPECTATOR_PUNCH_RELAYED:
+			if is_authenticated():
+				match_spectator_punch_relayed.emit(str(payload.get("match_id", "")))
+		LobbyProtocolScript.MATCH_SPECTATOR_PUNCH:
+			if is_authenticated():
+				match_spectator_punch_requested.emit(
+					str(payload.get("match_id", "")).strip_edges(),
+					str(payload.get("observer_session_id", "")).strip_edges(),
+					str(payload.get("punch_ip", "")).strip_edges(),
+					int(payload.get("punch_port", 0))
+				)
+		LobbyProtocolScript.REQUEST_NEXT_RECEIVED:
+			if is_authenticated():
+				request_next_received.emit(str(payload.get("requester_name", "Player")))
+		LobbyProtocolScript.REQUEST_NEXT_RESULT:
+			if is_authenticated():
+				request_next_result.emit(str(payload.get("message", "")))
 		LobbyProtocolScript.ACCOUNT_DECK_LIST:
 			current_preferred_account_deck_id = str(payload.get("preferred_deck_id", current_preferred_account_deck_id)).strip_edges()
 			account_deck_list_received.emit(payload.get("decks", []), current_preferred_account_deck_id)
 		LobbyProtocolScript.ACCOUNT_DECK_SAVED:
-			account_deck_saved.emit(payload.get("deck", {}))
+			var saved_deck: Dictionary = payload.get("deck", {})
+			var saved_deck_id := str(saved_deck.get("deck_id", "")).strip_edges()
+			var remaining_saves := int(_account_deck_save_requests.get(saved_deck_id, 0)) - 1
+			if remaining_saves > 0:
+				_account_deck_save_requests[saved_deck_id] = remaining_saves
+			else:
+				_account_deck_save_requests.erase(saved_deck_id)
+			account_deck_saved.emit(saved_deck)
 		LobbyProtocolScript.ACCOUNT_DECK_DELETED:
 			account_deck_deleted.emit(str(payload.get("deck_id", "")))
 		LobbyProtocolScript.PROFILE_SUMMARY:
 			profile_summary_received.emit(payload)
+		LobbyProtocolScript.RANK_BADGE_RESULT:
+			if is_authenticated():
+				rank_badge_result.emit(bool(payload.get("success", false)), str(payload.get("message", "")))
+		LobbyProtocolScript.BOT_LADDER:
+			if is_authenticated():
+				bot_ladder_received.emit(payload)
+		LobbyProtocolScript.BOT_DECK:
+			if is_authenticated():
+				bot_deck_received.emit(str(payload.get("list_id", "")), payload.get("deck", {}))
+		LobbyProtocolScript.BOT_MATCH_HISTORY:
+			if is_authenticated():
+				bot_match_history_received.emit(payload)
+		LobbyProtocolScript.BOT_WORK_ASSIGNMENT:
+			if is_authenticated():
+				bot_work_assignment_received.emit(payload)
+		LobbyProtocolScript.BOT_WORK_RESULT:
+			if is_authenticated():
+				bot_work_result_received.emit(str(payload.get("job_id", "")), bool(payload.get("success", false)), str(payload.get("message", "")))
+		LobbyProtocolScript.BOT_LEAGUE_RESULT:
+			if is_authenticated():
+				bot_league_result_received.emit(payload)
+		LobbyProtocolScript.BOT_LEAGUE_STATUS:
+			if is_authenticated():
+				bot_league_status_received.emit(payload)
+		LobbyProtocolScript.LEAGUE_ROUND_ROBIN_RESULT:
+			if is_authenticated():
+				league_round_robin_result_received.emit(payload)
+		LobbyProtocolScript.CLEAR_LEAGUE_BOTS_RESULT:
+			if is_authenticated():
+				clear_league_bots_result_received.emit(payload)
+		LobbyProtocolScript.REBUILD_LEAGUE_RECORDS_RESULT:
+			if is_authenticated():
+				rebuild_league_records_result_received.emit(payload)
+		LobbyProtocolScript.DUMP_BOT_DECK_RESULTS_RESULT:
+			if is_authenticated():
+				dump_bot_deck_results_result_received.emit(payload)
+		LobbyProtocolScript.ISSUE_REPORT_RESULT:
+			issue_report_result.emit(bool(payload.get("success", false)), str(payload.get("message", "")))
+		LobbyProtocolScript.BOT_PROPOSAL_RESULT:
+			bot_proposal_result.emit(bool(payload.get("success", false)), str(payload.get("message", "")))
+		LobbyProtocolScript.BOT_DECK_SUBMISSION_RESULT:
+			bot_deck_submission_result.emit(bool(payload.get("success", false)), str(payload.get("message", "")), payload.get("bot", {}))
+		LobbyProtocolScript.MY_BOTS:
+			my_bots_received.emit(payload.get("bots", []))
+		LobbyProtocolScript.BOT_DELETED:
+			bot_deleted.emit(bool(payload.get("success", false)), str(payload.get("message", "")), str(payload.get("bot_id", "")))
+		LobbyProtocolScript.BOT_QUARANTINED:
+			bot_quarantined.emit(
+				bool(payload.get("success", false)),
+				str(payload.get("message", "")),
+				str(payload.get("bot_id", "")),
+				bool(payload.get("quarantined", false))
+			)
+		LobbyProtocolScript.PLAYERS_ONLINE:
+			if is_authenticated():
+				var players = payload.get("players", [])
+				players_online_received.emit(players if players is Array else [])
 		LobbyProtocolScript.FRIENDS_STATE:
 			friends_state_received.emit(payload)
+		LobbyProtocolScript.ACCOUNT_SETTINGS_UPDATED:
+			var account = payload.get("account", {})
+			if account is Dictionary:
+				current_email = str((account as Dictionary).get("email", current_email))
+				current_username = str((account as Dictionary).get("username", current_username))
+				current_accepts_game_updates = bool((account as Dictionary).get("accepts_game_updates", current_accepts_game_updates))
+				account_settings_updated.emit((account as Dictionary).duplicate(true))
+		LobbyProtocolScript.MATCH_HOST_VIABILITY_REQUEST:
+			match_host_viability_requested.emit()
+
+func _prepare_match_info(value) -> Dictionary:
+	if not (value is Dictionary) or value.is_empty():
+		return {}
+	var info: Dictionary = value.duplicate(true)
+	info["prefer_websocket"] = network_manager != null and network_manager.peer is WebSocketMultiplayerPeer
+	return info
 
 func _on_connected_to_server() -> void:
 	_cancel_connect_attempt_timeout()
@@ -337,6 +996,7 @@ func _on_connected_to_server() -> void:
 		_trace("ignoring connected_to_server after disconnect")
 		return
 	_transport_connected_signal_received = true
+	_remember_transport_preference()
 	_trace("connected to server")
 	connected_to_lobby.emit()
 	_begin_initial_auth_request()
@@ -347,6 +1007,35 @@ func _begin_initial_auth_request() -> void:
 
 func _cancel_initial_auth_request() -> void:
 	_initial_auth_attempt_serial += 1
+
+func _arm_auth_response_timeout() -> void:
+	var tree := get_tree()
+	if tree == null:
+		return
+	_auth_response_serial += 1
+	var expected_serial := _auth_response_serial
+	var timeout_timer := tree.create_timer(AUTH_RESPONSE_TIMEOUT_SECONDS)
+	timeout_timer.timeout.connect(Callable(self, "_on_auth_response_timeout").bind(expected_serial))
+
+func _cancel_auth_response_timeout() -> void:
+	_auth_response_serial += 1
+
+func _on_auth_response_timeout(expected_serial: int) -> void:
+	if expected_serial != _auth_response_serial:
+		return
+	if _is_authenticated or _ignore_network_events:
+		return
+	if not is_transport_connected():
+		return
+	_trace("auth response timed out")
+	if _auto_reconnect_active:
+		if network_manager != null:
+			network_manager.disconnect_client()
+		_transport_connected_signal_received = false
+		_continue_auto_reconnect()
+		return
+	disconnect_from_server()
+	connection_failed.emit("The lobby sign-in timed out.")
 
 func _try_send_initial_auth_request(expected_serial: int, attempt: int) -> void:
 	if expected_serial != _initial_auth_attempt_serial:
@@ -371,78 +1060,269 @@ func _try_send_initial_auth_request(expected_serial: int, attempt: int) -> void:
 	_send_initial_auth_request()
 
 func _send_initial_auth_request() -> void:
+	if _pending_auth_mode in ["request_password_reset", "reset_password"]:
+		var completing := _pending_auth_mode == "reset_password"
+		var payload := {"email": _pending_account_email}
+		if completing:
+			payload["token"] = _pending_recovery_token
+			payload["new_password"] = _pending_password
+		_send_request(LobbyProtocolScript.RESET_PASSWORD if completing else LobbyProtocolScript.REQUEST_PASSWORD_RESET, payload)
+		_arm_auth_response_timeout()
+		return
 	if _should_attempt_pending_lobby_reconnect():
 		_send_request(LobbyProtocolScript.REQUEST_RECONNECT_LOBBY, {
 			"session_id": _pending_session_id,
 			"reconnect_token": _pending_reconnect_token,
 		})
+		_arm_auth_response_timeout()
 		return
 
 	if _pending_auth_mode == "register":
 		_send_request(LobbyProtocolScript.REGISTER_ACCOUNT, {
-			"username": _pending_player_name,
+			"email": _pending_account_email,
+			"username": _pending_account_username,
 			"password": _pending_password,
+			"accepts_game_updates": _pending_accepts_game_updates,
 		})
+		_arm_auth_response_timeout()
+		return
+	if _pending_auth_mode == "claim_legacy_account":
+		_send_request(LobbyProtocolScript.CLAIM_LEGACY_ACCOUNT, {
+			"email": _pending_account_email,
+			"username": _pending_account_username,
+			"password": _pending_password,
+			"accepts_game_updates": _pending_accepts_game_updates,
+		})
+		_arm_auth_response_timeout()
 		return
 	if _pending_auth_mode == "login":
 		_send_request(LobbyProtocolScript.LOGIN_ACCOUNT, {
-			"username": _pending_player_name,
+			"email": _pending_account_email,
 			"password": _pending_password,
 		})
+		_arm_auth_response_timeout()
 		return
 
 	_send_request(LobbyProtocolScript.LOGIN_ACCOUNT, {
-		"username": _pending_player_name,
+		"email": _pending_account_email,
 		"password": _pending_password,
 	})
+	_arm_auth_response_timeout()
 
 func _should_attempt_pending_lobby_reconnect() -> bool:
 	if _pending_session_id.is_empty() or _pending_reconnect_token.is_empty():
 		return false
-	if _pending_auth_mode in ["login", "register"] and not _pending_password.is_empty():
-		return false
 	return true
+
+func _try_fallback_to_password_login() -> bool:
+	if _reconnect_fallback_attempted \
+		or _pending_session_id.is_empty() \
+		or _pending_reconnect_token.is_empty() \
+		or _pending_password.is_empty():
+		return false
+	if not _password_auth_allowed_for_current_connection:
+		connection_failed.emit(_insecure_account_auth_message())
+		return false
+	_reconnect_fallback_attempted = true
+	_pending_session_id = ""
+	_pending_reconnect_token = ""
+	# A reconnect token can only belong to an account that already exists.
+	_pending_auth_mode = "login"
+	_send_initial_auth_request()
+	return true
+
+func _password_auth_would_be_sent_immediately() -> bool:
+	return not _pending_password.is_empty() and not _should_attempt_pending_lobby_reconnect()
+
+func _can_send_password_auth_to_address(address: String) -> bool:
+	if _is_loopback_address(address):
+		return true
+	if OS.is_debug_build() or Engine.is_editor_hint():
+		return true
+	if _truthy_string(OS.get_environment(ALLOW_INSECURE_ACCOUNT_AUTH_ENV)):
+		return true
+	return bool(ProjectSettings.get_setting(ALLOW_INSECURE_ACCOUNT_AUTH_SETTING, false))
+
+func _is_loopback_address(address: String) -> bool:
+	var normalized := address.strip_edges().to_lower()
+	return normalized == "localhost" \
+		or normalized == "::1" \
+		or normalized == "0:0:0:0:0:0:0:1" \
+		or normalized.begins_with("127.")
+
+func _truthy_string(value: String) -> bool:
+	match value.strip_edges().to_lower():
+		"1", "true", "yes", "on":
+			return true
+	return false
+
+func _insecure_account_auth_message() -> String:
+	return (
+		"Password sign-in is disabled for this lobby because the ENet transport is not encrypted. "
+		+ "Use a local lobby or enable %s only for trusted/private deployments."
+	) % ALLOW_INSECURE_ACCOUNT_AUTH_ENV
 
 func _on_connection_failed() -> void:
 	_cancel_connect_attempt_timeout()
 	_cancel_initial_auth_request()
+	_cancel_auth_response_timeout()
 	_transport_connected_signal_received = false
 	if _ignore_network_events:
 		_trace("ignoring connection_failed after disconnect")
 		return
 	_is_authenticated = false
-	current_session_id = ""
-	current_reconnect_token = ""
-	current_profile_id = ""
-	current_account_id = ""
-	current_username = ""
-	current_auth_mode = "login"
-	current_room_snapshot = {}
-	current_active_match_info = {}
-	current_preferred_account_deck_id = ""
 	_set_current_server_version("")
 	_trace("connection failed")
-	connection_failed.emit("The lobby connection failed.")
+	if _has_more_transport_attempts():
+		_advance_transport_attempt(false)
+		return
+	_last_transport_failure_was_timeout = false
+	_finish_transport_ladder_failure()
 
 func _on_server_disconnected() -> void:
 	_cancel_connect_attempt_timeout()
 	_cancel_initial_auth_request()
+	_cancel_auth_response_timeout()
 	_transport_connected_signal_received = false
 	if _ignore_network_events:
 		_trace("ignoring server_disconnected after disconnect")
 		return
 	_is_authenticated = false
+	_set_current_server_version("")
+	_trace("server disconnected")
+	if _try_auto_reconnect():
+		return
+	_finalize_unexpected_disconnect()
+
+func _finalize_unexpected_disconnect() -> void:
+	_clear_session_fields()
+	disconnected_from_lobby.emit()
+
+func _clear_session_fields() -> void:
+	supports_bot_ladder = false
+	supports_ladder_pages = false
+	supports_ladder_filter = false
+	can_see_players_online = false
+	can_host_top_50_bot_matches = false
+	can_view_quarantined_bots = false
 	current_session_id = ""
 	current_reconnect_token = ""
 	current_profile_id = ""
 	current_account_id = ""
+	current_email = ""
 	current_username = ""
 	current_auth_mode = "login"
+	current_accepts_game_updates = false
 	current_room_snapshot = {}
 	current_active_match_info = {}
 	current_preferred_account_deck_id = ""
-	_set_current_server_version("")
-	_trace("server disconnected")
+
+func is_auto_reconnecting() -> bool:
+	return _auto_reconnect_active
+
+## Kick off the automatic reconnect series after an unexpected drop of an
+## authenticated session. Credentials come from the session that just died;
+## the server's reconnect-token check is idempotent, so retrying with the same
+## token after a failed attempt is safe.
+func _try_auto_reconnect() -> bool:
+	if network_manager == null:
+		return false
+	if _auto_reconnect_active:
+		# Mid-series drop (an attempt connected, then died before
+		# authenticating): current_* was already cleared by connect_to_server,
+		# so the stash is the source of truth.
+		if _auto_reconnect_session_id.strip_edges().is_empty() or _auto_reconnect_token.strip_edges().is_empty():
+			return false
+		_continue_auto_reconnect()
+		return true
+	if current_session_id.strip_edges().is_empty() or current_reconnect_token.strip_edges().is_empty():
+		return false
+	_auto_reconnect_active = true
+	_auto_reconnect_session_id = current_session_id
+	_auto_reconnect_token = current_reconnect_token
+	_auto_reconnect_profile_id = current_profile_id
+	_continue_auto_reconnect()
+	return true
+
+func _continue_auto_reconnect() -> void:
+	if not _auto_reconnect_active:
+		return
+	if _auto_reconnect_attempt >= AUTO_RECONNECT_MAX_ATTEMPTS:
+		_emit_auto_reconnect_failure()
+		return
+	_auto_reconnect_attempt += 1
+	var attempt := _auto_reconnect_attempt
+	lobby_auto_reconnect_started.emit(attempt, AUTO_RECONNECT_MAX_ATTEMPTS)
+	_auto_reconnect_serial += 1
+	var expected_serial := _auto_reconnect_serial
+	var delay_seconds := _get_auto_reconnect_delay(attempt)
+	var tree := get_tree()
+	if tree == null:
+		_emit_auto_reconnect_failure()
+		return
+	var retry_timer := tree.create_timer(delay_seconds)
+	retry_timer.timeout.connect(Callable(self, "_perform_auto_reconnect").bind(expected_serial))
+
+func _get_auto_reconnect_delay(attempt: int) -> float:
+	if attempt - 1 >= AUTO_RECONNECT_BACKOFF_SECONDS.size():
+		return AUTO_RECONNECT_BACKOFF_MAX_SECONDS
+	return float(AUTO_RECONNECT_BACKOFF_SECONDS[attempt - 1])
+
+func _perform_auto_reconnect(expected_serial: int) -> void:
+	if expected_serial != _auto_reconnect_serial or not _auto_reconnect_active:
+		return
+	if _ignore_network_events or _is_authenticated:
+		return
+	if network_manager == null:
+		_emit_auto_reconnect_failure()
+		return
+	_trace("auto-reconnect attempt %d/%d" % [_auto_reconnect_attempt, AUTO_RECONNECT_MAX_ATTEMPTS])
+	network_manager.disconnect_client()
+	var connect_err := connect_to_server(
+		_last_server_address,
+		_pending_account_email,
+		_auto_reconnect_session_id,
+		_auto_reconnect_token,
+		_last_server_port,
+		_auto_reconnect_profile_id,
+		"login",
+		_pending_password,
+		_pending_account_username,
+		_pending_accepts_game_updates
+	)
+	if connect_err != OK:
+		# Exhausting the transport ladder already schedules the next attempt.
+		if _auto_reconnect_active and expected_serial == _auto_reconnect_serial:
+			_continue_auto_reconnect()
+		return
+	# connect_to_server clears the in-session fields; the stashed copies keep
+	# the series alive across attempts.
+	_auto_reconnect_active = true
+	_auto_reconnect_session_id = _pending_session_id
+	_auto_reconnect_token = _pending_reconnect_token
+	_auto_reconnect_profile_id = _pending_profile_id
+
+func _cancel_auto_reconnect() -> void:
+	_auto_reconnect_active = false
+	_auto_reconnect_attempt = 0
+	_auto_reconnect_serial += 1
+	_auto_reconnect_session_id = ""
+	_auto_reconnect_token = ""
+	_auto_reconnect_profile_id = ""
+
+func _finish_auto_reconnect() -> void:
+	_auto_reconnect_active = false
+	_auto_reconnect_attempt = 0
+	_auto_reconnect_serial += 1
+	_auto_reconnect_session_id = ""
+	_auto_reconnect_token = ""
+	_auto_reconnect_profile_id = ""
+
+func _emit_auto_reconnect_failure() -> void:
+	_trace("auto-reconnect exhausted")
+	_finish_auto_reconnect()
+	lobby_auto_reconnect_failed.emit()
+	_clear_session_fields()
 	disconnected_from_lobby.emit()
 
 func _send_request(message_type: String, payload: Dictionary = {}) -> void:
@@ -486,7 +1366,9 @@ func _ensure_network_manager() -> void:
 	if not network_manager.server_disconnected.is_connected(_on_server_disconnected):
 		network_manager.server_disconnected.connect(_on_server_disconnected)
 	if not network_manager.game_event_received.is_connected(_on_network_game_event_received):
-		network_manager.game_event_received.connect(_on_network_game_event_received)
+		# An authentication rejection may remove the lobby's multiplayer scope.
+		# Deliver RPC events after polling, just like transport failure signals.
+		network_manager.game_event_received.connect(_on_network_game_event_received, CONNECT_DEFERRED)
 
 func _on_network_game_event_received(event_type: String, data: Dictionary) -> void:
 	if _ignore_network_events:
@@ -515,9 +1397,11 @@ func _on_connect_attempt_timer_timeout(expected_serial: int) -> void:
 func _on_connect_attempt_timeout() -> void:
 	if is_transport_connected():
 		return
-	_trace("connect attempt timed out")
-	disconnect_from_server()
-	connection_failed.emit("The lobby connection timed out.")
+	_trace("connect attempt timed out (%d/%d transports)" % [
+		_transport_attempt_index + 1,
+		_transport_attempts.size(),
+	])
+	_advance_transport_attempt(true)
 
 func _set_current_server_version(version: String) -> void:
 	var normalized_version := AppReleaseInfoScript.normalize_version(version)
@@ -526,10 +1410,19 @@ func _set_current_server_version(version: String) -> void:
 	current_server_version = normalized_version
 	server_version_updated.emit(current_server_version)
 
+func _display_name_from_email(email: String) -> String:
+	var normalized_email := email.strip_edges()
+	var at_index := normalized_email.find("@")
+	if at_index > 0:
+		var local_part := normalized_email.substr(0, at_index).strip_edges()
+		if not local_part.is_empty():
+			return local_part
+	return "Player"
+
 func _trace(message: String) -> void:
 	if not trace_network and trace_file_path.is_empty():
 		return
-	var line := "LobbyClient[%s]: %s" % [name, message]
+	var line := "LobbyClient[%s] @%s: %s" % [name, str(snappedf(Time.get_unix_time_from_system(), 0.001)), message]
 	if trace_network:
 		print(line)
 	if trace_file_path.is_empty():

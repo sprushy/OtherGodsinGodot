@@ -44,6 +44,10 @@ func _should_petrify(card: Card) -> bool:
 
 func _apply_petrification(card: Card, game_manager: GameManager) -> void:
 	var was_hidden := card.is_face_down or card.is_stealth
+	var original_card_type := card.card_type
+	var original_strength := card.strength
+	var original_speed := card.speed
+	var original_card_types := card.card_types.duplicate()
 	card.reveal(game_manager)
 	if was_hidden and game_manager != null and game_manager.has_method("notify_card_revealed_by_effect"):
 		game_manager.notify_card_revealed_by_effect(card, self)
@@ -52,7 +56,19 @@ func _apply_petrification(card: Card, game_manager: GameManager) -> void:
 	card.speed = 0
 	if not card.has_type(STONE_TYPE):
 		card.card_types.append(STONE_TYPE)
-	card.add_status_effect(PETRIFIED_STATUS, card_name, self, card_owner)
+	card.add_status_effect(
+		PETRIFIED_STATUS,
+		card_name,
+		self,
+		card_owner,
+		{
+			"restore_base_state_on_remove": true,
+			"original_card_type": original_card_type,
+			"original_strength": original_strength,
+			"original_speed": original_speed,
+			"original_card_types": original_card_types,
+		}
+	)
 
 func can_be_played(game_manager: GameManager, player: Player) -> bool:
 	return super.can_be_played(game_manager, player)

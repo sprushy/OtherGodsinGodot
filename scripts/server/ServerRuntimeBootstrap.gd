@@ -1,9 +1,13 @@
 extends Node2D
 
 const LobbyServerScript = preload("res://scripts/server/LobbyServer.gd")
-const HeadlessMatchServerScript = preload("res://scripts/server/HeadlessMatchServer.gd")
 const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
+const LobbyProtocolScript = preload("res://scripts/network/LobbyProtocol.gd")
 const DEFAULT_LOBBY_HOST_SETTING := "application/config/default_lobby_host"
+## Server runtimes are event-driven (lobby RPC, prompts, bot step delays, 1 s
+## status heartbeats); without a cap an idle match or lobby process iterates
+## its main loop at full speed and pins a CPU core per process.
+const SERVER_RUNTIME_MAX_FPS := 30
 
 var _server_node: Node = null
 var _launch_args: Dictionary = {}
@@ -15,6 +19,7 @@ func _ready() -> void:
 	call_deferred("_boot_server_runtime")
 
 func _boot_server_runtime() -> void:
+	Engine.max_fps = SERVER_RUNTIME_MAX_FPS
 	var control := get_node_or_null("Control")
 	if control != null:
 		control.visible = false
@@ -32,6 +37,7 @@ func _boot_lobby_runtime(launch_args: Dictionary) -> void:
 		advertised_host = "127.0.0.1"
 	var lobby_port: int = int(launch_args.get("lobby_port", 22345))
 	var match_port: int = int(launch_args.get("match_port", 12345))
+	var ws_port: int = int(launch_args.get("ws_port", LobbyProtocolScript.WS_PORT))
 	var ready_file_path: String = str(launch_args.get("ready_file", "")).strip_edges()
 	var trace_file_path: String = str(launch_args.get("trace_file", "")).strip_edges()
 
@@ -39,6 +45,7 @@ func _boot_lobby_runtime(launch_args: Dictionary) -> void:
 	lobby_server.name = "LobbyPeer"
 	lobby_server.use_dedicated_match_processes = true
 	lobby_server.allow_in_process_match_fallback = false
+	lobby_server.server_bot_self_play_limit = LobbyServerScript.get_dedicated_bot_self_play_limit(launch_args)
 	lobby_server.use_default_multiplayer = true
 	lobby_server.trace_file_path = trace_file_path
 	var lobby_parent := _resolve_lobby_runtime_parent()
@@ -49,7 +56,7 @@ func _boot_lobby_runtime(launch_args: Dictionary) -> void:
 		print("ServerRuntimeBootstrap[lobby]: %s" % message)
 	)
 
-	var err: Error = lobby_server.start_server(advertised_host, lobby_port, match_port)
+	var err: Error = lobby_server.start_server(advertised_host, lobby_port, match_port, ws_port)
 	if err != OK:
 		push_error("ServerRuntimeBootstrap: failed to start dedicated lobby server (%s)" % error_string(err))
 		get_tree().quit(1)
@@ -83,8 +90,16 @@ func _boot_match_runtime(launch_args: Dictionary) -> void:
 		push_error("ServerRuntimeBootstrap: failed to load match config %s" % config_path)
 		get_tree().quit(1)
 		return
+	config["_launch_config_path"] = config_path
+	_cleanup_launch_config_path(config_path)
 
-	var match_server = HeadlessMatchServerScript.new()
+	# Match setup loads gameplay resources that the lobby doesn't need to keep in memory.
+	var match_server_script := load("res://scripts/server/HeadlessMatchServer.gd") as Script
+	if match_server_script == null:
+		push_error("ServerRuntimeBootstrap: could not load dedicated match runtime.")
+		get_tree().quit(1)
+		return
+	var match_server = match_server_script.new()
 	match_server.name = "HeadlessMatchServer"
 	add_child(match_server)
 	_server_node = match_server
@@ -133,3 +148,8 @@ func _parse_user_args(args: PackedStringArray) -> Dictionary:
 
 func _load_launch_config(config_path: String) -> Dictionary:
 	return JsonStoreScript.load_dictionary(config_path, {}, "ServerRuntimeBootstrap")
+
+func _cleanup_launch_config_path(config_path: String) -> void:
+	for path in [config_path, "%s.tmp" % config_path, "%s.bak" % config_path]:
+		if FileAccess.file_exists(path):
+			DirAccess.remove_absolute(path)

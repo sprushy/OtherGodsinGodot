@@ -7,7 +7,7 @@ const GUARDIAN_SLEEP_SOURCE := "Gidim Ensi Guardian"
 func _init() -> void:
 	super._init()
 	card_name = "Gidim Ensi"
-	card_types = ["Spirit", "Ghost", "Mage", "Priest", "Ancient Creature"]
+	card_types = ["Spirit", "Ghost", "Mage", "Priest"]
 	level = 4
 	mana_cost = 2
 	sacrifice_cost = 0
@@ -15,7 +15,7 @@ func _init() -> void:
 	resilience = 22
 	strength = 18
 	incorporeal = true
-	ability_text = "[b]Incorporeal[/b]\nGuardian ([b]Passive[/b]): Creatures that attack your followers sleep until the end of their controller's next turn. This card cannot attack."
+	ability_text = "[b]Incorporeal[/b] ([b]Passive[/b])\nGuardian ([b]Passive[/b]): Creatures that attack your Followers [b]Sleep[/b] until the end of their controller's next turn. Gidim Ensi can't attack."
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricarrdo Zoppello"
@@ -43,7 +43,9 @@ func on_opponent_attacks_followers(game_manager: GameManager, attacker: Card) ->
 	# Only trigger for opponents attacking this card's controller's followers.
 	if attacker.get_controller() == get_controller():
 		return
-	attacker.remove_status_effects_by_name("sleep")
+	if game_manager.is_immune_to_source(attacker, self):
+		return
+	attacker.remove_status_effects_from_source_card(self, "sleep")
 	attacker.add_status_effect(
 		"sleep",
 		GUARDIAN_SLEEP_SOURCE,
@@ -54,7 +56,7 @@ func on_opponent_attacks_followers(game_manager: GameManager, attacker: Card) ->
 	game_manager.note_player_feedback(
 		"%s: %s falls asleep until the end of their owner's next turn." % [
 			card_name,
-			attacker.card_name
+			attacker.get_public_combat_log_display_name()
 		]
 	)
 

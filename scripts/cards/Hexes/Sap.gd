@@ -7,7 +7,7 @@ func _init() -> void:
 	super._init()
 	card_name = "Sap"
 	level = 3
-	mana_cost = 0
+	mana_cost = 1
 	speed = 3
 	culture = "Neutral"
 	card_types = ["Destruction", "Front Line"]
@@ -35,6 +35,25 @@ func get_priority_targets(game_manager: GameManager, action: CardAction) -> Arra
 		return []
 	return [entered_card]
 
+func requires_priority_target_selection() -> bool:
+	return false
+
+func get_priority_activation_label(game_manager: GameManager, action: CardAction, viewer: Player) -> String:
+	var valid_targets := get_priority_targets(game_manager, action)
+	if valid_targets.is_empty():
+		return "Activate " + card_name
+	var target := valid_targets[0]
+	var target_name := target.get_target_log_display_name(viewer)
+	if not target.is_hidden_from_viewer(viewer):
+		for field_card in game_manager.get_field_cards():
+			if field_card == target or field_card.is_hidden_from_viewer(viewer):
+				continue
+			if field_card.card_name == target.card_name:
+				var side := "your" if target.get_controller() == viewer else "opponent"
+				target_name += " %s front line %d" % [side, target.current_zone.zone_index + 1]
+				break
+	return "Activate %s on %s" % [card_name, target_name]
+
 func on_activate_action(game_manager: GameManager, action: CardAction) -> void:
 	var target := action.target as Card
 	if not is_valid_target(game_manager, target):
@@ -48,10 +67,15 @@ func on_activate_action(game_manager: GameManager, action: CardAction) -> void:
 	if game_manager.is_immune_to_source(target, self):
 		game_manager.note_player_feedback("%s triggered, but %s was immune to hexes." % [card_name, target_name])
 		on_immune_activate(game_manager, target, target)
-	elif game_manager.request_send_to_graveyard(target, Callable(), false, true):
-		game_manager.note_player_feedback("%s destroyed %s." % [card_name, target_name])
 	else:
-		game_manager.note_player_feedback("%s triggered, but %s could not be destroyed." % [card_name, target_name])
+		var viewer := game_manager.get_feedback_viewer()
+		game_manager.request_send_to_graveyard(target, func() -> void:
+			if game_manager.reached_public_destroyed_destination(target):
+				var destroyed_name := game_manager.get_resolved_destruction_log_name(target, viewer, target_name)
+				game_manager.note_player_feedback("%s destroyed %s." % [card_name, destroyed_name])
+			else:
+				game_manager.note_player_feedback("%s triggered, but %s could not be destroyed." % [card_name, target_name])
+		, false, true)
 
 	if current_zone != null and card_owner != null:
 		card_owner.move_card(self, card_owner.graveyard_zone)

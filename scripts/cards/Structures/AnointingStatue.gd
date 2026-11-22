@@ -9,14 +9,14 @@ var cleanse_uses_this_turn := 0
 func _init() -> void:
 	super._init()
 	card_name = "Anointing Statue"
-	card_types = ["Triskelion", "Altar"]
+	card_types = ["Altar"]
 	level = 2
 	mana_cost = 0
 	resilience = 25
 	speed = 0
 	strength = 0
 	sacrifice_cost = 0
-	ability_text = "Once per turn, remove all status changes from a creature or structure."
+	ability_text = "Once per turn, remove all [b]Status[/b] changes from a creature or structure."
 	culture = "Triskelion"
 	art_path = ART_PATH
 

@@ -2,12 +2,13 @@ extends CreatureCard
 class_name Fenrir
 
 const ART_PATH := "res://images/card_art/creatures/fenrir.jpg"
+const ALT_ART_PATH := "res://images/card_art/creatures/fenrir_alt_art.png"
 const DEVOUR_BUFF_SOURCE := "Fenrir Devour"
 
 func _init() -> void:
 	super._init()
 	card_name = "Fenrir"
-	card_types = ["Animal", "Lupine", "Norse Creature"]
+	card_types = ["Animal", "Lupine"]
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
 	level = 6
@@ -18,10 +19,52 @@ func _init() -> void:
 	resilience = 20
 	strength = 20
 	targets = true
-	ability_text = "[b]Wolf Master[/b]: [b]Shuffle[/b] this card from your hand. For your turn summon, you may summon a Lupine from your deck, paying its summon cost.\n[b]Devour[/b] ([b]Impact[/b]): Destroy a creature at least 2 levels weaker than this card and gain its Str and Res."
+	ability_text = "[b]Wolf Master[/b]: [b]Shuffle[/b] Fenrir from your hand. For your turn summon, you may summon a Lupine from your deck, paying its summon cost.\n[b]Devour[/b] ([b]Impact[/b]): Destroy a creature at least 2 levels weaker than Fenrir and gain its Str and Res.\n[b]Sleep Immunity[/b]."
 	culture = "Norse"
 	artist = "Riccardo Zoppello"
 	art_path = ART_PATH
+	art_variants = [ART_PATH, ALT_ART_PATH]
+
+const GOD_CONSUME_MANA_COST := 5
+
+func is_immune_to_sleep() -> bool:
+	return true
+
+func can_activate(game_manager: GameManager) -> bool:
+	if not is_god:
+		return false
+	if card_owner == null:
+		return false
+	if card_owner != game_manager.current_player:
+		return false
+	if card_owner.mana < GOD_CONSUME_MANA_COST:
+		return false
+	return true
+
+func get_activation_failure_reason(game_manager: GameManager) -> String:
+	if not is_god:
+		return card_name + " cannot activate right now."
+	if card_owner == null:
+		return card_name + " cannot activate right now."
+	if card_owner != game_manager.current_player:
+		return "It is not your turn to act."
+	if card_owner.mana < GOD_CONSUME_MANA_COST:
+		return card_name + " needs " + str(GOD_CONSUME_MANA_COST) + " mana to consume."
+	return ""
+
+func activate(game_manager: GameManager, target: Card = null) -> void:
+	if not can_activate(game_manager):
+		return
+	if not card_owner.spend_mana(GOD_CONSUME_MANA_COST):
+		game_manager.note_player_feedback(card_name + " needs " + str(GOD_CONSUME_MANA_COST) + " mana to consume.")
+		return
+	var devour_target: Card = target
+	if devour_target == null:
+		var valid := get_valid_devour_targets(game_manager)
+		if not valid.is_empty():
+			devour_target = valid[0]
+	if devour_target != null:
+		resolve_devour_impact(game_manager, devour_target)
 
 func get_hand_ability_label() -> String:
 	return "Wolf Master"
@@ -38,6 +81,21 @@ func can_use_hand_ability(game_manager: GameManager) -> bool:
 	if _get_open_summon_zones().is_empty():
 		return false
 	return not get_valid_wolf_master_summons_after_shuffle(game_manager).is_empty()
+
+func get_hand_ability_unavailable_reason(game_manager: GameManager) -> String:
+	if game_manager == null or card_owner == null:
+		return "No active game."
+	if current_zone != card_owner.hand_zone:
+		return card_name + " must be in your hand."
+	if card_owner != game_manager.current_player:
+		return "Wait for your turn."
+	if card_owner.has_summoned_this_turn:
+		return "You have already used your normal summon this turn."
+	if _get_open_summon_zones().is_empty():
+		return "No empty friendly zone available."
+	if get_valid_wolf_master_summons_after_shuffle(game_manager).is_empty():
+		return "No payable Lupine in your deck."
+	return ""
 
 func perform_wolf_master_shuffle() -> bool:
 	if card_owner == null:
@@ -112,6 +170,14 @@ func get_devour_target_failure_reason(target: Card) -> String:
 		]
 	return card_name + " cannot devour " + target.card_name + "."
 
+var consumed_cards: Array[Card] = []
+
+func has_sheltered_cards() -> bool:
+	return not consumed_cards.is_empty()
+
+func get_sheltered_cards_for_passive_effects() -> Array[Card]:
+	return consumed_cards.duplicate()
+
 func resolve_devour_impact(game_manager: GameManager, target: Card, continue_callback: Callable = Callable()) -> void:
 	if game_manager == null:
 		_emit_devour_result(continue_callback, card_name + " cannot devour right now.")
@@ -126,19 +192,28 @@ func resolve_devour_impact(game_manager: GameManager, target: Card, continue_cal
 	if game_manager.is_immune_to_source(target, self):
 		_emit_devour_result(continue_callback, target.get_target_log_display_name(game_manager.get_feedback_viewer()) + " is immune to " + card_name + "'s creature abilities this turn.")
 		return
+	if is_god:
+		var viewer := game_manager.get_feedback_viewer()
+		var devoured_name := target.get_target_log_display_name(viewer)
+		consumed_cards.append(target)
+		game_manager.remove_card_from_game_with_hook(target)
+		_emit_devour_result(continue_callback, "%s consumes %s under him." % [card_name, devoured_name])
+		return
 
-	var devoured_name := target.get_target_log_display_name(game_manager.get_feedback_viewer())
+	var viewer := game_manager.get_feedback_viewer()
+	var devoured_name := target.get_target_log_display_name(viewer)
 	var gained_strength := target.get_effective_strength()
 	var gained_resilience := target.get_effective_resilience()
 	game_manager.request_send_to_graveyard(target, func() -> void:
-		var left_board := target.current_zone == null or not target.current_zone.is_board_zone()
-		if left_board:
+		var destroyed := game_manager.reached_public_destroyed_destination(target)
+		if destroyed:
+			var resolved_name := game_manager.get_resolved_destruction_log_name(target, viewer, devoured_name)
 			add_buff(DEVOUR_BUFF_SOURCE, gained_strength, gained_resilience, 0, self, card_owner, "fenrir_devour")
 			_emit_devour_result(
 				continue_callback,
 				"%s devoured %s and gained %d Str and %d Res." % [
 					card_name,
-					devoured_name,
+					resolved_name,
 					gained_strength,
 					gained_resilience
 				]
@@ -159,7 +234,7 @@ func _is_valid_devour_target(card: Card) -> bool:
 		and card.card_type == Card.CardType.CREATURE \
 		and card.current_zone != null \
 		and card.current_zone.is_board_zone() \
-		and card.get_effective_level() <= get_effective_level() - 2
+		and (is_god or card.get_effective_level() <= get_effective_level() - 2)
 
 func _get_open_summon_zones() -> Array[Zone]:
 	var open_zones: Array[Zone] = []
@@ -180,3 +255,18 @@ func _can_pay_wolf_master_cost_for(card: Card, game_manager: GameManager) -> boo
 func _emit_devour_result(callback: Callable, feedback: String) -> void:
 	if callback.is_valid():
 		callback.call(feedback)
+
+func get_hover_detail_lines(viewer: Player = null) -> Array[String]:
+	var details := super.get_hover_detail_lines(viewer)
+	if consumed_cards.is_empty():
+		return details
+	details.append("Cards underneath:")
+	for c in consumed_cards:
+		if c == null:
+			continue
+		var line := "- " + c.card_name
+		var ability_summary := c.get_inline_ability_summary()
+		if ability_summary != "":
+			line += " - " + ability_summary
+		details.append(line)
+	return details

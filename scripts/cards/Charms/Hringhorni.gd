@@ -11,24 +11,53 @@ func _init() -> void:
 	speed = 3
 	targets = true
 	flavor_text = ""
-	ability_text = "Activate when one of your Norse Warriors is destroyed; summon a Norse Warrior of the same level or lower from your deck."
+	ability_text = "When one of your Norse Warriors is destroyed, you may activate Hringhorni. Summon a Norse Warrior from your deck with LVL no higher than the destroyed Warrior's."
 	artist = "Tim Nguyen"
 	art_path = "res://images/card_art/charms/HringhorniEdit.png"
 
 func can_activate_from_hand(game_manager: GameManager, triggering_action: CardAction = null) -> bool:
-	if not super.can_activate_from_hand(game_manager, triggering_action):
+	if game_manager == null or card_owner == null:
 		return false
-	return _has_destroyed_friendly_norse_warrior(game_manager)
+	if must_be_prepared_to_activate:
+		return false
+	if not _is_valid_destroyed_warrior_event(triggering_action):
+		return false
+	if game_manager._has_pending_stack_action_for_card(self):
+		return false
+	if is_activation_locked(game_manager):
+		return false
+	if current_zone != card_owner.hand_zone:
+		return false
+	if card_owner != game_manager.current_player:
+		return false
+	var responding_player := game_manager.priority_player
+	if responding_player == null:
+		responding_player = triggering_action.initial_priority_player
+	if responding_player == null:
+		responding_player = triggering_action.source_player
+	if card_owner != responding_player:
+		return false
+	if not can_pay_costs(card_owner):
+		return false
+	if targets and get_priority_targets(game_manager, triggering_action).is_empty():
+		return false
+	return can_respond_to_destroyed_event(triggering_action, game_manager)
 
 func can_activate_prepared(game_manager: GameManager, triggering_action: CardAction = null) -> bool:
 	if not super.can_activate_prepared(game_manager, triggering_action):
 		return false
-	return _has_destroyed_friendly_norse_warrior(game_manager)
+	return _is_valid_destroyed_warrior_event(triggering_action)
 
 func can_respond_to_action(action: CardAction, game_manager: GameManager = null) -> bool:
 	if action != null and action.type == CardAction.Type.EVENT and action.event_name == "destroyed":
 		return _is_valid_destroyed_warrior(action.card)
 	return super.can_respond_to_action(action, game_manager)
+
+func can_respond_to_destroyed_event(action: CardAction, _game_manager: GameManager = null) -> bool:
+	return action != null \
+		and action.type == CardAction.Type.EVENT \
+		and action.event_name == "destroyed" \
+		and _is_valid_destroyed_warrior(action.card)
 
 func resolve(game_manager: GameManager, target: Card = null) -> void:
 	if game_manager == null or card_owner == null:
@@ -80,7 +109,7 @@ func is_valid_target(target: Card) -> bool:
 		and target.card_type == Card.CardType.CREATURE \
 		and not target.is_god \
 		and target.has_type("Warrior") \
-		and (target.has_type("Norse Creature") or target.culture == "Norse")
+		and target.culture == "Norse"
 
 func get_valid_recruits(game_manager: GameManager) -> Array[Card]:
 	return _get_valid_recruits_for_level_cap(game_manager, get_destroyed_warrior_level_cap(game_manager))
@@ -113,10 +142,13 @@ func _is_valid_destroyed_warrior(card: Card) -> bool:
 		and card.card_type == Card.CardType.CREATURE \
 		and card.card_owner == card_owner \
 		and card.has_type("Warrior") \
-		and (card.has_type("Norse Creature") or card.culture == "Norse")
+		and card.culture == "Norse"
 
-func _has_destroyed_friendly_norse_warrior(game_manager: GameManager) -> bool:
-	return get_destroyed_warrior_level_cap(game_manager) >= 0
+func _is_valid_destroyed_warrior_event(action: CardAction) -> bool:
+	return action != null \
+		and action.type == CardAction.Type.EVENT \
+		and action.event_name == "destroyed" \
+		and _is_valid_destroyed_warrior(action.card)
 
 func _is_valid_recruit(card: Card, max_level: int) -> bool:
 	return card != null \
@@ -125,7 +157,7 @@ func _is_valid_recruit(card: Card, max_level: int) -> bool:
 		and card.card_type == Card.CardType.CREATURE \
 		and not card.is_god \
 		and card.has_type("Warrior") \
-		and (card.has_type("Norse Creature") or card.culture == "Norse") \
+		and card.culture == "Norse" \
 		and card.get_effective_level() <= max_level
 
 func _find_open_summon_zone() -> Zone:

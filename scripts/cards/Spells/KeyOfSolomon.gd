@@ -8,7 +8,7 @@ func _init() -> void:
 	super._init()
 	card_name = "Key of Solomon"
 	culture = "Ancient"
-	card_types = ["Ancient", "Recovery"]
+	card_types = ["Recovery"]
 	level = 1
 	mana_cost = 1
 	speed = 1
@@ -36,6 +36,9 @@ func get_play_failure_reason(game_manager: GameManager, player: Player) -> Strin
 	if get_valid_demon_targets().is_empty():
 		return card_name + " has no Demon in your graveyard or abyss to return."
 	return ""
+
+func _get_missing_sacrifice_cost_reason(_player: Player) -> String:
+	return card_name + " requires a friendly Animal to sacrifice."
 
 ## Returns friendly Animals on the board that can be sacrificed.
 func get_valid_sacrifices() -> Array[Card]:

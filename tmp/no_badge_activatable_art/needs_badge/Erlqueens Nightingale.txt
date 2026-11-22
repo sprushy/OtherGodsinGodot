@@ -1,0 +1,1 @@
+﻿[b]Shift[/b] ([b]Activate[/b], [b]Minor Action[/b], once per turn): Switch this card between Human, Servant, Mage, Witch and Animal, Avian, Aerial. When this card shifts, you may return it to your hand.

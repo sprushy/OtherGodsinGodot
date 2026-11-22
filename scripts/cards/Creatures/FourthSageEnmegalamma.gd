@@ -3,14 +3,14 @@ extends CreatureCard
 func _init() -> void:
 	super._init()
 	card_name = "Fourth Sage Enmegalamma"
-	card_types = ["Mer", "Mage", "Priest", "Sage", "Ancient Creature"]
+	card_types = ["Mer", "Mage", "Priest", "Sage"]
 	level = 2
 	mana_cost = 0
 	sacrifice_cost = 0
 	speed = 1
 	resilience = 15
 	strength = 14
-	ability_text = "[b]Search[/b] Sage ([b]Impact[/b]): You may add a Mer Sage from your deck to your hand except for another copy of this card."
+	ability_text = "[b]Search[/b] Sage ([b]Impact[/b]): You may [b]Acquire[/b] a Mer Sage, except another copy of Fourth Sage Enmegalamma, by paying mana equal to half their level."
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricardo Zoppello"
@@ -43,9 +43,15 @@ func get_valid_targets(_game_manager: GameManager) -> Array[Card]:
 	if controller == null or controller.deck_zone == null:
 		return valid_targets
 	for card in controller.deck_zone.cards:
-		if _is_valid_search_target(card, controller):
+		if _is_valid_search_target(card, controller) and controller.mana >= get_acquisition_cost(card):
 			valid_targets.append(card)
 	return valid_targets
+
+func get_acquisition_cost(target: Card) -> int:
+	if target == null:
+		return 0
+	@warning_ignore("integer_division")
+	return maxi(0, target.level) / 2
 
 func resolve_search_sage_impact(game_manager: GameManager, target: Card) -> String:
 	var controller := get_controller()
@@ -54,6 +60,11 @@ func resolve_search_sage_impact(game_manager: GameManager, target: Card) -> Stri
 	var valid_targets := get_valid_targets(game_manager)
 	if target == null or target not in valid_targets:
 		return card_name + " found no valid Mer Sage to add."
+
+	var cost := get_acquisition_cost(target)
+	if cost > 0 and not controller.spend_mana(cost):
+		_shuffle_deck(controller)
+		return "%s could not pay %d mana to Acquire %s." % [card_name, cost, target.card_name]
 
 	controller.move_card(target, controller.hand_zone)
 	if target.current_zone != controller.hand_zone:
@@ -82,7 +93,7 @@ func resolve_no_search_targets() -> String:
 func _shuffle_deck(controller: Player) -> void:
 	if controller == null or controller.deck_zone == null:
 		return
-	controller.deck_zone.cards.shuffle()
+	controller.deck_zone.shuffle_deck()
 
 func _is_valid_search_target(card: Card, controller: Player) -> bool:
 	return card != null \

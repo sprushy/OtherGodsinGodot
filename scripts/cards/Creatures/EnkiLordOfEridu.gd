@@ -4,14 +4,14 @@ class_name EnkiLordOfEridu
 func _init() -> void:
 	super._init()
 	card_name = "Enki, Lord of Eridu"
-	card_types = ["Divine Manifestation", "Mer", "Mage", "Priest", "Sage", "Ancient Creature"]
+	card_types = ["Divine Manifestation", "Mer", "Mage", "Priest", "Sage"]
 	level = 6
 	mana_cost = 8
 	sacrifice_cost = 0
 	speed = 1
 	resilience = 36
 	strength = 32
-	ability_text = "Class Immunity (Passive): Friendly Mages are immune to hexes."
+	ability_text = "Class Immunity ([b]Passive[/b]): Friendly Mages are immune to hexes."
 	flavor_text = ""
 	culture = "Ancient"
 	art_path = "res://images/card_art/creatures/enki_lord_of_eridu - Copy.jpg"
@@ -29,7 +29,18 @@ func protects_from_hex(target: Card) -> bool:
 	)
 
 func hex_protection_is_suppressed_raw() -> bool:
-	if is_enslaved() or is_muted:
+	# This helper is called while Card is filtering effective statuses. Calling
+	# is_enslaved() here would call has_status_effect(), which re-enters that
+	# same filter and recurses through Enki's own immunity check.
+	var controller := get_controller()
+	var enslaved_raw := controller != null \
+		and card_owner != null \
+		and controller != card_owner
+	if enslaved_raw:
+		for status in active_statuses:
+			if status.get("name", "") == "enslaved":
+				return true
+	if is_muted:
 		return true
 	for status in active_statuses:
 		if status.get("name", "") == "petrified":

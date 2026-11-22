@@ -23,7 +23,7 @@ func _init() -> void:
 	culture = "Ancient"
 	# flavor_text = "Nusku's fire offers revelation now or judgment later."
 	flavor_text = ""
-	ability_text = "Core Flame ([b]Impact[/b]): You may [b]Mill[/b] 7. Add a magical card milled this way to your hand.\nCelestial Light ([b]Fatality[/b]): If you declined Core Flame, [b]Convert[/b] followers equal to your graveyard size."
+	ability_text = "Core Flame ([b]Impact[/b]): You may [b]Mill[/b] 7. Add a magical card milled this way to your hand.\nCelestial Light ([b]Perish[/b]): If you declined Core Flame, [b]Convert[/b] followers equal to your grave size."
 	art_path = ART_PATH
 	name_at_bottom = true
 	artist = "Ricardo Zoppello"
@@ -50,6 +50,8 @@ func on_impact(game_manager: GameManager) -> void:
 	game_manager.decision_requested.emit(prompt_player, "nusku_active_core_flame", {
 		"source_uid": uid,
 		"mill_count": mill_count,
+		"queue_with_priority": true,
+		"event_name": "nusku_active_core_flame_impact",
 	})
 
 func resolve_from_command(game_manager: GameManager, command: Dictionary) -> String:
@@ -86,8 +88,6 @@ func resolve_core_flame(game_manager: GameManager, chosen_card: Card = null, dec
 	var milled_cards := _mill_cards()
 	var eligible_cards := _get_eligible_milled_magical_cards(milled_cards)
 	var resolved_choice := chosen_card if chosen_card != null and chosen_card in eligible_cards else null
-	if resolved_choice == null and not eligible_cards.is_empty():
-		resolved_choice = eligible_cards[0]
 
 	_declined_core_flame = false
 
@@ -99,15 +99,22 @@ func resolve_core_flame(game_manager: GameManager, chosen_card: Card = null, dec
 			card_owner.player_name
 		]
 	else:
-		feedback += " No magical card was milled."
+		feedback += " No magical card was chosen." if not eligible_cards.is_empty() else " No magical card was milled."
 	return feedback
 
 func is_pending_core_flame_choice_uid(chosen_uid: String) -> bool:
 	var pending_choice_uids: Array = get_meta(CORE_FLAME_PENDING_CHOICE_UIDS_META, [])
 	return chosen_uid in pending_choice_uids
 
-func on_death(game_manager: GameManager) -> void:
+func has_pending_core_flame_choice() -> bool:
+	var pending_choice_uids: Array = get_meta(CORE_FLAME_PENDING_CHOICE_UIDS_META, [])
+	return not pending_choice_uids.is_empty()
+
+func on_perish(game_manager: GameManager) -> void:
 	if game_manager == null or not _declined_core_flame:
+		return
+	_declined_core_flame = false
+	if card_owner == null or current_zone != card_owner.graveyard_zone:
 		return
 	var controller := get_controller()
 	if controller == null:
@@ -118,13 +125,22 @@ func on_death(game_manager: GameManager) -> void:
 	var grave_count := 0
 	if controller != null and controller.graveyard_zone != null:
 		grave_count = controller.graveyard_zone.cards.size()
-	_declined_core_flame = false
 	if grave_count <= 0:
+		game_manager.note_player_feedback("%s's Celestial Light triggers, but the graveyard is empty." % card_name)
 		return
-	var converted := game_manager.convert_followers(opponent, controller, grave_count)
+	var converted := game_manager.convert_followers(opponent, controller, grave_count, self)
 	if converted <= 0:
 		return
 	game_manager.note_player_feedback("%s's Celestial Light converts %d followers." % [card_name, converted])
+
+func get_serialized_state() -> Dictionary:
+	var state := super.get_serialized_state()
+	state["declined_core_flame"] = _declined_core_flame
+	return state
+
+func apply_serialized_state(state: Dictionary) -> void:
+	super.apply_serialized_state(state)
+	_declined_core_flame = bool(state.get("declined_core_flame", false))
 
 func _mill_cards() -> Array[Card]:
 	var milled: Array[Card] = []
@@ -156,15 +172,13 @@ func _resolve_core_flame_after_mill(game_manager: GameManager) -> String:
 	var eligible_cards := _get_eligible_milled_magical_cards(milled_cards)
 	_declined_core_flame = false
 
-	if eligible_cards.size() > 1:
+	if not eligible_cards.is_empty():
 		_request_core_flame_milled_choice(game_manager, eligible_cards, milled_cards.size())
 		return "%s milled %d card(s). Choose a magical card to add to %s's hand." % [
 			card_name,
 			milled_cards.size(),
 			card_owner.player_name,
 		]
-	if eligible_cards.size() == 1:
-		return _complete_core_flame_choice(game_manager, eligible_cards[0], milled_cards.size())
 	return "%s milled %d card(s). No magical card was milled." % [card_name, milled_cards.size()]
 
 func _request_core_flame_milled_choice(game_manager: GameManager, eligible_cards: Array[Card], mill_count: int) -> void:

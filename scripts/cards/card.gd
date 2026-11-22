@@ -13,10 +13,13 @@ enum CreatureMode { AGGRESSIVE, DEFENSIVE }
 @export var is_god: bool = false
 @export var is_power: bool = false
 @export var is_token: bool = false
+@export var is_single_player_card: bool = false
 @export var can_be_used_for_creature_sacrifice: bool = true
 
 # Card types (warrior, mage, etc.) - can have multiple
 @export var card_types: Array[String] = []
+var field_subtypes: Array[String] = []
+var _checking_subtype_aura: bool = false
 
 # Lore and background
 @export_multiline var flavor_text: String = ""
@@ -28,6 +31,7 @@ enum CreatureMode { AGGRESSIVE, DEFENSIVE }
 		_art_path = resolve_art_path(value)
 	get:
 		return _art_path
+@export var art_variants: Array[String] = []
 @export var artist: String = ""
 @export var paragon_of_champions: String = ""  # Name of the champion type this god is patron of; empty if not a paragon
 @export var name_at_bottom: bool = false  # If true, card name is rendered at the bottom instead of the top
@@ -46,6 +50,94 @@ var _exhausted_art_path: String = ""
 
 func should_show_flavor_text_in_hover() -> bool:
 	return flavor_text != "" and ability_text == ""
+
+func get_display_ability_text(_game_manager: GameManager = null) -> String:
+	return ability_text
+
+func get_display_ability_bbcode_text(game_manager: GameManager = null) -> String:
+	return get_display_ability_text(game_manager)
+
+func get_named_ability_name(trigger_hint: String = "") -> String:
+	var ability_lines := _get_named_ability_lines()
+	if ability_lines.is_empty():
+		return ""
+	var normalized_hint := trigger_hint.strip_edges().to_lower()
+	for entry in ability_lines:
+		var qualifiers := str(entry.get("qualifiers", "")).to_lower()
+		if normalized_hint != "" and _ability_qualifiers_match_trigger_hint(qualifiers, normalized_hint):
+			return str(entry.get("name", ""))
+	if ability_lines.size() == 1:
+		return str(ability_lines[0].get("name", ""))
+	return ""
+
+func get_named_ability_entries() -> Array[Dictionary]:
+	return _get_named_ability_lines()
+
+func format_named_ability_log_message(message: String, trigger_hint: String = "") -> String:
+	var trimmed_message := message.strip_edges()
+	if trimmed_message == "":
+		return ""
+	var ability_name := get_named_ability_name(trigger_hint)
+	if ability_name == "":
+		return trimmed_message
+	if trimmed_message.findn(ability_name) >= 0:
+		return trimmed_message
+	return "%s: %s" % [ability_name, trimmed_message]
+
+func _get_named_ability_lines() -> Array[Dictionary]:
+	var entries: Array[Dictionary] = []
+	var seen_names: Dictionary = {}
+	var stripped_text := _strip_ability_bbcode(get_display_ability_text()).strip_edges()
+	if stripped_text == "":
+		return entries
+	for raw_line in stripped_text.split("\n", false):
+		var line := raw_line.strip_edges()
+		if line == "":
+			continue
+		var colon_index := line.find(":")
+		if colon_index < 0:
+			continue
+		var header := line.substr(0, colon_index).strip_edges()
+		if header == "":
+			continue
+		var ability_name := header
+		var qualifiers := ""
+		var paren_index := header.find("(")
+		if paren_index >= 0:
+			ability_name = header.substr(0, paren_index).strip_edges()
+			var closing_index := header.rfind(")")
+			if closing_index > paren_index:
+				qualifiers = header.substr(paren_index + 1, closing_index - paren_index - 1).strip_edges()
+		if ability_name == "" or seen_names.has(ability_name):
+			continue
+		seen_names[ability_name] = true
+		entries.append({
+			"name": ability_name,
+			"qualifiers": qualifiers,
+			"description": line.substr(colon_index + 1).strip_edges(),
+		})
+	return entries
+
+func _ability_qualifiers_match_trigger_hint(qualifiers: String, trigger_hint: String) -> bool:
+	if trigger_hint == "":
+		return true
+	if qualifiers.findn(trigger_hint) >= 0:
+		return true
+	if trigger_hint == "activated":
+		return qualifiers.findn("activate") >= 0 \
+			or qualifiers.findn("major action") >= 0 \
+			or qualifiers.findn("minor action") >= 0 \
+			or qualifiers.findn("spd") >= 0
+	return false
+
+func _strip_ability_bbcode(text: String) -> String:
+	var stripped := text
+	for tag in ["[b]", "[/b]", "[i]", "[/i]", "[u]", "[/u]", "[s]", "[/s]"]:
+		stripped = stripped.replace(tag, "")
+	var regex := RegEx.new()
+	if regex.compile("\\[(?:/?color(?:=[^\\]]+)?)\\]") == OK:
+		stripped = regex.sub(stripped, "", true)
+	return stripped
 
 const CARD_NAME_MOJIBAKE_FIXES := {
 	"AurboÃƒÂ°a": "Aurboða",
@@ -176,12 +268,40 @@ static func resolve_art_path(raw_path: String) -> String:
 		resolved_path = str(ART_PATH_REDIRECTS[resolved_path]).strip_edges()
 	return resolved_path
 
+func get_art_variant_paths() -> Array[String]:
+	var variants: Array[String] = []
+	for raw_path in art_variants:
+		var resolved_path := resolve_art_path(raw_path)
+		if not resolved_path.is_empty() and resolved_path not in variants:
+			variants.append(resolved_path)
+	if variants.is_empty() and not art_path.is_empty():
+		variants.append(art_path)
+	return variants
+
+func set_art_variant(variant_index: int) -> bool:
+	var variants := get_art_variant_paths()
+	if variant_index < 0 or variant_index >= variants.size():
+		return false
+	art_path = variants[variant_index]
+	art_updated.emit(art_path)
+	return true
+
 func switch_to_exhausted_art() -> void:
 	if exhausted_art_path != "":
 		art_path = exhausted_art_path
 		art_updated.emit(art_path)
 
+# Set while a legality probe mutates visual state transiently (restored before
+# returning): the probe must not schedule zone UI refreshes through
+# visual_state_changed, so its emissions are suppressed.
+var _visual_state_notifications_suppressed := false
+
+func set_visual_state_notifications_suppressed(suppressed: bool) -> void:
+	_visual_state_notifications_suppressed = suppressed
+
 func _emit_visual_state_changed() -> void:
+	if _visual_state_notifications_suppressed:
+		return
 	visual_state_changed.emit()
 
 # Costs
@@ -248,6 +368,7 @@ var is_stealth: bool = false
 var has_acted_this_turn: bool = false
 var has_moved_this_turn: bool = false
 var has_attacked_this_turn: bool = false
+var combats_this_game: int = 0
 var creature_major_action_used: bool = false
 var creature_minor_actions_used: int = 0
 var creature_shift_used_this_turn: bool = false
@@ -256,6 +377,7 @@ var sleeping_from: Card = null
 var equipped_on: Card = null
 var equipment: Array[Card] = []
 var summoned_this_turn: bool = false
+var summoned_after_first_attack_this_turn: bool = false
 var board_entry_order: int = -1
 var is_used: bool = false          # for single-use activatable abilities on powers
 var incorporeal: bool = false      # Incorporeal keyword: restricted engagement rules
@@ -273,8 +395,10 @@ var _pending_action_point_spend_visual_kinds: Array[String] = []
 var _creature_mode: CreatureMode = CreatureMode.DEFENSIVE
 var _board_leave_hooks_processed: bool = false
 
+const PARALYZED_STATUS := "paralyzed"
 const EXTERNAL_EFFECT_NEGATION_STATUS := "external_effect_negation"
 const ABILITY_NEGATED_STATUS := "ability_negated"
+const DESTROY_AFTER_COMBAT_STATUS := "destroy_after_combat"
 const COST_KIND_POWER_UNLOCK := "power_unlock"
 const COST_KIND_POWER_ACTIVATION := "power_activation"
 const COST_KIND_CREATURE_SUMMON := "creature_summon"
@@ -391,15 +515,23 @@ func is_hidden_from_viewer(viewer: Player = null) -> bool:
 	if viewer == null:
 		return false
 	var owner_game_manager := card_owner.game_manager if card_owner != null else null
-	if owner_game_manager != null and is_magical_card() and owner_game_manager._has_pending_stack_action_for_card(self):
+	if owner_game_manager != null and is_magical_card() and owner_game_manager._has_pending_stack_action_for_card(self) \
+			and not (is_stealth and has_veil_of_night()):
 		return false
+	if current_zone != null and current_zone.zone_type == Zone.ZoneType.DECK:
+		# Deck order is private. Opponents may know a primed/shelved card
+		# exists, but only learn its identity when it was publicly revealed or
+		# entered the deck from public information.
+		return current_zone.zone_owner != null \
+			and current_zone.zone_owner != viewer \
+			and not current_zone.is_deck_card_publicly_known(self)
 	var controller := get_controller()
 	var publicly_revealed_power := self is PowerCard and (self as PowerCard).is_publicly_revealed
 	var hidden_face_down := (is_face_down or is_prepared) and not publicly_revealed_power
 	return (is_stealth or hidden_face_down) \
 		and controller != null \
 		and controller != viewer \
-		and not is_temporarily_revealed()
+		and not is_revealed_to_all()
 
 func get_log_display_name(
 	viewer: Player = null,
@@ -420,6 +552,8 @@ func get_hidden_log_position_label() -> String:
 		controller = card_owner
 	var owner_prefix := controller.player_name + "'s " if controller != null and controller.player_name != "" else ""
 	match zone.zone_type:
+		Zone.ZoneType.DECK:
+			return owner_prefix + "deck"
 		Zone.ZoneType.FRONTLINE:
 			return owner_prefix + "Front Line position " + str(zone.zone_index + 1)
 		Zone.ZoneType.RESERVE:
@@ -434,16 +568,55 @@ func get_target_log_display_name(viewer: Player = null) -> String:
 	if current_zone != null and current_zone.zone_type in [Zone.ZoneType.GRAVEYARD, Zone.ZoneType.ABYSS]:
 		return get_display_name()
 	if is_hidden_from_viewer(viewer):
-		return get_hidden_log_position_label()
+		var label := get_hidden_log_position_label()
+		if is_stealth and has_veil_of_night() and not is_revealed_to_all() and is_combat_resilience_inferable():
+			return "%s (RES %d)" % [label, get_effective_resilience()]
+		return label
 	return get_display_name()
+
+func is_known_for_combat_log(viewer: Player = null) -> bool:
+	if not is_hidden_from_viewer(viewer):
+		return true
+	if is_stealth and has_veil_of_night():
+		return false
+	return has_meta("combat_declared_attackers") \
+		or has_meta("combat_was_stealth_when_engaged") \
+		or has_meta("combat_was_sleeping_when_engaged")
+
+func get_combat_log_display_name(viewer: Player = null) -> String:
+	if is_known_for_combat_log(viewer):
+		return get_display_name()
+	return get_target_log_display_name(viewer)
+
+func is_combat_resilience_inferable() -> bool:
+	return has_meta("combat_resilience_inferable")
+
+func mark_combat_resilience_inferable() -> void:
+	if not is_stealth or not has_veil_of_night():
+		return
+	set_meta("combat_resilience_inferable", true)
+
+func get_public_combat_log_display_name() -> String:
+	if is_stealth and has_veil_of_night() and not is_revealed_to_all():
+		var label := get_hidden_log_position_label()
+		if is_combat_resilience_inferable():
+			return "%s (RES %d)" % [label, get_effective_resilience()]
+		return label
+	return card_name
 
 func is_enslaved() -> bool:
 	var controller := get_controller()
-	return controller != null and card_owner != null and controller != card_owner
+	return controller != null \
+		and card_owner != null \
+		and controller != card_owner \
+		and has_status_effect("enslaved")
 
 func has_status_effect(status_name: String) -> bool:
+	var normalized_name := status_name
+	if normalized_name == "paralyze":
+		normalized_name = PARALYZED_STATUS
 	for status in _get_effective_statuses():
-		if status.get("name", "") == status_name:
+		if status.get("name", "") == normalized_name or status.get("name", "") == status_name:
 			return true
 	return false
 
@@ -451,16 +624,63 @@ func is_shapeshift_locked() -> bool:
 	return has_status_effect("tonal_extraction_no_shift")
 
 func get_status_effect(status_name: String) -> Dictionary:
+	var normalized_name := status_name
+	if normalized_name == "paralyze":
+		normalized_name = PARALYZED_STATUS
 	for status in _get_effective_statuses():
-		if status.get("name", "") == status_name:
+		if status.get("name", "") == normalized_name or status.get("name", "") == status_name:
 			return status
 	return {}
 
 func is_petrified() -> bool:
 	return has_status_effect("petrified")
 
+func is_paralyzed() -> bool:
+	return has_status_effect(PARALYZED_STATUS) or has_status_effect("paralyze")
+
 func is_temporarily_revealed() -> bool:
 	return has_status_effect("temporarily_revealed")
+
+func is_revealed_to_all() -> bool:
+	return is_temporarily_revealed() or has_status_effect("publicly_revealed")
+
+func is_revealed_in_hand() -> bool:
+	return has_status_effect("revealed_in_hand")
+
+func is_publicly_identified(game_manager: GameManager = null) -> bool:
+	if current_zone != null and current_zone.zone_type in [Zone.ZoneType.GRAVEYARD, Zone.ZoneType.ABYSS]:
+		return false
+	if is_revealed_in_hand() or is_revealed_to_all():
+		return true
+	if self is PowerCard and (self as PowerCard).is_publicly_revealed:
+		return true
+	var has_hidden_board_identity := current_zone != null \
+		and current_zone.is_board_zone() \
+		and (is_face_down or is_stealth or is_prepared)
+	if not has_hidden_board_identity:
+		return false
+	for equipment_card in equipment:
+		if equipment_card != null \
+				and equipment_card.equipped_on == self \
+				and equipment_card.current_zone == current_zone:
+			return true
+
+	var identifying_game_manager := game_manager
+	if identifying_game_manager == null and card_owner != null:
+		identifying_game_manager = card_owner.game_manager
+	if identifying_game_manager == null:
+		return false
+	for player in identifying_game_manager.players:
+		if player == null:
+			continue
+		for zone in player.frontline_zones + player.reserve_zones:
+			if zone == null:
+				continue
+			for zone_card in zone.cards:
+				var binding := zone_card as PermanentHexCard
+				if binding != null and binding.attached_target == self:
+					return true
+	return false
 
 func temporarily_reveal_until_end_of_turn(
 	current_turn: int,
@@ -519,11 +739,14 @@ func is_silenced() -> bool:
 	return is_muted and mute_turns_remaining < 0
 
 func abilities_suppressed() -> bool:
+	return abilities_suppressed_by_effects() \
+		or _abilities_disabled_by_hidden_state()
+
+func abilities_suppressed_by_effects() -> bool:
 	return is_enslaved() \
 		or is_petrified() \
 		or is_muted \
-		or has_status_effect(ABILITY_NEGATED_STATUS) \
-		or _abilities_disabled_by_hidden_state()
+		or has_status_effect(ABILITY_NEGATED_STATUS)
 
 func post_field_abilities_suppressed() -> bool:
 	# Silence and generic ability negation only apply while the card remains in play.
@@ -575,11 +798,19 @@ func _append_unique_passive_card(passive_cards: Array[Card], seen_cards: Diction
 func is_creature_card() -> bool:
 	return card_type == CardType.CREATURE
 
-func get_effective_speed() -> int:
+func counts_as_on_field(game_manager: GameManager = null) -> bool:
+	if current_zone != null and current_zone.is_board_zone():
+		return true
+	var resolved_game_manager := game_manager
+	if resolved_game_manager == null and card_owner != null:
+		resolved_game_manager = card_owner.game_manager
+	return resolved_game_manager != null and resolved_game_manager.is_card_on_field(self)
+
+func get_effective_speed(speed_delta: int = 0) -> int:
 	var base_speed = speed
 	var speed_override: Variant = null
 	var equipment_speed_bonus := 0
-	if is_stealth:
+	if is_stealth and not has_veil_of_night():
 		base_speed -= 1
 	for equip in equipment:
 		equipment_speed_bonus += equip.speed_modifier
@@ -592,7 +823,7 @@ func get_effective_speed() -> int:
 	base_speed += equipment_speed_bonus
 	for buff in _get_effective_buffs():
 		base_speed += buff.get("spd", 0)
-	return clampi(base_speed, 1, 7)
+	return clampi(base_speed + speed_delta, 1, 7)
 
 func get_effective_level() -> int:
 	var total := level
@@ -600,21 +831,31 @@ func get_effective_level() -> int:
 		total += buff.get("lvl", 0)
 	return max(1, total)
 
-func get_effective_strength() -> int:
-	var total = strength
+func get_effective_strength(strength_delta: int = 0) -> int:
+	var total := strength + strength_delta
 	for equip in equipment:
 		total += equip.strength_modifier
 	for buff in _get_effective_buffs():
 		total += buff.get("str", 0)
 	return max(0, total)
 
-func get_effective_resilience() -> int:
-	var total = resilience
+func get_effective_resilience(resilience_delta: int = 0) -> int:
+	var total := resilience + resilience_delta
 	for equip in equipment:
 		total += equip.resilience_modifier
 	for buff in _get_effective_buffs():
 		total += buff.get("res", 0)
 	return max(0, total)
+
+# Effective resilience without the floor-at-zero clamp. Used to detect lethal
+# stat damage (e.g. poison) that should destroy a creature at 0 or below.
+func get_unclamped_effective_resilience() -> int:
+	var total := resilience
+	for equip in equipment:
+		total += equip.resilience_modifier
+	for buff in _get_effective_buffs():
+		total += buff.get("res", 0)
+	return total
 
 # Returns a human-readable breakdown of all active buffs for a stat ("str", "res", "spd", "lvl")
 func get_buff_tooltip(stat: String) -> String:
@@ -673,8 +914,17 @@ func get_effect_summary_lines() -> Array[String]:
 			continue
 		lines.append(", ".join(parts) + " from " + str(buff.get("source", "?")))
 
-	for status in _get_effective_statuses():
+	var effective_statuses := _get_effective_statuses()
+	var summarized_good_fortune_sources: Dictionary = {}
+	for status in effective_statuses:
 		var raw_status_name := str(status.get("name", "Status"))
+		if raw_status_name == "third_sage_good_fortune":
+			var good_fortune_key := _get_effect_source_key(status)
+			if summarized_good_fortune_sources.has(good_fortune_key):
+				continue
+			summarized_good_fortune_sources[good_fortune_key] = true
+			lines.append(_format_good_fortune_effect_summary(status, effective_statuses))
+			continue
 		if raw_status_name == "blessed_ward":
 			var ward_kind := str(status.get("ward_kind", "")).replace("_", " ")
 			lines.append("Blessed Ward vs " + ward_kind.capitalize() + " from " + str(status.get("source", "?")))
@@ -685,16 +935,75 @@ func get_effect_summary_lines() -> Array[String]:
 		if raw_status_name == "temporarily_revealed":
 			lines.append("Revealed until end of turn by " + str(status.get("source", "?")))
 			continue
+		if raw_status_name == "publicly_revealed":
+			lines.append("Publicly revealed by " + str(status.get("source", "?")))
+			continue
+		if raw_status_name == "revealed_in_hand":
+			lines.append("Revealed while in hand by " + str(status.get("source", "?")))
+			continue
 		if raw_status_name == "activation_locked":
 			lines.append("Cannot activate this turn from " + str(status.get("source", "?")))
 			continue
 		if raw_status_name == ABILITY_NEGATED_STATUS:
 			lines.append("Abilities negated from " + str(status.get("source", "?")))
 			continue
+		if raw_status_name == DESTROY_AFTER_COMBAT_STATUS:
+			lines.append("Destroyed after its next combat")
+			continue
 		var status_name := raw_status_name.capitalize()
 		lines.append(status_name + " from " + str(status.get("source", "?")))
 
 	return lines
+
+func _format_good_fortune_effect_summary(status: Dictionary, statuses: Array[Dictionary]) -> String:
+	var source_label := _get_effect_source_label(status)
+	var source_key := _get_effect_source_key(status)
+	var ward_kinds: Array[String] = []
+	for candidate in statuses:
+		if str(candidate.get("name", "")) != "third_sage_good_fortune":
+			continue
+		if _get_effect_source_key(candidate) != source_key:
+			continue
+		var ward_kind := str(candidate.get("ward_kind", "")).strip_edges()
+		if ward_kind != "" and ward_kind not in ward_kinds:
+			ward_kinds.append(ward_kind)
+	var protection_text := _format_good_fortune_protection_text(ward_kinds)
+	if protection_text == "":
+		return "Good Fortune from " + source_label
+	return "Good Fortune from %s: Cannot be targeted by %s while %s remains face-up on the field." % [
+		source_label,
+		protection_text,
+		source_label,
+	]
+
+func _format_good_fortune_protection_text(ward_kinds: Array[String]) -> String:
+	var protects_spells := "spells" in ward_kinds
+	var protects_creature_abilities := "creature_abilities" in ward_kinds
+	if protects_spells and protects_creature_abilities:
+		return "spells or creature abilities"
+	if protects_spells:
+		return "spells"
+	if protects_creature_abilities:
+		return "creature abilities"
+	return ""
+
+func _get_effect_source_label(entry: Dictionary) -> String:
+	var source_card := entry.get("source_card", null) as Card
+	if source_card != null and source_card.card_name.strip_edges() != "":
+		return source_card.card_name
+	var source_label := str(entry.get("source", "")).strip_edges()
+	return source_label if source_label != "" else "?"
+
+func _get_effect_source_key(entry: Dictionary) -> String:
+	var source_card := entry.get("source_card", null) as Card
+	if source_card != null:
+		if source_card.uid.strip_edges() != "":
+			return "card:" + source_card.uid
+		return "card_instance:%d" % source_card.get_instance_id()
+	var source_uid := str(entry.get("source_card_uid", "")).strip_edges()
+	if source_uid != "":
+		return "card:" + source_uid
+	return "source:" + _get_effect_source_label(entry)
 
 func get_equipment_modifier_summary_parts() -> Array[String]:
 	var parts: Array[String] = []
@@ -778,6 +1087,12 @@ func get_hover_stored_cards_total_level(_viewer: Player = null) -> int:
 			total += stored_card.get_effective_level()
 	return total
 
+func get_hover_summoned_active_gods(_viewer: Player = null) -> Array[Card]:
+	return []
+
+func get_hover_summoned_active_gods_title(_viewer: Player = null) -> String:
+	return "Summons"
+
 func get_equipment_summary_lines() -> Array[String]:
 	var lines: Array[String] = []
 	for equip in equipment:
@@ -844,6 +1159,9 @@ func add_status_effect(
 	source_owner: Player = null,
 	extra_metadata: Dictionary = {}
 ) -> void:
+	# Sleep-immune creatures (e.g. Incorporeal) are immune to Sleep.
+	if status_name == "sleep" and is_immune_to_sleep():
+		return
 	var status := {
 		"name": status_name,
 		"source": source,
@@ -857,9 +1175,15 @@ func add_status_effect(
 	_emit_visual_state_changed()
 
 func remove_status_effects_by_name(status_name: String) -> void:
+	var normalized_name := status_name
+	if normalized_name == "paralyze":
+		normalized_name = PARALYZED_STATUS
 	var previous_status_count := active_statuses.size()
+	_restore_removed_status_side_effects(active_statuses.filter(func(s):
+		return s.get("name", "") == normalized_name or s.get("name", "") == status_name
+	))
 	active_statuses = active_statuses.filter(func(s):
-		return s.get("name", "") != status_name
+		return s.get("name", "") != normalized_name and s.get("name", "") != status_name
 	)
 	_sync_status_flags()
 	if active_statuses.size() != previous_status_count:
@@ -867,6 +1191,11 @@ func remove_status_effects_by_name(status_name: String) -> void:
 
 func remove_status_effects_from_source_card(source_card: Card, status_name: String = "") -> void:
 	var previous_status_count := active_statuses.size()
+	_restore_removed_status_side_effects(active_statuses.filter(func(s):
+		var same_source: bool = s.get("source_card", null) == source_card
+		var same_status: bool = status_name == "" or s.get("name", "") == status_name
+		return same_source and same_status
+	))
 	active_statuses = active_statuses.filter(func(s):
 		var same_source: bool = s.get("source_card", null) == source_card
 		var same_status: bool = status_name == "" or s.get("name", "") == status_name
@@ -930,17 +1259,29 @@ func remove_effects_from_player(player: Player) -> void:
 	if active_buffs.size() != previous_buff_count or active_statuses.size() != previous_status_count:
 		_emit_visual_state_changed()
 
+func is_immune_to_sleep() -> bool:
+	return incorporeal
+
+func is_immune_to_poison() -> bool:
+	return incorporeal
+
 func apply_sleep(source_card: Card) -> void:
+	# Sleep-immune creatures (e.g. Incorporeal) are immune to Sleep; do not change stance or add the status.
+	if is_immune_to_sleep():
+		return
 	if card_type == CardType.CREATURE and current_zone != null and current_zone.is_board_zone():
 		creature_mode = CreatureMode.DEFENSIVE
-	remove_status_effects_by_name("sleep")
+	# Refresh this source without replacing sleeps with independent durations.
+	remove_status_effects_from_source_card(source_card, "sleep")
 	add_status_effect("sleep", source_card.card_name if source_card != null else "Sleep", source_card, source_card.card_owner if source_card != null else null)
 
 func wake_up() -> void:
+	# Explicit Wake effects clear all sleep; expiry must remove only its own source.
 	remove_status_effects_by_name("sleep")
 
 func clear_all_effects() -> void:
 	var had_changes := not active_buffs.is_empty() or not active_statuses.is_empty()
+	_restore_removed_status_side_effects(active_statuses)
 	active_buffs.clear()
 	active_statuses.clear()
 	_sync_status_flags()
@@ -948,7 +1289,42 @@ func clear_all_effects() -> void:
 		_emit_visual_state_changed()
 
 func clear_board_leave_state() -> void:
+	# Some departures move the card under Kurnugia, where it still counts as fielded.
+	if not field_subtypes.is_empty() and (current_zone != null or not counts_as_on_field()):
+		field_subtypes.clear()
 	clear_all_effects()
+	is_prepared = false
+	is_face_down = false
+	is_stealth = false
+	is_muted = false
+	mute_turns_remaining = 0
+	_mute_applied_owner_turn_number = -1
+	_was_muted_last_check = false
+	is_used = false
+	summoned_this_turn = false
+	summoned_after_first_attack_this_turn = false
+	if has_meta("combat_resilience_inferable"):
+		remove_meta("combat_resilience_inferable")
+	reset_creature_action_state()
+	if self is PowerCard:
+		(self as PowerCard).is_publicly_revealed = false
+	_emit_visual_state_changed()
+
+func _restore_removed_status_side_effects(statuses: Array) -> void:
+	for status_value in statuses:
+		var status := status_value as Dictionary
+		if status.is_empty() or status.get("restore_base_state_on_remove", false) != true:
+			continue
+		if status.has("original_card_type"):
+			card_type = int(status.get("original_card_type")) as CardType
+		if status.has("original_strength"):
+			strength = int(status.get("original_strength"))
+		if status.has("original_resilience"):
+			resilience = int(status.get("original_resilience"))
+		if status.has("original_speed"):
+			speed = int(status.get("original_speed"))
+		if status.has("original_card_types"):
+			card_types = CardSubtypes.without_culture_labels(status["original_card_types"])
 
 func _sync_status_flags() -> void:
 	var sleep_status: Dictionary = {}
@@ -1049,7 +1425,7 @@ func _has_raw_enki_hex_immunity() -> bool:
 		return false
 	# This is called while filtering effective statuses. Using has_type() here
 	# re-enters status filtering and can recurse when a hex status is added.
-	if "Mage" not in card_types:
+	if not CardSubtypes.includes(get_subtypes(), "Mage"):
 		return false
 	var controller := get_controller()
 	if controller == null:
@@ -1082,6 +1458,7 @@ func mute_permanently(game_manager: GameManager = null) -> void:
 	mute_turns_remaining = -1
 	_mute_applied_owner_turn_number = -1
 	_process_mute_state_change(game_manager, was_muted)
+	_emit_visual_state_changed()
 
 func on_turn_end(game_manager: GameManager) -> void:
 	var was_muted := is_muted
@@ -1137,6 +1514,29 @@ func reveal(game_manager: GameManager = null) -> void:
 	if was_hidden and game_manager != null and not abilities_suppressed():
 		on_reveal(game_manager)
 
+func get_subtypes() -> Array[String]:
+	var underlying_types := get_underlying_subtypes()
+	# Immunity checks can themselves inspect the creature's subtypes.
+	if not is_creature_card() or card_owner == null or card_owner.game_manager == null or _checking_subtype_aura:
+		return underlying_types
+	_checking_subtype_aura = true
+	var aura := card_owner.game_manager.get_metamorphosis_aura(self)
+	_checking_subtype_aura = false
+	if aura == null:
+		return underlying_types
+	var types := aura.chosen_subtypes.duplicate()
+	for type_name in underlying_types:
+		if type_name in CardSubtypes.FIXED_TYPES:
+			types.append(type_name)
+	return types
+
+func get_underlying_subtypes() -> Array[String]:
+	return field_subtypes if not field_subtypes.is_empty() else card_types
+
+func replace_field_subtypes(subtypes: Array[String]) -> void:
+	field_subtypes = subtypes.duplicate()
+	_emit_visual_state_changed()
+
 func has_type(type_name: String) -> bool:
 	if type_name == "Physical":
 		return is_physical_card()
@@ -1146,7 +1546,7 @@ func has_type(type_name: String) -> bool:
 		return false
 	if _has_granted_type(type_name):
 		return true
-	if type_name in card_types:
+	if CardSubtypes.includes(get_subtypes(), type_name):
 		return true
 	for equip in equipment:
 		if equip == null:
@@ -1180,34 +1580,17 @@ func remove_status_effects_with_flag(flag_name: String) -> void:
 	if active_statuses.size() != previous_status_count:
 		_emit_visual_state_changed()
 
-func get_intercept_reach_bonus(
-	_game_manager: GameManager = null,
-	_attacker: Card = null,
-	_protected_target = null
-) -> int:
-	if card_type != CardType.CREATURE or ability_text == "":
-		return 0
-	var normalized := " " + ability_text.to_lower() + " "
-	for token in ["[b]", "[/b]", "\n", "\t", ",", ".", ":", ";", "!", "?", "(", ")", "[", "]"]:
-		normalized = normalized.replace(token, " ")
-	if normalized.contains(" reach +1 "):
-		return 1
-	if normalized.contains(" reach "):
-		return 1
-	return 0
-
-func get_intercept_speed_bonus_against_attacker(
-	_game_manager: GameManager,
-	_attacker: Card,
-	_protected_target = null
-) -> int:
-	return 0
-
-func can_special_intercept(_game_manager: GameManager, _attacker: Card, _protected_target) -> bool:
+func prevents_interception() -> bool:
 	return false
 
-func halves_follower_damage_inflicted() -> bool:
+func can_intercept_regardless_of_speed(_protected_target) -> bool:
 	return false
+
+func has_reach(_protected_target) -> bool:
+	return false
+
+func get_combat_follower_damage_halving_sources(_inflicts_damage: bool) -> PackedStringArray:
+	return PackedStringArray()
 
 func get_tonal_extraction_spirit_profile() -> Dictionary:
 	return {}
@@ -1277,23 +1660,29 @@ func can_be_engaged_by(source: Card) -> bool:
 			return false
 		if not (source.has_type("Aerial") or source.has_type("Archer")):
 			return false
+	return can_be_engaged_by_incorporeal_rules(source)
+
+func can_be_engaged_by_incorporeal_rules(source: Card) -> bool:
 	if not incorporeal:
 		return true
 	if source == null or not source.is_creature_card():
 		return false
 	if source.has_type("Spirit"):
 		return true
-	return source.has_type("Mage") and source.get_effective_speed() > get_effective_speed()
+	return source.has_type("Mage")
 
 # Returns false when this card is incorporeal and `target` is not a permitted engage target.
 func can_engage(target: Card) -> bool:
+	return can_engage_by_incorporeal_rules(target)
+
+func can_engage_by_incorporeal_rules(target: Card) -> bool:
 	if not incorporeal:
 		return true
 	if target == null or not target.is_creature_card():
 		return false
 	if target.has_type("Spirit"):
 		return true
-	return target.has_type("Mage") and target.get_effective_speed() < get_effective_speed()
+	return target.has_type("Mage")
 
 func can_ignore_attack_targeting_restrictions(target: Card = null) -> bool:
 	for equip in equipment:
@@ -1317,6 +1706,22 @@ func can_destroy_combat_protected_creatures(target: Card = null) -> bool:
 
 func reveal_from_stealth(game_manager: GameManager = null) -> void:
 	if is_stealth:
+		reveal(game_manager)
+
+func has_veil_of_night() -> bool:
+	if not is_creature_card():
+		return false
+	var controller := get_controller()
+	if controller == null or controller.god_zone == null or controller.god_zone.cards.is_empty():
+		return false
+	var god := controller.god_zone.cards[0] as AphroditeSkotia
+	return god != null and not god.abilities_suppressed() and not god.is_face_down and not god.is_sleeping
+
+func will_reveal_in_combat() -> bool:
+	return is_stealth and not has_veil_of_night()
+
+func reveal_from_combat(game_manager: GameManager) -> void:
+	if will_reveal_in_combat():
 		reveal(game_manager)
 
 func _has_equipped_evasive() -> bool:
@@ -1491,6 +1896,27 @@ func can_prepare(game_manager: GameManager, player: Player) -> bool:
 func can_pay_costs(player: Player) -> bool:
 	return can_pay_costs_with_mana_cost(player, mana_cost)
 
+func get_cost_payment_failure_reason(player: Player, mana_required: int) -> String:
+	if player == null:
+		return "No acting player was provided."
+	if player.hand_zone == null:
+		return "No hand is available to pay this card's costs."
+	if player.mana < mana_required:
+		return "Not enough mana."
+	if player.hand_zone.get_card_count() < discard_cost:
+		return "%s requires %d discard(s)." % [card_name, discard_cost]
+	if player.hand_zone.get_card_count() < shelve_cost:
+		return "%s requires %d card(s) in hand to shelve." % [card_name, shelve_cost]
+	var sacrifice_failure_reason := _get_sacrifice_cost_failure_reason(player)
+	if not sacrifice_failure_reason.is_empty():
+		return sacrifice_failure_reason
+	var banishable = player.hand_zone.get_card_count()
+	for zone in player.frontline_zones + player.reserve_zones:
+		banishable += zone.get_card_count()
+	if banishable < banish_cost:
+		return "%s requires %d banish(es)." % [card_name, banish_cost]
+	return ""
+
 func can_pay_costs_with_mana_cost(player: Player, mana_required: int) -> bool:
 	# Check if player can afford all costs
 	if player.mana < mana_required:
@@ -1530,6 +1956,35 @@ func can_pay_costs_with_mana_cost(player: Player, mana_required: int) -> bool:
 		return false
 	
 	return true
+
+func _get_sacrifice_cost_failure_reason(player: Player) -> String:
+	if sacrifice_cost <= 0:
+		return ""
+	if _pending_chosen_sacrifices.size() > 0 and _pending_chosen_sacrifices.size() < sacrifice_cost:
+		return _get_missing_sacrifice_cost_reason(player)
+	if _pending_chosen_sacrifices.size() >= sacrifice_cost:
+		var seen_sacrifice_uids := {}
+		for i in range(sacrifice_cost):
+			var chosen_sacrifice := _pending_chosen_sacrifices[i]
+			if not _is_valid_pending_sacrifice_choice(chosen_sacrifice, player):
+				return _get_missing_sacrifice_cost_reason(player)
+			if seen_sacrifice_uids.has(chosen_sacrifice.uid):
+				return _get_missing_sacrifice_cost_reason(player)
+			seen_sacrifice_uids[chosen_sacrifice.uid] = true
+		return ""
+	var creature_count := 0
+	for zone in player.frontline_zones + player.reserve_zones:
+		for card in zone.cards:
+			if card.is_creature_card() and card.can_be_used_for_creature_sacrifice:
+				creature_count += 1
+	if creature_count < sacrifice_cost:
+		return _get_missing_sacrifice_cost_reason(player)
+	return ""
+
+func _get_missing_sacrifice_cost_reason(_player: Player) -> String:
+	if sacrifice_cost == 1:
+		return card_name + " requires a friendly creature to sacrifice."
+	return "%s requires %d friendly creatures to sacrifice." % [card_name, sacrifice_cost]
 
 func requires_chosen_hand_discards() -> bool:
 	return discard_cost > 0
@@ -1610,6 +2065,7 @@ func pay_costs_with_mana_cost(player: Player, mana_required: int, game_manager: 
 				var chosen_sacrifice := _pending_chosen_sacrifices[i]
 				if _is_valid_pending_sacrifice_choice(chosen_sacrifice, player):
 					if game_manager != null:
+						game_manager.note_creature_sacrifice(chosen_sacrifice)
 						game_manager._send_to_graveyard_with_hook(chosen_sacrifice, false, false)
 					else:
 						player.move_card(chosen_sacrifice, player.graveyard_zone)
@@ -1623,6 +2079,7 @@ func pay_costs_with_mana_cost(player: Player, mana_required: int, game_manager: 
 				for card in zone.cards:
 					if card.is_creature_card() and card.can_be_used_for_creature_sacrifice:
 						if game_manager != null:
+							game_manager.note_creature_sacrifice(card)
 							game_manager._send_to_graveyard_with_hook(card, false, false)
 						else:
 							player.move_card(card, player.graveyard_zone)

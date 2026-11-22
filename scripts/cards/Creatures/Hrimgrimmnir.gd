@@ -4,7 +4,7 @@ class_name Hrimgrimmnir
 func _init() -> void:
 	super._init()
 	card_name = "Hrimgrimmnir"
-	card_types = ["Giant", "Ice", "Norse Creature"]
+	card_types = ["Giant", "Ice"]
 	level = 2
 	mana_cost = 0
 	sacrifice_cost = 0

@@ -1,7 +1,7 @@
 extends PowerCard
 class_name Ragnarok
 
-const UNLOCK_COST := 11
+const UNLOCK_COST := 12
 const HAND_LIMIT := 5
 const RELOCK_TURNS := 7
 const ART_PATH := "res://images/card_art/powers/RagnarokEdit.png"
@@ -18,12 +18,49 @@ func _init() -> void:
 	is_legendary = true
 	card_types = ["Power", "Legendary Destruction", "Universal"]
 	targets = false
-	ability_text = "[b]Unlock[/b] (11): This activates only when you unlock it. Destroy all creatures on the field; then each player with more than 5 cards discards down to 5. You cannot attack this turn. After 7 of your turns, [b]Relock[/b] this."
+	ability_text = "[b]Unlock[/b] (%d): Destroy all cards on the field. Each player with more than %d cards in hand discards down to %d. You can't attack this turn. [b]Relock[/b] this after %d of your opponent's turns." % [UNLOCK_COST, HAND_LIMIT, HAND_LIMIT, RELOCK_TURNS]
 	artist = "Riccardo Zoppello"
 	art_path = ART_PATH
 
 func can_activate(_game_manager: GameManager) -> bool:
 	return false
+
+func get_turn_countdown_badge_text(game_manager: GameManager = null) -> String:
+	var turns_remaining := get_relock_turns_remaining(game_manager)
+	return "%dT" % turns_remaining if turns_remaining > 0 else ""
+
+func get_turn_countdown_badge_hover_text(game_manager: GameManager = null) -> String:
+	var turns_remaining := get_relock_turns_remaining(game_manager)
+	if turns_remaining <= 0:
+		return ""
+	return "%s relocks after %d more opponent turn%s." % [
+		card_name,
+		turns_remaining,
+		"" if turns_remaining == 1 else "s",
+	]
+
+func get_relock_turns_remaining(_game_manager: GameManager = null) -> int:
+	if is_face_down:
+		return 0
+	return maxi(0, _relock_turns_remaining)
+
+func get_hover_detail_lines(viewer: Player = null) -> Array[String]:
+	var lines := super.get_hover_detail_lines(viewer)
+	var turns_remaining := get_relock_turns_remaining()
+	if turns_remaining > 0:
+		lines.append("[b]Opponent turns remaining until relock:[/b] %d" % turns_remaining)
+	return lines
+
+func get_serialized_state() -> Dictionary:
+	var state := super.get_serialized_state()
+	state["relock_turns_remaining"] = _relock_turns_remaining
+	state["relock_activation_turn"] = _relock_activation_turn
+	return state
+
+func apply_serialized_state(state: Dictionary) -> void:
+	super.apply_serialized_state(state)
+	_relock_turns_remaining = int(state.get("relock_turns_remaining", -1))
+	_relock_activation_turn = int(state.get("relock_activation_turn", -1))
 
 func on_unlock(game_manager: GameManager) -> void:
 	if game_manager != null:
@@ -43,12 +80,15 @@ func _resolve_ragnarok(game_manager: GameManager) -> void:
 	if game_manager == null:
 		return
 
-	var doomed_cards := _get_field_cards(game_manager)
-	var destroyed_count := 0
-	for doomed_card in doomed_cards:
-		if game_manager.request_send_to_graveyard(doomed_card, Callable(), false, true):
-			destroyed_count += 1
+	game_manager.field_effect_requested.emit("ragnarok", self)
+	game_manager.request_send_cards_to_graveyard(
+		_get_field_cards(game_manager),
+		_resolve_ragnarok_discards.bind(game_manager),
+		false,
+		true
+	)
 
+func _resolve_ragnarok_discards(destroyed_count: int, game_manager: GameManager) -> void:
 	if _begin_pending_discards(game_manager, destroyed_count, HAND_LIMIT):
 		return
 	var discarded_count := 0
@@ -60,16 +100,7 @@ func _get_field_cards(game_manager: GameManager) -> Array[Card]:
 	var field_cards: Array[Card] = []
 	if game_manager == null:
 		return field_cards
-	for player in game_manager.players:
-		var zones: Array[Zone] = []
-		zones.append_array(player.frontline_zones)
-		zones.append_array(player.reserve_zones)
-		for zone in zones:
-			if zone == null:
-				continue
-			for card in zone.cards:
-				if card != null:
-					field_cards.append(card)
+	field_cards.append_array(game_manager.get_field_cards())
 	return field_cards
 
 func _discard_down_to_limit(player: Player, limit: int) -> int:
@@ -130,7 +161,8 @@ func resolve_discard_choice(game_manager: GameManager, chosen_card: Card) -> voi
 	var player := get_pending_discard_player(game_manager)
 	if player == null or player.hand_zone == null or chosen_card == null or chosen_card.current_zone != player.hand_zone:
 		return
-	player.discard_card(chosen_card)
+	# Discards happen in later commands, outside on_unlock's effect-source scope.
+	game_manager.run_with_effect_source(self, func() -> void: player.discard_card(chosen_card))
 	set_meta(
 		"ragnarok_pending_discarded_count",
 		int(get_meta("ragnarok_pending_discarded_count", 0)) + 1
@@ -171,6 +203,7 @@ func _clear_pending_discards() -> void:
 func _finish_resolution(game_manager: GameManager, destroyed_count: int, discarded_count: int) -> void:
 	if game_manager == null:
 		return
+	game_manager.field_effect_requested.emit("ragnarok_return", self)
 	if card_owner != null:
 		game_manager.apply_attack_restriction(card_owner, 1)
 
@@ -184,12 +217,14 @@ func _finish_resolution(game_manager: GameManager, destroyed_count: int, discard
 	print(feedback)
 	_start_relock_countdown(game_manager)
 
-func on_turn_end(game_manager: GameManager) -> void:
-	super.on_turn_end(game_manager)
+func on_global_turn_end(game_manager: GameManager, ending_player: Player) -> void:
+	super.on_global_turn_end(game_manager, ending_player)
 	if is_face_down or _relock_turns_remaining <= 0:
 		_clear_relock_countdown()
 		return
 	if game_manager != null and game_manager.turn_number == _relock_activation_turn:
+		return
+	if ending_player == null or card_owner == null or ending_player == card_owner:
 		return
 	_relock_turns_remaining -= 1
 	if _relock_turns_remaining <= 0:

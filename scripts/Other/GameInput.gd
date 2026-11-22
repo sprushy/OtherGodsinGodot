@@ -4,7 +4,7 @@ class_name GameInput
 
 ## Abstract base class for submitting player actions into the game.
 ##
-## Swap LocalGameInput for NetworkedGameInput to route actions over the network.
+## InProcessGameInput and NetworkedGameInput both submit to MatchManager.process_command().
 ## The command dict format mirrors MatchManager.process_command().
 
 @warning_ignore("unused_signal")

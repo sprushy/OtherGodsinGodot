@@ -1,0 +1,1 @@
+﻿[b]Transform[/b] ([b]Activate[/b]): Twice per turn, choose a friendly Norse Warrior and change it to an Animal subtype, or choose a friendly Animal and change it to a Norse Human Warrior.

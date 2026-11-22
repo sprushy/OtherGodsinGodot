@@ -1,9 +1,9 @@
 param(
-    [switch]$SkipMutex
+    [switch]$SkipMutex,
+    [string]$Root = "C:\OtherGodsServer"
 )
 
 $ErrorActionPreference = "Stop"
-$Root = "C:\OtherGodsServer"
 $PreferredExe = Join-Path $Root "OtherGodsServer.exe"
 $LegacyExe = Join-Path $Root "ClaudeOtherGodsServer.exe"
 $PreferredConsoleExe = Join-Path $Root "OtherGodsServer_console.exe"
@@ -16,9 +16,44 @@ $ExeCandidates = @(
 )
 $Log = Join-Path $Root "updater.log"
 $LogDir = Join-Path $Root "logs"
+$ProxySetupScript = Join-Path $Root 'Initialize-WebSocketProxy.ps1'
 $LobbyHost = "63.33.96.156"
 $LobbyPort = 22345
 $MatchPort = 12345
+$WebSocketPort = 24443
+# Stateless UDP endpoint clients bounce NAT-punch markers off (PunchReflector.gd).
+# The reflector falls back through +10 attempts when a port is taken.
+$PunchReflectorBasePort = 22346
+$PunchReflectorPortAttempts = 10
+$NetworkConfigPath = Join-Path $Root "network.json"
+
+function Load-NetworkConfig {
+    if (-not (Test-Path -LiteralPath $NetworkConfigPath)) {
+        return
+    }
+    $networkConfig = Get-Content -LiteralPath $NetworkConfigPath -Raw | ConvertFrom-Json
+    $publicWebSocketUrl = [string]$networkConfig.public_websocket_url
+    if ($publicWebSocketUrl -notmatch '^wss://[^/@?#\s]+/?$') {
+        throw 'network.json requires a wss:// origin in public_websocket_url.'
+    }
+    $env:OTHERGODS_PUBLIC_WEBSOCKET_URL = $publicWebSocketUrl.TrimEnd('/')
+    $script:WebSocketPort = [int]$networkConfig.lobby_websocket_port
+    $script:MatchPort = [int]$networkConfig.match_port
+    if ($WebSocketPort -lt 1024 -or $WebSocketPort -gt 65535 -or $MatchPort -lt 1024 -or $MatchPort -gt 65472) {
+        throw 'network.json contains an invalid backend port.'
+    }
+}
+
+function Load-RecoveryEmailEnvironment {
+    # Scheduled tasks may inherit an old environment from Task Scheduler.
+    # Read current Machine values on each launch; no Windows reboot is needed.
+    foreach ($name in @('OTHERGODS_GMAIL_ADDRESS', 'OTHERGODS_GMAIL_APP_PASSWORD', 'OTHERGODS_RESEND_API_KEY', 'OTHERGODS_RECOVERY_EMAIL_FROM')) {
+        $value = [Environment]::GetEnvironmentVariable($name, 'Machine')
+        if ($null -ne $value) {
+            [Environment]::SetEnvironmentVariable($name, $value, 'Process')
+        }
+    }
+}
 $LifecycleMutexName = "Global\OtherGodsServerLifecycle"
 $RetainedLogFilesPerPattern = 20
 
@@ -31,7 +66,43 @@ function Get-ServerProcess {
 }
 
 function Test-LobbyListener {
-    @(Get-NetUDPEndpoint -LocalPort $LobbyPort -ErrorAction SilentlyContinue).Count -gt 0
+    $udpReady = @(Get-NetUDPEndpoint -LocalPort $LobbyPort -ErrorAction SilentlyContinue).Count -gt 0
+    # The launcher always passes ws_port, even without a public URL or proxy.
+    # Never accept an older UDP-only process as a healthy lobby.
+    $webSocketReady = @(Get-NetTCPConnection -LocalPort $WebSocketPort -State Listen -ErrorAction SilentlyContinue |
+        Where-Object { $_.LocalAddress -in @('127.0.0.1', '0.0.0.0') }).Count -gt 0
+    return $udpReady -and $webSocketReady
+}
+
+function Write-ListenerStatus {
+    $udpListeners = @(Get-NetUDPEndpoint -LocalPort $LobbyPort -ErrorAction SilentlyContinue)
+    $webSocketListeners = @(Get-NetTCPConnection -LocalPort $WebSocketPort -State Listen -ErrorAction SilentlyContinue)
+    $webSocketAddresses = ($webSocketListeners | ForEach-Object { $_.LocalAddress }) -join ', '
+    Write-Log "Startup: listener status: UDP ${LobbyPort}=$($udpListeners.Count); WebSocket TCP ${WebSocketPort}=$($webSocketListeners.Count) addresses=[$webSocketAddresses] (requires IPv4 loopback access)."
+    Write-Log "Startup: listener status: punch reflector UDP $PunchReflectorBasePort-$($PunchReflectorBasePort + $PunchReflectorPortAttempts - 1)=$(Get-PunchReflectorPort)"
+}
+
+## First UDP port in the reflector range the server has bound, or 0 when the
+## reflector is not listening (old build or every fallback port was taken).
+function Get-PunchReflectorPort {
+    foreach ($port in ($PunchReflectorBasePort..($PunchReflectorBasePort + $PunchReflectorPortAttempts - 1))) {
+        if (@(Get-NetUDPEndpoint -LocalPort $port -ErrorAction SilentlyContinue).Count -gt 0) {
+            return $port
+        }
+    }
+    return 0
+}
+
+## Log-only: a missing reflector never blocks the lobby, but without it
+## client-hosted bot challenges stay "Not watchable" and spectators cannot
+## connect. The Lightsail/Windows Firewall rules are external to this script.
+function Write-PunchReflectorStatus {
+    $reflectorPort = Get-PunchReflectorPort
+    if ($reflectorPort -gt 0) {
+        Write-Log "Startup: punch reflector listening on UDP $reflectorPort."
+        return
+    }
+    Write-Log "Startup: WARNING: punch reflector is not listening on UDP $PunchReflectorBasePort-$($PunchReflectorBasePort + $PunchReflectorPortAttempts - 1); client-hosted bot challenges will show 'Not watchable'. Allow inbound UDP $PunchReflectorBasePort-$($PunchReflectorBasePort + $PunchReflectorPortAttempts - 1) in the Lightsail Networking tab and Windows Firewall, and confirm the deployed build includes the reflector."
 }
 
 function Remove-OldLogs {
@@ -89,6 +160,17 @@ if (-not $SkipMutex) {
 }
 
 try {
+    if (Test-Path -LiteralPath $ProxySetupScript) {
+        try {
+            & $ProxySetupScript -Root $Root
+        } catch {
+            # Keep the lobby available over UDP if Caddy is absent or cannot
+            # start yet. The watchdog retries proxy setup on its next run.
+            Write-Log "WebSocket proxy setup failed: $($_.Exception.Message)"
+        }
+    }
+    Load-NetworkConfig
+    Load-RecoveryEmailEnvironment
     $launchPath = Resolve-LaunchPath
 
     if (-not (Test-Path -LiteralPath $launchPath)) {
@@ -97,12 +179,14 @@ try {
     }
 
     if (Test-LobbyListener) {
-        Write-Log "Startup: lobby listener already healthy on UDP $LobbyPort."
+        Write-Log "Startup: lobby listeners already healthy on UDP $LobbyPort and WebSocket TCP $WebSocketPort."
+        Write-PunchReflectorStatus
         return
     }
 
+    Write-ListenerStatus
     if (@(Get-ServerProcess).Count -gt 0) {
-        Write-Log "Startup: process exists but lobby listener on UDP $LobbyPort is down; restarting."
+        Write-Log "Startup: process exists but required lobby listeners are missing; restarting with ws_port=$WebSocketPort."
         Stop-StaleServerProcess
     }
 
@@ -115,6 +199,13 @@ try {
     $godotLogPath = Join-Path $LogDir "server-$timestamp.godot.log"
     $tracePath = Join-Path $LogDir "server-$timestamp.trace.log"
 
+    # Human-vs-human match subprocess cap (cores-1 would be 1 on this 2 vCPU
+    # box). Server-bot challenge matches run in the challenger's client, so
+    # this budget stays reserved for real human matches.
+    if ([string]::IsNullOrEmpty($env:OTHERGODS_MAX_HUMAN_MATCHES)) {
+        $env:OTHERGODS_MAX_HUMAN_MATCHES = "6"
+    }
+
     $startArgs = @{
         FilePath = $launchPath
         ArgumentList = @(
@@ -126,6 +217,7 @@ try {
             "lobby_host=$LobbyHost"
             "lobby_port=$LobbyPort"
             "match_port=$MatchPort"
+            "ws_port=$WebSocketPort"
             "trace_file=$tracePath"
         )
         WorkingDirectory = $Root
@@ -159,13 +251,15 @@ try {
     }
 
     if ($listenerReady) {
-        Write-Log "Startup: lobby listener recovered on UDP $LobbyPort."
+        Write-Log "Startup: lobby listeners recovered on UDP $LobbyPort and WebSocket TCP $WebSocketPort."
+        Write-PunchReflectorStatus
         return
     }
 
-    if (-not $serverProcess.HasExited) {
-        Write-Log "Startup: process is running but lobby listener on UDP $LobbyPort did not appear within 10s."
-    }
+    Write-ListenerStatus
+    $startupFailure = "Startup: required lobby listeners on UDP $LobbyPort and WebSocket TCP $WebSocketPort did not become ready within 10s. Check $godotLogPath and $tracePath."
+    Write-Log $startupFailure
+    throw $startupFailure
 } finally {
     if ($acquiredMutex -and $null -ne $mutex) {
         $mutex.ReleaseMutex() | Out-Null

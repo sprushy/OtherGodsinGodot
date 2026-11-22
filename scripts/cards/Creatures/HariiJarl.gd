@@ -6,14 +6,14 @@ const MAX_WARBAND_SUMMONS := 2
 func _init() -> void:
 	super._init()
 	card_name = "Harii Jarl"
-	card_types = ["Human", "Warrior", "Norse Creature"]
+	card_types = ["Human", "Warrior"]
 	level = 4
 	mana_cost = 4
 	speed = 1
 	resilience = 18
 	strength = 25
 	sacrifice_cost = 0
-	ability_text = "[b]Warband[/b] ([b]Impact[/b]): Summon up to two other \"Harii\" creatures from your hand and pay their summon costs."
+	ability_text = "[b]Warband[/b] ([b]Impact[/b]): Summon up to 2 other \"Harii\" creatures from your hand, paying their summon costs."
 	flavor_text = ""
 	culture = "Norse"
 	artist = "Ricardo Zoppello"

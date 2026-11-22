@@ -5,22 +5,31 @@ class_name Player
 const MAX_HAND_SIZE := 7
 const BOARD_LANE_COUNT := 5
 const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
+const ManaSoundPlayerScript = preload("res://scripts/audio/ManaSoundPlayer.gd")
+const DrawCardSoundPlayerScript = preload("res://scripts/audio/DrawCardSoundPlayer.gd")
 
 signal mana_changed(new_mana: int)
 signal followers_changed(new_followers: int)
+signal guard_changed(new_guard: int)
 signal card_moved(card: Card, from_zone: Zone, to_zone: Zone)
 signal defeated(player: Player)
 
 var player_name: String
 var mana: int = 0
 var followers: int = 100
+var followers_enabled: bool = true
+var guard: int = 0
 var is_defeated: bool = false
 var is_turn_player: bool = false
 var has_summoned_this_turn: bool = false
+var has_summoned_structure_this_turn: bool = false
+var has_had_god_in_play: bool = false
 var attack_restriction_turns: int = 0
 
 var card_collection: Array[Card] = []
 var current_deck: Array[Card] = []
+var starting_creature_typings: Dictionary[String, Array] = {}
+var starting_deck_has_heroic_stand: bool = false
 var game_manager: GameManager = null
 var reserved_active_god: ActiveGodCard = null
 
@@ -33,13 +42,37 @@ var power_zones: Array[Zone] = []
 var frontline_zones: Array[Zone] = []
 var reserve_zones: Array[Zone] = []
 
+func record_starting_creature_typings(cards: Array[Card]) -> void:
+	for card in cards:
+		if card == null or not card.is_creature_card() or card.is_god or card.is_power or card.is_token:
+			continue
+		_record_starting_typing(card.card_types)
+
+func restore_starting_creature_typings(typings: Dictionary) -> void:
+	starting_creature_typings.clear()
+	for types: Array in typings.values():
+		_record_starting_typing(types)
+
+func _record_starting_typing(types: Array) -> void:
+	var subtypes := CardSubtypes.get_transferable_subtypes(types)
+	var sorted_types := subtypes.duplicate()
+	sorted_types.sort()
+	var typing_key := CardSubtypes.format_typing(sorted_types)
+	if not starting_creature_typings.has(typing_key):
+		starting_creature_typings[typing_key] = subtypes
+
 func get_index(manager: GameManager = null) -> int:
 	if manager == null:
 		return -1
 	return manager.players.find(self)
 
-func _init() -> void:
-	_initialize_zones()
+static func create_spectator_viewer() -> Player:
+	# Spectators need a distinct identity for visibility without owning zones.
+	return Player.new(false)
+
+func _init(owns_zones: bool = true) -> void:
+	if owns_zones:
+		_initialize_zones()
 
 func _initialize_zones() -> void:
 	hand_zone = Zone.new()
@@ -91,16 +124,24 @@ func get_deck_validation(deck: Array[Card], special_setup: Dictionary = {}) -> D
 	var validator = DeckValidatorScript.new()
 	return validator.validate_card_array(deck, special_setup)
 
-func gain_mana(amount: int) -> void:
+func gain_mana(amount: int, play_sound: bool = true) -> void:
 	if amount > 0 and game_manager != null and not game_manager.can_player_gain_mana_now(self):
 		game_manager.note_player_feedback("Laws of Civilization prevents gaining mana outside upkeep.")
 		return
 	mana += amount
+	if amount > 0 and game_manager != null and play_sound:
+		if game_manager.sfx_enabled:
+			ManaSoundPlayerScript.play_gain(amount)
+		game_manager.note_ui_sound_cue("mana_gain:%d" % amount)
 	mana_changed.emit(mana)
 
 func spend_mana(amount: int) -> bool:
 	if mana >= amount:
 		mana -= amount
+		if amount > 0 and game_manager != null:
+			if game_manager.sfx_enabled:
+				ManaSoundPlayerScript.play_spend()
+			game_manager.note_ui_sound_cue("mana_spend")
 		mana_changed.emit(mana)
 		return true
 	return false
@@ -113,19 +154,43 @@ func lose_mana(amount: int) -> int:
 	mana_changed.emit(mana)
 	return removed
 
-func gain_followers(amount: int) -> void:
+func gain_guard(amount: int) -> void:
 	if is_defeated:
 		return
+	if amount <= 0:
+		return
+	guard += amount
+	guard_changed.emit(guard)
+
+func absorb_guard_damage(amount: int) -> int:
+	if amount <= 0 or guard <= 0:
+		return amount
+	var absorbed := mini(amount, guard)
+	guard -= absorbed
+	guard_changed.emit(guard)
+	return amount - absorbed
+
+func gain_followers(amount: int) -> void:
+	if not followers_enabled:
+		return
+	if is_defeated:
+		return
+	if game_manager != null:
+		game_manager.record_match_follower_gain(self, amount)
 	followers += amount
 	followers_changed.emit(followers)
 
-func lose_followers(amount: int) -> void:
+func lose_followers(amount: int, source_card: Card = null) -> void:
+	if not followers_enabled:
+		return
 	if is_defeated:
 		return
 	if amount <= 0:
 		return
 	if game_manager != null and not game_manager.can_player_lose_followers_now(self):
 		return
+	if game_manager != null:
+		game_manager.record_match_follower_loss(self, mini(followers, amount), source_card)
 	followers = max(0, followers - amount)
 	followers_changed.emit(followers)
 	if followers <= 0 and not is_defeated:
@@ -136,7 +201,7 @@ func game_over() -> void:
 	print(player_name + " has lost!")
 	defeated.emit(self)
 
-func move_card(card: Card, to_zone: Zone) -> void:
+func move_card(card: Card, to_zone: Zone, deck_placement: Zone.DeckPlacement = Zone.DeckPlacement.UNKNOWN) -> void:
 	var from_zone = card.current_zone
 	var destination_zone := _resolve_destination_zone(card, from_zone, to_zone)
 	var detached_equipment: Array[Card] = []
@@ -156,14 +221,14 @@ func move_card(card: Card, to_zone: Zone) -> void:
 		and destination_zone != null
 		and not destination_zone.is_board_zone()
 	)
-	var leaving_board := (
+	var leaving_play := (
 		from_zone != null
-		and from_zone.is_board_zone()
+		and from_zone.is_in_play_zone()
 		and destination_zone != null
-		and not destination_zone.is_board_zone()
+		and not destination_zone.is_in_play_zone()
 	)
 
-	if leaving_board:
+	if leaving_play:
 		card.process_board_leave_hooks(game_manager)
 	
 	if creature_left_board:
@@ -177,27 +242,36 @@ func move_card(card: Card, to_zone: Zone) -> void:
 		var same_zone_move := destination_zone != null and equipped_creature != null and destination_zone == equipped_creature.current_zone
 		if not same_zone_move:
 			card.unequip()
-	if from_zone and from_zone.is_board_zone() and destination_zone and not destination_zone.is_board_zone():
+	if leaving_play:
 		if card.has_method("reset_activation_counter"):
 			card.reset_activation_counter()
-		if card.has_method("remove_status_effects_with_flag"):
-			card.remove_status_effects_with_flag("remove_when_leaves_board")
 		card.remove_effects_expiring_after_combat()
-		card.clear_board_leave_state()
 
 	if card.is_token and (destination_zone == null or not destination_zone.is_board_zone()):
 		card.remove_effects_expiring_after_combat()
 		if from_zone:
 			from_zone.remove_card(card)
 		card_moved.emit(card, from_zone, null)
+		if leaving_play:
+			card.clear_board_leave_state()
 		return
 	
+	var deck_identity_public: Variant = _get_deck_identity_public(card, from_zone, destination_zone, deck_placement)
 	if from_zone:
 		from_zone.remove_card(card)
-	destination_zone.add_card(card)
-	if destination_zone.is_board_zone():
+	elif not destination_zone.is_in_play_zone():
+		card.field_subtypes.clear()
+	destination_zone.add_card(card, deck_placement, deck_identity_public)
+	if destination_zone.is_in_play_zone():
 		card.reset_board_leave_hooks()
 	card_moved.emit(card, from_zone, destination_zone)
+	if leaving_play \
+			and destination_zone == card.card_owner.graveyard_zone \
+			and card.has_method("on_perish") \
+			and not card.post_field_abilities_suppressed():
+		card.call("on_perish", game_manager)
+	if leaving_play:
+		card.clear_board_leave_state()
 
 	if creature_left_board and from_zone != null:
 		_reposition_detached_equipment(from_zone, detached_equipment)
@@ -268,7 +342,50 @@ func draw_card() -> Card:
 		var card = deck_zone.cards[0]
 		move_card(card, hand_zone)
 		if card.current_zone == hand_zone:
+			if game_manager != null:
+				if game_manager.sfx_enabled:
+					DrawCardSoundPlayerScript.play_sound()
+				game_manager.note_ui_sound_cue("draw_card")
 			return card
+	return null
+
+## Decide whether opponents legitimately know a card's identity when it enters
+## a deck primed or shelved. Cards taken from public information (a face-up
+## board card, or a graveyard/abyss card everyone could see) stay known; cards
+## taken from a hand or an unknown deck position stay hidden.
+func _get_deck_identity_public(card: Card, from_zone: Zone, to_zone: Zone, deck_placement: Zone.DeckPlacement) -> Variant:
+	if to_zone == null or to_zone.zone_type != Zone.ZoneType.DECK:
+		return null
+	if deck_placement != Zone.DeckPlacement.PRIMED and deck_placement != Zone.DeckPlacement.SHELVED:
+		return null
+	if from_zone == null:
+		return false
+	match from_zone.zone_type:
+		Zone.ZoneType.GRAVEYARD, Zone.ZoneType.ABYSS:
+			# Graveyard and abyss contents are public to all players.
+			return true
+		Zone.ZoneType.DECK:
+			# Keep any identity opponents already learned (e.g. Odin revealed
+			# the top card before shelving it).
+			return from_zone.is_deck_card_publicly_known(card)
+		Zone.ZoneType.HAND:
+			return card.is_revealed_in_hand() \
+				or card.is_revealed_to_all() \
+				or (card is PowerCard and (card as PowerCard).is_publicly_revealed)
+		Zone.ZoneType.FRONTLINE, Zone.ZoneType.RESERVE, Zone.ZoneType.POWER_SLOT, Zone.ZoneType.GOD_SLOT:
+			var viewer := _get_opposing_viewer_of(card)
+			return viewer == null or not card.is_hidden_from_viewer(viewer)
+	return false
+
+func _get_opposing_viewer_of(card: Card) -> Player:
+	var owner_game_manager := game_manager
+	if owner_game_manager == null and card != null and card.card_owner != null:
+		owner_game_manager = card.card_owner.game_manager
+	if owner_game_manager == null:
+		return null
+	for player in owner_game_manager.players:
+		if player != null and player != self:
+			return player
 	return null
 
 func discard_card(card: Card) -> void:
@@ -279,13 +396,13 @@ func banish_card(card: Card) -> void:
 
 func shelve_card(card: Card) -> void:
 	if card.current_zone == hand_zone:
-		move_card(card, deck_zone)
+		move_card(card, deck_zone, Zone.DeckPlacement.SHELVED)
 
 func shuffle_card_into_deck(card: Card) -> bool:
 	if card == null:
 		return false
 	move_card(card, deck_zone)
-	deck_zone.cards.shuffle()
+	deck_zone.shuffle_deck()
 	return card.current_zone == deck_zone
 
 func _resolve_destination_zone(card: Card, from_zone: Zone, to_zone: Zone) -> Zone:
@@ -297,10 +414,10 @@ func _resolve_destination_zone(card: Card, from_zone: Zone, to_zone: Zone) -> Zo
 		return to_zone
 	if to_zone.is_board_zone():
 		return to_zone
-	if not card.is_enslaved():
-		return to_zone
 	var owner_player := card.card_owner
 	if owner_player == null:
+		return to_zone
+	if card.get_controller() == owner_player:
 		return to_zone
 	match to_zone.zone_type:
 		Zone.ZoneType.HAND:
@@ -343,7 +460,9 @@ func get_adjacent_zones(zone: Zone) -> Array[Zone]:
 
 func reset_creature_actions() -> void:
 	has_summoned_this_turn = false
+	has_summoned_structure_this_turn = false
 	for zone in frontline_zones + reserve_zones:
 		for card in zone.cards:
 			if card.is_creature_card():
 				card.reset_creature_action_state()
+				card.summoned_after_first_attack_this_turn = false

@@ -6,14 +6,14 @@ const QUEUED_AUGURY_SUPPRESSION_META := "queued_humbaba_augury_suppression"
 func _init() -> void:
 	super._init()
 	card_name = "Humbaba the Terrible"
-	card_types = ["Giant", "Forest", "Ancient Creature"]
+	card_types = ["Giant", "Forest"]
 	level = 3
 	mana_cost = 0
 	sacrifice_cost = 0
 	speed = 1
 	resilience = 20
-	strength = 28
-	ability_text = "[b]Augury Reading[/b] ([b]Passive[/b]): Every time this card enters combat, your opponent looks at the top three cards of their deck, [b]Primes[/b] one, and [b]Shelves[/b] the others."
+	strength = 27
+	ability_text = "[b]Augury Reading[/b] ([b]Passive[/b]): Every time Humbaba enters combat, your opponent looks at the top three cards of their deck, [b]Primes[/b] one, and [b]Shelves[/b] the others."
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricardo Zoppello"
@@ -52,7 +52,7 @@ func _trigger_augury_reading(game_manager: GameManager) -> void:
 		return
 
 	var prompt_player := _get_opponent(game_manager)
-	if top_cards.size() == 1 or prompt_player == null:
+	if prompt_player == null:
 		game_manager.note_player_feedback(resolve_augury_reading(game_manager, top_cards[0]))
 		return
 
@@ -87,16 +87,11 @@ func resolve_augury_reading(game_manager: GameManager, chosen_card: Card = null)
 		return card_name + " found no cards to read."
 
 	var primed_card := chosen_card if chosen_card != null and chosen_card in top_cards else top_cards[0]
-	var shelved_cards: Array[Card] = []
-	for card in top_cards:
-		opponent.deck_zone.cards.erase(card)
-		if card == primed_card:
-			continue
-		shelved_cards.append(card)
-
-	opponent.deck_zone.cards.insert(0, primed_card)
+	var shelved_cards := top_cards
+	shelved_cards.erase(primed_card)
+	opponent.deck_zone.prime_card(primed_card)
 	for card in shelved_cards:
-		opponent.deck_zone.cards.append(card)
+		opponent.deck_zone.shelve_deck_card(card)
 
 	var primed_name := primed_card.get_target_log_display_name(game_manager.get_feedback_viewer())
 	if shelved_cards.is_empty():

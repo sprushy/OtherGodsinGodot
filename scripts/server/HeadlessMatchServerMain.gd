@@ -2,10 +2,14 @@ extends SceneTree
 
 const HeadlessMatchServerScript = preload("res://scripts/server/HeadlessMatchServer.gd")
 const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
+## Match servers are event-driven; cap the loop so an idle match does not
+## spin a CPU core at maximum frame rate.
+const SERVER_RUNTIME_MAX_FPS := 30
 
 var _server = null
 
 func _initialize() -> void:
+	Engine.max_fps = SERVER_RUNTIME_MAX_FPS
 	var launch_args: Dictionary = _parse_user_args(OS.get_cmdline_user_args())
 	var config_path: String = str(launch_args.get("match_config", "")).strip_edges()
 	if config_path.is_empty():
@@ -18,6 +22,8 @@ func _initialize() -> void:
 		push_error("HeadlessMatchServerMain: failed to load launch config %s" % config_path)
 		quit(1)
 		return
+	config["_launch_config_path"] = config_path
+	_cleanup_launch_config_path(config_path)
 
 	call_deferred("_boot_server", config)
 
@@ -52,3 +58,8 @@ func _parse_user_args(args: PackedStringArray) -> Dictionary:
 
 func _load_launch_config(config_path: String) -> Dictionary:
 	return JsonStoreScript.load_dictionary(config_path, {}, "HeadlessMatchServerMain")
+
+func _cleanup_launch_config_path(config_path: String) -> void:
+	for path in [config_path, "%s.tmp" % config_path, "%s.bak" % config_path]:
+		if FileAccess.file_exists(path):
+			DirAccess.remove_absolute(path)

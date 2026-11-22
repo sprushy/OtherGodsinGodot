@@ -1,0 +1,1 @@
+﻿[b]Devour[/b] ([b]Major Action[/b]): Destroy a creature at least 2 levels lower than this card. If you do, this card gains +1 Lvl, +1 Spd, +5 Res, and +5 Str.

@@ -1,0 +1,27 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="PackedScene" path="res://quarantine/town_bell/scenes/town_bell.tscn" id="1_bell"]
+
+[node name="EndTurnBell" instance=ExtResource("1_bell")]
+custom_minimum_size = Vector2(176, 220)
+offset_right = 176.0
+offset_bottom = 220.0
+tooltip_text = "Pull the rope down and release to end your turn.\nKeyboard: focus, then press Space or Enter."
+disabled = true
+
+[node name="Caption" type="Label" parent="."]
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -22.0
+grow_horizontal = 2
+grow_vertical = 0
+mouse_filter = 2
+theme_override_colors/font_color = Color(0.88, 0.77, 0.55, 1)
+theme_override_colors/font_outline_color = Color(0.05, 0.035, 0.02, 0.95)
+theme_override_constants/outline_size = 3
+theme_override_font_sizes/font_size = 18
+text = "End Turn"
+horizontal_alignment = 1

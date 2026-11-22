@@ -14,7 +14,7 @@ func _init() -> void:
 	flavor_text = ""
 	artist = "David Revoy"
 	art_path = "res://images/card_art/hexes/foolish_optimism_crop.jpg"
-	ability_text = "Force your opponent's lowest lvl face-up creature to attack your highest lvl face-up creature. Halve follower damage from that combat."
+	ability_text = "Force your opponent's lowest lvl face-up creature to attack your highest lvl face-up creature."
 
 func resolve(game_manager: GameManager, _target = null) -> void:
 	if game_manager == null:
@@ -42,6 +42,10 @@ func resolve_with_choices(game_manager: GameManager, attacker: Card, defender: C
 	if not _can_force_attack(game_manager, attacker, defender):
 		return "%s fizzles: %s cannot legally attack %s." % [card_name, attacker.card_name, defender.card_name]
 
+	# A declared attack requires an aggressive attacker, so force the compelled
+	# creature into aggressive stance before putting the attack on the stack.
+	attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
+
 	var feedback := "%s compels %s to attack %s." % [card_name, attacker.card_name, defender.card_name]
 	print(feedback)
 	var action := CardAction.new()
@@ -54,7 +58,6 @@ func resolve_with_choices(game_manager: GameManager, attacker: Card, defender: C
 	if attacker.has_method("get_united_front_attack_speed"):
 		action.attack_speed_override = attacker.get_united_front_attack_speed(game_manager)
 	action.target = defender
-	action.halve_follower_damage = true
 	game_manager.push_to_stack(action)
 	return feedback
 
@@ -167,23 +170,20 @@ func _begin_resolution(game_manager: GameManager) -> String:
 	if defender_choices.is_empty():
 		return "%s fizzles: no friendly creature to attack when it resolves." % card_name
 
-	if attacker_choices.size() > 1 or defender_choices.size() > 1:
-		var attacker_uids: Array[String] = []
-		for attacker in attacker_choices:
-			if attacker != null:
-				attacker_uids.append(attacker.uid)
-		var defender_uids: Array[String] = []
-		for defender in defender_choices:
-			if defender != null:
-				defender_uids.append(defender.uid)
-		game_manager.decision_requested.emit(_get_spell_controller(game_manager), "foolish_optimism", {
-			source_uid = uid,
-			attacker_uids = attacker_uids,
-			defender_uids = defender_uids,
-		})
-		return ""
-
-	return resolve_with_choices(game_manager, attacker_choices[0], defender_choices[0])
+	var attacker_uids: Array[String] = []
+	for attacker in attacker_choices:
+		if attacker != null:
+			attacker_uids.append(attacker.uid)
+	var defender_uids: Array[String] = []
+	for defender in defender_choices:
+		if defender != null:
+			defender_uids.append(defender.uid)
+	game_manager.decision_requested.emit(_get_spell_controller(game_manager), "foolish_optimism", {
+		source_uid = uid,
+		attacker_uids = attacker_uids,
+		defender_uids = defender_uids,
+	})
+	return ""
 
 func _can_force_attack(game_manager: GameManager, attacker: Card, defender: Card) -> bool:
 	if game_manager == null or attacker == null or defender == null:

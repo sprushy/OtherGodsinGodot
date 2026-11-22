@@ -1,0 +1,1 @@
+﻿Pay 3 mana: [b]Search[/b] a card and place it under this card. At the end of your second turn after activation, [b]Prime[/b] it.

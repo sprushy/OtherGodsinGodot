@@ -41,6 +41,7 @@ const CARD_SCRIPT_PATHS := [
 	"res://scripts/cards/ActiveGods/ThorActive.gd",
 	"res://scripts/cards/ActiveGods/TiamatActive.gd",
 	"res://scripts/cards/Creatures/AgainWalker.gd",
+	"res://scripts/cards/Creatures/Afanc.gd",
 	"res://scripts/cards/Creatures/Alu.gd",
 	"res://scripts/cards/Creatures/AnkouServantToTheReaper.gd",
 	"res://scripts/cards/Creatures/AnTheBowbender.gd",
@@ -77,6 +78,7 @@ const CARD_SCRIPT_PATHS := [
 	"res://scripts/cards/Creatures/GiantMasterArchitect.gd",
 	"res://scripts/cards/Creatures/GidimEnsi.gd",
 	"res://scripts/cards/Creatures/Gilgamesh.gd",
+	"res://scripts/cards/Creatures/Grindylow.gd",
 	"res://scripts/cards/Creatures/GududPriest.gd",
 	"res://scripts/cards/Creatures/GugalannaBullOfHeaven.gd",
 	"res://scripts/cards/Creatures/Gullinbursti.gd",
@@ -93,6 +95,7 @@ const CARD_SCRIPT_PATHS := [
 	"res://scripts/cards/Creatures/HumbabaTheTerrible.gd",
 	"res://scripts/cards/Creatures/HyenaPack.gd",
 	"res://scripts/cards/Creatures/Isimud.gd",
+	"res://scripts/cards/Creatures/JiangZiyaFisherOfKings.gd",
 	"res://scripts/cards/Creatures/Jiaolong.gd",
 	"res://scripts/cards/Creatures/TianlongHolyDragon.gd",
 	"res://scripts/cards/Creatures/PaiLongAutumnKing.gd",
@@ -133,6 +136,7 @@ const CARD_SCRIPT_PATHS := [
 	"res://scripts/cards/Creatures/Tatzelwurm.gd",
 	"res://scripts/cards/Creatures/TelchineApprentice.gd",
 	"res://scripts/cards/Creatures/TezcatlipocaBlasphemer.gd",
+	"res://scripts/cards/Creatures/TheChainedGhostOfAthens.gd",
 	"res://scripts/cards/Creatures/TheWhiteSerpent.gd",
 	"res://scripts/cards/Creatures/Thiazi.gd",
 	"res://scripts/cards/Creatures/ThirdSageEnmedugga.gd",
@@ -151,12 +155,14 @@ const CARD_SCRIPT_PATHS := [
 	"res://scripts/cards/Equipment/RunicShortsword.gd",
 	"res://scripts/cards/Equipment/SharurTheFlyingMace.gd",
 	"res://scripts/cards/Gods/AphroditeAreia.gd",
+	"res://scripts/cards/Gods/AphroditeSkotia.gd",
 	"res://scripts/cards/Gods/Baldr.gd",
 	"res://scripts/cards/Gods/Cernunnos.gd",
 	"res://scripts/cards/Gods/DellingrTheDayspring.gd",
 	"res://scripts/cards/Gods/Freyja.gd",
 	"res://scripts/cards/Gods/GuanYu.gd",
 	"res://scripts/cards/Gods/Hermes.gd",
+	"res://scripts/cards/Gods/HermesPsychopompus.gd",
 	"res://scripts/cards/Gods/ManannanMacLir.gd",
 	"res://scripts/cards/Gods/Mummu.gd",
 	"res://scripts/cards/Gods/NuskuFirebearer.gd",
@@ -167,6 +173,7 @@ const CARD_SCRIPT_PATHS := [
 	"res://scripts/cards/Hexes/Banishment.gd",
 	"res://scripts/cards/Hexes/Dromi.gd",
 	"res://scripts/cards/Hexes/Gleipnir.gd",
+"res://scripts/cards/Hexes/ObsidianReflection.gd",
 	"res://scripts/cards/Hexes/SepLemutti.gd",
 	"res://scripts/cards/Hexes/Sap.gd",
 	"res://scripts/cards/Hexes/SapStrength.gd",
@@ -186,6 +193,7 @@ const CARD_SCRIPT_PATHS := [
 	"res://scripts/cards/Powers/AltarOfDreams.gd",
 	"res://scripts/cards/Powers/AnankesBinding.gd",
 	"res://scripts/cards/Powers/AncientWisdom.gd",
+	"res://scripts/cards/Powers/AspectShift.gd",
 	"res://scripts/cards/Powers/BerserkerMead.gd",
 	"res://scripts/cards/Powers/Breidablik.gd",
 	"res://scripts/cards/Powers/CallOfTheValkyrie.gd",
@@ -209,26 +217,35 @@ const CARD_SCRIPT_PATHS := [
 	"res://scripts/cards/Powers/ImmortalTechniques.gd",
 	"res://scripts/cards/Powers/Kurnugia.gd",
 	"res://scripts/cards/Powers/LawsOfCivilization.gd",
+	"res://scripts/cards/Powers/ManaGuard.gd",
 	"res://scripts/cards/Powers/MechFactory.gd",
 	"res://scripts/cards/Powers/Myrkwood.gd",
 	"res://scripts/cards/Spells/Absence.gd",
 	"res://scripts/cards/Spells/ApollyonsDemiurge.gd",
+	"res://scripts/cards/Spells/Apotheosis.gd",
 	"res://scripts/cards/Spells/BaneOfTheSvartalfar.gd",
 	"res://scripts/cards/Spells/BitMeseri.gd",
 	"res://scripts/cards/Spells/BlotSacrifice.gd",
 	"res://scripts/cards/Spells/BookOfLife.gd",
 	"res://scripts/cards/Spells/CircleofRebirth.gd",
+	"res://scripts/cards/Spells/ConjureEidolon.gd",
 	"res://scripts/cards/Spells/DeucalionsInfants.gd",
+	"res://scripts/cards/Spells/Drought.gd",
 	"res://scripts/cards/Spells/Earthquake.gd",
 	"res://scripts/cards/Spells/FalloftheMighty.gd",
+"res://scripts/cards/Spells/FairyBlast.gd",
 	"res://scripts/cards/Spells/Famine.gd",
 	"res://scripts/cards/Spells/FiresOfJudgment.gd",
 	"res://scripts/cards/Spells/FoolishOptimism.gd",
 	"res://scripts/cards/Spells/KeyOfSolomon.gd",
 	"res://scripts/cards/Spells/LightOfMorningsDoors.gd",
+	"res://scripts/cards/Spells/Metamorphosis.gd",
 	"res://scripts/cards/Spells/OccultSingularity.gd",
 	"res://scripts/cards/Spells/TabletOfLife.gd",
 	"res://scripts/cards/Spells/RunicSpellbreaker.gd",
+	"res://scripts/cards/Spells/SirensSong.gd",
+	"res://scripts/cards/Spells/Snowball.gd",
+	"res://scripts/cards/Spells/TheChangelingExchange.gd",
 	"res://scripts/cards/Spells/WildMagic.gd",
 	"res://scripts/cards/Structures/AncientPyre.gd",
 	"res://scripts/cards/Structures/AnointingStatue.gd",
@@ -237,49 +254,102 @@ const CARD_SCRIPT_PATHS := [
 	"res://scripts/cards/Structures/EriduCityOfSages.gd",
 	"res://scripts/cards/Structures/GlitnirThePeaceful.gd",
 	"res://scripts/cards/Structures/HildskjalfThroneOfOdin.gd",
+	"res://scripts/cards/Structures/SleepOfTheDuat.gd",
+	"res://scripts/cards/Structures/Watchtower.gd",
 	"res://scripts/cards/Structures/WardingStone.gd",
 ]
 
 static var _cached_all_cards: Array[Card] = []
 static var _cached_card_templates_by_alias: Dictionary = {}
+# Incremental discovery state: card scripts are loaded in small batches so a
+# startup warm-up never stalls one frame on the full ~230-script load. The
+# cache may be PARTIAL between batches; any consumer that needs the full
+# catalog synchronously goes through _ensure_discovery_complete(), and the
+# alias cache is only built once discovery is complete.
+static var _discovery_started: bool = false
+static var _discovery_complete: bool = false
+static var _discovery_next_index: int = 0
 
 static func make_all_cards() -> Array[Card]:
-	if not _cached_all_cards.is_empty():
-		return _duplicate_cached_cards()
-	
-	var discovered_cards: Array[Card] = []
-	_discover_cards_from_registry(discovered_cards)
-	
-	_cached_all_cards = discovered_cards
-	_rebuild_card_alias_cache()
-	
+	_ensure_discovery_complete()
 	return _duplicate_cached_cards()
 
 static func _duplicate_cached_cards() -> Array[Card]:
 	var duplicates: Array[Card] = []
 	for card in _cached_all_cards:
-		duplicates.append(card.duplicate(true))
+		duplicates.append(_duplicate_card_with_fresh_uid(card))
 	return duplicates
 
-static func _discover_cards_from_registry(out_cards: Array[Card]) -> void:
-	for full_path in CARD_SCRIPT_PATHS:
-		var script: GDScript = load(full_path)
-		if script == null:
-			push_warning("CardCatalog: Failed to load card script %s" % full_path)
-			continue
-		var inst = script.new()
-		if inst is Card:
-			var is_valid_for_catalog := true
-			if inst.is_token or inst.card_types.has("Token"):
-				is_valid_for_catalog = false
-			elif inst.card_name == "" or inst.card_name == "Unnamed" or inst.card_name == "Card":
-				is_valid_for_catalog = false
-			if is_valid_for_catalog:
-				out_cards.append(inst)
-			elif inst is Object and not inst is RefCounted:
-				inst.free()
+static func _duplicate_card_with_fresh_uid(template: Card) -> Card:
+	if template == null:
+		return null
+	var duplicated := template.duplicate(true) as Card
+	if duplicated is BaseCard:
+		(duplicated as BaseCard).assign_fresh_uid()
+	return duplicated
+
+static func _append_card_instance(inst: Variant) -> void:
+	if inst is Card:
+		var card := inst as Card
+		var is_valid_for_catalog := true
+		if card.is_token or card.card_types.has("Token"):
+			is_valid_for_catalog = false
+		elif card.card_name == "" or card.card_name == "Unnamed" or card.card_name == "Card":
+			is_valid_for_catalog = false
+		if is_valid_for_catalog:
+			_cached_all_cards.append(card)
 		elif inst is Object and not inst is RefCounted:
-			inst.free()
+			(inst as Object).free()
+	elif inst is Object and not inst is RefCounted:
+		(inst as Object).free()
+
+# Loads the next card script from CARD_SCRIPT_PATHS into the shared cache.
+static func _discover_next_cached_card() -> void:
+	if _discovery_next_index >= CARD_SCRIPT_PATHS.size():
+		return
+	var full_path: String = CARD_SCRIPT_PATHS[_discovery_next_index]
+	_discovery_next_index += 1
+	var script: GDScript = load(full_path)
+	if script == null:
+		push_warning("CardCatalog: Failed to load card script %s" % full_path)
+		return
+	_append_card_instance(script.new())
+
+# Loads up to batch_size more card scripts into the shared cache. Intended for
+# frame-budgeted startup warm-ups: call repeatedly, awaiting a frame between
+# calls, until it returns true.
+static func warm_cache_batch(batch_size: int = 24) -> bool:
+	if _discovery_complete:
+		return true
+	if not _discovery_started:
+		_discovery_started = true
+	var loaded := 0
+	while loaded < batch_size and _discovery_next_index < CARD_SCRIPT_PATHS.size():
+		_discover_next_cached_card()
+		loaded += 1
+	if _discovery_next_index >= CARD_SCRIPT_PATHS.size():
+		_discovery_complete = true
+		_rebuild_card_alias_cache()
+	return _discovery_complete
+
+# Synchronous completion for consumers that cannot tolerate a partial cache.
+static func _ensure_discovery_complete() -> void:
+	if _discovery_complete:
+		return
+	var started_ms := Time.get_ticks_msec()
+	while not warm_cache_batch(32):
+		pass
+	print("[STARTUP] card catalog sync discovery completed in %dms" % (Time.get_ticks_msec() - started_ms))
+
+# Returns the shared cached card templates WITHOUT duplicating them or
+# assigning fresh UIDs. Use this for read-only lookups (e.g. resolving card
+# art/names for UI lists) where you do not mutate the card or hand it to match
+# play. This skips the 225x duplicate(true) cost that make_all_cards() pays to
+# give every match instance its own UID. The returned array references the
+# internal cache directly and must not be mutated.
+static func get_cached_card_templates() -> Array[Card]:
+	_ensure_discovery_complete()
+	return _cached_all_cards
 
 static func instantiate_card_by_name(card_name: String) -> Card:
 	var requested_name := str(card_name).strip_edges()
@@ -287,8 +357,7 @@ static func instantiate_card_by_name(card_name: String) -> Card:
 		return null
 	
 	# Ensure cache is populated
-	if _cached_all_cards.is_empty():
-		make_all_cards()
+	_ensure_discovery_complete()
 	if _cached_card_templates_by_alias.is_empty():
 		_rebuild_card_alias_cache()
 
@@ -296,7 +365,7 @@ static func instantiate_card_by_name(card_name: String) -> Card:
 	if template == null:
 		template = _cached_card_templates_by_alias.get(to_lookup_key(requested_name), null)
 	if template is Card:
-		return (template as Card).duplicate(true)
+		return _duplicate_card_with_fresh_uid(template as Card)
 	return null
 
 static func make_cards_from_counts(card_counts: Dictionary) -> Array[Card]:

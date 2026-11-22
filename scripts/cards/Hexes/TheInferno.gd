@@ -29,7 +29,9 @@ func can_respond_to_action(action: CardAction) -> bool:
 	if attacker.get_controller() == card_owner:
 		return false
 	var attacking_player := _get_attacking_player(action)
-	if attacking_player == null or _get_frontline_cards(attacking_player).is_empty():
+	# A projected attacker can occupy the first frontline slot for planning.
+	if attacking_player == null or (attacker.current_zone not in attacking_player.frontline_zones \
+			and _get_frontline_cards(attacking_player).is_empty()):
 		return false
 	return attacker.get_effective_speed() <= get_effective_speed()
 

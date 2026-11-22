@@ -24,8 +24,7 @@ func applies_to(card: Card) -> bool:
 		and card.card_type == Card.CardType.CREATURE
 		and card.has_type("Animal")
 		and card.get_effective_level() >= 5
-		and card.current_zone != null
-		and card.current_zone.is_board_zone()
+		and card.counts_as_on_field()
 	)
 
 func prevents_enslave(creature: Card) -> bool:
@@ -35,8 +34,7 @@ func prevents_enslave(creature: Card) -> bool:
 		and creature.card_type == Card.CardType.CREATURE
 		and creature.has_type("Animal")
 		and creature.culture == "Triskelion"
-		and creature.current_zone != null
-		and creature.current_zone.is_board_zone()
+		and creature.counts_as_on_field()
 	)
 
 func apply_passive_to_board(game_manager: GameManager) -> void:
@@ -45,19 +43,15 @@ func apply_passive_to_board(game_manager: GameManager) -> void:
 	remove_passive_from_board(game_manager)
 	if is_muted:
 		return
-	for player in game_manager.players:
-		for zone in player.frontline_zones + player.reserve_zones:
-			for card in zone.cards:
-				if applies_to(card):
-					card.add_buff(PASSIVE_SOURCE, BUFF_STRENGTH, 0, BUFF_SPEED, self, card_owner, "passive")
+	for card in game_manager.get_field_cards():
+		if applies_to(card):
+			card.add_buff(PASSIVE_SOURCE, BUFF_STRENGTH, 0, BUFF_SPEED, self, card_owner, "passive")
 
 func remove_passive_from_board(game_manager: GameManager) -> void:
 	if game_manager == null:
 		return
-	for player in game_manager.players:
-		for zone in player.frontline_zones + player.reserve_zones:
-			for card in zone.cards:
-				card.clear_buffs_from(PASSIVE_SOURCE)
+	for card in game_manager.get_field_cards():
+		card.clear_buffs_from(PASSIVE_SOURCE)
 
 func on_summon(game_manager: GameManager) -> void:
 	apply_passive_to_board(game_manager)

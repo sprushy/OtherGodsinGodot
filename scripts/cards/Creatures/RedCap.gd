@@ -9,14 +9,14 @@ var _resolved_attack_this_turn: bool = false
 func _init() -> void:
 	super._init()
 	card_name = "Red Cap"
-	card_types = ["Fairy", "Warrior", "Triskelion Creature"]
+	card_types = ["Fairy", "Warrior"]
 	level = 2
 	mana_cost = 0
 	sacrifice_cost = 0
 	speed = 3
 	resilience = 16
 	strength = 20
-	ability_text = "[b]Fresh Blood![/b] ([b]Passive[/b]): At the end of any of your turns, if this card did not resolve an attack, destroy it."
+	ability_text = "[b]Fresh Blood![/b] ([b]Passive[/b]): At the end of any of your turns, if Red Cap did not resolve an attack, destroy it."
 	flavor_text = ""
 	culture = "Triskelion"
 	artist = "Ricardo Zoppello"
@@ -42,7 +42,7 @@ func on_turn_end(game_manager: GameManager) -> void:
 	if _resolved_attack_this_turn:
 		return
 	game_manager.note_player_feedback("%s is destroyed by %s." % [card_name, FRESH_BLOOD_ABILITY])
-	game_manager.request_send_to_graveyard(self, Callable(), false, true)
+	game_manager.request_send_to_graveyard(self, Callable(), false, true, false, self)
 
 func on_removed(_game_manager: GameManager) -> void:
 	_resolved_attack_this_turn = false

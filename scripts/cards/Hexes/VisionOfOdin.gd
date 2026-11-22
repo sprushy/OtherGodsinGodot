@@ -12,12 +12,12 @@ func _init() -> void:
 	card_name = "Vision of Odin"
 	level = 3
 	mana_cost = 0
-	speed = 2
+	speed = 5
 	culture = "Norse"
 	card_types = ["Hex", "Battle Modifier"]
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
-	ability_text = "Choose a creature. It gets -7 Str and -1 Spd until end of turn; if it is a Norse creature, it gets +7 Str and +1 Spd instead."
+	ability_text = "Choose a creature. Until end of turn, it gets +7 STR and +1 SPD if it's Norse, or -7 STR and -1 SPD otherwise."
 	flavor_text = ""
 	artist = "Lorinda Tomko"
 	art_path = ART_PATH
@@ -98,4 +98,4 @@ func is_valid_target(game_manager: GameManager, target: Card) -> bool:
 	return true
 
 func _is_norse_creature(target: Card) -> bool:
-	return target != null and (target.has_type("Norse Creature") or target.culture == "Norse")
+	return target != null and target.culture == "Norse"

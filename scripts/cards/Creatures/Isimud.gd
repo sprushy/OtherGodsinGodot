@@ -7,7 +7,7 @@ const REVELATION_SUMMON_TAX := 2
 func _init() -> void:
 	super._init()
 	card_name = "Isimud"
-	card_types = ["Divine Manifestation", "Priest", "Aerial", "Ancient Creature"]
+	card_types = ["Divine Manifestation", "Priest", "Aerial"]
 	level = 2
 	mana_cost = 0
 	sacrifice_cost = 0
@@ -17,7 +17,7 @@ func _init() -> void:
 	culture = "Ancient"
 	artist = "Ricardo Zoppello"
 	art_path = "res://images/card_art/creatures/Isimud(web).jpg"
-	ability_text = "Forerunner ([b]Passive[/b]): Your Divine Manifestations cost 6 less to summon.\nRevelation ([b]Activate[/b]): Use this card's major action to summon a Divine Manifestation from your hand. It costs 2 more mana."
+	ability_text = "Forerunner ([b]Passive[/b]): Your Divine Manifestations cost 6 less to summon.\nRevelation ([b]Major Action[/b]): Summon a Divine Manifestation from your hand. It costs 2 more mana."
 
 func get_cost_adjustment_entries(
 	target_card: Card,

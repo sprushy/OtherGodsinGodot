@@ -18,7 +18,7 @@ func _init() -> void:
 	flavor_text = ""
 	artist = "Lorinda Tomko"
 	art_path = ART_PATH
-	ability_text = "Destroy one face-up or revealed magical card and send any copies of it from your opponent's deck to the graveyard."
+	ability_text = "Destroy a face-up or revealed magical card. Send all copies of that card from your opponent's deck to their Graveyard."
 
 func get_valid_targets(game_manager: GameManager) -> Array[Card]:
 	var valid_targets: Array[Card] = []
@@ -54,7 +54,7 @@ func resolve(game_manager: GameManager, target = null) -> void:
 	var target_name := target_card.get_target_log_display_name(viewer)
 	var target_lookup_key := CardCatalog.to_lookup_key(_get_card_lookup_name(target_card))
 	var on_destroy_complete := func() -> void:
-		var destroyed := target_card.current_zone == null or not target_card.current_zone.is_board_zone()
+		var destroyed := game_manager.reached_public_destroyed_destination(target_card)
 		if not destroyed:
 			var failed_text := "%s failed to destroy %s." % [card_name, target_name]
 			game_manager.note_player_feedback(failed_text)
@@ -62,7 +62,8 @@ func resolve(game_manager: GameManager, target = null) -> void:
 			return
 
 		var milled_count := _send_matching_copies_from_opponent_deck_to_graveyard(game_manager, target_lookup_key)
-		var feedback := "%s destroyed %s." % [card_name, target_name]
+		var destroyed_name := game_manager.get_resolved_destruction_log_name(target_card, viewer, target_name)
+		var feedback := "%s destroyed %s." % [card_name, destroyed_name]
 		if milled_count > 0:
 			feedback += " Sent %d copy(ies) from your opponent's deck to the graveyard." % milled_count
 		else:

@@ -2,21 +2,22 @@ extends CreatureCard
 class_name MasmassuPriest
 
 const ART_PATH := "res://images/card_art/creatures/MasmassuPriest.png"
+const DEMON_SPIRIT_MANA_GAIN := 1
 
 func _init() -> void:
 	super._init()
 	card_name = "Ma" + char(353) + "ma" + char(353) + char(353) + "u Priest"
-	card_types = ["Human", "Mage", "Priest", "Ancient Creature"]
+	card_types = ["Human", "Mage", "Priest"]
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
 	level = 2
 	mana_cost = 0
 	sacrifice_cost = 0
-	speed = 2
+	speed = 1
 	resilience = 3
 	strength = 12
 	targets = true
-	ability_text = "[b]Dalkhu Break[/b] ([b]Reveal[/b]): Destroy a non-Human creature."
+	ability_text = "[b]Dalkhu Break[/b] ([b]Reveal[/b]): Destroy any creature. If this targets a Demon or Spirit, gain 1 mana."
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricardo Zoppello"
@@ -27,7 +28,7 @@ func on_reveal(game_manager: GameManager) -> void:
 		return
 	var valid_targets := get_valid_targets(game_manager)
 	if valid_targets.is_empty():
-		game_manager.note_player_feedback("%s found no non-Human creatures to break." % card_name)
+		game_manager.note_player_feedback("%s found no creatures to break." % card_name)
 		return
 	var controller := get_controller()
 	if controller == null:
@@ -41,6 +42,7 @@ func on_reveal(game_manager: GameManager) -> void:
 		"target_uids": target_uids,
 		"queue_with_priority": true,
 		"event_name": "masmassu_priest_reveal",
+		"completion_command_type": "masmassu_priest_reveal_choice",
 	})
 
 func get_valid_targets(game_manager: GameManager) -> Array[Card]:
@@ -72,8 +74,9 @@ func begin_dalkhu_break_reveal(
 		return
 
 	var valid_targets := get_valid_targets(game_manager)
-	if target == null or target not in valid_targets:
-		finish.call(card_name + " found no valid non-Human creature to destroy.")
+	target = _resolve_valid_target(target, valid_targets)
+	if target == null:
+		finish.call(card_name + " found no valid creature to destroy.")
 		return
 	if game_manager.is_immune_to_source(target, self):
 		finish.call(
@@ -86,12 +89,23 @@ func begin_dalkhu_break_reveal(
 
 	var viewer := game_manager.get_feedback_viewer()
 	var target_name := target.get_target_log_display_name(viewer)
+	var gained_bonus_mana := false
+	if card_owner != null and (target.has_type("Demon") or target.has_type("Spirit")):
+		card_owner.gain_mana(DEMON_SPIRIT_MANA_GAIN)
+		gained_bonus_mana = true
 	var on_destroy_complete := func() -> void:
-		var destroyed := target.current_zone == null or not target.current_zone.is_board_zone()
+		var destroyed := game_manager.reached_public_destroyed_destination(target)
 		if not destroyed:
-			finish.call("%s failed to destroy %s with Dalkhu Break." % [card_name, target_name])
+			if gained_bonus_mana:
+				finish.call("%s failed to destroy %s with Dalkhu Break, but gained %d mana from targeting a Demon or Spirit." % [card_name, target_name, DEMON_SPIRIT_MANA_GAIN])
+			else:
+				finish.call("%s failed to destroy %s with Dalkhu Break." % [card_name, target_name])
 			return
-		finish.call("%s destroyed %s with Dalkhu Break." % [card_name, target_name])
+		var destroyed_name := game_manager.get_resolved_destruction_log_name(target, viewer, target_name)
+		if gained_bonus_mana:
+			finish.call("%s destroyed %s with Dalkhu Break and gained %d mana from targeting a Demon or Spirit." % [card_name, destroyed_name, DEMON_SPIRIT_MANA_GAIN])
+		else:
+			finish.call("%s destroyed %s with Dalkhu Break." % [card_name, destroyed_name])
 	game_manager.request_send_to_graveyard(
 		target,
 		on_destroy_complete,
@@ -101,9 +115,18 @@ func begin_dalkhu_break_reveal(
 
 func _is_valid_dalkhu_break_target(target: Card) -> bool:
 	return target != null \
-		and target != self \
 		and target.card_type == Card.CardType.CREATURE \
 		and not target.is_god \
 		and target.current_zone != null \
-		and target.current_zone.is_board_zone() \
-		and not target.has_type("Human")
+		and target.current_zone.is_board_zone()
+
+func _resolve_valid_target(target: Card, valid_targets: Array) -> Card:
+	if target == null:
+		return null
+	var target_uid := str(target.uid).strip_edges()
+	for valid_target in valid_targets:
+		if valid_target == target:
+			return valid_target
+		if valid_target is Card and target_uid != "" and str(valid_target.uid).strip_edges() == target_uid:
+			return valid_target
+	return null

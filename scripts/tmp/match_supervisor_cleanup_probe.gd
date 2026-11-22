@@ -57,5 +57,84 @@ func _run_probe() -> void:
 		quit(1)
 		return
 
+	closed_events.clear()
+	var finished_session := MatchSession.new(
+		"match_cleanup_finished_probe",
+		"ROOMF1",
+		"127.0.0.1",
+		14568,
+		["HOST", "CLIENT"]
+	)
+	finished_session.server_mode = MatchSession.SERVER_MODE_DEDICATED_HEADLESS
+	var finished_config_path := cleanup_dir.path_join("match_cleanup_finished_probe.json")
+	var finished_status_path := cleanup_dir.path_join("match_cleanup_finished_probe.status.json")
+	_write_json_file(finished_config_path, {})
+	_write_json_file(finished_status_path, {
+		"match_id": finished_session.match_id,
+		"room_id": finished_session.room_id,
+		"status": MatchSession.STATUS_FINISHED,
+		"heartbeat_unix": int(Time.get_unix_time_from_system()),
+	})
+	finished_session.status_file_path = finished_status_path
+	finished_session.mark_process_launched(0, finished_config_path)
+	supervisor.active_matches[finished_session.match_id] = finished_session
+	supervisor._refresh_active_matches()
+
+	if supervisor.active_matches.has(finished_session.match_id):
+		push_error("match_supervisor_cleanup_probe: finished status match was not removed")
+		quit(1)
+		return
+	if closed_events.size() != 1 or str(closed_events[0].get("final_status", "")) != MatchSession.STATUS_FINISHED:
+		push_error("match_supervisor_cleanup_probe: finished status did not close as finished")
+		quit(1)
+		return
+	if FileAccess.file_exists(finished_config_path) or FileAccess.file_exists(finished_status_path):
+		push_error("match_supervisor_cleanup_probe: finished status cleanup left files behind")
+		quit(1)
+		return
+
+	closed_events.clear()
+	var stale_session := MatchSession.new(
+		"match_cleanup_stale_probe",
+		"ROOMS1",
+		"127.0.0.1",
+		14569,
+		["HOST", "CLIENT"]
+	)
+	stale_session.server_mode = MatchSession.SERVER_MODE_DEDICATED_HEADLESS
+	var stale_config_path := cleanup_dir.path_join("match_cleanup_stale_probe.json")
+	var stale_status_path := cleanup_dir.path_join("match_cleanup_stale_probe.status.json")
+	_write_json_file(stale_config_path, {})
+	_write_json_file(stale_status_path, {
+		"match_id": stale_session.match_id,
+		"room_id": stale_session.room_id,
+		"status": MatchSession.STATUS_ACTIVE,
+		"heartbeat_unix": int(Time.get_unix_time_from_system()) - 60,
+	})
+	stale_session.status_file_path = stale_status_path
+	stale_session.mark_process_launched(0, stale_config_path)
+	supervisor.active_matches[stale_session.match_id] = stale_session
+	supervisor._refresh_active_matches()
+
+	if supervisor.active_matches.has(stale_session.match_id):
+		push_error("match_supervisor_cleanup_probe: stale heartbeat match was not removed")
+		quit(1)
+		return
+	if closed_events.size() != 1 or str(closed_events[0].get("final_status", "")) != MatchSession.STATUS_ABANDONED:
+		push_error("match_supervisor_cleanup_probe: stale heartbeat did not close as abandoned")
+		quit(1)
+		return
+	if FileAccess.file_exists(stale_config_path) or FileAccess.file_exists(stale_status_path):
+		push_error("match_supervisor_cleanup_probe: stale heartbeat cleanup left files behind")
+		quit(1)
+		return
+
 	print("match_supervisor_cleanup_probe: PASS")
 	quit()
+
+func _write_json_file(path: String, payload: Dictionary) -> void:
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	if file == null:
+		return
+	file.store_string(JSON.stringify(payload))
+	file.close()

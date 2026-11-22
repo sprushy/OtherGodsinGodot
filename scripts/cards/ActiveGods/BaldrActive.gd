@@ -18,7 +18,7 @@ func _init() -> void:
 	culture = "Norse"
 	# flavor_text = "Baldr's radiance turns every blow against the faithful into renewed devotion."
 	flavor_text = ""
-	ability_text = "[b]Divine Resilience[/b] ([b]Passive[/b]): Immune to creature abilities. Cannot be destroyed in combat. Follower damage resulting from combat with this card is halved.\n[b]Radiant Wisdom[/b] ([b]Passive[/b]): Any time you would inflict follower damage, convert the followers instead."
+	ability_text = "[b]Divine Resilience[/b] ([b]Passive[/b]): Immune to creature abilities. Cannot be destroyed in combat. Follower damage resulting from combat with Baldr is halved.\n[b]Radiant Wisdom[/b] ([b]Passive[/b]): Any time you would inflict follower damage, convert the followers instead."
 	art_path = ART_PATH
 	name_at_bottom = true
 	artist = "Ricardo Zoppello"
@@ -37,8 +37,11 @@ func get_self_graveyard_replacement_zone(
 		return null
 	return current_zone
 
-func halves_follower_damage_inflicted() -> bool:
-	return _passives_are_active()
+func get_combat_follower_damage_halving_sources(inflicts_damage: bool) -> PackedStringArray:
+	var sources := super.get_combat_follower_damage_halving_sources(inflicts_damage)
+	if _passives_are_active():
+		sources.append("Divine Resilience")
+	return sources
 
 func converts_follower_damage_to_conversion(_game_manager: GameManager = null) -> bool:
 	return _passives_are_active()

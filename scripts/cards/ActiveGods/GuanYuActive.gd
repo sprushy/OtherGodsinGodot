@@ -21,7 +21,7 @@ func _init() -> void:
 	targets = true
 	# flavor_text = "The general enters the field already armed with practiced discipline and battlefield momentum."
 	flavor_text = ""
-	ability_text = "Knowledge of the General ([b]Impact[/b]): Put 7 tactic counters on this. Whenever a friendly Warrior destroys a creature, put 1 tactic counter on this.\nManoeuvre ([b]Activate[/b]): Move a tactic counter from this to another tactic-counter card you control."
+	ability_text = "([b]Impact[/b]) Gain 7 tactic counters. When a friendly Warrior [b]Slay[/b]s a creature, gain 1 tactic counter.\nManoeuvre ([b]Activate[/b]): Move a tactic counter from this to another tactic-counter card you control."
 	art_path = ART_PATH
 	name_at_bottom = true
 	artist = "Ricardo Zoppello"
@@ -42,6 +42,8 @@ func on_ally_kill(game_manager: GameManager, killer: Card, victim: Card) -> void
 		return
 	if killer == null or victim == null:
 		return
+	if victim.card_owner == null or victim.current_zone != victim.card_owner.graveyard_zone:
+		return
 	if killer.get_controller() != get_controller():
 		return
 	if not killer.has_type("Warrior"):
@@ -50,7 +52,7 @@ func on_ally_kill(game_manager: GameManager, killer: Card, victim: Card) -> void
 	_emit_visual_state_changed()
 	if game_manager != null:
 		game_manager.note_player_feedback(
-			"%s gains a tactic counter from %s destroying %s (now %d)." % [
+			"%s gains a tactic counter from %s slaying %s (now %d)." % [
 				card_name,
 				killer.card_name,
 				victim.card_name,
@@ -103,7 +105,7 @@ func get_valid_targets(game_manager: GameManager) -> Array[Card]:
 		return valid_targets
 	for candidate in [controller.god_zone] + controller.power_zones + controller.frontline_zones + controller.reserve_zones:
 		for card in candidate.cards:
-			if _is_valid_manoeuvre_target(card):
+			if card != null and card != self and card.get_controller() == controller and "tactic_counters" in card:
 				valid_targets.append(card)
 	return valid_targets
 
@@ -154,18 +156,3 @@ func _passives_are_active() -> bool:
 		and not is_face_down \
 		and not is_stealth \
 		and not abilities_suppressed()
-
-func _is_valid_manoeuvre_target(target: Card) -> bool:
-	if target == null or target == self:
-		return false
-	if target.card_owner != card_owner:
-		return false
-	if not (target is GuanYu or target is GuanYuActive):
-		return false
-	if target.current_zone == null:
-		return false
-	if target.current_zone == card_owner.god_zone:
-		return true
-	if target.current_zone in card_owner.power_zones:
-		return true
-	return target.current_zone.is_board_zone()

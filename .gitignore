@@ -4,10 +4,21 @@
 .godot_portable/
 *.tmp
 scripts/tmp/
+tmp/
+nul
 .release/
 server_upload/
+addons/macos_sparkle/bin/
+android/
+*.keystore
+*.jks
+export_credentials.cfg
+__pycache__/
 
 # Claude Code
 .claude/
 CLAUDE.md
 .codex_tmp/
+.zcode/
+tmp_orig_profile_store.txt
+.tmp-godot-appdata/

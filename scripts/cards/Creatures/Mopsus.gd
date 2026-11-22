@@ -6,7 +6,7 @@ const ART_PATH := "res://images/card_art/creatures/Mopsus.png"
 func _init() -> void:
 	super._init()
 	card_name = "Mopsus"
-	card_types = ["Human", "Mage", "Warrior", "Olympic Creature"]
+	card_types = ["Human", "Mage", "Warrior"]
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
 	level = 3
@@ -16,7 +16,7 @@ func _init() -> void:
 	resilience = 11
 	strength = 21
 	targets = true
-	ability_text = "[b]Seer[/b] ([b]Activate[/b], [b]Minor Action[/b]): Look at one of your opponent's hand cards, plus one more for each friendly Avian on the board."
+	ability_text = "[b]Seer[/b] ([b]Activate[/b], [b]Minor Action[/b]): Reveal one of your opponent's hand cards, plus one more for each friendly Avian on the board. They remain revealed while in hand."
 	flavor_text = ""
 	culture = "Olympic"
 	artist = "Ricardo Zoppello"
@@ -92,6 +92,20 @@ func get_selected_seer_targets(game_manager: GameManager, selection = null) -> A
 func is_valid_seer_selection(game_manager: GameManager, selection = null) -> bool:
 	return get_selected_seer_targets(game_manager, selection).size() == get_required_seer_target_count(game_manager)
 
+func reveal_hand_card(game_manager: GameManager, selected_card: Card) -> bool:
+	if selected_card == null or selected_card not in get_valid_targets(game_manager):
+		return false
+	if selected_card.is_revealed_in_hand():
+		return true
+	selected_card.add_status_effect(
+		"revealed_in_hand",
+		card_name,
+		self,
+		get_controller(),
+		{"clear_on_card_move": true}
+	)
+	return true
+
 func activate(game_manager: GameManager, target = null) -> void:
 	if not can_activate(game_manager):
 		if game_manager != null:
@@ -104,8 +118,14 @@ func activate(game_manager: GameManager, target = null) -> void:
 			game_manager.note_player_feedback("%s fizzles: choose %d card(s) in your opponent's hand." % [card_name, required_count])
 		return
 	spend_minor_creature_action()
+	for selected_card in selected_targets:
+		reveal_hand_card(game_manager, selected_card)
 	if game_manager != null:
-		game_manager.note_player_feedback("%s peers into %d opponent hand card(s)." % [card_name, selected_targets.size()])
+		var revealed_names: Array[String] = []
+		for selected_card in selected_targets:
+			if selected_card != null:
+				revealed_names.append(selected_card.get_display_name())
+		game_manager.note_player_feedback("%s reveals %s in the opponent's hand." % [card_name, ", ".join(revealed_names)])
 
 func _count_friendly_board_avians() -> int:
 	var controller := get_controller()

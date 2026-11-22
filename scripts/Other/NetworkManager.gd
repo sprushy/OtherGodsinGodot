@@ -11,27 +11,82 @@ const MAX_NETWORK_PAYLOAD_ITEMS := 128
 const MAX_NETWORK_PAYLOAD_STRING_LENGTH := 4096
 const MAX_COMMAND_TYPE_LENGTH := 96
 const MAX_GAME_EVENT_TYPE_LENGTH := 96
+# ENet drops a peer when reliable traffic goes unacknowledged for too long. The
+# library defaults (limit 1000ms, min 5000ms, max 30000ms) treat a multi-second
+# packet-loss burst as a dead connection, which kills otherwise recoverable
+# matches on flaky links. Raise the tolerance so brief outages ride through; the
+# application-level reconnect windows remain the real liveness bound.
+const ENET_PEER_TIMEOUT_LIMIT_MS := 4000
+const ENET_PEER_TIMEOUT_MIN_MS := 15000
+const ENET_PEER_TIMEOUT_MAX_MS := 45000
+# Transport identifiers used by the lobby fallback ladder (LobbyClient).
+const TRANSPORT_ENET := "enet"
+const TRANSPORT_WEBSOCKET := "websocket"
+# On the server, each transport is its own NetworkManager instance. ENet and
+# WebSocket both hand out random 32-bit peer ids, so no numeric offset can keep
+# the two id spaces apart. The WebSocket instance instead mints synthetic ids
+# from a range above 32 bits (GDScript ints are 64-bit) and translates them
+# back to raw transport ids on send; shared lobby logic only ever sees the
+# synthetic range, so cross-transport id collisions are impossible.
+const WS_PEER_ID_BASE := 8589934592
 const MatchCommandRegistryScript = preload("res://scripts/Other/MatchCommandRegistry.gd")
+const PunchReflectorScript = preload("res://scripts/network/PunchReflector.gd")
+
+# NAT hole punching cadence. Punch packets repeat at the registry/keepalive
+# rate; a punch target expires when the spectator it serves stops dialing.
+const PUNCH_TARGET_TTL_SECONDS := 60.0
+const PUNCH_PACKET_INTERVAL_SECONDS := 1.0
 
 signal command_received(command: Dictionary, sender_info: Dictionary)
 signal game_event_received(event_type: String, data: Dictionary)
 signal peer_connected(peer_id: int)
 signal peer_disconnected(peer_id: int)
 signal connected_to_server()
+@warning_ignore("unused_signal")
 signal connection_failed()
+@warning_ignore("unused_signal")
 signal server_disconnected()
 signal match_join_requested(join_request: Dictionary, sender_info: Dictionary)
 signal match_join_approved(match_info: Dictionary)
 signal match_join_denied(reason: String)
 
-var peer: ENetMultiplayerPeer = ENetMultiplayerPeer.new()
+var peer: MultiplayerPeer = ENetMultiplayerPeer.new()
 var is_server: bool = false
 var last_client_address: String = "127.0.0.1"
 var last_client_port: int = 12345
 var last_server_error: int = OK
+## Actual bound UDP port after create_server; OS-assigned when created with
+## port 0 (client-hosted spectate listeners).
+var last_bound_port: int = 0
 var trace_file_path: String = ""
 var use_current_scene_relative_path: bool = false
+var managed_multiplayer_root_path: NodePath = NodePath("")
 var validate_match_command_types: bool = true
+## Server-side: set on the primary (ENet) instance to delegate traffic for
+## synthetic peer ids to the WebSocket transport instance.
+var websocket_transport: Node = null
+## Server-side: true on the WebSocket transport instance, which mints synthetic
+## lobby peer ids (WS_PEER_ID_BASE+) for its raw 32-bit transport peer ids.
+var is_websocket_transport: bool = false
+var _synthetic_peer_ids: Dictionary = {}
+var _raw_peer_ids_by_synthetic: Dictionary = {}
+var _next_synthetic_peer_id: int = WS_PEER_ID_BASE
+var _managed_multiplayer_api: MultiplayerAPI = null
+var _registered_multiplayer_root_path: NodePath = NodePath("")
+var _suppress_disconnect_events_until_msec: int = 0
+var _client_websocket_url: String = ""
+var _client_punch_local_port: int = 0
+var _websocket_mount: Node = null
+# NAT hole punching: public endpoints to keep open for spectators, keyed by
+# observer session id; plus the tick accumulator for the punch _process loop.
+var _punch_targets: Dictionary = {}
+var _punch_elapsed: float = 0.0
+
+func _spectate_breadcrumb(stage: String, details: Dictionary = {}) -> void:
+	var line := "Spectate breadcrumb role=transport stage=%s t=%d" % [stage, Time.get_ticks_msec()]
+	for key in details.keys():
+		line += " %s=%s" % [str(key), str(details[key])]
+	print(line)
 
 ## Maps player_index (0/1) to their ENet peer_id.
 ## Player 0 = host (peer_id 1), Player 1 = first remote client.
@@ -54,23 +109,63 @@ func _ready() -> void:
 
 func _on_peer_connected(id: int) -> void:
 	_trace("peer_connected %d" % id)
-	peer_connected.emit(id)
+	_apply_enet_peer_timeouts(id)
+	peer_connected.emit(_to_lobby_peer_id(id))
 
 func _on_peer_disconnected(id: int) -> void:
+	if not is_server:
+		_defer_client_disconnect_signal(&"peer_disconnected", [id])
+		return
+	if _should_suppress_disconnect_event():
+		_trace("ignoring stale peer_disconnected %d during transport replacement" % id)
+		return
 	_trace("peer_disconnected %d" % id)
-	peer_disconnected.emit(id)
+	var lobby_id := _to_lobby_peer_id(id)
+	if is_websocket_transport:
+		_synthetic_peer_ids.erase(id)
+		_raw_peer_ids_by_synthetic.erase(lobby_id)
+	peer_disconnected.emit(lobby_id)
+
+## Translate a raw transport peer id into the id shared lobby logic sees.
+## Identity on the primary (ENet) instance; minted synthetic on WebSocket.
+func _to_lobby_peer_id(raw_peer_id: int) -> int:
+	if not is_websocket_transport:
+		return raw_peer_id
+	if _synthetic_peer_ids.has(raw_peer_id):
+		return int(_synthetic_peer_ids[raw_peer_id])
+	var synthetic := _next_synthetic_peer_id
+	_next_synthetic_peer_id += 1
+	_synthetic_peer_ids[raw_peer_id] = synthetic
+	_raw_peer_ids_by_synthetic[synthetic] = raw_peer_id
+	_trace("minted synthetic peer id %d for websocket peer %d" % [synthetic, raw_peer_id])
+	return synthetic
 
 func _on_connected_to_server() -> void:
 	_trace("connected_to_server")
+	_apply_enet_peer_timeouts(1)
 	connected_to_server.emit()
 
 func _on_connection_failed() -> void:
 	_trace("connection_failed")
-	connection_failed.emit()
+	_defer_client_disconnect_signal(&"connection_failed")
 
 func _on_server_disconnected() -> void:
 	_trace("server_disconnected")
-	server_disconnected.emit()
+	_defer_client_disconnect_signal(&"server_disconnected")
+
+func _defer_client_disconnect_signal(signal_name: StringName, arguments: Array = []) -> void:
+	# These callbacks run inside MultiplayerAPI.poll(). Listeners may replace
+	# the peer or remove this node's multiplayer scope. Let the engine finish
+	# polling before releasing either object; otherwise Godot can crash.
+	call_deferred("_emit_client_disconnect_signal", peer, signal_name, arguments)
+
+func _emit_client_disconnect_signal(expected_peer: MultiplayerPeer, signal_name: StringName, arguments: Array) -> void:
+	# A canceled attempt must not tear down a new connection on the same node.
+	if not is_inside_tree() or peer != expected_peer or is_server:
+		return
+	var signal_arguments: Array = [signal_name]
+	signal_arguments.append_array(arguments)
+	callv("emit_signal", signal_arguments)
 
 func create_server(port: int = 12345, assign_local_host_player: bool = true) -> Error:
 	var api := _ensure_multiplayer_api()
@@ -78,6 +173,7 @@ func create_server(port: int = 12345, assign_local_host_player: bool = true) -> 
 		last_server_error = ERR_UNAVAILABLE
 		_trace("create_server failed: multiplayer unavailable")
 		return ERR_UNAVAILABLE
+	peer = ENetMultiplayerPeer.new()
 	var err := (peer as ENetMultiplayerPeer).create_server(port)
 	last_server_error = err
 	if err == OK:
@@ -85,28 +181,164 @@ func create_server(port: int = 12345, assign_local_host_player: bool = true) -> 
 		is_server = true
 		local_player_index = 0 if assign_local_host_player else -1
 		player_peer_ids.clear()
+		last_bound_port = port
 		if assign_local_host_player:
 			player_peer_ids[0] = 1  # server's own peer_id in ENet is always 1
 		print("Server started on port ", port)
 		_trace("server started on port %d path=%s" % [port, str(get_path())])
 	return err
 
-func create_client(address: String = "127.0.0.1", port: int = 12345) -> Error:
+func create_client(address: String = "127.0.0.1", port: int = 12345, punch_local_port: int = 0) -> Error:
+	_client_websocket_url = ""
+	_client_punch_local_port = 0
 	last_client_address = address
 	last_client_port = port
 	var api := _ensure_multiplayer_api()
 	if api == null:
 		_trace("create_client failed: multiplayer unavailable")
 		return ERR_UNAVAILABLE
-	var err := (peer as ENetMultiplayerPeer).create_client(address, port)
+	peer = ENetMultiplayerPeer.new()
+	var enet_peer := peer as ENetMultiplayerPeer
+	var err := enet_peer.create_client(address, port, 0, 0, 0, punch_local_port)
+	if err != OK and punch_local_port > 0:
+		# The probe's port may have been taken before ENet could bind it.
+		_trace("punch local port bind failed requested=%d error=%d; retrying with ephemeral port" % [punch_local_port, int(err)])
+		err = enet_peer.create_client(address, port)
 	if err == OK:
+		if punch_local_port > 0:
+			var bound_port := enet_peer.get_host().get_local_port()
+			if bound_port != punch_local_port:
+				_trace("punch local port remapped requested=%d actual=%d" % [punch_local_port, bound_port])
+			_client_punch_local_port = bound_port
+			_spectate_breadcrumb("enet_client_bound", {
+				"requested_port": punch_local_port, "actual_port": bound_port,
+				"destination": "%s:%d" % [address, port],
+			})
 		api.multiplayer_peer = peer
 		is_server = false
 		print("Client connecting to ", address, ":", port)
 		_trace("client connecting to %s:%d path=%s" % [address, port, str(get_path())])
+	else:
+		last_server_error = err
+		_trace("client connect failed to %s:%d error=%d punch_local_port=%d" % [address, port, err, punch_local_port])
+		if punch_local_port > 0:
+			_spectate_breadcrumb("enet_client_create_failed", {
+				"destination": "%s:%d" % [address, port], "error": int(err),
+			})
 	return err
 
-func disconnect_client() -> void:
+## Client-side WebSocket transport for restrictive networks. The URL must
+## include the scheme. wss:// uses the engine's certificate verification.
+func create_client_websocket(url: String) -> Error:
+	_client_websocket_url = url
+	_client_punch_local_port = 0
+	last_client_address = url
+	last_client_port = -1
+	var api := _ensure_multiplayer_api()
+	if api == null:
+		_trace("create_client_websocket failed: multiplayer unavailable")
+		return ERR_UNAVAILABLE
+	var ws_peer := WebSocketMultiplayerPeer.new()
+	ws_peer.inbound_buffer_size = MAX_GAME_EVENT_PAYLOAD_BYTES * 2
+	ws_peer.outbound_buffer_size = MAX_GAME_EVENT_PAYLOAD_BYTES * 2
+	var err := ws_peer.create_client(url)
+	if err == OK:
+		peer = ws_peer
+		api.multiplayer_peer = peer
+		is_server = false
+		print("Client connecting via websocket ", url)
+		_trace("client connecting via websocket %s path=%s" % [url, str(get_path())])
+	else:
+		last_server_error = err
+		_trace("websocket create_client failed for %s error=%d" % [url, err])
+	return err
+
+## Server-side WebSocket listener. Runs on its own NetworkManager instance so
+## ENet and WebSocket peers coexist, with synthetic ids on the secondary peer.
+func create_server_websocket(port: int, bind_address: String = "127.0.0.1") -> Error:
+	var api := _ensure_multiplayer_api()
+	if api == null:
+		last_server_error = ERR_UNAVAILABLE
+		_trace("create_server_websocket failed: multiplayer unavailable")
+		return ERR_UNAVAILABLE
+	var ws_peer := WebSocketMultiplayerPeer.new()
+	ws_peer.inbound_buffer_size = MAX_GAME_EVENT_PAYLOAD_BYTES * 2
+	ws_peer.outbound_buffer_size = MAX_GAME_EVENT_PAYLOAD_BYTES * 2
+	var err := ws_peer.create_server(port, bind_address)
+	if err == OK:
+		peer = ws_peer
+		api.multiplayer_peer = peer
+		is_server = true
+		local_player_index = -1
+		player_peer_ids.clear()
+		print("WebSocket server started on port ", port)
+		_trace("websocket server started on port %d path=%s" % [port, str(get_path())])
+	else:
+		last_server_error = err
+		_trace("websocket create_server failed on port %d error=%d" % [port, err])
+	return err
+
+func create_match_client(address: String, port: int, websocket_url: String = "", prefer_websocket: bool = false, punch_local_port: int = 0) -> Error:
+	if prefer_websocket and not websocket_url.is_empty():
+		return create_client_websocket(websocket_url)
+	var err := create_client(address, port, punch_local_port)
+	_client_websocket_url = websocket_url
+	return err
+
+func start_match_websocket_server(port: int) -> Error:
+	if websocket_transport != null:
+		return ERR_ALREADY_IN_USE
+	# Match RPCs retain the same relative node path as the existing UDP client.
+	_websocket_mount = Node.new()
+	var mount_suffix := str(get_parent().name) if get_parent() != null else str(name)
+	_websocket_mount.name = "MatchWebSocketRoot_%s" % mount_suffix.validate_node_name()
+	get_tree().root.add_child(_websocket_mount)
+	var secondary := get_script().new() as Node
+	secondary.name = name
+	secondary.use_current_scene_relative_path = true
+	secondary.managed_multiplayer_root_path = _websocket_mount.get_path()
+	secondary.is_websocket_transport = true
+	secondary.trace_file_path = trace_file_path
+	_websocket_mount.add_child(secondary)
+	var err: Error = secondary.create_server_websocket(port)
+	if err != OK:
+		_websocket_mount.queue_free()
+		_websocket_mount = null
+		return err
+	websocket_transport = secondary
+	secondary.command_received.connect(func(command: Dictionary, sender: Dictionary) -> void:
+		command_received.emit(command, _build_sender_info(int(sender.get("peer_id", 0))))
+	)
+	secondary.match_join_requested.connect(func(request: Dictionary, sender: Dictionary) -> void:
+		match_join_requested.emit(request, _build_sender_info(int(sender.get("peer_id", 0))))
+	)
+	secondary.peer_connected.connect(func(id: int) -> void: peer_connected.emit(id))
+	secondary.peer_disconnected.connect(func(id: int) -> void: peer_disconnected.emit(id))
+	return OK
+
+func _exit_tree() -> void:
+	# SceneTree keeps custom multiplayer scopes after their nodes are removed.
+	# Release ours before a later online match reuses the same node path.
+	var tree := get_tree()
+	if tree != null and _managed_multiplayer_api != null and _registered_multiplayer_root_path != NodePath(""):
+		if tree.get_multiplayer(_registered_multiplayer_root_path) == _managed_multiplayer_api:
+			tree.set_multiplayer(null, _registered_multiplayer_root_path)
+	_managed_multiplayer_api = null
+	_registered_multiplayer_root_path = NodePath("")
+	if is_instance_valid(_websocket_mount):
+		_websocket_mount.queue_free()
+	_websocket_mount = null
+	clear_spectator_punch()
+
+func disconnect_client(suppress_disconnect_events: bool = true) -> void:
+	if suppress_disconnect_events:
+		_suppress_disconnect_events_until_msec = Time.get_ticks_msec() + 1000
+	if is_instance_valid(_websocket_mount):
+		if is_instance_valid(websocket_transport):
+			websocket_transport.disconnect_client(suppress_disconnect_events)
+		_websocket_mount.queue_free()
+		_websocket_mount = null
+		websocket_transport = null
 	var api := _ensure_multiplayer_api()
 	if api != null and api.multiplayer_peer != null:
 		api.multiplayer_peer = null
@@ -115,6 +347,7 @@ func disconnect_client() -> void:
 	peer = ENetMultiplayerPeer.new()
 	is_server = false
 	local_player_index = -1
+	clear_spectator_punch()
 	player_peer_ids.clear()
 	spectator_peer_ids.clear()
 	spectator_visible_player_indices_by_peer.clear()
@@ -125,8 +358,133 @@ func reconnect_client(address: String = "", port: int = -1) -> Error:
 	if connect_address.is_empty():
 		connect_address = last_client_address
 	var connect_port := port if port > 0 else last_client_port
+	var websocket_url := connect_address if connect_address.begins_with("wss://") or connect_address.begins_with("ws://") else _client_websocket_url
+	var punch_local_port := _client_punch_local_port
 	disconnect_client()
-	return create_client(connect_address, connect_port)
+	if not websocket_url.is_empty():
+		return create_client_websocket(websocket_url)
+	return create_client(connect_address, connect_port, punch_local_port)
+
+# ---------------------------------------------------------------------------
+# NAT hole punching for spectating client-hosted matches
+# ---------------------------------------------------------------------------
+
+## Send one punch-discovery packet from this peer's own UDP socket to the
+## lobby's punch reflector. The reflector records the packet's public sender
+## endpoint under the match/role key, so lobby signaling can tell the other
+## side exactly which NAT mapping will carry the real ENet traffic. Client
+## bounces carry the observer session id so each spectator is keyed separately.
+func send_punch_bounce(reflector_ip: String, reflector_port: int, match_id: String, bounce_kind: String, observer_session_id: String = "") -> Error:
+	var enet_connection := _get_bound_enet_connection()
+	if enet_connection == null:
+		return ERR_UNAVAILABLE
+	if reflector_ip.strip_edges().is_empty() or reflector_port <= 0 or match_id.strip_edges().is_empty():
+		return ERR_INVALID_PARAMETER
+	_trace("punch bounce kind=%s match=%s observer=%s reflector=%s:%d" % [
+		bounce_kind, match_id, observer_session_id, reflector_ip.strip_edges(), reflector_port,
+	])
+	# ENetConnection.socket_send returns void in Godot 4.7, so trace the attempt
+	# instead of trying to assign a nonexistent Error result.
+	enet_connection.socket_send(
+		reflector_ip.strip_edges(),
+		reflector_port,
+		PunchReflectorScript.make_marker(bounce_kind, match_id, observer_session_id)
+	)
+	return OK
+
+## Open this host's NAT toward one spectator's public endpoint before the
+## spectator's ENet connect packets arrive (restricted-cone routers drop
+## unsolicited UDP from unknown endpoints). Punches repeat at a low rate until
+## expiry; re-calling with the same observer refreshes endpoint and timer.
+func begin_spectator_punch(observer_session_id: String, target_ip: String, target_port: int, punch: PackedByteArray) -> Error:
+	var punch_id := observer_session_id.strip_edges()
+	if punch_id.is_empty() or target_ip.strip_edges().is_empty() or target_port <= 0 or punch.is_empty():
+		return ERR_INVALID_PARAMETER
+	var enet_connection := _get_bound_enet_connection()
+	if not is_server or enet_connection == null:
+		return ERR_UNAVAILABLE
+	_punch_targets[punch_id] = {
+		"ip": target_ip.strip_edges(),
+		"port": target_port,
+		"packet": punch,
+		"expires_msec": Time.get_ticks_msec() + int(PUNCH_TARGET_TTL_SECONDS * 1000.0),
+	}
+	_trace("spectator punch begin observer=%s target=%s:%d" % [punch_id, target_ip.strip_edges(), target_port])
+	_spectate_breadcrumb("host_punch_started", {
+		"observer": punch_id, "target": "%s:%d" % [target_ip.strip_edges(), target_port],
+	})
+	enet_connection.socket_send(target_ip.strip_edges(), target_port, punch)
+	return OK
+
+func clear_spectator_punch() -> void:
+	_punch_targets.clear()
+	_punch_elapsed = 0.0
+
+func _get_bound_enet_connection() -> ENetConnection:
+	var enet_peer := peer as ENetMultiplayerPeer
+	if enet_peer == null:
+		return null
+	if enet_peer.get_connection_status() == MultiplayerPeer.CONNECTION_DISCONNECTED:
+		return null
+	return enet_peer.get_host()
+
+func _process(delta: float) -> void:
+	if _punch_targets.is_empty():
+		return
+	_punch_elapsed += delta
+	if _punch_elapsed < PUNCH_PACKET_INTERVAL_SECONDS:
+		return
+	_punch_elapsed = 0.0
+	var enet_connection := _get_bound_enet_connection()
+	if enet_connection == null:
+		return
+	var expired_ids := []
+	for punch_id in _punch_targets.keys():
+		var target = _punch_targets.get(punch_id, {})
+		if not (target is Dictionary):
+			expired_ids.append(punch_id)
+			continue
+		if Time.get_ticks_msec() > int((target as Dictionary).get("expires_msec", 0)):
+			expired_ids.append(punch_id)
+			continue
+		_trace("spectator punch send observer=%s target=%s:%d" % [
+			punch_id, str((target as Dictionary).get("ip", "")), int((target as Dictionary).get("port", 0)),
+		])
+		enet_connection.socket_send(
+			str((target as Dictionary).get("ip", "")),
+			int((target as Dictionary).get("port", 0)),
+			(target as Dictionary)["packet"]
+		)
+	for punch_id in expired_ids:
+		_punch_targets.erase(punch_id)
+
+## Apply loss-tolerant ENet timeouts to one connected peer. Per-side only, so
+## mixed client/server versions stay compatible: whichever side still runs the
+## defaults simply drops earlier and the reconnect paths take over.
+func _apply_enet_peer_timeouts(target_peer_id: int) -> void:
+	if target_peer_id <= 0 or peer == null:
+		return
+	var enet_peer := peer as ENetMultiplayerPeer
+	if enet_peer == null:
+		return
+	var packet_peer: ENetPacketPeer = null
+	if target_peer_id == 1 and not is_server and enet_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED:
+		# On a client the server is always peer 1; get_peer is valid once connected.
+		packet_peer = enet_peer.get_peer(target_peer_id)
+	elif is_server:
+		packet_peer = enet_peer.get_peer(target_peer_id)
+	if packet_peer == null:
+		return
+	packet_peer.set_timeout(
+		ENET_PEER_TIMEOUT_LIMIT_MS,
+		ENET_PEER_TIMEOUT_MIN_MS,
+		ENET_PEER_TIMEOUT_MAX_MS
+	)
+	_trace("applied tolerant ENet timeouts to peer %d" % target_peer_id)
+
+func _should_suppress_disconnect_event() -> bool:
+	return _suppress_disconnect_events_until_msec > 0 \
+		and Time.get_ticks_msec() <= _suppress_disconnect_events_until_msec
 
 # ---------------------------------------------------------------------------
 # Client → server: submit a player action
@@ -135,7 +493,7 @@ func reconnect_client(address: String = "", port: int = -1) -> Error:
 @rpc("any_peer", "call_remote", "reliable")
 func send_command(command: Dictionary) -> void:
 	if is_server:
-		var peer_id := multiplayer.get_remote_sender_id()
+		var peer_id := _to_lobby_peer_id(multiplayer.get_remote_sender_id())
 		_trace("received send_command from peer %d" % peer_id)
 		var rejection_reason := get_command_payload_rejection_reason(command)
 		if not rejection_reason.is_empty():
@@ -162,7 +520,7 @@ func request_action(command: Dictionary) -> void:
 func request_match_join(join_request: Dictionary) -> void:
 	if not is_server:
 		return
-	var peer_id := multiplayer.get_remote_sender_id()
+	var peer_id := _to_lobby_peer_id(multiplayer.get_remote_sender_id())
 	var rejection_reason := get_join_request_payload_rejection_reason(join_request)
 	if not rejection_reason.is_empty():
 		_reject_match_join_payload(peer_id, rejection_reason)
@@ -200,7 +558,9 @@ func broadcast_event(event_type: String, data: Dictionary) -> void:
 	game_event_received.emit(event_type, data)
 
 ## Server broadcasts the same event to every connected remote peer.
-func broadcast_event_to_all(event_type: String, data: Dictionary) -> void:
+## force_send skips the recipient-bookkeeping guard for delegated fan-out from
+## the primary transport (the WebSocket instance keeps no player bookkeeping).
+func broadcast_event_to_all(event_type: String, data: Dictionary, force_send: bool = false) -> void:
 	if not is_server:
 		return
 	var rejection_reason := get_game_event_payload_rejection_reason(event_type, data)
@@ -209,9 +569,11 @@ func broadcast_event_to_all(event_type: String, data: Dictionary) -> void:
 		return
 	if not _has_active_multiplayer_peer():
 		return
-	if not _has_remote_broadcast_recipients():
+	if not force_send and not _has_remote_broadcast_recipients():
 		return
 	rpc("broadcast_event", event_type, data)
+	if not is_websocket_transport and websocket_transport != null:
+		websocket_transport.broadcast_event_to_all(event_type, data, true)
 
 ## Server sends an event to one specific peer only (for hand privacy).
 func broadcast_event_to_peer(target_peer_id: int, event_type: String, data: Dictionary) -> void:
@@ -223,6 +585,18 @@ func broadcast_event_to_peer(target_peer_id: int, event_type: String, data: Dict
 		return
 	if target_peer_id == 1:
 		game_event_received.emit(event_type, data)
+		return
+	if is_websocket_transport:
+		var raw_peer_id := int(_raw_peer_ids_by_synthetic.get(target_peer_id, 0))
+		if raw_peer_id <= 0:
+			_trace("no websocket peer for synthetic id %d" % target_peer_id)
+			return
+		if not _has_active_multiplayer_peer():
+			return
+		rpc_id(raw_peer_id, "broadcast_event", event_type, data)
+		return
+	if websocket_transport != null and target_peer_id >= WS_PEER_ID_BASE:
+		websocket_transport.broadcast_event_to_peer(target_peer_id, event_type, data)
 		return
 	if not _has_active_multiplayer_peer():
 		return
@@ -242,23 +616,34 @@ func assign_peer_to_player(target_peer_id: int, player_index: int) -> void:
 	if not is_server:
 		return
 	player_peer_ids[player_index] = target_peer_id
-	rpc_id(target_peer_id, "set_local_player_index", player_index)
+	_rpc_to_peer(target_peer_id, "set_local_player_index", [player_index])
 
 func approve_match_join(target_peer_id: int, player_index: int, match_info: Dictionary = {}) -> void:
 	if not is_server:
 		return
+	unassign_peer(target_peer_id)
 	if player_index >= 0:
 		player_peer_ids[player_index] = target_peer_id
-		spectator_peer_ids.erase(target_peer_id)
-		rpc_id(target_peer_id, "set_local_player_index", player_index)
+		_rpc_to_peer(target_peer_id, "set_local_player_index", [player_index])
 	else:
 		register_spectator_peer(target_peer_id)
-	rpc_id(target_peer_id, "notify_match_join_approved", match_info)
+	_rpc_to_peer(target_peer_id, "notify_match_join_approved", [match_info])
 
 func deny_match_join(target_peer_id: int, reason: String) -> void:
 	if not is_server or target_peer_id <= 0:
 		return
-	rpc_id(target_peer_id, "notify_match_join_denied", reason)
+	_rpc_to_peer(target_peer_id, "notify_match_join_denied", [reason])
+
+func _rpc_to_peer(target_peer_id: int, method: String, arguments: Array) -> void:
+	if not is_websocket_transport and websocket_transport != null and target_peer_id >= WS_PEER_ID_BASE:
+		websocket_transport._rpc_to_peer(target_peer_id, method, arguments)
+		return
+	var raw_peer_id := int(_raw_peer_ids_by_synthetic.get(target_peer_id, 0)) if is_websocket_transport else target_peer_id
+	if raw_peer_id > 0 and _has_active_multiplayer_peer():
+		callv("rpc_id", [raw_peer_id, method] + arguments)
+
+func reject_command(peer_id: int, reason: String) -> void:
+	_reject_command_payload(peer_id, reason)
 
 func unassign_peer(peer_id: int) -> void:
 	spectator_peer_ids.erase(peer_id)
@@ -269,7 +654,6 @@ func unassign_peer(peer_id: int) -> void:
 		if int(player_index) == 0 and peer_id == 1:
 			continue
 		player_peer_ids.erase(player_index)
-		return
 
 func get_player_index_for_peer(peer_id: int) -> int:
 	for player_index in player_peer_ids.keys():
@@ -343,20 +727,22 @@ func _build_sender_info(peer_id: int) -> Dictionary:
 	}
 
 func _ensure_multiplayer_api() -> MultiplayerAPI:
-	if multiplayer != null:
+	if use_current_scene_relative_path and _managed_multiplayer_api != null:
+		return _managed_multiplayer_api
+	if multiplayer != null and not use_current_scene_relative_path:
 		return multiplayer
-	if get_tree() == null:
+	if get_tree() == null or not is_inside_tree():
 		return null
 	var fallback_api := MultiplayerAPI.create_default_interface()
 	var target_path: NodePath = get_path()
-	if use_current_scene_relative_path and get_tree().current_scene != null:
-		var active_scene: Node = get_tree().current_scene
-		if active_scene == self:
-			target_path = NodePath(".")
-		elif active_scene.is_ancestor_of(self):
-			target_path = active_scene.get_path_to(self)
+	if managed_multiplayer_root_path != NodePath(""):
+		target_path = managed_multiplayer_root_path
 	get_tree().set_multiplayer(fallback_api, target_path)
-	return multiplayer
+	if use_current_scene_relative_path:
+		_managed_multiplayer_api = fallback_api
+		_registered_multiplayer_root_path = target_path
+		return _managed_multiplayer_api
+	return multiplayer if multiplayer != null else fallback_api
 
 func _has_active_multiplayer_peer() -> bool:
 	var api := _ensure_multiplayer_api()
@@ -378,7 +764,7 @@ func _reject_command_payload(peer_id: int, reason: String) -> void:
 func _reject_match_join_payload(peer_id: int, reason: String) -> void:
 	_trace("rejected match join payload from peer %d: %s" % [peer_id, reason])
 	if is_server and peer_id > 1:
-		rpc_id(peer_id, "notify_match_join_denied", reason)
+		_rpc_to_peer(peer_id, "notify_match_join_denied", [reason])
 	else:
 		match_join_denied.emit(reason)
 
@@ -446,6 +832,6 @@ func _trace(message: String) -> void:
 	if file == null:
 		return
 	file.seek_end()
-	file.store_line("NetworkManager[%s]: %s" % [name, message])
+	file.store_line("NetworkManager[%s] @%s: %s" % [name, str(snappedf(Time.get_unix_time_from_system(), 0.001)), message])
 	file.flush()
 	file.close()

@@ -16,6 +16,13 @@ func on_defend(_game_manager: GameManager, _attacker: Card) -> void:
 	# Override to add effects when this creature is attacked
 	pass
 
+func changes_visible_stats_when_entering_combat() -> bool:
+	return false
+
+func get_combat_strength_against(_opponent: Card, strength_delta: int = 0) -> int:
+	# Read-only forecast for AI. Overrides must never run combat hooks or add buffs.
+	return get_effective_strength(strength_delta)
+
 func on_summon(_game_manager: GameManager) -> void:
 	# Called whenever this creature is summoned onto the board.
 	pass
@@ -30,6 +37,10 @@ func on_reveal(_game_manager: GameManager) -> void:
 
 func on_death(_game_manager: GameManager) -> void:
 	# Called when creature is destroyed by combat during kill resolution.
+	pass
+
+func on_perish(_game_manager: GameManager) -> void:
+	# Called after this card is sent from the field to its owner's graveyard.
 	pass
 
 func on_equip(_equipment: Card) -> void:

@@ -4,16 +4,21 @@ class_name DedicatedLobbyServerNode
 const DedicatedLobbyProtocolScript = preload("res://scripts/network/LobbyProtocol.gd")
 
 func _ready() -> void:
+	# Dedicated-only lobby node: cap the loop so an idle process does not spin
+	# a CPU core at maximum frame rate.
+	Engine.max_fps = 30
 	use_dedicated_match_processes = true
 	allow_in_process_match_fallback = false
 	super._ready()
 
 	var launch_args: Dictionary = _parse_user_args(OS.get_cmdline_user_args())
-	var advertised_host: String = str(launch_args.get("lobby_host", "127.0.0.1")).strip_edges()
-	if advertised_host.is_empty():
-		advertised_host = "127.0.0.1"
-	var lobby_port: int = int(launch_args.get("lobby_port", DedicatedLobbyProtocolScript.PORT))
-	var match_port: int = int(launch_args.get("match_port", DedicatedLobbyProtocolScript.MATCH_PORT))
+	server_bot_self_play_limit = get_dedicated_bot_self_play_limit(launch_args)
+	var resolved_host: String = str(launch_args.get("lobby_host", "127.0.0.1")).strip_edges()
+	if resolved_host.is_empty():
+		resolved_host = "127.0.0.1"
+	var resolved_lobby_port: int = int(launch_args.get("lobby_port", DedicatedLobbyProtocolScript.PORT))
+	var resolved_match_port: int = int(launch_args.get("match_port", DedicatedLobbyProtocolScript.MATCH_PORT))
+	var resolved_ws_port: int = int(launch_args.get("ws_port", DedicatedLobbyProtocolScript.WS_PORT))
 	var ready_file_path: String = str(launch_args.get("ready_file", "")).strip_edges()
 	var trace_output_path: String = str(launch_args.get("trace_file", "")).strip_edges()
 
@@ -25,7 +30,7 @@ func _ready() -> void:
 	if get_parent() != null:
 		multiplayer_mount_path = get_parent().get_path()
 
-	var err: Error = start_server(advertised_host, lobby_port, match_port)
+	var err: Error = start_server(resolved_host, resolved_lobby_port, resolved_match_port, resolved_ws_port)
 	if err != OK:
 		push_error("DedicatedLobbyServerNode: failed to start lobby server (%s)" % error_string(err))
 		get_tree().quit(1)

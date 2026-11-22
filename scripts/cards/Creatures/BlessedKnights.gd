@@ -13,7 +13,7 @@ func _init() -> void:
 	resilience = 13
 	strength = 15
 	sacrifice_cost = 0
-	ability_text = "Blessed Ward (impact): This turn this card and cards which share its name are immune to your choice of hexes, creature abilities, or powers."
+	ability_text = "Blessed Ward (impact): This turn Blessed Knights and other cards with that name are immune to your choice of hexes, creature abilities, or powers."
 	flavor_text = ""
 	culture = "Triskelion"
 	artist = "Mike Capprotti via TgMaker"

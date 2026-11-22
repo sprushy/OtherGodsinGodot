@@ -144,7 +144,7 @@ func _is_friendly_norse_warrior(card: Card) -> bool:
 		and card.card_type == Card.CardType.CREATURE \
 		and card.get_controller() == card_owner \
 		and card.has_type("Warrior") \
-		and (card.has_type("Norse Creature") or card.culture == "Norse")
+		and card.culture == "Norse"
 
 func _is_valid_bloodlust_summon(card: Card) -> bool:
 	return card != null \

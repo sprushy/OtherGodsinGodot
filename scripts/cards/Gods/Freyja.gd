@@ -4,6 +4,7 @@ class_name Freyja
 const BASE_ACTIVATION_COST := 5
 const DOOMED_STATUS := "freyja_receiver_of_the_slain"
 const SPIRIT_GRANT_STATUS := "freyja_spirit_grant"
+const ABILITY_NAME := "Receiver of the Slain"
 
 func _init() -> void:
 	super._init()
@@ -16,7 +17,7 @@ func _init() -> void:
 	targets = true
 	# flavor_text = "The slain do not always stay dead when Freyja calls them back."
 	flavor_text = ""
-	ability_text = "Receiver of the Slain ([b]Activate[/b], 5 mana): Summon a Norse Warrior from your graveyard. It gains Spirit and is destroyed at the start of your next turn. This ability costs 1 less for each Valkyrie card you have in play."
+	ability_text = "Receiver of the Slain ([b]Activate[/b], %d mana): Summon a Norse Warrior from your Graveyard. It gains Spirit. Destroy it at the start of your next turn. This ability costs 1 less mana per Valkyrie card you have in play." % BASE_ACTIVATION_COST
 	art_path = "res://images/card_art/gods/FrejyaAndCatsAieditSquare.png"
 	artist = "Ricardo Zoppello"
 	name_at_bottom = true
@@ -62,7 +63,7 @@ func is_valid_activation_target(target: Card) -> bool:
 		and target.card_type == Card.CardType.CREATURE \
 		and not target.is_god \
 		and target.has_type("Warrior") \
-		and (target.has_type("Norse Creature") or target.culture == "Norse") \
+		and target.culture == "Norse" \
 		and _get_best_summon_zone(target) != null
 
 func activate(game_manager: GameManager, target: Card = null) -> void:
@@ -71,12 +72,12 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 			game_manager.note_player_feedback(get_activation_failure_reason(game_manager))
 		return
 	if not is_valid_activation_target(target):
-		game_manager.note_player_feedback("Receiver of the Slain fizzles: invalid target.")
+		game_manager.note_player_feedback(ABILITY_NAME + " fizzles: invalid target.")
 		return
 
 	var summon_zone := _get_best_summon_zone(target)
 	if summon_zone == null:
-		game_manager.note_player_feedback("Receiver of the Slain fizzles: no open summon lane.")
+		game_manager.note_player_feedback(ABILITY_NAME + " fizzles: no open summon lane.")
 		return
 
 	var activation_cost := get_activation_mana_cost(game_manager)
@@ -98,12 +99,13 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 	)
 	if not summoned:
 		card_owner.gain_mana(activation_cost)
-		game_manager.note_player_feedback("Receiver of the Slain fizzles: " + target.card_name + " could not be summoned.")
+		game_manager.note_player_feedback(ABILITY_NAME + " fizzles: " + target.card_name + " could not be summoned.")
 		return
 
 	_apply_receiver_of_the_slain(target, game_manager)
 	game_manager.note_player_feedback(
-		"Receiver of the Slain summons %s from the graveyard for %d mana." % [
+		"%s summons %s from the graveyard for %d mana." % [
+			ABILITY_NAME,
 			target.card_name,
 			activation_cost
 		]
@@ -113,17 +115,16 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 func on_turn_upkeep(game_manager: GameManager) -> void:
 	if game_manager == null or game_manager.current_player != card_owner:
 		return
-	var due_cards := _get_due_returned_cards(game_manager)
-	for card in due_cards:
+	var doomed_cards: Array[Card] = []
+	for card in _get_due_returned_cards(game_manager):
 		if card == null or not is_instance_valid(card):
 			continue
 		card.remove_status_effects_from_source_card(self, DOOMED_STATUS)
 		if card.current_zone == null or not card.current_zone.is_board_zone():
 			_cleanup_spirit_grant(card)
 			continue
-		game_manager.request_send_to_graveyard(card, Callable(), false, true)
-		if card.current_zone == null or not card.current_zone.is_board_zone():
-			_cleanup_spirit_grant(card)
+		doomed_cards.append(card)
+	game_manager.request_send_cards_to_graveyard(doomed_cards, Callable(), false, true)
 
 func on_any_card_moved(_game_manager: GameManager, moved_card: Card, from_zone: Zone, to_zone: Zone) -> void:
 	if moved_card == null:
@@ -139,6 +140,22 @@ func on_any_card_moved(_game_manager: GameManager, moved_card: Card, from_zone: 
 
 func get_activation_mana_cost(_game_manager: GameManager = null) -> int:
 	return maxi(0, BASE_ACTIVATION_COST - _count_friendly_valkyries_in_play())
+
+func get_display_ability_text(game_manager: GameManager = null) -> String:
+	return _replace_display_activation_cost(ability_text, get_activation_mana_cost(game_manager))
+
+func get_display_ability_bbcode_text(game_manager: GameManager = null) -> String:
+	var activation_cost := get_activation_mana_cost(game_manager)
+	var replacement := "%d mana" % activation_cost
+	if activation_cost < BASE_ACTIVATION_COST:
+		replacement = "[color=#66ff66]%s[/color]" % replacement
+	elif activation_cost > BASE_ACTIVATION_COST:
+		replacement = "[color=#ff6666]%s[/color]" % replacement
+	return _replace_display_activation_cost(ability_text, activation_cost, replacement)
+
+func _replace_display_activation_cost(text: String, activation_cost: int, replacement: String = "") -> String:
+	var display_cost := replacement if replacement != "" else "%d mana" % activation_cost
+	return text.replace(", %d mana" % BASE_ACTIVATION_COST, ", " + display_cost)
 
 func _apply_receiver_of_the_slain(creature: Card, game_manager: GameManager) -> void:
 	if creature == null:
@@ -216,9 +233,16 @@ func _count_friendly_valkyries_in_play() -> int:
 	zones.append_array(card_owner.reserve_zones)
 	for zone in zones:
 		for card in zone.cards:
-			if _is_valkyrie_card(card):
+			if _counts_for_receiver_discount(card, zone):
 				count += 1
 	return count
+
+func _counts_for_receiver_discount(card: Card, zone: Zone) -> bool:
+	if not _is_valkyrie_card(card):
+		return false
+	if zone != null and zone.zone_type == Zone.ZoneType.POWER_SLOT and card.is_face_down:
+		return false
+	return true
 
 func _is_valkyrie_card(card: Card) -> bool:
 	if card == null:

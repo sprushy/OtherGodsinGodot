@@ -28,8 +28,15 @@ func resolve(game_manager: GameManager, _target = null) -> void:
 		game_manager.note_player_feedback(no_targets_feedback)
 		print(no_targets_feedback)
 		return
-	var on_destroy_complete := func(destroyed_count) -> void:
-		var feedback := "%s destroyed %d magical card(s) on the field." % [card_name, destroyed_count]
+	game_manager.field_effect_requested.emit("occult_singularity", self)
+	var on_destroy_complete := func(_destroyed_count) -> void:
+		var destroyed_names: Array[String] = []
+		for doomed_card in doomed_cards:
+			if doomed_card != null and game_manager.reached_public_destroyed_destination(doomed_card):
+				destroyed_names.append(doomed_card.get_display_name())
+		var feedback := "%s destroyed %s." % [card_name, _format_name_list(destroyed_names)]
+		if destroyed_names.is_empty():
+			feedback = "%s resolved, but no magical cards were destroyed." % card_name
 		game_manager.note_player_feedback(feedback)
 		print(feedback)
 	game_manager.request_send_cards_to_graveyard(
@@ -38,6 +45,15 @@ func resolve(game_manager: GameManager, _target = null) -> void:
 		false,
 		true
 	)
+
+func _format_name_list(names: Array[String]) -> String:
+	if names.is_empty():
+		return "no magical cards"
+	if names.size() == 1:
+		return names[0]
+	if names.size() == 2:
+		return names[0] + " and " + names[1]
+	return "%s, and %s" % [", ".join(names.slice(0, names.size() - 1)), names.back()]
 
 func can_be_played(game_manager: GameManager, player: Player) -> bool:
 	if not super.can_be_played(game_manager, player):
@@ -59,17 +75,21 @@ func _get_doomed_cards(game_manager: GameManager) -> Array[Card]:
 	var doomed_cards: Array[Card] = []
 	if game_manager == null:
 		return doomed_cards
-	for player: Player in game_manager.players:
-		for zone: Zone in player.frontline_zones + player.reserve_zones:
-			for card: Card in zone.cards:
-				if card == self:
-					continue
-				if _is_doomed_card(card):
-					doomed_cards.append(card)
+	for card in game_manager.get_field_cards():
+		if card == self:
+			continue
+		if _is_doomed_card(card, game_manager):
+			doomed_cards.append(card)
 	return doomed_cards
 
-func _is_doomed_card(card: Card) -> bool:
+func _is_doomed_card(card: Card, game_manager: GameManager = null) -> bool:
 	return card != null \
-		and card.current_zone != null \
-		and card.current_zone.is_board_zone() \
+		and _counts_as_field_card(card, game_manager) \
 		and card.is_magical_card()
+
+func _counts_as_field_card(card: Card, game_manager: GameManager = null) -> bool:
+	if card == null:
+		return false
+	if card.current_zone != null and card.current_zone.is_board_zone():
+		return true
+	return game_manager != null and game_manager.is_card_on_field(card)

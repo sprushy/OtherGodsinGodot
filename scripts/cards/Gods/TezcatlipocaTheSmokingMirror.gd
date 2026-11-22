@@ -20,7 +20,7 @@ func _init() -> void:
 	culture = "Nahuatl"
 	targets = true
 	flavor_text = ""
-	ability_text = "Tonal Mastery ([b]Passive[/b]): Every time a creature shapeshifts, gain 1 Tonal Mastery token. At 3 tokens, clear them and gain 3 mana.\nNecoc Yaotl ([b]Activate[/b]): Sacrifice a friendly creature and place it under this card. Once you have done this 4 times, summon Tezcatlipoca, Active God."
+	ability_text = "Tonal Mastery ([b]Passive[/b]): Every time a creature shapeshifts, gain 1 Tonal Mastery token. At 3 tokens, clear them and gain 3 mana.\nNecoc Yaotl ([b]Activate[/b]): Sacrifice a friendly creature and place it under Tezcatlipoca. Once you have done this 4 times, summon Tezcatlipoca, Active God."
 	artist = "Ricardo Zoppello"
 	art_path = ART_PATH
 	name_at_bottom = true
@@ -92,6 +92,16 @@ func get_hover_stored_cards(_viewer: Player = null) -> Array[Card]:
 
 func get_hover_stored_cards_title(_viewer: Player = null) -> String:
 	return "Necoc Yaotl Sacrifices"
+
+func get_hover_summoned_active_gods(_viewer: Player = null) -> Array[Card]:
+	var manifestation := _get_necoc_yaotl_candidate(true)
+	var summoned_active_gods: Array[Card] = []
+	if manifestation != null:
+		summoned_active_gods.append(manifestation)
+	return summoned_active_gods
+
+func get_hover_summoned_active_gods_title(_viewer: Player = null) -> String:
+	return "Necoc Yaotl summons"
 
 func get_tonal_mastery_token_count() -> int:
 	return clampi(tonal_mastery_tokens, 0, TONAL_MASTERY_TOKEN_THRESHOLD)
@@ -172,9 +182,11 @@ func resolve_necoc_yaotl_sacrifice(game_manager: GameManager, target: Card) -> S
 			target.remove_effects_expiring_after_combat()
 		from_zone.remove_card(target)
 	target.current_zone = null
+	target.field_subtypes.clear()
 	if target.card_owner != null and from_zone != null:
 		target.card_owner.card_moved.emit(target, from_zone, null)
 	necoc_yaotl_sacrifices.append(target)
+	game_manager.note_creature_sacrifice(target)
 	_emit_visual_state_changed()
 	notify_power_activated(game_manager, target)
 

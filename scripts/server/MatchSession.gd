@@ -7,30 +7,59 @@ const STATUS_FINISHED := "finished"
 const STATUS_ABANDONED := "abandoned"
 const SERVER_MODE_IN_PROCESS_HOST := "in_process_host"
 const SERVER_MODE_DEDICATED_HEADLESS := "dedicated_headless"
+const SERVER_MODE_PLAYER_HOST := "player_host"
+const BOT_SESSION_PREFIX := "BOT_"
+const SUPERVISOR_HEARTBEAT_TIMEOUT_SECONDS := 30
 
 var match_id: String = ""
 var room_id: String = ""
 var server_ip: String = "127.0.0.1"
 var match_port: int = 12345
+var match_websocket_url: String = ""
 var player_session_ids: Array[String] = []
 var status: String = STATUS_STARTING
 var server_mode: String = SERVER_MODE_IN_PROCESS_HOST
 var is_ranked: bool = true
 var launch_config_path: String = ""
+var status_file_path: String = ""
 var process_id: int = 0
+var supervisor_heartbeat_path: String = ""
 var process_launch_error: String = ""
 var reconnect_deadline_unix: int = 0
 var reconnect_window_seconds: int = 90
+var created_unix: int = 0
 var player_match_tokens: Dictionary = {}
 var player_decks_by_session: Dictionary = {}
 var player_identity_by_session: Dictionary = {}
+var next_requests_by_account: Dictionary = {}
 var session_id_by_peer: Dictionary = {}
 var peer_id_by_session: Dictionary = {}
 var disconnected_sessions: Dictionary = {}
 var spectator_peer_ids: Array[int] = []
 var spectator_visible_player_indices_by_session: Dictionary = {}
+var spectator_match_tokens_by_session: Dictionary = {}
+var series_best_of: int = 1
+var games_to_win: int = 1
+var series_game_number: int = 1
+var series_wins_by_session: Dictionary = {}
+var registered_player_decks_by_session: Dictionary = {}
+var reinforcement_ready_by_session: Dictionary = {}
 
-var _rng := RandomNumberGenerator.new()
+## Per-bot opponent observations accumulated across series games
+## ({"cards": {name: count}, "tags": {tag: count}} keyed by bot session id).
+## Bots detach between games, so the session carries what each bot saw of the
+## opponent's public cards so later swap windows build on earlier games.
+var bot_opponent_observations_by_session: Dictionary = {}
+
+## Player-hosted (listen-server) match bookkeeping. Only meaningful when
+## server_mode == SERVER_MODE_PLAYER_HOST. host_session_id names the player who
+## runs the authoritative match; host_reachable_ip/port is their UPnP-mapped
+## public endpoint the opponent connects to. host_bind_port is the local port
+## the host binds and that the lobby probes for inbound reachability.
+var host_session_id: String = ""
+var host_reachable_ip: String = ""
+var host_reachable_port: int = 0
+var host_bind_port: int = 0
 
 func _init(
 	p_match_id: String = "",
@@ -41,15 +70,17 @@ func _init(
 	p_player_decks_by_session: Dictionary = {},
 	p_player_identity_by_session: Dictionary = {}
 ) -> void:
-	_rng.randomize()
 	match_id = p_match_id
 	room_id = p_room_id
 	server_ip = p_server_ip
 	match_port = p_match_port
 	player_session_ids = p_player_session_ids.duplicate()
 	player_decks_by_session = p_player_decks_by_session.duplicate(true)
+	registered_player_decks_by_session = p_player_decks_by_session.duplicate(true)
 	player_identity_by_session = p_player_identity_by_session.duplicate(true)
+	created_unix = int(Time.get_unix_time_from_system())
 	_ensure_player_match_tokens()
+	_ensure_series_state()
 
 func mark_active() -> void:
 	status = STATUS_ACTIVE
@@ -60,8 +91,42 @@ func mark_finished() -> void:
 func mark_abandoned() -> void:
 	status = STATUS_ABANDONED
 
+func configure_series_format(best_of: int) -> void:
+	series_best_of = 3 if best_of == 3 else 1
+	games_to_win = 2 if series_best_of == 3 else 1
+
 func get_player_index(session_id: String) -> int:
 	return player_session_ids.find(session_id)
+
+func is_bot_session(session_id: String) -> bool:
+	var resolved_session_id := session_id.strip_edges()
+	if resolved_session_id.is_empty():
+		return false
+	var identity := get_player_identity(resolved_session_id)
+	if bool(identity.get("is_bot", false)):
+		return true
+	return resolved_session_id.to_upper().begins_with(BOT_SESSION_PREFIX)
+
+func get_human_player_count() -> int:
+	var count := 0
+	for session_id in player_session_ids:
+		if is_bot_session(str(session_id)):
+			continue
+		count += 1
+	return count
+
+func is_bot_self_play() -> bool:
+	return player_session_ids.size() == 2 and get_human_player_count() == 0
+
+func get_connected_human_player_count() -> int:
+	var count := 0
+	for session_id in player_session_ids:
+		var resolved_session_id := str(session_id).strip_edges()
+		if resolved_session_id.is_empty() or is_bot_session(resolved_session_id):
+			continue
+		if peer_id_by_session.has(resolved_session_id):
+			count += 1
+	return count
 
 func get_player_index_for_peer(peer_id: int) -> int:
 	var session_id := str(session_id_by_peer.get(peer_id, "")).strip_edges()
@@ -71,6 +136,9 @@ func get_player_index_for_peer(peer_id: int) -> int:
 
 func get_match_token(session_id: String) -> String:
 	return str(player_match_tokens.get(session_id, ""))
+
+func get_spectator_match_token(session_id: String) -> String:
+	return str(spectator_match_tokens_by_session.get(session_id.strip_edges(), ""))
 
 func get_player_identity(session_id: String) -> Dictionary:
 	var identity = player_identity_by_session.get(session_id, {})
@@ -101,24 +169,98 @@ func get_public_player_names() -> Array[String]:
 		names.append(get_player_display_name(session_id, player_index))
 	return names
 
+func get_public_rank_badges() -> Array[Dictionary]:
+	var badges: Array[Dictionary] = []
+	for session_id in player_session_ids:
+		var identity: Dictionary = player_identity_by_session.get(session_id, {})
+		var badge: Dictionary = identity.get("rank_badge", {})
+		badges.append(badge.duplicate(true))
+	return badges
+
+func get_public_bot_player_stars() -> Array[int]:
+	var bot_stars: Array[int] = []
+	for session_id in player_session_ids:
+		var resolved_session_id := str(session_id).strip_edges()
+		var stars := -1
+		if is_bot_session(resolved_session_id):
+			stars = int(_get_player_deck(resolved_session_id).get("bot_stars", 0))
+		bot_stars.append(stars)
+	return bot_stars
+
+func record_series_game_win(winner_index: int) -> Dictionary:
+	if winner_index < 0 or winner_index >= player_session_ids.size():
+		return get_series_snapshot()
+	var winner_session_id := str(player_session_ids[winner_index]).strip_edges()
+	series_wins_by_session[winner_session_id] = int(series_wins_by_session.get(winner_session_id, 0)) + 1
+	reinforcement_ready_by_session.clear()
+	return get_series_snapshot()
+
+func is_series_complete() -> bool:
+	if status == STATUS_FINISHED:
+		return true
+	for session_id in player_session_ids:
+		if int(series_wins_by_session.get(session_id, 0)) >= games_to_win:
+			return true
+	return false
+
+func begin_next_series_game() -> void:
+	series_game_number += 1
+	reinforcement_ready_by_session.clear()
+
+func set_reinforcement_ready(session_id: String, ready: bool = true) -> void:
+	var resolved_session_id := session_id.strip_edges()
+	if resolved_session_id.is_empty() or not player_session_ids.has(resolved_session_id):
+		return
+	reinforcement_ready_by_session[resolved_session_id] = ready
+
+func all_reinforcement_submissions_ready() -> bool:
+	for session_id in player_session_ids:
+		if not bool(reinforcement_ready_by_session.get(session_id, false)):
+			return false
+	return not player_session_ids.is_empty()
+
+func get_series_snapshot() -> Dictionary:
+	var wins: Array[int] = []
+	for session_id in player_session_ids:
+		wins.append(int(series_wins_by_session.get(session_id, 0)))
+	return {
+		"best_of": series_best_of,
+		"games_to_win": games_to_win,
+		"game_number": series_game_number,
+		"wins": wins,
+		"is_complete": is_series_complete(),
+	}
+
 func authenticate_join(session_id: String, match_token: String, peer_id: int) -> int:
-	if get_match_token(session_id) != match_token:
+	var resolved_session_id := session_id.strip_edges()
+	if is_bot_session(resolved_session_id):
 		return -1
-	var player_index := get_player_index(session_id)
+	var expected_token := get_match_token(resolved_session_id)
+	if peer_id <= 0 \
+		or resolved_session_id.is_empty() \
+		or expected_token.is_empty() \
+		or match_token.is_empty() \
+		or expected_token != match_token:
+		return -1
+	var player_index := get_player_index(resolved_session_id)
 	if player_index == -1:
 		return -1
-	var previous_peer_id := int(peer_id_by_session.get(session_id, 0))
+	var existing_session_id := str(session_id_by_peer.get(peer_id, "")).strip_edges()
+	if not existing_session_id.is_empty() and existing_session_id != resolved_session_id:
+		return -1
+	var previous_peer_id := int(peer_id_by_session.get(resolved_session_id, 0))
 	if previous_peer_id > 0:
 		session_id_by_peer.erase(previous_peer_id)
 	for existing_peer_id in session_id_by_peer.keys():
 		if int(existing_peer_id) == peer_id:
-			var existing_session_id := str(session_id_by_peer[existing_peer_id])
-			peer_id_by_session.erase(existing_session_id)
+			var mapped_session_id := str(session_id_by_peer[existing_peer_id])
+			peer_id_by_session.erase(mapped_session_id)
 			session_id_by_peer.erase(existing_peer_id)
 			break
-	session_id_by_peer[peer_id] = session_id
-	peer_id_by_session[session_id] = peer_id
-	disconnected_sessions.erase(session_id)
+	session_id_by_peer[peer_id] = resolved_session_id
+	peer_id_by_session[resolved_session_id] = peer_id
+	disconnected_sessions.erase(resolved_session_id)
+	spectator_peer_ids.erase(peer_id)
 	_refresh_reconnect_deadline()
 	return player_index
 
@@ -149,6 +291,19 @@ func add_spectator_peer(peer_id: int) -> void:
 		return
 	spectator_peer_ids.append(peer_id)
 
+func authenticate_spectator(session_id: String, match_token: String, peer_id: int) -> bool:
+	var resolved_session_id := session_id.strip_edges()
+	var expected_token := get_spectator_match_token(resolved_session_id)
+	if peer_id <= 0 \
+		or session_id_by_peer.has(peer_id) \
+		or resolved_session_id.is_empty() \
+		or expected_token.is_empty() \
+		or match_token.is_empty() \
+		or expected_token != match_token:
+		return false
+	add_spectator_peer(peer_id)
+	return true
+
 func is_spectator_peer(peer_id: int) -> bool:
 	return spectator_peer_ids.has(peer_id)
 
@@ -159,6 +314,8 @@ func set_spectator_visible_player_indices(session_id: String, player_indices: Ar
 	var resolved_session_id := session_id.strip_edges()
 	if resolved_session_id.is_empty():
 		return
+	if not spectator_match_tokens_by_session.has(resolved_session_id):
+		spectator_match_tokens_by_session[resolved_session_id] = _generate_token(20)
 	var sanitized: Array[int] = []
 	for raw_index in player_indices:
 		var player_index := int(raw_index)
@@ -193,12 +350,17 @@ func get_reconnect_deadline_for_session(session_id: String) -> int:
 
 func all_players_connected() -> bool:
 	for session_id in player_session_ids:
+		if is_bot_session(str(session_id)):
+			continue
 		if not peer_id_by_session.has(session_id):
 			return false
 	return not player_session_ids.is_empty()
 
 func is_dedicated_headless() -> bool:
 	return server_mode == SERVER_MODE_DEDICATED_HEADLESS
+
+func is_player_host() -> bool:
+	return server_mode == SERVER_MODE_PLAYER_HOST
 
 func has_spawned_process() -> bool:
 	return process_id > 0
@@ -212,6 +374,7 @@ func has_reconnect_timed_out(now_unix: int = -1) -> bool:
 func clear_process_tracking() -> void:
 	process_id = 0
 	launch_config_path = ""
+	status_file_path = ""
 
 func to_match_info(session_id: String = "") -> Dictionary:
 	var match_info := {
@@ -219,11 +382,17 @@ func to_match_info(session_id: String = "") -> Dictionary:
 		"room_id": room_id,
 		"server_ip": server_ip,
 		"match_port": match_port,
+		"match_websocket_url": match_websocket_url,
 		"player_index": get_player_index(session_id) if not session_id.is_empty() else -1,
 		"player_names": get_public_player_names(),
+		"rank_badges": get_public_rank_badges(),
+		"bot_player_stars": get_public_bot_player_stars(),
+		"has_bot": get_human_player_count() < player_session_ids.size(),
+		"is_bot_self_play": is_bot_self_play(),
 		"status": status,
 		"server_mode": server_mode,
 		"is_ranked": is_ranked,
+		"series": get_series_snapshot(),
 	}
 	if not session_id.is_empty():
 		var selected_deck := _get_player_deck(session_id)
@@ -232,15 +401,67 @@ func to_match_info(session_id: String = "") -> Dictionary:
 		match_info["reconnect_deadline_unix"] = get_reconnect_deadline_for_session(session_id)
 		match_info["selected_deck_name"] = str(selected_deck.get("deck_name", ""))
 		match_info["selected_deck_cards"] = selected_deck.get("cards", {})
+		match_info["selected_deck_reinforcements"] = selected_deck.get("reinforcements", {})
+		match_info["selected_deck_special_setup"] = selected_deck.get("special_setup", {})
 	match_info["reconnect_window_seconds"] = reconnect_window_seconds
 	match_info["waiting_for_reconnect"] = is_waiting_for_reconnect()
+	_apply_player_host_match_info(match_info, session_id)
 	return match_info
+
+## For SERVER_MODE_PLAYER_HOST, override server_ip/match_port per recipient:
+## the host binds locally (no remote endpoint), while the opponent and any
+## spectators are pointed at the host's UPnP-mapped public endpoint. Also emit
+## is_match_host so the host client knows to launch authoritatively. The host
+## additionally receives the full roster (session ids, tokens, identities, decks)
+## so its local MatchSession can authenticate the opponent's join and resolve
+## the right per-player state.
+func _apply_player_host_match_info(match_info: Dictionary, session_id: String) -> void:
+	if not is_player_host():
+		return
+	var is_recipient_host := not session_id.is_empty() and session_id == host_session_id
+	match_info["is_match_host"] = is_recipient_host
+	match_info["host_session_id"] = host_session_id
+	match_info["host_bind_port"] = host_bind_port
+	match_info["host_reachable_ip"] = host_reachable_ip
+	match_info["host_reachable_port"] = host_reachable_port
+	if is_recipient_host:
+		# The host binds its own port; it does not connect to a remote endpoint.
+		match_info["server_ip"] = "127.0.0.1"
+		match_info["match_port"] = host_bind_port
+		_apply_host_roster(match_info)
+	elif host_reachable_ip != "" and host_reachable_port > 0:
+		match_info["server_ip"] = host_reachable_ip
+		match_info["match_port"] = host_reachable_port
+
+## Host-private roster: every player's session id, match token, identity, and
+## submitted deck. Lets the host client rebuild a MatchSession capable of
+## authenticating joins and seeding both Player objects.
+func _apply_host_roster(match_info: Dictionary) -> void:
+	var roster: Array = []
+	for player_session_id in player_session_ids:
+		var resolved_session_id := str(player_session_id).strip_edges()
+		if resolved_session_id.is_empty():
+			continue
+		var deck := _get_player_deck(resolved_session_id)
+		roster.append({
+			"session_id": resolved_session_id,
+			"match_token": get_match_token(resolved_session_id),
+			"identity": get_player_identity(resolved_session_id),
+			"deck_name": str(deck.get("deck_name", "")),
+			"cards": deck.get("cards", {}),
+			"reinforcements": deck.get("reinforcements", {}),
+			"special_setup": deck.get("special_setup", {}),
+		})
+	match_info["host_roster"] = roster
 
 func to_spectator_match_info(observer_session_id: String = "") -> Dictionary:
 	var match_info := to_match_info("")
 	match_info["observer_mode"] = true
 	match_info["player_index"] = -1
-	match_info["observer_session_id"] = observer_session_id.strip_edges()
+	match_info["is_bot_self_play"] = is_bot_self_play()
+	var resolved_observer_session_id := observer_session_id.strip_edges()
+	match_info["observer_session_id"] = resolved_observer_session_id
+	match_info["observer_match_token"] = get_spectator_match_token(resolved_observer_session_id)
 	return match_info
 
 func to_launch_config() -> Dictionary:
@@ -249,15 +470,30 @@ func to_launch_config() -> Dictionary:
 		"room_id": room_id,
 		"server_ip": server_ip,
 		"match_port": match_port,
+		"match_websocket_url": match_websocket_url,
 		"player_session_ids": player_session_ids.duplicate(),
 		"status": status,
 		"server_mode": server_mode,
 		"is_ranked": is_ranked,
 		"reconnect_window_seconds": reconnect_window_seconds,
+		"created_unix": created_unix,
+		"status_file_path": status_file_path,
+		"supervisor_heartbeat_path": supervisor_heartbeat_path,
 		"player_match_tokens": player_match_tokens.duplicate(true),
 		"player_decks_by_session": player_decks_by_session.duplicate(true),
 		"player_identity_by_session": player_identity_by_session.duplicate(true),
+		"series_best_of": series_best_of,
+		"games_to_win": games_to_win,
+		"series_game_number": series_game_number,
+		"series_wins_by_session": series_wins_by_session.duplicate(true),
+		"registered_player_decks_by_session": registered_player_decks_by_session.duplicate(true),
+		"reinforcement_ready_by_session": reinforcement_ready_by_session.duplicate(true),
 		"spectator_visible_player_indices_by_session": spectator_visible_player_indices_by_session.duplicate(true),
+		"spectator_match_tokens_by_session": spectator_match_tokens_by_session.duplicate(true),
+		"host_session_id": host_session_id,
+		"host_reachable_ip": host_reachable_ip,
+		"host_reachable_port": host_reachable_port,
+		"host_bind_port": host_bind_port,
 	}
 
 func mark_process_launched(p_process_id: int, p_launch_config_path: String) -> void:
@@ -282,16 +518,92 @@ static func from_launch_config(config: Dictionary) -> MatchSession:
 		_to_dictionary(config.get("player_identity_by_session", {}))
 	)
 	session.status = str(config.get("status", STATUS_STARTING))
+	session.match_websocket_url = str(config.get("match_websocket_url", "")).strip_edges()
 	session.server_mode = str(config.get("server_mode", SERVER_MODE_IN_PROCESS_HOST))
 	session.is_ranked = bool(config.get("is_ranked", true))
 	session.reconnect_window_seconds = int(config.get("reconnect_window_seconds", 90))
+	session.created_unix = int(config.get("created_unix", session.created_unix))
+	session.configure_series_format(int(config.get("series_best_of", 1)))
+	session.series_game_number = int(config.get("series_game_number", 1))
+	session.series_wins_by_session = _to_dictionary(config.get("series_wins_by_session", {}))
+	session.registered_player_decks_by_session = _to_dictionary(
+		config.get("registered_player_decks_by_session", session.player_decks_by_session)
+	)
+	session.reinforcement_ready_by_session = _to_dictionary(config.get("reinforcement_ready_by_session", {}))
+	session.status_file_path = str(config.get("status_file_path", "")).strip_edges()
+	session.supervisor_heartbeat_path = str(config.get("supervisor_heartbeat_path", "")).strip_edges()
+	session.launch_config_path = str(config.get("_launch_config_path", "")).strip_edges()
 	var configured_tokens = config.get("player_match_tokens", {})
 	if configured_tokens is Dictionary:
 		session.player_match_tokens = (configured_tokens as Dictionary).duplicate(true)
 	var configured_spectator_visibility = config.get("spectator_visible_player_indices_by_session", {})
 	if configured_spectator_visibility is Dictionary:
 		session.spectator_visible_player_indices_by_session = (configured_spectator_visibility as Dictionary).duplicate(true)
+	var configured_spectator_tokens = config.get("spectator_match_tokens_by_session", {})
+	if configured_spectator_tokens is Dictionary:
+		session.spectator_match_tokens_by_session = (configured_spectator_tokens as Dictionary).duplicate(true)
 	session._ensure_player_match_tokens()
+	session._ensure_series_state()
+	session.host_session_id = str(config.get("host_session_id", "")).strip_edges()
+	session.host_reachable_ip = str(config.get("host_reachable_ip", "")).strip_edges()
+	session.host_reachable_port = int(config.get("host_reachable_port", 0))
+	session.host_bind_port = int(config.get("host_bind_port", 0))
+	return session
+
+## Reconstruct a MatchSession on the host client from the lobby-provided
+## match_info payload. The host needs the full roster (player session IDs,
+## match tokens, identities, decks) for the authenticated join path
+## (HeadlessMatchHost._on_match_join_requested -> authenticate_join) to validate
+## the opponent and seed both Player objects. The roster is carried in
+## match_info["host_roster"] (host-private; only emitted to the host recipient).
+static func from_match_info(match_info: Dictionary) -> MatchSession:
+	if match_info.is_empty():
+		return null
+	var resolved_match_id := str(match_info.get("match_id", "")).strip_edges()
+	var resolved_room_id := str(match_info.get("room_id", "")).strip_edges()
+	var roster_value = match_info.get("host_roster", [])
+	var roster: Array = roster_value if roster_value is Array else []
+	var resolved_player_session_ids: Array[String] = []
+	var decks_by_session: Dictionary = {}
+	var identity_by_session: Dictionary = {}
+	var tokens_by_session: Dictionary = {}
+	for entry in roster:
+		if not (entry is Dictionary):
+			continue
+		var resolved_session_id := str((entry as Dictionary).get("session_id", "")).strip_edges()
+		if resolved_session_id.is_empty() or resolved_player_session_ids.has(resolved_session_id):
+			continue
+		resolved_player_session_ids.append(resolved_session_id)
+		decks_by_session[resolved_session_id] = {
+			"deck_name": str((entry as Dictionary).get("deck_name", "")),
+			"cards": (entry as Dictionary).get("cards", {}),
+			"reinforcements": (entry as Dictionary).get("reinforcements", {}),
+			"special_setup": (entry as Dictionary).get("special_setup", {}),
+		}
+		identity_by_session[resolved_session_id] = (entry as Dictionary).get("identity", {})
+		var token := str((entry as Dictionary).get("match_token", "")).strip_edges()
+		if not token.is_empty():
+			tokens_by_session[resolved_session_id] = token
+	var session := MatchSession.new(
+		resolved_match_id,
+		resolved_room_id,
+		str(match_info.get("server_ip", "127.0.0.1")),
+		int(match_info.get("match_port", 12345)),
+		resolved_player_session_ids,
+		decks_by_session,
+		identity_by_session
+	)
+	session.status = str(match_info.get("status", STATUS_ACTIVE))
+	session.server_mode = str(match_info.get("server_mode", SERVER_MODE_IN_PROCESS_HOST))
+	session.is_ranked = bool(match_info.get("is_ranked", true))
+	session.host_session_id = str(match_info.get("host_session_id", "")).strip_edges()
+	session.host_reachable_ip = str(match_info.get("host_reachable_ip", "")).strip_edges()
+	session.host_reachable_port = int(match_info.get("host_reachable_port", 0))
+	session.host_bind_port = int(match_info.get("host_bind_port", int(match_info.get("match_port", 12345))))
+	for resolved_session_id in tokens_by_session.keys():
+		session.player_match_tokens[resolved_session_id] = tokens_by_session[resolved_session_id]
+	session._ensure_player_match_tokens()
+	session._ensure_series_state()
 	return session
 
 static func _to_string_array(value) -> Array[String]:
@@ -319,14 +631,28 @@ func _ensure_player_match_tokens() -> void:
 			continue
 		player_match_tokens[session_id] = _generate_token(20)
 
+func _ensure_series_state() -> void:
+	configure_series_format(series_best_of)
+	if registered_player_decks_by_session.is_empty():
+		registered_player_decks_by_session = player_decks_by_session.duplicate(true)
+	for session_id in player_session_ids:
+		if not series_wins_by_session.has(session_id):
+			series_wins_by_session[session_id] = 0
+
 func _generate_token(length: int) -> String:
 	const CHARS := "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+	var crypto := Crypto.new()
+	var random_bytes := crypto.generate_random_bytes(length)
+	if random_bytes.size() != length:
+		return ""
 	var output := ""
-	for _i in length:
-		output += CHARS[_rng.randi_range(0, CHARS.length() - 1)]
+	for random_byte in random_bytes:
+		output += CHARS[int(random_byte) % CHARS.length()]
 	return output
 
 func _refresh_reconnect_deadline() -> void:
 	reconnect_deadline_unix = 0
 	for session_id in disconnected_sessions.keys():
-		reconnect_deadline_unix = maxi(reconnect_deadline_unix, int(disconnected_sessions[session_id]))
+		var session_deadline := int(disconnected_sessions[session_id])
+		if reconnect_deadline_unix == 0 or session_deadline < reconnect_deadline_unix:
+			reconnect_deadline_unix = session_deadline

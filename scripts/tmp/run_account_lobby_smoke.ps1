@@ -41,9 +41,11 @@ function Invoke-SmokePass {
         [int]$MatchPort,
         [string]$HostAuthMode,
         [string]$HostName,
+        [string]$HostEmail,
         [string]$HostPassword,
         [string]$ClientAuthMode,
         [string]$ClientName,
+        [string]$ClientEmail,
         [string]$ClientPassword
     )
 
@@ -72,6 +74,7 @@ function Invoke-SmokePass {
         'smoke_role=host',
         'smoke_ip=127.0.0.1',
         ('smoke_name=' + $HostName),
+        ('smoke_email=' + $HostEmail),
         ('smoke_auth_mode=' + $HostAuthMode),
         ('smoke_password=' + $HostPassword),
         ('smoke_lobby_port=' + $LobbyPort),
@@ -93,6 +96,7 @@ function Invoke-SmokePass {
         'smoke_role=client',
         'smoke_ip=127.0.0.1',
         ('smoke_name=' + $ClientName),
+        ('smoke_email=' + $ClientEmail),
         ('smoke_auth_mode=' + $ClientAuthMode),
         ('smoke_password=' + $ClientPassword),
         ('smoke_lobby_port=' + $LobbyPort),
@@ -157,6 +161,8 @@ function Invoke-SmokePass {
 $uniqueSuffix = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds().ToString()
 $hostUsername = "SmokeHost_" + $uniqueSuffix
 $clientUsername = "SmokeClient_" + $uniqueSuffix
+$hostEmail = ($hostUsername.ToLowerInvariant() + '@smoke.othergods.test')
+$clientEmail = ($clientUsername.ToLowerInvariant() + '@smoke.othergods.test')
 $hostPassword = "SmokePass123"
 $clientPassword = "SmokePass456"
 
@@ -166,9 +172,11 @@ $registerPass = Invoke-SmokePass `
     -MatchPort 12545 `
     -HostAuthMode 'register' `
     -HostName $hostUsername `
+    -HostEmail $hostEmail `
     -HostPassword $hostPassword `
     -ClientAuthMode 'register' `
     -ClientName $clientUsername `
+    -ClientEmail $clientEmail `
     -ClientPassword $clientPassword
 
 $loginPass = Invoke-SmokePass `
@@ -177,9 +185,11 @@ $loginPass = Invoke-SmokePass `
     -MatchPort 12645 `
     -HostAuthMode 'login' `
     -HostName $hostUsername `
+    -HostEmail $hostEmail `
     -HostPassword $hostPassword `
     -ClientAuthMode 'login' `
     -ClientName $clientUsername `
+    -ClientEmail $clientEmail `
     -ClientPassword $clientPassword
 
 foreach ($result in @($registerPass, $loginPass)) {

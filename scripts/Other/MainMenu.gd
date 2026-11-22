@@ -5,6 +5,8 @@ const LobbyServerScript = preload("res://scripts/server/LobbyServer.gd")
 const AccountStoreScript = preload("res://scripts/server/AccountStore.gd")
 const LobbyClientScript = preload("res://scripts/client/LobbyClient.gd")
 const AppReleaseInfoScript = preload("res://scripts/client/AppReleaseInfo.gd")
+const MacOSSelfUpdaterScript = preload("res://scripts/client/MacOSSelfUpdater.gd")
+const AndroidSelfUpdaterScript = preload("res://scripts/client/AndroidSelfUpdater.gd")
 const DeckCatalogUtilsScript = preload("res://scripts/core/DeckCatalogUtils.gd")
 const LocalProfileStoreScript = preload("res://scripts/core/LocalProfileStore.gd")
 const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
@@ -12,32 +14,121 @@ const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
 const PracticeAutofillDeckFactoryScript = preload("res://scripts/server/PracticeAutofillDeckFactory.gd")
 const PracticeFuzzPlayerBotScript = preload("res://scripts/bots/PracticeFuzzPlayerBot.gd")
 const BotGameInputScript = preload("res://scripts/bots/BotGameInput.gd")
+const HostHuntingTacticsBotScript = preload("res://scripts/bots/HostHuntingTacticsBot.gd")
+const NetworkClientSmokeBotScript = preload("res://scripts/bots/NetworkClientSmokeBot.gd")
+const LoadingBarScript = preload("res://scripts/ui/LoadingBar.gd")
+const MatchLoadingHintsScript = preload("res://scripts/ui/MatchLoadingHints.gd")
+const SmallScreenPlayViewScript = preload("res://scripts/ui/SmallScreenPlayView.gd")
+const UIFontScript = preload("res://scripts/ui/UIFont.gd")
+const GameSettingsTabsScript = preload("res://scripts/ui/GameSettingsTabs.gd")
+const AudioSettingsScript = preload("res://scripts/core/AudioSettings.gd")
+const UIHoverSfxScript = preload("res://scripts/core/UIHoverSfx.gd")
 const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
+const RankedLadderViewScript = preload("res://scripts/ui/RankedLadderView.gd")
+const RankBadgeCatalog = preload("res://scripts/core/RankBadgeCatalog.gd")
+const RankBadgePickerScript = preload("res://scripts/ui/RankBadgePicker.gd")
+const BotLadderViewScript = preload("res://scripts/ui/BotLadderView.gd")
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
+const MatchSupervisorScript = preload("res://scripts/server/MatchSupervisor.gd")
+const RankedProgressionScript = preload("res://scripts/server/RankedProgression.gd")
+const MatchRankOutline = preload("res://scripts/ui/MatchRankOutline.gd")
+const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
+const ServerPathsScript = preload("res://scripts/server/ServerPaths.gd")
 const LobbyRoomScript = preload("res://scripts/server/LobbyRoom.gd")
+const HostReachabilityProbeScript = preload("res://scripts/network/HostReachabilityProbe.gd")
+const PunchReflectorScript = preload("res://scripts/network/PunchReflector.gd")
 const STARTUP_SPLASH_IMAGE_PATH := "res://images/ui/splash/other_gods_splash.png"
-const STARTUP_MUSIC_PATH := "res://audio/relaxingtime-relaxing-music-119247.mp3"
+const STARTUP_SPLASH_SLICE_COUNT := 14
+const STARTUP_SPLASH_SLIDE_SECONDS := 1.15
+const STARTUP_SPLASH_SLICE_STAGGER_SECONDS := 0.045
+const STARTUP_LOADING_FADE_SECONDS := 0.22
+const STARTUP_SPLASH_SETTLE_TIMEOUT_SECONDS := 4.0
+const STARTUP_MUSIC_PATH := "res://audio/if-they-had-hearts.mp3"
+const STARTUP_MUSIC_CLASSIC_PATH := "res://audio/relaxingtime-relaxing-music-119247.mp3"
 const USER_SETTINGS_PATH := "user://settings.cfg"
 const AUDIO_SETTINGS_SECTION := "audio"
 const MUSIC_MUTED_KEY := "music_muted"
+const ALL_SOUND_MUTED_KEY := "all_sound_muted"
+const STARTUP_MUSIC_TRACK_KEY := "startup_music_track"
+const STARTUP_MUSIC_TRACK_IF_THEY_HAD_HEARTS := "if_they_had_hearts"
+const STARTUP_MUSIC_TRACK_RELAXING_TIME := "relaxing_time"
+const DEFAULT_STARTUP_MUSIC_TRACK := STARTUP_MUSIC_TRACK_IF_THEY_HAD_HEARTS
 const PRACTICE_THOR_SCENE_PATH := "res://scenes/practice_thor_game.tscn"
+const STORY_STEP_ONE_SCENE_PATH := "res://scenes/story_step_one.tscn"
+const POPUP_BOOK_SCENE_PATH := "res://scenes/popup_book_board.tscn"
 const DEDICATED_LOBBY_ENTRY_SCRIPT_PATH := "res://scripts/server/DedicatedLobbyServerMain.gd"
 const DEDICATED_SERVER_EXPORT_RELATIVE_PATH := "res://.exports/server/OtherGodsServer.exe"
 const DEFAULT_LOBBY_HOST_SETTING := "application/config/default_lobby_host"
 const DEFAULT_LOBBY_HOST := ""
+const SNOWSTORM_CONTROL_GROUP := "other_gods_snowstorm_control"
 const RULES_DOC_PATH := "res://docs/new-player-rules.md"
 const AUTH_MODE_GUEST := "guest"
 const AUTH_MODE_LOGIN := "login"
 const AUTH_MODE_REGISTER := "register"
+const AUTH_MODE_CLAIM_LEGACY := "claim_legacy_account"
+const GUEST_USERNAME_PREFIX := "guest#"
+const GUEST_ACCOUNT_PROMPT := "Make an account to save decks across instances."
+const ACCOUNT_SETTINGS_SECTION_TITLE := "Account"
 const SEEK_AUTO_REFRESH_INTERVAL_SECONDS := 3.0
+# Debug-only roster refresh cadence for the connected lobby.
+const PLAYERS_ONLINE_REFRESH_INTERVAL_SECONDS := 5.0
 const FRESH_LOBBY_RECONNECT_DELAY_SECONDS := 0.6
+const LOBBY_SIGN_IN_WATCHDOG_SECONDS := 12.0
+# NAT hole punching for spectating client-hosted bot challenges. Quick bounces
+# while an endpoint is still undiscovered; slow keepalives once it is known.
+const SPECTATE_PUNCH_BOUNCE_INTERVAL_MSEC := 1000
+const SPECTATE_PUNCH_KEEPALIVE_INTERVAL_MSEC := 10000
+const SPECTATE_PUNCH_SUBMIT_INTERVAL_MSEC := 1500
+const SPECTATE_PUNCH_SUBMIT_ATTEMPTS := 6
+const MATCH_PUNCH_WATCH_BOUNCE_INTERVAL_MSEC := 1500
+const MATCH_PUNCH_WATCH_REPORT_INTERVAL_MSEC := 2500
 const ACTIVE_MATCH_AUTO_RESUME_SUPPRESS_SECONDS := 10.0
-const STARTUP_MENU_FADE_SECONDS := 3.0
+const LEGACY_JOIN_WHILE_IN_ROOM_ERROR := "Leave your current room before joining a new one."
+const STARTUP_MENU_FADE_SECONDS := 0.25
+const MENU_CARD_CACHE_BATCH_SIZE := 24
+const UPDATE_CHECK_TIMEOUT_SECONDS := 15.0
+const UPDATE_CHECK_RETRY_DELAY_SECONDS := 1.0
+const UPDATE_CHECK_MAX_ATTEMPTS := 2
+const UPDATE_DOWNLOAD_RETRY_DELAY_SECONDS := 2.0
+const UPDATE_DOWNLOAD_MAX_ATTEMPTS := 3
+const UPDATE_DOWNLOAD_MINIMUM_FREE_MARGIN_BYTES := 268435456
+const WINDOWS_CURL_POLL_SECONDS := 0.25
+const UPDATE_CLEANUP_RETRY_DELAY_SECONDS := 0.5
+const UPDATE_CLEANUP_MAX_ATTEMPTS := 10
+const UPDATE_LOG_PATH := "user://update.log"
+const UPDATE_FAILURE_MARKER_PATH := "user://update_failure.txt"
+const WINDOWS_NATIVE_UPDATER_HANDSHAKE_SECONDS := 10.0
+const BYTES_PER_MIB := 1048576.0
+const MENU_PRIMARY_BUTTON_FONT_SIZE := 32
+const MENU_PRIMARY_BUTTON_MIN_WIDTH := 420.0
+const MENU_PRIMARY_BUTTON_MIN_HEIGHT := 68.0
+const MENU_VIEWPORT_MARGIN := 24.0
+const MENU_BUTTON_FONT_SIZE := 24
+const MENU_BUTTON_MIN_HEIGHT := 52.0
+const MENU_TEXT_FONT_SIZE := 20
+const MENU_INPUT_FONT_SIZE := 20
+const MENU_INPUT_MIN_HEIGHT := 44.0
+const MENU_USERNAME_FONT_SIZE := 32
+const MENU_ACCOUNT_IDENTITY_FONT_SIZE := 20
+const LOCAL_BOT_MATCH_MIN_AVAILABLE_BYTES := 2 * 1024 * 1024 * 1024
+const LOCAL_BOT_MATCH_MEMORY_PER_WORKER := 1024 * 1024 * 1024
+const LOCAL_BOT_MATCH_RESERVED_CORES := 3
+const LOCAL_BOT_MATCH_CORES_PER_WORKER := 2
+const LOCAL_BOT_MATCH_MAX_WORKERS := 6
+const LOCAL_BOT_MATCH_LEASE_REFRESH_SECONDS := 25.0
+const AUTH_TITLE_FONT_SIZE := 28
+const AUTH_BODY_FONT_SIZE := 18
+const AUTH_CONTROL_FONT_SIZE := 18
+const AUTH_BUTTON_FONT_SIZE := MENU_PRIMARY_BUTTON_FONT_SIZE
+const AUTH_FIELD_MIN_HEIGHT := 42.0
+const AUTH_BUTTON_MIN_HEIGHT := MENU_PRIMARY_BUTTON_MIN_HEIGHT
 
 @onready var menu_container = $MenuContainer
 @onready var game_container = $GameContainer
 @onready var title_label = $MenuContainer/TitleLabel
 @onready var rules_button = $MenuContainer/RulesButton
+@onready var tutorial_button = $MenuContainer/TutorialButton
+@onready var story_button = $MenuContainer/StoryButton
 @onready var multiplayer_container = $MenuContainer/MultiplayerContainer
 @onready var multiplayer_button = $MenuContainer/MultiplayerButton
 @onready var multiplayer_back_button = $MenuContainer/MultiplayerContainer/MultiplayerHeaderRow/BackButton
@@ -49,6 +140,7 @@ const STARTUP_MENU_FADE_SECONDS := 3.0
 @onready var create_seek_button = $MenuContainer/MultiplayerContainer/CreateSeekButton
 @onready var seek_list = $MenuContainer/MultiplayerContainer/SeekList
 @onready var leave_seek_button = $MenuContainer/MultiplayerContainer/LeaveSeekButton
+@onready var leave_match_button = $MenuContainer/MultiplayerContainer/LeaveMatchButton
 @onready var room_code_line_edit = $MenuContainer/MultiplayerContainer/RoomCodeLineEdit
 @onready var connect_button = $MenuContainer/MultiplayerContainer/MultiplayerHeaderRow/ConnectButton
 @onready var ready_button = $MenuContainer/MultiplayerContainer/ReadyButton
@@ -56,22 +148,103 @@ const STARTUP_MENU_FADE_SECONDS := 3.0
 
 var _smoke_config: Dictionary = {}
 var _smoke_finished: bool = false
+# True while a hunting_tactics_host/client two-process smoke is driving a match.
+# Gates the post-launch bot-attachment phase and the smoke-mode deck fallback.
+var _hunting_tactics_smoke_active: bool = false
+var _hunting_tactics_bot_attached: bool = false
 var lobby_server: LobbyServer = null
 var lobby_client: LobbyClient = null
 var _current_room_snapshot: Dictionary = {}
 var _open_seek_rooms: Array[Dictionary] = []
+var _bot_match_live: Array = []
+var _seek_action_row: HBoxContainer
+var _bot_league_section: VBoxContainer
+var _ladder_button: Button
+var _quarantined_bots_button: Button
+var _host_bot_match_button: Button
+var _host_bo3_bot_matches_button: Button
+var _host_top_50_bot_matches_button: Button
+var _host_another_bot_match_button: Button
+var _stop_hosting_bot_matches_button: Button
+var _host_own_bot_button: Button
+var _host_bot_gauntlet_button: Button
+var _custom_bot_ids_pending: Array[String] = []
+# Debug controls for the bot league feature (debug builds only).
+var _seed_bot_league_button: Button
+var _finalize_bot_league_button: Button
+var _status_bot_league_button: Button
+var _run_league_round_robin_button: Button
+var _clear_league_bots_button: Button
+var _rebuild_league_records_button: Button
+var _dump_bot_deck_results_button: Button
+var _host_bot_gauntlet_id := ""
+var _host_bot_gauntlet_remaining := 0
+var _host_bot_gauntlet_opponents: Dictionary = {}
+var _my_bot_entries: Array = []
+var _my_bot_dialog: AcceptDialog
+var _my_bot_option: OptionButton
+var _choose_bot_gauntlet := false
+var _bot_match_hosting_enabled := false
+var _top_50_bot_hosting := false
+# True while volunteer bot-match hosting runs best-of-three series with bot
+# sidedecking instead of single games.
+var _bo3_bot_hosting := false
+# True while the default "host one bot match on sign in" mode is active. It
+# keeps exactly one bot match running and recurs when it finishes, but gives way
+# whenever the player needs the space to play or spectate.
+var _default_bot_hosting := false
+var _pending_local_bot_match_modes: Array[bool] = []
+# Series format (1 or 3) for each pending volunteer request, parallel to
+# _pending_local_bot_match_modes.
+var _pending_local_bot_match_best_of: Array[int] = []
+var _local_bot_match_workers: Dictionary = {}
+var _local_bot_match_supervisor: MatchSupervisor
+var _local_bot_match_lease_timer: Timer
+var _watch_next_local_bot_match_pending: bool = false
+var _local_bot_match_submitting: Dictionary = {}
+var _local_bot_spectate_probe_thread: Thread = null
+var _local_bot_spectate_match_id: String = ""
+var _local_bot_spectate_bind_port: int = 0
+var _local_bot_spectate_external_port: int = 0
+var _local_bot_spectate_client_id: int = 0
+var _local_bot_spectate_session_id: String = ""
+var _local_bot_spectate_punch: Dictionary = {}
+var _match_punch_watch: Dictionary = {}
+# Print each skipped host-punch reason once per observer instead of spamming
+# the console on every one-second lobby relay.
+var _spectator_punch_skip_printed: Dictionary = {}
+var _pending_spectator_approvals: Dictionary = {}
+var _bot_match_retry_timer: Timer
+var _continuous_bot_match_ids: Dictionary = {}
 var _lobby_session_id: String = ""
 var _lobby_reconnect_token: String = ""
 var _pending_join_room_code: String = ""
 var _pending_join_room_id: String = ""
+var _pending_rejoin_room_id: String = ""
+var _manual_rejoin_room_id: String = ""
 var _pending_observe_room_id: String = ""
+var _observe_room_in_flight: String = ""
+var _observe_auth_retry_used: bool = false
+var _pending_seek_switch_join_room_id: String = ""
 var _pending_rematch_room_id: String = ""
 var _pending_rematch_ready_submitted: bool = false
+var _pending_leave_room_id: String = ""
 var _current_lobby_ip: String = ""
 var _is_local_lobby_host: bool = false
 var _match_launch_queued: bool = false
+## True while the lobby client is silently retrying a dropped session with its
+## reconnect token; used to word the final failure message once attempts end.
+var _lobby_auto_reconnect_was_active: bool = false
+## External port mapped via UPnP for the currently-running player-hosted match,
+## if any. Tracked so the mapping can be removed when the host match ends. 0 when
+## not hosting or when UPnP was not used.
+var _player_host_external_port: int = 0
+var _host_viability_probe_thread: Thread = null
+var _host_viability_probe_client_id: int = 0
+var _host_viability_probe_session_id: String = ""
 var _pending_host_room_creation: bool = false
 var _pending_room_is_ranked: bool = true
+var _pending_room_best_of: int = 1
 var _pending_local_lobby_launch_on_connect_failure: bool = false
 var _spawned_lobby_process_id: int = 0
 var _dedicated_lobby_connect_attempts_remaining: int = 0
@@ -79,6 +252,9 @@ var _local_profile_store = null
 var _local_profile_id: String = ""
 var _selected_multiplayer_deck_id: String = ""
 var _multiplayer_deck_entries: Array[Dictionary] = []
+var _multiplayer_screen_hidden_menu_controls: Array[Control] = []
+var _multiplayer_deck_change_button: Button = null
+var _deck_popup_anchor_button: Button = null
 var _deck_validator = DeckValidatorScript.new()
 var _last_submitted_lobby_room_id: String = ""
 var _last_submitted_lobby_deck_id: String = ""
@@ -87,18 +263,49 @@ var _auth_mode_option: OptionButton = null
 var _password_line_edit: LineEdit = null
 var _switch_account_button: Button = null
 var _resume_match_button: Button = null
+var _active_match_rejoin_dialog: ConfirmationDialog = null
+var _pending_active_match_rejoin_info: Dictionary = {}
 var _create_unranked_seek_button: Button = null
+var _create_bo3_ranked_seek_button: Button = null
+var _create_bo3_unranked_seek_button: Button = null
 var _profile_summary_panel: PanelContainer = null
 var _profile_summary_label: Label = null
+var _rank_badge_buttons: Dictionary[int, Button] = {}
+var _rank_badge_picker: RankBadgePickerScript
 var _current_profile_summary: Dictionary = {}
-var _profile_summary_expanded: bool = false
+var _ranked_ladder_button: Button = null
+var _ranked_ladder_view: RankedLadderViewScript = null
+var _bot_ladder_view: BotLadderViewScript = null
+var _bot_ladder_request_serial: int = 0
+var _recent_activity_panel: PanelContainer = null
+var _recent_activity_rows: VBoxContainer = null
+var _recent_activity_timer: Timer = null
 var _account_decks_cache: Array[Dictionary] = []
 var _auth_onboarding_overlay: Control = null
 var _auth_onboarding_selected_mode: String = AUTH_MODE_LOGIN
+var _auth_onboarding_action_button_column: VBoxContainer = null
+var _auth_onboarding_login_mode_button: Button = null
+var _auth_onboarding_register_mode_button: Button = null
+var _auth_onboarding_claim_mode_button: Button = null
+var _auth_onboarding_guest_button: Button = null
 var _auth_onboarding_mode_hint_label: Label = null
 var _auth_onboarding_username_edit: LineEdit = null
+var _auth_onboarding_public_username_edit: LineEdit = null
 var _auth_onboarding_password_edit: LineEdit = null
+var _auth_onboarding_auto_login_toggle: CheckButton = null
+var _auth_onboarding_save_password_toggle: CheckButton = null
+var _auth_onboarding_game_updates_toggle: CheckButton = null
 var _auth_onboarding_continue_button: Button = null
+var _settings_button: Button = null
+var _settings_overlay: Control = null
+var _settings_music_mute_toggle: CheckButton = null
+var _settings_account_status_label: Label = null
+var _settings_auto_login_toggle: CheckButton = null
+var _settings_save_password_toggle: CheckButton = null
+var _settings_account_updates_toggle: CheckButton = null
+var _settings_current_password_edit: LineEdit = null
+var _settings_new_email_edit: LineEdit = null
+var _settings_new_password_edit: LineEdit = null
 var _report_bug_button: Button = null
 var _bug_report_overlay: Control = null
 var _bug_report_expected_edit: TextEdit = null
@@ -106,7 +313,10 @@ var _bug_report_actual_edit: TextEdit = null
 var _suppressed_active_match_id: String = ""
 var _suppressed_active_match_room_id: String = ""
 var _suppress_active_match_resume_until_msec: int = 0
+var _declined_active_match_rejoin_id: String = ""
+var _declined_active_match_rejoin_room_id: String = ""
 var _bug_report_status_label: Label = null
+var _bug_report_submit_button: Button = null
 var _bug_report_screenshot_label: Label = null
 var _bug_report_screenshot_preview: TextureRect = null
 var _bug_report_file_dialog: FileDialog = null
@@ -115,24 +325,98 @@ var _account_identity_label: Label = null
 var _logged_in_account_username: String = ""
 var _selected_auth_mode: String = AUTH_MODE_LOGIN
 var _selected_account_username: String = ""
+var _selected_account_public_username: String = ""
+var _selected_account_accepts_game_updates: bool = false
 var _selected_account_password: String = ""
+var _password_recovery_dialog: AcceptDialog = null
+var _password_recovery_email: LineEdit = null
+var _password_recovery_token: LineEdit = null
+var _password_recovery_password: LineEdit = null
+var _password_recovery_confirm: LineEdit = null
+var _password_recovery_status: Label = null
+var _password_recovery_send: Button = null
+var _password_recovery_submit: Button = null
+var _password_recovery_busy: bool = false
+var _startup_autologin_pending: bool = false
+var _startup_autologin_in_progress: bool = false
+var _background_lobby_auth_error: String = ""
+var _pending_background_lobby_auth_completion: Callable = Callable()
 var _account_switch_pending: bool = false
 var _account_switch_retry_attempts: int = 0
 var _authenticated_lobby_connect_serial: int = 0
+var _lobby_suspended_for_practice: bool = false
+var _lobby_sign_in_watchdog_serial: int = 0
 var _update_check_request: HTTPRequest = null
 var _update_prompt_overlay: Control = null
 var _pending_update_release_version: String = ""
 var _pending_update_release_url: String = AppReleaseInfoScript.RELEASES_PAGE_URL
 var _pending_update_download_url: String = ""
+var _pending_update_download_size: int = 0
+var _pending_update_download_sha256: String = ""
+var _pending_update_download_sha256_url: String = ""
+var _update_checksum_request: HTTPRequest = null
 var _update_download_request: HTTPRequest = null
+var _update_download_attempt: int = 0
+var _update_curl_process_id: int = 0
+var _update_curl_download_path: String = ""
+var _update_curl_fallback_started: bool = false
 var _update_now_button: Button = null
+var _update_open_button: Button = null
+var _update_support_button: Button = null
+var _update_button_row: HBoxContainer = null
 var _update_download_status_label: Label = null
 var _is_auto_updating: bool = false
+var _android_updater = AndroidSelfUpdaterScript.new()
+var _android_install_permission_pending: bool = false
+var _deferred_required_update: Dictionary = {}
 var _automatic_update_required: bool = false
+var _update_uses_startup_loading_bar: bool = false
+var _server_version_update_check_requested: bool = false
+var _lobby_failure_update_check_requested: bool = false
+var _update_check_in_flight: bool = false
+var _update_check_attempt: int = 0
+var _update_check_retry_serial: int = 0
+var _update_check_no_update_status: String = ""
+var _update_check_failure_status: String = ""
+var _last_logged_update_percent: int = -10
 var _startup_prompt_gate_open: bool = false
 var _rules_overlay: Control = null
+var _rules_overlay_focus_button: Button = null
+var _tutorial_lessons: Array[Dictionary] = []
+var _tutorial_lesson_index: int = 0
+var _tutorial_step_index: int = 0
+var _tutorial_lesson_buttons: Array[Button] = []
+var _tutorial_title_label: Label = null
+var _tutorial_progress_label: Label = null
+var _tutorial_step_title_label: Label = null
+var _tutorial_step_body_label: Label = null
+var _tutorial_try_label: Label = null
+var _tutorial_prev_button: Button = null
+var _tutorial_next_button: Button = null
+var _tutorial_action_button: Button = null
+var _tutorial_coach_overlay: Control = null
+var _tutorial_coach_panel: PanelContainer = null
+var _tutorial_coach_title_label: Label = null
+var _tutorial_coach_progress_label: Label = null
+var _tutorial_coach_step_title_label: Label = null
+var _tutorial_coach_body_label: Label = null
+var _tutorial_coach_status_label: Label = null
+var _tutorial_coach_next_button: Button = null
+var _tutorial_coach_lesson: Dictionary = {}
+var _tutorial_coach_steps: Array[Dictionary] = []
+var _tutorial_coach_step_index: int = 0
+var _tutorial_coach_step_complete: bool = false
+var _tutorial_coach_mode: String = ""
+var _tutorial_coach_target: Node = null
+var _tutorial_coach_baseline: Dictionary = {}
+var _tutorial_coach_seen_stack: bool = false
 var _seek_auto_refresh_elapsed: float = 0.0
+var _players_online_label: Label = null
+var _players_online_refresh_elapsed: float = 0.0
+var _players_online_request_pending: bool = false
+var _players_online_request_time: float = 0.0
 var _seek_list_request_pending: bool = false
+var _request_next_notices: VBoxContainer = null
 var _deck_picker_button: Button = null
 var _deck_picker_popup: PanelContainer = null
 var _deck_picker_popup_list: VBoxContainer = null
@@ -143,6 +427,7 @@ var _multiplayer_deck_summary_god_label: Label = null
 var _server_version_label: Label = null
 var _connected_server_version: String = ""
 var _menu_card_templates: Dictionary = {}
+var _menu_card_templates_built: bool = false
 var _menu_card_art_cache: Dictionary = {}
 var _friends_button: Button = null
 var _friends_overlay: Control = null
@@ -150,30 +435,64 @@ var _friends_state: Dictionary = {}
 var _friends_status_label: Label = null
 var _friends_username_edit: LineEdit = null
 var _friends_content_list: VBoxContainer = null
+var _friend_observer_card_visibility_toggle: CheckButton = null
 var _friends_send_deck_dialog: ConfirmationDialog = null
 var _friends_send_deck_option: OptionButton = null
 var _friends_pending_send_username: String = ""
 var _close_confirm_overlay: Control = null
-var _startup_splash_background: TextureRect = null
+var _startup_splash_background: Control = null
+var _startup_splash_texture: Texture2D = null
+var _startup_splash_full_image: TextureRect = null
+var _startup_splash_slices: Array[TextureRect] = []
+var _startup_loading_overlay: Control = null
+var _startup_loading_status_label: Label = null
+var _startup_loading_bar: LoadingBar = null
+var _startup_loading_progress_tween: Tween = null
+var _startup_loading_finished: bool = false
+var _match_loading_overlay: Control = null
+var _match_loading_hint_label: Label = null
+var _match_loading_bot_hint_label: Label = null
+var _match_loading_bar: LoadingBar = null
+var _match_loading_lobby_button: Button = null
+var _match_loading_hints: Array[String] = []
+var _match_loading_uses_tap_controls: bool = false
 var _startup_music_player: AudioStreamPlayer = null
+var _audio_mute_buttons: HBoxContainer = null
+var _sound_mute_button: Button = null
 var _music_mute_button: Button = null
 var _music_muted: bool = false
+var _all_sound_muted: bool = false
 var _startup_menu_fade_started: bool = false
+var _startup_splash_animation_started: bool = false
+var _startup_splash_animation_finished: bool = false
+var _environment_test: CanvasLayer = null
 
 func _ready() -> void:
 	if _is_server_runtime_launch():
 		return
+	if menu_container != null:
+		UIFontScript.apply_default_font(menu_container)
+	_apply_multiplayer_screen_default_font()
+	if OS.get_name() == "Windows":
+		call_deferred("_cleanup_windows_update_artifacts")
 	add_to_group("music_controls")
+	add_to_group(UIHoverSfxScript.CLICK_ZONE_GROUP)
 	_load_audio_preferences()
+	_startup_trace("_ready: audio prefs loaded")
 	_ensure_startup_splash_background()
+	_build_startup_loading_overlay()
+	_build_match_loading_overlay()
 	_ensure_startup_music()
 	_prepare_startup_menu_fade()
 	_fit_to_viewport()
-	_build_server_version_overlay()
-	_build_music_mute_button()
+	if OS.is_debug_build():
+		_build_server_version_overlay()
+	_build_audio_mute_buttons()
+	if not OS.is_debug_build() and multiplayer_container != null:
+		multiplayer_container.visibility_changed.connect(_refresh_audio_mute_buttons)
 	get_viewport().size_changed.connect(_fit_to_viewport)
 	if ip_line_edit != null:
-		ip_line_edit.visible = true
+		ip_line_edit.visible = false
 		ip_line_edit.text = _get_project_default_lobby_host()
 		ip_line_edit.placeholder_text = "Dedicated lobby IP or hostname"
 
@@ -182,18 +501,9 @@ func _ready() -> void:
 	_bind_game_signals()
 
 	var deck_btn = $MenuContainer/DeckBuilderButton
-	var rules_btn = $MenuContainer/RulesButton
-	var card_test_btn = $MenuContainer/CardTestButton
-
 	if deck_btn:
 		deck_btn.pressed.connect(_on_deck_builder_pressed)
-	if rules_btn:
-		rules_btn.pressed.connect(_open_rules_overlay)
-	if card_test_btn:
-		if OS.is_debug_build():
-			card_test_btn.pressed.connect(_on_card_test_pressed)
-		else:
-			card_test_btn.visible = false
+	_configure_debug_menu_entries()
 	if multiplayer_button:
 		multiplayer_button.pressed.connect(_on_multiplayer_pressed)
 	if multiplayer_back_button:
@@ -204,60 +514,394 @@ func _ready() -> void:
 		create_seek_button.pressed.connect(_on_create_seek_pressed)
 	if leave_seek_button:
 		leave_seek_button.pressed.connect(_on_leave_seek_pressed)
+	if leave_match_button:
+		leave_match_button.pressed.connect(_on_leave_match_pressed)
 	if seek_list != null and seek_list.has_signal("item_clicked"):
 		seek_list.item_clicked.connect(_on_seek_item_clicked)
+	_apply_seek_list_scrollbar_style()
 	if ready_button:
 		ready_button.pressed.connect(_on_ready_button_pressed)
 
-	_build_menu_card_template_cache()
+	call_deferred("_build_menu_card_template_cache_backgrounded")
 	_build_multiplayer_deck_controls()
+	_startup_trace("_ready: multiplayer deck controls")
 	_build_auth_controls()
+	_startup_trace("_ready: auth controls")
+	_build_settings_controls()
+	_build_bug_report_controls()
+	_startup_trace("_ready: settings controls")
 	_ensure_local_profile_store()
+	_startup_trace("_ready: local profile store loaded")
 	_restore_auth_preferences()
+	_startup_trace("_ready: auth prefs restored")
 	_build_profile_summary_controls()
+	_build_seek_tabs()
+	_build_players_online_controls()
+	_build_recent_activity_panel()
 	_build_account_identity_controls()
 	_build_friends_controls()
 	_build_resume_controls()
-	_build_unranked_seek_controls()
+	_build_active_match_rejoin_dialog()
+	_build_seek_format_controls()
+	_startup_trace("_ready: misc controls built")
+	_apply_main_menu_text_sizing()
+	_startup_trace("_ready: text sizing applied")
 	_refresh_multiplayer_deck_options()
+	_startup_trace("_ready: multiplayer deck options refreshed")
 	_refresh_seek_list()
 	_refresh_multiplayer_action_state()
 	_restore_saved_resume_state()
+	_startup_trace("_ready: resume state restored")
 	_smoke_config = _parse_smoke_config(OS.get_cmdline_user_args())
+	_startup_trace("_ready: menu build complete, showing menu")
 	show_menu()
 	if not _smoke_config.is_empty():
 		if menu_container != null:
 			menu_container.modulate.a = 1.0
+		_remove_startup_loading_overlay()
 		call_deferred("_start_smoke_mode")
 	else:
-		_begin_startup_menu_fade()
-		call_deferred("_begin_startup_prompts")
+		call_deferred("_begin_startup_sequence")
+
+func _configure_debug_menu_entries() -> void:
+	var card_test_btn = $MenuContainer/CardTestButton
+	if not OS.is_debug_build():
+		for control in [title_label, rules_button, tutorial_button, story_button, card_test_btn]:
+			if control != null:
+				control.hide()
+		return
+	if rules_button:
+		rules_button.pressed.connect(_open_rules_overlay)
+	if tutorial_button:
+		tutorial_button.pressed.connect(_open_tutorial_overlay)
+	if story_button:
+		story_button.pressed.connect(_on_story_pressed)
+	var popup_book_button := Button.new()
+	popup_book_button.name = "PopUpBookButton"
+	popup_book_button.text = "Pop-up Book"
+	popup_book_button.tooltip_text = "Explore the field as an interactive paper diorama."
+	popup_book_button.pressed.connect(_on_popup_book_pressed)
+	menu_container.add_child(popup_book_button)
+	if story_button != null:
+		menu_container.move_child(popup_book_button, story_button.get_index() + 1)
+	if card_test_btn:
+		card_test_btn.pressed.connect(_on_card_test_pressed)
+		var environment_test_btn := Button.new()
+		environment_test_btn.name = "EnvironmentTestButton"
+		environment_test_btn.text = "Environment Test"
+		environment_test_btn.pressed.connect(_on_environment_test_pressed)
+		menu_container.add_child(environment_test_btn)
+		menu_container.move_child(environment_test_btn, card_test_btn.get_index() + 1)
+
+func _startup_trace(message: String) -> void:
+	print("[STARTUP] t=%dms %s" % [Time.get_ticks_msec(), message])
+
+func _build_startup_loading_overlay() -> void:
+	if _startup_loading_overlay != null and is_instance_valid(_startup_loading_overlay):
+		return
+	var overlay := Control.new()
+	overlay.name = "StartupLoadingOverlay"
+	overlay.z_index = 2200
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(overlay)
+
+	var background := ColorRect.new()
+	background.color = Color(0.018, 0.022, 0.038, 1.0)
+	background.mouse_filter = Control.MOUSE_FILTER_STOP
+	background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.add_child(background)
+
+	var center := CenterContainer.new()
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.add_child(center)
+
+	var content := VBoxContainer.new()
+	content.custom_minimum_size = Vector2(420.0, 0.0)
+	content.alignment = BoxContainer.ALIGNMENT_CENTER
+	content.add_theme_constant_override("separation", 12)
+	center.add_child(content)
+
+	var title := Label.new()
+	title.text = "OTHER GODS"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 46)
+	var title_font: Font = UIFontScript.get_norse_card_name_font()
+	if title_font != null:
+		title.add_theme_font_override("font", title_font)
+	title.add_theme_color_override("font_color", Color(0.87, 0.78, 0.58))
+	content.add_child(title)
+
+	var rule := HSeparator.new()
+	rule.custom_minimum_size = Vector2(260.0, 2.0)
+	rule.modulate = Color(0.47, 0.62, 0.82, 0.7)
+	content.add_child(rule)
+
+	var loading_bar := LoadingBarScript.new()
+	loading_bar.custom_minimum_size = Vector2(620.0, 86.0)
+	# Main3D's early loading screen (a replica of this overlay) hands off its
+	# bar progress here, so the fill continues across the swap instead of
+	# jumping backwards to the start.
+	var start_progress := 0.16
+	if get_parent() != null and get_parent().has_meta("early_loading_progress"):
+		start_progress = clampf(float(get_parent().get_meta("early_loading_progress")), 0.0, 0.9)
+	loading_bar.progress = start_progress
+	content.add_child(loading_bar)
+
+	var status := Label.new()
+	status.text = "Loading..."
+	status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	status.custom_minimum_size = Vector2(620.0, 0.0)
+	status.add_theme_font_size_override("font_size", 18)
+	status.add_theme_color_override("font_color", Color(0.74, 0.80, 0.90))
+	content.add_child(status)
+
+	_startup_loading_overlay = overlay
+	_startup_loading_status_label = status
+	_startup_loading_bar = loading_bar
+	# The overlay is short-lived and the startup stages now fire back-to-back,
+	# so the bar gets ONE smooth fill tween (fast start, slow approach) that is
+	# only replaced when loading actually finishes. Per-stage progress tweens
+	# were killing this tween mid-flight every frame, leaving the bar frozen
+	# near its start value before snapping to full. The chained crawl keeps the
+	# bar alive during long local loads instead of parking at 0.9, and the
+	# first segment's duration shrinks when the early loading screen already
+	# filled part of the way (or is skipped entirely if it crawled past 0.9, so
+	# the fill never moves backwards).
+	var fill_target := maxf(0.9, start_progress)
+	var fill_span := clampf((fill_target - start_progress) / (0.9 - 0.16), 0.0, 1.0)
+	var fill_tween := create_tween()
+	if fill_span > 0.0:
+		fill_tween.tween_property(_startup_loading_bar, "progress", fill_target, 2.2 * fill_span) \
+			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	fill_tween.tween_property(_startup_loading_bar, "progress", 0.97, 6.0) \
+		.set_trans(Tween.TRANS_LINEAR)
+	_startup_loading_progress_tween = fill_tween
+
+func _build_match_loading_overlay() -> void:
+	if _match_loading_overlay != null:
+		return
+	var overlay := ColorRect.new()
+	overlay.name = "MatchLoadingOverlay"
+	overlay.color = Color(0.018, 0.022, 0.038, 1.0)
+	overlay.z_index = 2200
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.hide()
+	add_child(overlay)
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.add_child(center)
+	var content := VBoxContainer.new()
+	content.add_theme_constant_override("separation", 16)
+	center.add_child(content)
+	var title := Label.new()
+	title.text = "Loading"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 36)
+	title.add_theme_color_override("font_color", Color(0.87, 0.78, 0.58))
+	content.add_child(title)
+	var bar := LoadingBarScript.new()
+	bar.custom_minimum_size = Vector2(620.0, 86.0)
+	content.add_child(bar)
+	var hint := Label.new()
+	hint.custom_minimum_size = Vector2(620.0, 0.0)
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint.add_theme_font_size_override("font_size", 20)
+	hint.add_theme_color_override("font_color", Color(0.74, 0.80, 0.90))
+	content.add_child(hint)
+	var bot_hint := hint.duplicate() as Label
+	bot_hint.text = MatchLoadingHintsScript.BOT_FEEDBACK
+	bot_hint.hide()
+	content.add_child(bot_hint)
+	var lobby_button := Button.new()
+	lobby_button.text = "Show lobby"
+	lobby_button.pressed.connect(_on_match_loading_lobby_pressed)
+	content.add_child(lobby_button)
+	_match_loading_overlay = overlay
+	_match_loading_hint_label = hint
+	_match_loading_bot_hint_label = bot_hint
+	_match_loading_bar = bar
+	_match_loading_lobby_button = lobby_button
+
+func _begin_match_loading(has_bot: bool = false, can_show_lobby: bool = false) -> void:
+	_build_match_loading_overlay()
+	if not _match_loading_overlay.visible:
+		_match_loading_hint_label.text = _next_match_loading_hint()
+	_match_loading_bar.indeterminate = true
+	_match_loading_bot_hint_label.visible = has_bot
+	_match_loading_lobby_button.text = "Show lobby"
+	_match_loading_lobby_button.visible = can_show_lobby
+	_match_loading_overlay.show()
+
+func _on_match_loading_lobby_pressed() -> void:
+	var game := _get_active_embedded_game()
+	if game_container.visible and game != null and bool(game.get("_is_observer_mode")):
+		_restore_lobby_after_match_connection_lost("Stopped observing.")
+		return
+	_finish_match_loading()
+
+func _next_match_loading_hint() -> String:
+	var force_phone_controls := _get_saved_bool_setting(
+		GameSettingsTabsScript.COMBAT_SETTINGS_SECTION,
+		GameSettingsTabsScript.PHONE_CONTROLS_ON_DESKTOP_KEY,
+		false
+	)
+	var uses_tap_controls := SmallScreenPlayViewScript.uses_tap_controls(get_viewport(), force_phone_controls)
+	if _match_loading_hints.is_empty() or uses_tap_controls != _match_loading_uses_tap_controls:
+		_match_loading_uses_tap_controls = uses_tap_controls
+		_match_loading_hints.assign(MatchLoadingHintsScript.GENERAL)
+		_match_loading_hints.append_array(
+			MatchLoadingHintsScript.TAP if uses_tap_controls else MatchLoadingHintsScript.MOUSE_AND_KEYBOARD
+		)
+		_match_loading_hints.shuffle()
+		if _match_loading_hints.back() == _match_loading_hint_label.text:
+			_match_loading_hints.push_front(_match_loading_hints.pop_back())
+	return _match_loading_hints.pop_back()
+
+func _finish_match_loading() -> void:
+	if _match_loading_overlay == null:
+		return
+	_match_loading_overlay.hide()
+	_match_loading_bar.indeterminate = false
+
+func _begin_startup_sequence() -> void:
+	await get_tree().process_frame
+	_startup_trace("_begin_startup_sequence")
+	if _startup_loading_status_label != null and is_instance_valid(_startup_loading_status_label):
+		_startup_loading_status_label.text = "Restoring saved account..." if _startup_autologin_pending else "Sign in to continue"
+	# The update check and lobby autologin no longer gate the menu: they run
+	# while the remaining local loads finish, and their results surface through
+	# the menu status line / auth prompts once the loading overlay is gone.
+	# Progress is driven by the single overlay fill tween, not per-stage here.
+	_begin_startup_prompts()
+	_reveal_menu_when_local_loads_done()
+
+func _reveal_menu_when_local_loads_done() -> void:
+	await _wait_for_startup_background_loads()
+	if not is_instance_valid(self):
+		return
+	_finish_startup_loading()
+
+func _finish_startup_loading() -> void:
+	if _startup_loading_finished:
+		return
+	_startup_loading_finished = true
+	_startup_trace("_finish_startup_loading (menu reveal)")
+	_apply_main_menu_text_sizing()
+	if not _menu_card_templates_built:
+		_set_startup_loading_status("Loading card catalog...")
+		_set_startup_loading_progress(0.92, 0.25)
+		await _wait_for_startup_background_loads()
+		if not is_instance_valid(self):
+			return
+	_set_startup_loading_progress(1.0, 0.18)
+	# Release mouse input as soon as the local menu is ready.
+	# Fading a Control visually does not stop it intercepting clicks.
+	if _startup_loading_overlay != null and is_instance_valid(_startup_loading_overlay):
+		_startup_loading_overlay.hide()
+	_begin_startup_menu_fade()
+	if _startup_loading_overlay != null and is_instance_valid(_startup_loading_overlay):
+		var tween := create_tween()
+		tween.tween_property(
+			_startup_loading_overlay,
+			"modulate:a",
+			0.0,
+			STARTUP_LOADING_FADE_SECONDS
+		).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		await tween.finished
+	_remove_startup_loading_overlay()
+
+func _remove_startup_loading_overlay() -> void:
+	if _startup_loading_overlay != null and is_instance_valid(_startup_loading_overlay):
+		_startup_loading_overlay.queue_free()
+	_startup_loading_overlay = null
+	_startup_loading_status_label = null
+	_startup_loading_bar = null
+	if _startup_loading_progress_tween != null:
+		_startup_loading_progress_tween.kill()
+	_startup_loading_progress_tween = null
+
+func _set_startup_loading_status(message: String) -> void:
+	if _startup_loading_status_label != null and is_instance_valid(_startup_loading_status_label):
+		_startup_loading_status_label.text = message
+
+func _set_startup_loading_progress(value: float, duration: float = 0.0) -> void:
+	if _startup_loading_bar == null or not is_instance_valid(_startup_loading_bar):
+		return
+	if _startup_loading_progress_tween != null:
+		_startup_loading_progress_tween.kill()
+		_startup_loading_progress_tween = null
+	if duration <= 0.0:
+		_startup_loading_bar.progress = value
+		return
+	_startup_loading_progress_tween = create_tween()
+	_startup_loading_progress_tween.tween_property(
+		_startup_loading_bar,
+		"progress",
+		clampf(value, 0.0, 1.0),
+		duration
+	).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+
+func _wait_for_startup_background_loads() -> void:
+	while not _menu_card_templates_built:
+		var tree := get_tree()
+		if tree == null:
+			return
+		await tree.process_frame
+		if not is_instance_valid(self):
+			return
 
 func _ensure_startup_splash_background() -> void:
 	if _startup_splash_background != null and is_instance_valid(_startup_splash_background):
 		return
-	var splash_texture := _load_startup_splash_texture()
-	if splash_texture == null:
+	_startup_splash_texture = _load_startup_splash_texture()
+	if _startup_splash_texture == null:
 		return
-	var background := TextureRect.new()
+	var background := Control.new()
 	background.name = "StartupSplashBackground"
-	background.texture = splash_texture
-	background.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	background.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	background.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	background.clip_contents = true
 	background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var fill := ColorRect.new()
+	fill.name = "BackgroundFill"
+	fill.color = Color(0.03, 0.03, 0.05, 1.0)
+	fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	fill.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	background.add_child(fill)
+	_startup_splash_full_image = TextureRect.new()
+	_startup_splash_full_image.name = "SplashFullImage"
+	_startup_splash_full_image.texture = _startup_splash_texture
+	_startup_splash_full_image.stretch_mode = TextureRect.STRETCH_SCALE
+	_startup_splash_full_image.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_startup_splash_full_image.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_startup_splash_full_image.visible = false
+	background.add_child(_startup_splash_full_image)
+	_startup_splash_slices.clear()
+	for slice_index in range(STARTUP_SPLASH_SLICE_COUNT):
+		var slice := TextureRect.new()
+		slice.name = "SplashSlice%d" % slice_index
+		slice.texture = _make_startup_splash_slice_texture(_startup_splash_texture, slice_index)
+		slice.stretch_mode = TextureRect.STRETCH_SCALE
+		slice.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		slice.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		background.add_child(slice)
+		_startup_splash_slices.append(slice)
 	add_child(background)
 	move_child(background, 0)
 	_startup_splash_background = background
+	_layout_startup_splash_background()
 
 func _ensure_startup_music() -> void:
 	if _startup_music_player != null and is_instance_valid(_startup_music_player):
-		if not _music_muted and not _startup_music_player.playing:
-			_startup_music_player.play()
 		_apply_music_mute_state()
 		return
 	var player := AudioStreamPlayer.new()
 	player.name = "StartupMusicPlayer"
+	player.bus = AudioSettingsScript.MUSIC_BUS_NAME
 	var music_stream := _load_startup_music_stream()
 	if music_stream == null:
 		return
@@ -279,37 +923,261 @@ func _load_startup_splash_texture() -> Texture2D:
 		return null
 	return ImageTexture.create_from_image(image)
 
+func _make_startup_splash_slice_texture(splash_texture: Texture2D, slice_index: int) -> Texture2D:
+	if splash_texture == null:
+		return null
+	var slice_count := maxi(1, STARTUP_SPLASH_SLICE_COUNT)
+	var texture_size := splash_texture.get_size()
+	var source_rect := _get_startup_splash_slice_source_rect(texture_size, slice_index, slice_count)
+	var atlas := AtlasTexture.new()
+	atlas.atlas = splash_texture
+	atlas.region = source_rect
+	atlas.filter_clip = true
+	return atlas
+
+func _get_startup_splash_slice_source_rect(texture_size: Vector2, slice_index: int, slice_count: int) -> Rect2:
+	var texture_width := maxi(1, int(round(texture_size.x)))
+	var texture_height := maxi(1, int(round(texture_size.y)))
+	var clamped_index := clampi(slice_index, 0, maxi(0, slice_count - 1))
+	var left := int(floor(float(texture_width) * float(clamped_index) / float(slice_count)))
+	var right := int(floor(float(texture_width) * float(clamped_index + 1) / float(slice_count)))
+	if clamped_index == slice_count - 1:
+		right = texture_width
+	right = clampi(right, left + 1, texture_width)
+	return Rect2(Vector2(left, 0.0), Vector2(right - left, texture_height))
+
+func _layout_startup_splash_background(force_entry_offsets: bool = false) -> void:
+	if _startup_splash_background == null or not is_instance_valid(_startup_splash_background):
+		return
+	_startup_splash_background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	if _startup_splash_texture == null:
+		return
+	var texture_size := _startup_splash_texture.get_size()
+	var splash_rect := _get_startup_splash_draw_rect(texture_size, size)
+	if _startup_splash_full_image != null and is_instance_valid(_startup_splash_full_image):
+		_startup_splash_full_image.position = splash_rect.position
+		_startup_splash_full_image.size = splash_rect.size
+	var slice_count := maxi(1, _startup_splash_slices.size())
+	for slice_index in range(_startup_splash_slices.size()):
+		var slice := _startup_splash_slices[slice_index]
+		if slice == null or not is_instance_valid(slice):
+			continue
+		var source_rect := _get_startup_splash_slice_source_rect(texture_size, slice_index, slice_count)
+		var left := splash_rect.position.x + splash_rect.size.x * source_rect.position.x / texture_size.x
+		var right := splash_rect.position.x + splash_rect.size.x * (source_rect.position.x + source_rect.size.x) / texture_size.x
+		var target_position := Vector2(left, splash_rect.position.y)
+		var target_size := Vector2(right - left, splash_rect.size.y)
+		slice.size = target_size
+		slice.set_meta("target_position", target_position)
+		if force_entry_offsets:
+			slice.position = Vector2(target_position.x, _get_startup_splash_entry_y(target_position, target_size, slice_index))
+		else:
+			slice.position = target_position
+
+func _get_startup_splash_draw_rect(texture_size: Vector2, available_size: Vector2) -> Rect2:
+	if texture_size.x <= 0.0 or texture_size.y <= 0.0 or available_size.x <= 0.0 or available_size.y <= 0.0:
+		return Rect2(Vector2.ZERO, available_size)
+	# Fit the whole splash on every aspect ratio; the background fill covers spare space.
+	var fit_scale := minf(available_size.x / texture_size.x, available_size.y / texture_size.y)
+	var scaled_size := texture_size * fit_scale
+	return Rect2((available_size - scaled_size) * 0.5, scaled_size)
+
+func _get_startup_splash_entry_y(target_position: Vector2, target_size: Vector2, slice_index: int) -> float:
+	if slice_index % 2 == 0:
+		return target_position.y - target_size.y
+	return target_position.y + target_size.y
+
+func _begin_startup_splash_animation() -> void:
+	if _startup_splash_animation_started:
+		return
+	if _startup_splash_background == null or not is_instance_valid(_startup_splash_background):
+		return
+	if _startup_splash_slices.is_empty():
+		return
+	_startup_splash_animation_started = true
+	_startup_splash_animation_finished = false
+	_set_startup_splash_final_frame_visible(false)
+	_layout_startup_splash_background(true)
+	var tween := create_tween()
+	for slice_index in range(_startup_splash_slices.size()):
+		var slice := _startup_splash_slices[slice_index]
+		if slice == null or not is_instance_valid(slice):
+			continue
+		var target_position: Vector2 = slice.get_meta("target_position", slice.position)
+		tween.parallel().tween_property(
+			slice,
+			"position:y",
+			target_position.y,
+			STARTUP_SPLASH_SLIDE_SECONDS
+		).set_delay(float(slice_index) * STARTUP_SPLASH_SLICE_STAGGER_SECONDS).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tween.finished.connect(Callable(self, "_on_startup_splash_animation_finished"))
+
+func _on_startup_splash_animation_finished() -> void:
+	_startup_splash_animation_finished = true
+	_layout_startup_splash_background(false)
+	_set_startup_splash_final_frame_visible(true)
+	_apply_music_mute_state()
+
+func _set_startup_splash_final_frame_visible(frame_visible: bool) -> void:
+	if _startup_splash_full_image != null and is_instance_valid(_startup_splash_full_image):
+		_startup_splash_full_image.visible = frame_visible
+	for slice in _startup_splash_slices:
+		if slice != null and is_instance_valid(slice):
+			slice.visible = not frame_visible
+
 func _load_startup_music_stream() -> AudioStream:
-	if ResourceLoader.exists(STARTUP_MUSIC_PATH):
-		var imported_resource := load(STARTUP_MUSIC_PATH)
+	var music_path := _get_startup_music_path_for_track(get_startup_music_track())
+	if ResourceLoader.exists(music_path):
+		var imported_resource := load(music_path)
 		if imported_resource is AudioStream:
 			var imported_stream := (imported_resource as AudioStream).duplicate()
 			return imported_stream
-	if not FileAccess.file_exists(STARTUP_MUSIC_PATH):
-		push_warning("Could not find startup music: %s" % STARTUP_MUSIC_PATH)
+	if not FileAccess.file_exists(music_path):
+		push_warning("Could not find startup music: %s" % music_path)
 		return null
-	var bytes := FileAccess.get_file_as_bytes(STARTUP_MUSIC_PATH)
+	var bytes := FileAccess.get_file_as_bytes(music_path)
 	if bytes.is_empty():
-		push_warning("Could not read startup music: %s" % STARTUP_MUSIC_PATH)
+		push_warning("Could not read startup music: %s" % music_path)
 		return null
 	var stream := AudioStreamMP3.new()
 	stream.data = bytes
 	return stream
 
+func get_startup_music_track() -> String:
+	var saved_track := _get_saved_string_setting(AUDIO_SETTINGS_SECTION, STARTUP_MUSIC_TRACK_KEY, DEFAULT_STARTUP_MUSIC_TRACK).strip_edges()
+	if _is_valid_startup_music_track(saved_track):
+		return saved_track
+	return DEFAULT_STARTUP_MUSIC_TRACK
+
+func set_startup_music_track(track: String) -> void:
+	var normalized_track := track.strip_edges()
+	if not _is_valid_startup_music_track(normalized_track):
+		return
+	var previous_track := get_startup_music_track()
+	_save_string_setting(AUDIO_SETTINGS_SECTION, STARTUP_MUSIC_TRACK_KEY, normalized_track)
+	if normalized_track != previous_track:
+		_refresh_startup_music_stream()
+
+func _is_valid_startup_music_track(track: String) -> bool:
+	return track == STARTUP_MUSIC_TRACK_IF_THEY_HAD_HEARTS or track == STARTUP_MUSIC_TRACK_RELAXING_TIME
+
+func _get_startup_music_path_for_track(track: String) -> String:
+	if track == STARTUP_MUSIC_TRACK_RELAXING_TIME:
+		return STARTUP_MUSIC_CLASSIC_PATH
+	return STARTUP_MUSIC_PATH
+
+func _refresh_startup_music_stream() -> void:
+	if _startup_music_player == null or not is_instance_valid(_startup_music_player):
+		_ensure_startup_music()
+		return
+	var music_stream := _load_startup_music_stream()
+	if music_stream == null:
+		return
+	_startup_music_player.stream = music_stream
+	_apply_music_mute_state()
+
 func _load_audio_preferences() -> void:
 	var config := ConfigFile.new()
 	if config.load(USER_SETTINGS_PATH) != OK:
 		_music_muted = false
+		_all_sound_muted = false
 		return
 	_music_muted = bool(config.get_value(AUDIO_SETTINGS_SECTION, MUSIC_MUTED_KEY, false))
+	_all_sound_muted = bool(config.get_value(AUDIO_SETTINGS_SECTION, ALL_SOUND_MUTED_KEY, false))
 
 func _save_audio_preferences() -> void:
 	var config := ConfigFile.new()
 	config.load(USER_SETTINGS_PATH)
 	config.set_value(AUDIO_SETTINGS_SECTION, MUSIC_MUTED_KEY, _music_muted)
+	config.set_value(AUDIO_SETTINGS_SECTION, ALL_SOUND_MUTED_KEY, _all_sound_muted)
 	var error := config.save(USER_SETTINGS_PATH)
 	if error != OK:
 		push_warning("Could not save audio settings: %s" % str(error))
+
+func _read_config_bool(config: ConfigFile, section: String, key: String, default_value: bool) -> bool:
+	var value = config.get_value(section, key, default_value)
+	if value is bool:
+		return value
+	if value is String:
+		var text := str(value).strip_edges().to_lower()
+		if text in ["true", "1", "yes", "on"]:
+			return true
+		if text in ["false", "0", "no", "off"]:
+			return false
+	return default_value
+
+func _get_saved_bool_setting(section: String, key: String, default_value: bool) -> bool:
+	var config := ConfigFile.new()
+	if config.load(USER_SETTINGS_PATH) != OK:
+		return default_value
+	return _read_config_bool(config, section, key, default_value)
+
+func _save_bool_setting(section: String, key: String, value: bool) -> void:
+	var config := ConfigFile.new()
+	config.load(USER_SETTINGS_PATH)
+	config.set_value(section, key, value)
+	var error := config.save(USER_SETTINGS_PATH)
+	if error != OK:
+		push_warning("Could not save user setting %s/%s: %s" % [section, key, str(error)])
+
+func _get_saved_string_setting(section: String, key: String, default_value: String) -> String:
+	var config := ConfigFile.new()
+	if config.load(USER_SETTINGS_PATH) != OK:
+		return default_value
+	var value = config.get_value(section, key, default_value)
+	if value is String:
+		return str(value)
+	return default_value
+
+func _save_string_setting(section: String, key: String, value: String) -> void:
+	var config := ConfigFile.new()
+	config.load(USER_SETTINGS_PATH)
+	config.set_value(section, key, value)
+	var error := config.save(USER_SETTINGS_PATH)
+	if error != OK:
+		push_warning("Could not save user setting %s/%s: %s" % [section, key, str(error)])
+
+func _get_settings_menu_value(section: String, key: String, default_value: bool) -> bool:
+	if section == AUDIO_SETTINGS_SECTION:
+		if key == MUSIC_MUTED_KEY:
+			return _music_muted
+		if key == ALL_SOUND_MUTED_KEY:
+			return _all_sound_muted
+	return _get_saved_bool_setting(section, key, default_value)
+
+func _set_settings_menu_value(section: String, key: String, value: bool) -> void:
+	if section == AUDIO_SETTINGS_SECTION:
+		if key == MUSIC_MUTED_KEY:
+			set_music_muted(value)
+			return
+		if key == ALL_SOUND_MUTED_KEY:
+			set_all_sound_muted(value)
+			return
+	_save_bool_setting(section, key, value)
+	if section == GameSettingsTabsScript.COMBAT_SETTINGS_SECTION and key == GameSettingsTabsScript.SHOW_FOLLOWERS_KEY:
+		get_tree().call_group("combat_mock_game", "_apply_show_followers", value)
+	if section == GameSettingsTabsScript.COMBAT_SETTINGS_SECTION and key == GameSettingsTabsScript.PHONE_CONTROLS_ON_DESKTOP_KEY:
+		get_tree().call_group("combat_mock_game", "_apply_phone_controls_on_desktop", value)
+
+func _get_settings_menu_text_value(section: String, key: String, default_value: String) -> String:
+	if section == AUDIO_SETTINGS_SECTION and key == STARTUP_MUSIC_TRACK_KEY:
+		return get_startup_music_track()
+	return _get_saved_string_setting(section, key, default_value)
+
+func _set_settings_menu_text_value(section: String, key: String, value: String) -> void:
+	if section == AUDIO_SETTINGS_SECTION and key == STARTUP_MUSIC_TRACK_KEY:
+		set_startup_music_track(value)
+		return
+	_save_string_setting(section, key, value)
+
+func _get_settings_menu_number_value(section: String, key: String, default_value: float) -> float:
+	if section == AUDIO_SETTINGS_SECTION and AudioSettingsScript.is_volume_key(key):
+		return AudioSettingsScript.get_volume(key, USER_SETTINGS_PATH)
+	return default_value
+
+func _set_settings_menu_number_value(section: String, key: String, value: float) -> void:
+	if section == AUDIO_SETTINGS_SECTION and AudioSettingsScript.is_volume_key(key):
+		AudioSettingsScript.set_volume(key, value, USER_SETTINGS_PATH)
 
 func is_music_muted() -> bool:
 	return _music_muted
@@ -322,46 +1190,296 @@ func set_music_muted(muted: bool) -> void:
 	_apply_music_mute_state()
 	_save_audio_preferences()
 
-func toggle_music_mute() -> void:
-	set_music_muted(not _music_muted)
+func is_all_sound_muted() -> bool:
+	return _all_sound_muted
+
+func set_all_sound_muted(muted: bool) -> void:
+	if _all_sound_muted == muted:
+		_apply_music_mute_state()
+		return
+	_all_sound_muted = muted
+	_apply_music_mute_state()
+	_save_audio_preferences()
+
+func toggle_all_sound_mute() -> void:
+	set_all_sound_muted(not _all_sound_muted)
 
 func _apply_music_mute_state() -> void:
+	var master_bus_index := AudioServer.get_bus_index("Master")
+	if master_bus_index >= 0:
+		AudioServer.set_bus_mute(master_bus_index, _all_sound_muted)
 	if _startup_music_player != null and is_instance_valid(_startup_music_player):
 		if _music_muted:
 			_startup_music_player.stream_paused = true
 		else:
-			if not _startup_music_player.playing:
+			if _startup_splash_animation_finished and not _startup_music_player.playing:
 				_startup_music_player.play()
 			_startup_music_player.stream_paused = false
-	_refresh_music_mute_button()
+	_refresh_audio_mute_buttons()
+	if is_instance_valid(_settings_music_mute_toggle):
+		_settings_music_mute_toggle.set_pressed_no_signal(_music_muted)
 	if is_inside_tree():
 		get_tree().call_group("music_mute_observers", "_on_music_mute_changed", _music_muted)
+		get_tree().call_group("music_mute_observers", "_on_all_sound_mute_changed", _all_sound_muted)
 
-func _build_music_mute_button() -> void:
-	if _music_mute_button != null and is_instance_valid(_music_mute_button):
-		_refresh_music_mute_button()
+func _build_audio_mute_buttons() -> void:
+	if is_instance_valid(_audio_mute_buttons):
+		_refresh_audio_mute_buttons()
 		return
+	_audio_mute_buttons = HBoxContainer.new()
+	_audio_mute_buttons.name = "AudioMuteButtons"
+	_audio_mute_buttons.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
+	_audio_mute_buttons.offset_left = 16.0
+	_audio_mute_buttons.offset_top = -36.0
+	_audio_mute_buttons.offset_bottom = -8.0
+	_audio_mute_buttons.z_index = 2300
+	_audio_mute_buttons.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_audio_mute_buttons.add_theme_constant_override("separation", 8)
+
+	_sound_mute_button = Button.new()
+	_sound_mute_button.name = "SoundMuteButton"
+	_sound_mute_button.pressed.connect(toggle_all_sound_mute)
+
+	_music_mute_button = Button.new()
+	_music_mute_button.name = "MusicMuteButton"
+	_music_mute_button.text = String.chr(0x266A)
+	_music_mute_button.accessibility_name = "Mute music"
+	_music_mute_button.toggle_mode = true
+	_music_mute_button.toggled.connect(set_music_muted)
+
+	for button: Button in [_sound_mute_button, _music_mute_button]:
+		button.custom_minimum_size = Vector2(40.0, 28.0)
+		button.mouse_filter = Control.MOUSE_FILTER_STOP
+		_audio_mute_buttons.add_child(button)
+	add_child(_audio_mute_buttons)
+	_refresh_audio_mute_buttons()
+
+func _refresh_audio_mute_buttons() -> void:
+	if not is_instance_valid(_audio_mute_buttons):
+		return
+	_sound_mute_button.text = String.chr(0x1F507) if _all_sound_muted else String.chr(0x1F50A)
+	_sound_mute_button.tooltip_text = "Unmute all sound" if _all_sound_muted else "Mute all sound"
+	_sound_mute_button.modulate = Color(0.72, 0.76, 0.84, 0.96) if _all_sound_muted else Color(1, 1, 1, 0.96)
+	_music_mute_button.set_pressed_no_signal(_music_muted)
+	_music_mute_button.tooltip_text = "Unmute music" if _music_muted else "Mute music"
+	var main_menu_visible: bool = menu_container != null and menu_container.visible and not _is_multiplayer_screen_active()
+	_audio_mute_buttons.visible = not _is_deck_builder_open() and (OS.is_debug_build() or not main_menu_visible)
+
+func _apply_main_menu_text_sizing() -> void:
+	if menu_container != null:
+		menu_container.custom_minimum_size.x = maxf(menu_container.custom_minimum_size.x, MENU_PRIMARY_BUTTON_MIN_WIDTH)
+		menu_container.size.x = maxf(menu_container.size.x, MENU_PRIMARY_BUTTON_MIN_WIDTH)
+		_apply_main_menu_text_sizing_recursive(menu_container)
+	if title_label != null:
+		title_label.custom_minimum_size.x = maxf(title_label.custom_minimum_size.x, MENU_PRIMARY_BUTTON_MIN_WIDTH)
+		title_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		title_label.add_theme_font_size_override("font_size", MENU_USERNAME_FONT_SIZE)
+	if _account_identity_label != null:
+		_account_identity_label.custom_minimum_size.x = maxf(_account_identity_label.custom_minimum_size.x, MENU_PRIMARY_BUTTON_MIN_WIDTH)
+		_account_identity_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_account_identity_label.add_theme_font_size_override("font_size", MENU_ACCOUNT_IDENTITY_FONT_SIZE)
+	_apply_seek_action_button_sizing()
+
+func _apply_seek_list_scrollbar_style() -> void:
+	if seek_list == null or not is_instance_valid(seek_list):
+		return
+	var bar: VScrollBar = seek_list.get_v_scroll_bar()
+	if not is_instance_valid(bar):
+		return
+	# The seek list's default scrollbar is very thin, which makes it easy to
+	# miss when scrolling and accidentally click into a seek/match row. Widen
+	# the scrollbar (and its reserved gutter) so it is an easier, more reliable
+	# scroll target.
+	bar.custom_minimum_size.x = 24.0
+	bar.mouse_filter = Control.MOUSE_FILTER_STOP
+	bar.add_theme_constant_override("scroll_width", 24)
+	bar.add_theme_constant_override("scroll_border", 2)
+
+	var track := StyleBoxFlat.new()
+	track.bg_color = Color(0.035, 0.040, 0.060, 0.94)
+	track.border_color = Color(0.18, 0.20, 0.30, 0.95)
+	track.set_border_width_all(1)
+	track.set_corner_radius_all(8)
+	bar.add_theme_stylebox_override("scroll", track)
+	bar.add_theme_stylebox_override("scroll_focus", track)
+
+	var grabber := StyleBoxFlat.new()
+	grabber.bg_color = Color(0.72, 0.66, 0.40, 0.98)
+	grabber.border_color = Color(0.98, 0.88, 0.52, 1.0)
+	grabber.set_border_width_all(1)
+	grabber.set_corner_radius_all(8)
+	bar.add_theme_stylebox_override("grabber", grabber)
+
+	var grabber_highlight := StyleBoxFlat.new()
+	grabber_highlight.bg_color = Color(0.88, 0.78, 0.45, 1.0)
+	grabber_highlight.border_color = grabber.border_color
+	grabber_highlight.set_border_width_all(1)
+	grabber_highlight.set_corner_radius_all(8)
+	bar.add_theme_stylebox_override("grabber_highlight", grabber_highlight)
+
+	var grabber_pressed := StyleBoxFlat.new()
+	grabber_pressed.bg_color = Color(1.0, 0.84, 0.44, 1.0)
+	grabber_pressed.border_color = grabber.border_color
+	grabber_pressed.set_border_width_all(1)
+	grabber_pressed.set_corner_radius_all(8)
+	bar.add_theme_stylebox_override("grabber_pressed", grabber_pressed)
+
+func _apply_seek_action_button_sizing() -> void:
+	if is_instance_valid(_ladder_button) and deck_picker_option != null:
+		deck_picker_option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_ladder_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_ladder_button.custom_minimum_size = Vector2(
+			deck_picker_option.custom_minimum_size.x,
+			maxf(36.0, deck_picker_option.get_combined_minimum_size().y)
+		)
+	if is_instance_valid(_quarantined_bots_button):
+		_quarantined_bots_button.custom_minimum_size.y = _ladder_button.custom_minimum_size.y
+	if not is_instance_valid(_seek_action_row):
+		return
+	_seek_action_row.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	_seek_action_row.alignment = BoxContainer.ALIGNMENT_BEGIN
+	for child in _seek_action_row.get_children():
+		if not child is Button:
+			continue
+		var button := child as Button
+		button.add_theme_font_size_override("font_size", 16)
+		button.custom_minimum_size = Vector2(0.0, 36.0)
+		button.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+
+func _build_bot_league_section() -> void:
+	if multiplayer_container == null:
+		return
+	if _bot_league_section != null and is_instance_valid(_bot_league_section):
+		return
+	var section := VBoxContainer.new()
+	section.name = "BotLeagueSection"
+	section.add_theme_constant_override("separation", 6)
+
+	var header := Label.new()
+	header.text = "Bot League"
+	header.add_theme_font_size_override("font_size", 14)
+	header.add_theme_color_override("font_color", Color(0.72, 0.82, 1.0))
+	section.add_child(header)
+
+	var row1 := HBoxContainer.new()
+	row1.add_theme_constant_override("separation", 8)
+	row1.alignment = BoxContainer.ALIGNMENT_BEGIN
+	var row2 := HBoxContainer.new()
+	row2.add_theme_constant_override("separation", 8)
+	row2.alignment = BoxContainer.ALIGNMENT_BEGIN
+
+	_seed_bot_league_button = _make_bot_league_button("Seed Bot League", "Builds 10 ranked bot decks per god for the bot league.", _on_seed_bot_league_pressed)
+	row1.add_child(_seed_bot_league_button)
+	_finalize_bot_league_button = _make_bot_league_button("Finalize Bot League", "Keeps best 1 per god on ladder, quarantines worst 1 per god, removes the rest.", _on_finalize_bot_league_pressed)
+	row1.add_child(_finalize_bot_league_button)
+	_status_bot_league_button = _make_bot_league_button("Bot League Status", "Shows current bot league state: seeded lists, kept/quarantined bots per god.", _on_status_bot_league_pressed)
+	row1.add_child(_status_bot_league_button)
+	_run_league_round_robin_button = _make_bot_league_button("Run League Round Robin", "Schedules 50 matches per bot for the league round robin (played by volunteer bot workers).", _on_run_league_round_robin_pressed)
+	row1.add_child(_run_league_round_robin_button)
+
+	_clear_league_bots_button = _make_bot_league_button("Clear League Bots", "Removes every seeded league bot (list ids starting with league_), including any 0-0-0 leftovers.", _on_clear_league_bots_pressed)
+	row2.add_child(_clear_league_bots_button)
+	_rebuild_league_records_button = _make_bot_league_button("Rebuild League Records", "Replays all bot match history into league bots, re-registering any culled bots that still have recorded results.", _on_rebuild_league_records_pressed)
+	row2.add_child(_rebuild_league_records_button)
+	_dump_bot_deck_results_button = _make_bot_league_button("Dump Bot Deck Results", "Prints every bot match result from match history to the console so you can verify results exist and what list_ids they reference.", _on_dump_bot_deck_results_pressed)
+	row2.add_child(_dump_bot_deck_results_button)
+
+	section.add_child(row1)
+	section.add_child(row2)
+
+	_apply_bot_league_button_sizing(section)
+
+	_bot_league_section = section
+	multiplayer_container.add_child(_bot_league_section)
+	multiplayer_container.move_child(_bot_league_section, _seek_action_row.get_index() + 1)
+
+func _make_bot_league_button(text: String, tooltip: String, on_pressed: Callable) -> Button:
 	var button := Button.new()
-	button.name = "MusicMuteButton"
-	button.tooltip_text = "Toggle background music."
-	button.custom_minimum_size = Vector2(146.0, 28.0)
-	button.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
-	button.offset_left = -266.0
-	button.offset_top = -60.0
-	button.offset_right = -120.0
-	button.offset_bottom = -32.0
-	button.z_index = 2100
-	button.mouse_filter = Control.MOUSE_FILTER_STOP
-	button.pressed.connect(toggle_music_mute)
-	add_child(button)
-	_music_mute_button = button
-	_refresh_music_mute_button()
+	button.text = text
+	button.tooltip_text = tooltip
+	button.pressed.connect(on_pressed)
+	return button
 
-func _refresh_music_mute_button() -> void:
-	if _music_mute_button == null or not is_instance_valid(_music_mute_button):
+func _apply_bot_league_button_sizing(section: Node) -> void:
+	if section == null:
 		return
-	_music_mute_button.text = "Music Muted" if _music_muted else "Mute Music"
-	_music_mute_button.modulate = Color(0.78, 0.86, 0.92, 0.96) if _music_muted else Color(1, 1, 1, 0.96)
+	for child in section.get_children():
+		if not child is HBoxContainer:
+			continue
+		for button in child.get_children():
+			if not button is Button:
+				continue
+			button.add_theme_font_size_override("font_size", 16)
+			button.custom_minimum_size = Vector2(0.0, 36.0)
+			button.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+
+func _apply_main_menu_text_sizing_recursive(root: Node) -> void:
+	if root == null:
+		return
+	for child in root.get_children():
+		if child is Button:
+			var button := child as Button
+			if _is_primary_main_menu_button(button):
+				_apply_primary_main_menu_button_sizing(button)
+			else:
+				_apply_button_text_sizing(button, MENU_BUTTON_FONT_SIZE, MENU_BUTTON_MIN_HEIGHT)
+		elif child is LineEdit:
+			_apply_line_edit_text_sizing(child as LineEdit, MENU_INPUT_FONT_SIZE, MENU_INPUT_MIN_HEIGHT)
+		elif child is ItemList:
+			(child as ItemList).add_theme_font_size_override("font_size", MENU_TEXT_FONT_SIZE)
+		elif child is Label:
+			(child as Label).add_theme_font_size_override("font_size", MENU_TEXT_FONT_SIZE)
+		if child is Control:
+			_apply_main_menu_text_sizing_recursive(child)
+
+func _is_primary_main_menu_button(button: Button) -> bool:
+	return button != null and menu_container != null and button.get_parent() == menu_container
+
+func _apply_primary_main_menu_button_sizing(button: Button) -> void:
+	_apply_button_text_sizing(button, MENU_PRIMARY_BUTTON_FONT_SIZE, MENU_PRIMARY_BUTTON_MIN_HEIGHT)
+	button.custom_minimum_size.x = maxf(button.custom_minimum_size.x, MENU_PRIMARY_BUTTON_MIN_WIDTH)
+	button.clip_text = true
+	button.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+
+func _apply_button_text_sizing(button: Button, font_size: int, min_height: float = 0.0) -> void:
+	if button == null:
+		return
+	button.add_theme_font_size_override("font_size", font_size)
+	if min_height > 0.0:
+		button.custom_minimum_size.y = maxf(button.custom_minimum_size.y, min_height)
+
+func _apply_line_edit_text_sizing(edit: LineEdit, font_size: int, min_height: float = 0.0) -> void:
+	if edit == null:
+		return
+	edit.add_theme_font_size_override("font_size", font_size)
+	if min_height > 0.0:
+		edit.custom_minimum_size.y = maxf(edit.custom_minimum_size.y, min_height)
+
+func _fit_main_menu_container_to_contents() -> void:
+	if menu_container == null:
+		return
+	menu_container.reset_size()
+	menu_container.size.x = maxf(menu_container.size.x, MENU_PRIMARY_BUTTON_MIN_WIDTH)
+	_center_main_menu_container()
+
+func _center_main_menu_container() -> void:
+	if menu_container == null:
+		return
+	var viewport_size: Vector2 = get_viewport().get_visible_rect().size
+	if viewport_size == Vector2.ZERO:
+		viewport_size = size
+	var menu_size: Vector2 = menu_container.size
+	if menu_size.x <= 0.0 or menu_size.y <= 0.0:
+		menu_size = menu_container.get_combined_minimum_size()
+	if menu_size.x <= 0.0 or menu_size.y <= 0.0:
+		return
+	var max_x := maxf(MENU_VIEWPORT_MARGIN, viewport_size.x - menu_size.x - MENU_VIEWPORT_MARGIN)
+	var max_y := maxf(MENU_VIEWPORT_MARGIN, viewport_size.y - menu_size.y - MENU_VIEWPORT_MARGIN)
+	menu_container.position = Vector2(
+		clampf((viewport_size.x - menu_size.x) * 0.5, MENU_VIEWPORT_MARGIN, max_x),
+		clampf((viewport_size.y - menu_size.y) * 0.5, MENU_VIEWPORT_MARGIN, max_y)
+	).floor()
 
 func _prepare_startup_menu_fade() -> void:
 	if menu_container == null:
@@ -372,6 +1490,8 @@ func _begin_startup_menu_fade() -> void:
 	if _startup_menu_fade_started or menu_container == null:
 		return
 	_startup_menu_fade_started = true
+	_startup_trace("_begin_startup_menu_fade (menu fade + splash slide start)")
+	_begin_startup_splash_animation()
 	menu_container.modulate.a = 0.0
 	var tween := create_tween()
 	tween.tween_property(menu_container, "modulate:a", 1.0, STARTUP_MENU_FADE_SECONDS).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
@@ -394,14 +1514,26 @@ func _bind_game_signals() -> void:
 			var leave_callback := Callable(self, "_on_game_leave_match_requested")
 			if not game.leave_match_requested.is_connected(leave_callback):
 				game.leave_match_requested.connect(leave_callback)
+		if game != null and game.has_signal("watch_next_bot_match_requested"):
+			var watch_next_callback := Callable(self, "_on_watch_next_local_bot_match_requested")
+			if not game.watch_next_bot_match_requested.is_connected(watch_next_callback):
+				game.watch_next_bot_match_requested.connect(watch_next_callback)
 		if game != null and game.has_signal("rematch_requested"):
 			var rematch_callback := Callable(self, "_on_game_rematch_requested")
 			if not game.rematch_requested.is_connected(rematch_callback):
 				game.rematch_requested.connect(rematch_callback)
+		if game != null and game.has_signal("match_connection_lost"):
+			var connection_lost_callback := Callable(self, "_on_game_match_connection_lost")
+			if not game.match_connection_lost.is_connected(connection_lost_callback):
+				game.match_connection_lost.connect(connection_lost_callback)
 		if game != null and game.has_signal("match_session_cleared"):
 			var clear_callback := Callable(self, "_on_match_session_cleared")
 			if not game.match_session_cleared.is_connected(clear_callback):
 				game.match_session_cleared.connect(clear_callback)
+		if game != null and game.has_signal("match_loading_finished"):
+			var loading_callback := Callable(self, "_finish_match_loading")
+			if not game.match_loading_finished.is_connected(loading_callback):
+				game.match_loading_finished.connect(loading_callback)
 
 func _ensure_practice_thor_entry() -> void:
 	if game_container == null or menu_container == null:
@@ -411,16 +1543,8 @@ func _ensure_practice_thor_entry() -> void:
 		if practice_button != null:
 			practice_button.visible = false
 		return
-	var practice_game = game_container.get_node_or_null("PracticeThor")
-	if practice_game == null:
-		var practice_scene := load(PRACTICE_THOR_SCENE_PATH)
-		var practice_instance = practice_scene.instantiate() if practice_scene is PackedScene else null
-		if practice_instance != null:
-			practice_instance.name = "PracticeThor"
-			if practice_instance is Control:
-				practice_instance.visible = false
-			game_container.add_child(practice_instance)
-			practice_game = practice_instance
+	# The PracticeThor scene is instantiated lazily on first use (see
+	# _ensure_practice_thor_game) so startup only pays for the menu button.
 	if practice_button == null:
 		practice_button = Button.new()
 		practice_button.name = "PracticeThorButton"
@@ -429,13 +1553,32 @@ func _ensure_practice_thor_entry() -> void:
 		var insert_index := multiplayer_button.get_index() if multiplayer_button != null else menu_container.get_child_count() - 1
 		menu_container.move_child(practice_button, insert_index)
 	if practice_button != null:
-		practice_button.visible = practice_game != null
+		practice_button.visible = true
 		var callback := Callable(self, "_on_practice_thor_pressed")
-		if practice_game != null and not practice_button.pressed.is_connected(callback):
-			practice_button.pressed.connect(_on_practice_thor_pressed)
+		if not practice_button.pressed.is_connected(callback):
+			practice_button.pressed.connect(callback)
+
+func _ensure_practice_thor_game() -> Node:
+	if not _is_practice_thor_enabled():
+		return null
+	var practice_game = game_container.get_node_or_null("PracticeThor")
+	if practice_game != null:
+		return practice_game
+	var practice_scene := load(PRACTICE_THOR_SCENE_PATH)
+	var practice_instance = practice_scene.instantiate() if practice_scene is PackedScene else null
+	if practice_instance == null:
+		return null
+	practice_instance.name = "PracticeThor"
+	if practice_instance is Control:
+		(practice_instance as Control).visible = false
+	game_container.add_child(practice_instance)
+	# Signal bindings normally happen in _ready for embedded games; games
+	# created lazily need the same connections before first use.
+	_bind_game_signals()
+	return practice_instance
 
 func _get_embedded_game_node_names() -> Array[String]:
-	var node_names: Array[String] = ["MockGame", "CardTest"]
+	var node_names: Array[String] = ["MockGame", "CardTest", "Story"]
 	if _is_practice_thor_enabled():
 		node_names.append("PracticeThor")
 	return node_names
@@ -448,14 +1591,34 @@ func _hide_embedded_games() -> void:
 
 func _show_embedded_game(node_name: String) -> Node:
 	_hide_embedded_games()
+	if node_name == "PracticeThor":
+		_ensure_practice_thor_game()
 	var game = get_node_or_null("GameContainer/" + node_name)
 	if game != null:
+		if node_name == "PracticeThor":
+			_suspend_lobby_for_practice()
+		_fit_embedded_game_to_container(game)
 		game.visible = true
 	return game
+
+func _fit_embedded_game_to_container(game: Node) -> void:
+	if game_container == null or not (game is Control):
+		return
+	var control := game as Control
+	control.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	control.position = Vector2.ZERO
+	control.size = game_container.size
 
 func _fit_to_viewport() -> void:
 	position = Vector2.ZERO
 	size = get_viewport().get_visible_rect().size
+	_center_main_menu_container()
+	_layout_recent_activity_panel()
+	_layout_startup_splash_background()
+	for node_name in _get_embedded_game_node_names():
+		var game = get_node_or_null("GameContainer/" + node_name)
+		if game != null:
+			_fit_embedded_game_to_container(game)
 	if _deck_picker_popup != null and is_instance_valid(_deck_picker_popup) and _deck_picker_popup.visible:
 		_position_multiplayer_deck_popup()
 
@@ -484,19 +1647,24 @@ func _build_server_version_overlay() -> void:
 func _set_connected_server_version(version: String) -> void:
 	_connected_server_version = AppReleaseInfoScript.normalize_version(version)
 	_refresh_server_version_label()
+	_maybe_check_for_server_required_update(_connected_server_version)
 
 func _refresh_server_version_label() -> void:
 	if _server_version_label == null or not is_instance_valid(_server_version_label):
 		return
 	var server_text := ""
 	if _connected_server_version.is_empty():
-		if _has_connected_lobby_transport():
+		if _has_active_lobby_connection():
 			server_text = "Server: version unavailable"
+		elif _has_connected_lobby_transport():
+			server_text = "Server: signing in..."
+		elif _has_saved_account_identity():
+			server_text = "Server: sign in required"
 		else:
 			server_text = "Server: not connected"
 	else:
 		server_text = "Server: %s" % _connected_server_version
-	var client_version := AppReleaseInfoScript.get_current_version()
+	var client_version := AppReleaseInfoScript.get_display_version()
 	_server_version_label.text = "%s\nClient: %s" % [server_text, client_version]
 
 func _is_deck_builder_open() -> bool:
@@ -524,15 +1692,40 @@ func _refresh_server_version_overlay_visibility() -> void:
 	)
 
 func _process(delta: float) -> void:
+	_poll_host_viability_probe()
+	_poll_local_bot_spectate_probe()
+	if OS.is_debug_build():
+		if not _should_auto_refresh_seeks():
+			_players_online_refresh_elapsed = 0.0
+		else:
+			_players_online_refresh_elapsed += delta
+			if _players_online_refresh_elapsed >= PLAYERS_ONLINE_REFRESH_INTERVAL_SECONDS:
+				_players_online_refresh_elapsed = 0.0
+				_request_players_online()
+	# Timeout fallback for servers that never answer (old release servers).
+	if _players_online_request_pending:
+		var elapsed := (Time.get_ticks_msec() / 1000.0) - _players_online_request_time
+		if elapsed >= 4.0:
+			_players_online_request_pending = false
+			if _players_online_label != null and is_instance_valid(_players_online_label):
+				_players_online_label.visible = false
+	if not _deferred_required_update.is_empty() and not _should_defer_required_update():
+		var pending_update := _deferred_required_update
+		_deferred_required_update = {}
+		_begin_required_update(
+			pending_update.latest_version,
+			pending_update.release_url,
+			pending_update.download_url,
+			pending_update.download_size,
+			pending_update.download_sha256,
+			pending_update.macos_appcast_available,
+			pending_update.download_sha256_url
+		)
 	if _is_auto_updating and _update_download_request != null and is_instance_valid(_update_download_request):
-		if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
-			var total := _update_download_request.get_body_size()
-			var downloaded := _update_download_request.get_downloaded_bytes()
-			if total > 0:
-				var percent := int(float(downloaded) / float(total) * 100.0)
-				_update_download_status_label.text = "Downloading... %d%%" % percent
-			else:
-				_update_download_status_label.text = "Downloading... %.1f MB" % (float(downloaded) / 1048576.0)
+		_refresh_update_download_progress()
+	elif _is_auto_updating and _update_curl_process_id > 0:
+		_refresh_windows_curl_download_progress()
+	_poll_tutorial_coach()
 	if not _should_auto_refresh_seeks():
 		_seek_auto_refresh_elapsed = 0.0
 		return
@@ -542,7 +1735,124 @@ func _process(delta: float) -> void:
 	_seek_auto_refresh_elapsed = 0.0
 	_queue_room_list_refresh(false)
 
+func _exit_tree() -> void:
+	_stop_local_bot_match_worker()
+	# Join before releasing the Thread, including when quitting during discovery.
+	if _host_viability_probe_thread != null:
+		_host_viability_probe_thread.wait_to_finish()
+		_host_viability_probe_thread = null
+
+func _refresh_update_download_progress() -> void:
+	if not _has_update_download_status_target():
+		return
+	var downloaded := _update_download_request.get_downloaded_bytes()
+	var total := _update_download_request.get_body_size()
+	if total <= 0:
+		total = _pending_update_download_size
+	var version_text := _pending_update_release_version
+	if version_text.is_empty():
+		version_text = "the latest version"
+	if total > 0:
+		var progress := clampf(float(downloaded) / float(total), 0.0, 1.0)
+		var percent := clampi(int(progress * 100.0), 0, 100)
+		_set_update_download_progress(progress)
+		_set_update_download_status(
+			(
+				"Downloading %s: %d%% (%.1f / %.1f MB).\n"
+				+ "Keep Other Gods open until it restarts."
+			) % [
+				version_text,
+				percent,
+				float(downloaded) / BYTES_PER_MIB,
+				float(total) / BYTES_PER_MIB,
+			]
+		)
+		if percent >= _last_logged_update_percent + 10 or percent == 100:
+			_last_logged_update_percent = percent
+			_write_update_log(
+				"download_progress version=%s percent=%d bytes=%d total=%d"
+				% [version_text, percent, downloaded, total]
+			)
+	else:
+		_set_update_download_status(
+			(
+				"Downloading %s: %.1f MB received.\n"
+				+ "Keep Other Gods open until it restarts."
+			) % [version_text, float(downloaded) / BYTES_PER_MIB]
+		)
+
+func _has_update_download_status_target() -> bool:
+	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
+		return true
+	return _update_uses_startup_loading_bar \
+		and _startup_loading_status_label != null \
+		and is_instance_valid(_startup_loading_status_label)
+
+func _set_update_download_status(message: String) -> void:
+	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
+		_update_download_status_label.text = message
+		_update_download_status_label.visible = true
+	if (
+		_update_uses_startup_loading_bar
+		and _startup_loading_status_label != null
+		and is_instance_valid(_startup_loading_status_label)
+	):
+		_startup_loading_status_label.text = message
+
+func _set_update_download_progress(progress: float, duration: float = 0.0) -> void:
+	if not _update_uses_startup_loading_bar:
+		return
+	_set_startup_loading_progress(progress, duration)
+
+func _refresh_windows_curl_download_progress() -> void:
+	if not _has_update_download_status_target():
+		return
+	var downloaded := maxi(0, _get_file_size(_update_curl_download_path))
+	var total := _pending_update_download_size
+	var version_text := _pending_update_release_version
+	if version_text.is_empty():
+		version_text = "the latest version"
+	if total > 0:
+		var progress := clampf(float(downloaded) / float(total), 0.0, 1.0)
+		var percent := clampi(int(progress * 100.0), 0, 100)
+		_set_update_download_progress(progress)
+		_set_update_download_status(
+			(
+				"Windows downloader: %s %d%% (%.1f / %.1f MB).\n"
+				+ "Keep Other Gods open until it restarts."
+			) % [
+				version_text,
+				percent,
+				float(downloaded) / BYTES_PER_MIB,
+				float(total) / BYTES_PER_MIB,
+			]
+		)
+	else:
+		_set_update_download_status(
+			(
+				"Windows downloader: %s (%.1f MB received).\n"
+				+ "Keep Other Gods open until it restarts."
+			) % [version_text, float(downloaded) / BYTES_PER_MIB]
+		)
+
+func _on_environment_test_pressed() -> void:
+	if not OS.is_debug_build() or is_instance_valid(_environment_test):
+		return
+	_set_snowstorm_visible(false)
+	var test_script := load("res://scripts/ui/EnvironmentTest.gd") as Script
+	_environment_test = test_script.new() as CanvasLayer
+	_environment_test.connect("closed", _on_environment_test_closed)
+	add_child(_environment_test)
+
+func _on_environment_test_closed() -> void:
+	_environment_test = null
+
 func _input(event: InputEvent) -> void:
+	if is_instance_valid(_environment_test):
+		if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
+			_environment_test.call("request_close")
+			get_viewport().set_input_as_handled()
+		return
 	if event is InputEventKey:
 		var key_event := event as InputEventKey
 		if key_event.pressed and key_event.keycode == KEY_ESCAPE:
@@ -561,27 +1871,54 @@ func _input(event: InputEvent) -> void:
 			return
 		var popup_rect := _deck_picker_popup.get_global_rect()
 		var button_rect := Rect2()
-		if _deck_picker_button != null and is_instance_valid(_deck_picker_button):
-			button_rect = _deck_picker_button.get_global_rect()
+		var anchor_button := _get_deck_popup_anchor_button()
+		if anchor_button != null and is_instance_valid(anchor_button):
+			button_rect = anchor_button.get_global_rect()
 		if popup_rect.has_point(mouse_event.position) or button_rect.has_point(mouse_event.position):
 			return
 		_hide_multiplayer_deck_popup()
 
 func _handle_escape_navigation() -> bool:
+	if is_instance_valid(_bug_report_overlay):
+		if is_instance_valid(_bug_report_file_dialog) and _bug_report_file_dialog.visible:
+			_bug_report_file_dialog.hide()
+		else:
+			_close_bug_report_overlay()
+		return true
 	if _close_confirm_overlay != null and is_instance_valid(_close_confirm_overlay):
 		_close_program()
 		return true
+	if is_instance_valid(_rank_badge_picker):
+		_close_rank_badge_picker()
+		return true
+	if is_instance_valid(_ranked_ladder_view):
+		_close_ranked_ladder()
+		return true
+	if is_instance_valid(_bot_ladder_view):
+		if not _bot_ladder_view.close_deck():
+			_close_bot_ladder()
+		return true
 	if _rules_overlay != null and is_instance_valid(_rules_overlay):
+		var return_to_menu_after_rules = menu_container != null and menu_container.visible
 		_close_rules_overlay()
-		show_menu()
+		if return_to_menu_after_rules:
+			show_menu()
 		return true
 	if _friends_overlay != null and is_instance_valid(_friends_overlay):
 		_close_friends_overlay()
 		show_menu()
 		return true
 	if _is_deck_builder_open():
-		_return_to_menu()
+		var deck_builder := game_container.get_node_or_null("DeckBuilder") as DeckBuilderUI
+		if deck_builder == null:
+			_return_to_menu()
+		else:
+			deck_builder.request_exit()
 		return true
+	if menu_container != null and menu_container.visible and multiplayer_container != null and multiplayer_container.visible:
+		if _auth_onboarding_overlay == null or not is_instance_valid(_auth_onboarding_overlay):
+			_on_multiplayer_back_pressed()
+			return true
 	if menu_container != null and menu_container.visible and multiplayer_container != null and not multiplayer_container.visible:
 		_open_close_confirm_overlay()
 		return true
@@ -675,18 +2012,53 @@ func _close_program() -> void:
 	get_tree().quit()
 
 func show_menu() -> void:
-	menu_container.visible = true
+	_lobby_suspended_for_practice = false
+	_finish_match_loading()
+	_set_snowstorm_visible(false)
+	_close_tutorial_coach_overlay()
 	game_container.visible = false
+	_set_startup_splash_background_visible(true)
+	_apply_main_menu_text_sizing()
+	_reconcile_multiplayer_screen_for_menu()
 	_hide_multiplayer_deck_popup()
 	_refresh_multiplayer_deck_options()
 	_refresh_multiplayer_action_state()
+	_fit_main_menu_container_to_contents()
+	menu_container.visible = true
+	_layout_recent_activity_panel()
 	_refresh_server_version_overlay_visibility()
+	_refresh_audio_mute_buttons()
 
 func show_game() -> void:
+	_set_startup_splash_background_visible(false)
 	menu_container.visible = false
+	_layout_recent_activity_panel()
 	game_container.visible = true
+	get_tree().call_group("combat_mock_game", "_sync_drought_weather_visuals")
 	_hide_multiplayer_deck_popup()
 	_refresh_server_version_overlay_visibility()
+	_refresh_audio_mute_buttons()
+
+func _set_startup_splash_background_visible(background_visible: bool) -> void:
+	if _startup_splash_background != null and is_instance_valid(_startup_splash_background):
+		_startup_splash_background.visible = background_visible
+
+func _set_snowstorm_visible(active: bool) -> void:
+	var tree := get_tree()
+	if tree == null:
+		return
+	tree.call_group(SNOWSTORM_CONTROL_GROUP, "set_snowstorm_active", active)
+	if not active:
+		tree.call_group("other_gods_drought_control", "set_drought_active", false)
+
+func _apply_multiplayer_screen_default_font() -> void:
+	# The multiplayer screen uses the engine default font instead of the
+	# Norse UI font applied to the rest of the menu container.
+	if multiplayer_container == null:
+		return
+	if multiplayer_container.theme == null:
+		multiplayer_container.theme = Theme.new()
+	multiplayer_container.theme.default_font = ThemeDB.fallback_font
 
 func _on_multiplayer_pressed() -> void:
 	_open_multiplayer_screen()
@@ -694,18 +2066,75 @@ func _on_multiplayer_pressed() -> void:
 func _on_multiplayer_back_pressed() -> void:
 	multiplayer_container.visible = false
 	_hide_multiplayer_deck_popup()
+	_restore_main_menu_controls_after_multiplayer_screen()
 	status_label.text = "Refresh seeks to join a room or watch a live match."
 	_refresh_seek_list()
 	_refresh_multiplayer_action_state()
+	_fit_main_menu_container_to_contents()
+	_refresh_server_version_overlay_visibility()
+
+func _is_multiplayer_screen_active() -> bool:
+	return multiplayer_container != null and multiplayer_container.visible
+
+func _reconcile_multiplayer_screen_for_menu() -> void:
+	if multiplayer_container == null:
+		return
+	if multiplayer_container.visible:
+		_hide_main_menu_controls_for_multiplayer_screen()
+	else:
+		_restore_main_menu_controls_after_multiplayer_screen()
+
+func _hide_main_menu_controls_for_multiplayer_screen() -> void:
+	if menu_container == null:
+		return
+	for child in menu_container.get_children():
+		if child == multiplayer_container or not (child is Control):
+			continue
+		var child_control := child as Control
+		if not child_control.visible:
+			continue
+		child_control.visible = false
+		if not _multiplayer_screen_hidden_menu_controls.has(child_control):
+			_multiplayer_screen_hidden_menu_controls.append(child_control)
+
+func _restore_main_menu_controls_after_multiplayer_screen() -> void:
+	if _multiplayer_screen_hidden_menu_controls.is_empty():
+		return
+	for hidden_control in _multiplayer_screen_hidden_menu_controls:
+		if hidden_control != null and is_instance_valid(hidden_control):
+			hidden_control.visible = true
+	_multiplayer_screen_hidden_menu_controls.clear()
+	# Auth-owned controls can be created or re-shown while the multiplayer
+	# screen is open; recompute their visibility for the main menu.
+	_refresh_switch_account_button()
+	_refresh_account_identity_label()
 
 func _open_multiplayer_screen() -> void:
+	_cancel_pending_authenticated_lobby_connects()
+	_startup_autologin_pending = false
+	_startup_autologin_in_progress = false
+	_hide_main_menu_controls_for_multiplayer_screen()
 	multiplayer_container.visible = true
+	if _pending_background_lobby_auth_completion.is_valid():
+		var completion := _pending_background_lobby_auth_completion
+		_pending_background_lobby_auth_completion = Callable()
+		completion.call()
 	_refresh_multiplayer_deck_options()
 	_refresh_auth_controls()
+	_fit_main_menu_container_to_contents()
+	_refresh_server_version_overlay_visibility()
 	if _current_profile_summary.is_empty() and not _has_active_lobby_connection():
 		_refresh_profile_summary_from_local_history(_local_profile_id)
 	_refresh_seek_list()
 	_refresh_multiplayer_action_state()
+	_request_recent_match_activity()
+	if is_instance_valid(_recent_activity_timer):
+		_recent_activity_timer.start()
+	if not _background_lobby_auth_error.is_empty():
+		var auth_message := _background_lobby_auth_error
+		_background_lobby_auth_error = ""
+		_show_auth_recovery_prompt(auth_message)
+		return
 	if not _current_room_snapshot.is_empty():
 		_apply_room_snapshot(_current_room_snapshot)
 		return
@@ -716,13 +2145,16 @@ func _open_multiplayer_screen() -> void:
 	if not target_error.is_empty():
 		status_label.text = target_error
 		return
-	var auth_error := _validate_auth_inputs()
+	var auth_error := _get_lobby_auth_input_error()
 	if not auth_error.is_empty():
 		status_label.text = auth_error
+		_show_current_auth_prompt(auth_error)
 		return
 	_pending_host_room_creation = false
 	_pending_join_room_id = ""
+	_pending_rejoin_room_id = ""
 	_pending_observe_room_id = ""
+	_pending_seek_switch_join_room_id = ""
 	_pending_local_lobby_launch_on_connect_failure = false
 	_connect_to_browseable_lobby("Connecting to lobby...")
 
@@ -731,6 +2163,27 @@ func _has_active_lobby_connection() -> bool:
 
 func _has_connected_lobby_transport() -> bool:
 	return lobby_client != null and is_instance_valid(lobby_client) and lobby_client.is_transport_connected()
+
+func _has_saved_account_identity() -> bool:
+	return _get_selected_auth_mode() in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY] \
+		and not _get_saved_account_username().is_empty()
+
+func _is_account_sign_in_required() -> bool:
+	return _get_selected_auth_mode() in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY] \
+		and not _has_active_lobby_connection() \
+		and (
+			not _get_saved_account_username().is_empty()
+			or not _selected_account_username.strip_edges().is_empty()
+			or not _get_pending_legacy_claim_username().is_empty()
+		)
+
+func _clear_unauthenticated_lobby_transport() -> void:
+	if lobby_client == null or not is_instance_valid(lobby_client):
+		return
+	if lobby_client.is_authenticated():
+		return
+	_cleanup_lobby_client()
+	_set_connected_server_version("")
 
 func _prepare_fresh_lobby_login() -> void:
 	if not _account_switch_pending and not _has_active_lobby_connection():
@@ -742,12 +2195,59 @@ func _prepare_fresh_lobby_login() -> void:
 func _cancel_pending_authenticated_lobby_connects() -> void:
 	_authenticated_lobby_connect_serial += 1
 
+func _suspend_lobby_for_practice() -> void:
+	# Practice runs in-process. Stop lobby handshakes and reconnect timers until
+	# returning to the menu, which restores the saved lobby session as usual.
+	_lobby_suspended_for_practice = true
+	_cancel_pending_authenticated_lobby_connects()
+	_startup_autologin_pending = false
+	_startup_autologin_in_progress = false
+	_background_lobby_auth_error = ""
+	_lobby_auto_reconnect_was_active = false
+	_cleanup_lobby_client()
+	_set_connected_server_version("")
+
 func _should_delay_fresh_lobby_connect() -> bool:
 	return lobby_client != null and is_instance_valid(lobby_client)
 
 func _queue_authenticated_lobby_connect(connect_status: String = "Connecting to lobby...") -> void:
 	_authenticated_lobby_connect_serial += 1
 	call_deferred("_deferred_authenticated_lobby_connect", connect_status, _authenticated_lobby_connect_serial)
+
+func _begin_lobby_sign_in_watchdog() -> void:
+	_lobby_sign_in_watchdog_serial += 1
+	var watchdog_serial := _lobby_sign_in_watchdog_serial
+	var tree := get_tree()
+	if tree == null:
+		return
+	var timer := tree.create_timer(LOBBY_SIGN_IN_WATCHDOG_SECONDS)
+	timer.timeout.connect(Callable(self, "_on_lobby_sign_in_watchdog_timeout").bind(watchdog_serial))
+
+func _cancel_lobby_sign_in_watchdog() -> void:
+	_lobby_sign_in_watchdog_serial += 1
+
+func _on_lobby_sign_in_watchdog_timeout(watchdog_serial: int) -> void:
+	if watchdog_serial != _lobby_sign_in_watchdog_serial:
+		return
+	if lobby_client == null or not is_instance_valid(lobby_client):
+		return
+	if lobby_client.is_authenticated():
+		return
+	if not lobby_client.is_transport_connected():
+		return
+	_write_smoke_trace("lobby_sign_in_watchdog_timeout")
+	_finish_match_loading()
+	_cancel_lobby_sign_in_watchdog()
+	_startup_autologin_in_progress = false
+	_account_switch_pending = false
+	_account_switch_retry_attempts = 0
+	_logged_in_account_username = ""
+	_cleanup_lobby_client()
+	_set_connected_server_version("")
+	var message := "The lobby sign-in timed out. Try Login and sign in again."
+	status_label.text = message
+	_refresh_account_identity_label()
+	_show_auth_recovery_prompt(message)
 
 func _should_reuse_active_lobby_connection(target_lobby_ip: String) -> bool:
 	if _account_switch_pending:
@@ -761,17 +2261,44 @@ func _should_reuse_active_lobby_connection(target_lobby_ip: String) -> bool:
 		str(lobby_client.current_auth_mode) if lobby_client != null else "",
 		AUTH_MODE_LOGIN
 	)
-	if desired_auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+	if desired_auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
 		return false
-	var desired_username := _get_preferred_account_username().strip_edges().to_lower()
+	if desired_auth_mode == AUTH_MODE_CLAIM_LEGACY:
+		return false
+	var desired_email := _get_preferred_account_username().strip_edges().to_lower()
+	var connected_email := _get_connected_account_email().strip_edges().to_lower()
 	var connected_username := _get_connected_account_username().strip_edges().to_lower()
-	return not desired_username.is_empty() \
-		and connected_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER] \
-		and connected_username == desired_username
+	return not desired_email.is_empty() \
+		and connected_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY] \
+		and (connected_email == desired_email or connected_username == desired_email)
 
-func _build_menu_card_template_cache() -> void:
+func _build_menu_card_template_cache_backgrounded() -> void:
+	if _menu_card_templates_built:
+		return
+	# Yield one frame so the startup loading overlay paints before we start the
+	# card-script warm-up.
+	await get_tree().process_frame
+	if not is_instance_valid(self):
+		return
+	# Warm the shared CardCatalog cache a batch of scripts per frame so the
+	# ~230-script load never blocks one frame for longer than a single batch.
+	var warm_started_ms := Time.get_ticks_msec()
+	var batch_index := 0
+	while not CardCatalogScript.warm_cache_batch(MENU_CARD_CACHE_BATCH_SIZE):
+		batch_index += 1
+		_startup_trace("card warm batch %d done (%dms cumulative)" % [
+			batch_index,
+			Time.get_ticks_msec() - warm_started_ms
+		])
+		if not is_instance_valid(self):
+			return
+		await get_tree().process_frame
+	_startup_trace("card warm complete: %dms total" % (Time.get_ticks_msec() - warm_started_ms))
+	# Hold the shared cached templates directly instead of duplicating all 225
+	# cards with fresh UIDs -- the menu only reads art/names from these
+	# templates.
 	_menu_card_templates.clear()
-	for card in CardCatalogScript.make_all_cards():
+	for card in CardCatalogScript.get_cached_card_templates():
 		if card == null:
 			continue
 		var card_name := str(card.card_name).strip_edges()
@@ -780,6 +2307,26 @@ func _build_menu_card_template_cache() -> void:
 		var lookup_key := CardCatalogScript.to_lookup_key(card_name)
 		if not lookup_key.is_empty():
 			_menu_card_templates[lookup_key] = card
+	_menu_card_templates_built = true
+	# Refresh the deck picker now that god-card templates are available, so any
+	# rows rendered before the cache finished resolve their icons.
+	if is_instance_valid(self):
+		_refresh_multiplayer_deck_options()
+
+func _build_menu_card_template_cache() -> void:
+	if _menu_card_templates_built:
+		return
+	_menu_card_templates.clear()
+	for card in CardCatalogScript.get_cached_card_templates():
+		if card == null:
+			continue
+		var card_name := str(card.card_name).strip_edges()
+		if not card_name.is_empty():
+			_menu_card_templates[card_name] = card
+		var lookup_key := CardCatalogScript.to_lookup_key(card_name)
+		if not lookup_key.is_empty():
+			_menu_card_templates[lookup_key] = card
+	_menu_card_templates_built = true
 
 func _build_multiplayer_deck_controls() -> void:
 	if menu_container == null or multiplayer_container == null or _deck_picker_button != null:
@@ -797,12 +2344,22 @@ func _build_multiplayer_deck_controls() -> void:
 	button.text = "Change Deck: No saved decks"
 	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	button.custom_minimum_size = Vector2(0, 36)
-	button.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	button.pressed.connect(_toggle_multiplayer_deck_popup)
+	button.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	button.pressed.connect(_toggle_multiplayer_deck_popup.bind(button))
 	menu_container.add_child(button)
 	var menu_insert_index := multiplayer_button.get_index() if multiplayer_button != null else menu_container.get_child_count() - 1
 	menu_container.move_child(button, menu_insert_index)
 	_deck_picker_button = button
+
+	var screen_button := Button.new()
+	screen_button.name = "MultiplayerDeckChangeButton"
+	screen_button.text = "Change Deck: No saved decks"
+	screen_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	screen_button.custom_minimum_size = Vector2(0, 36)
+	screen_button.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	screen_button.pressed.connect(_toggle_multiplayer_deck_popup.bind(screen_button))
+	multiplayer_container.add_child(screen_button)
+	_multiplayer_deck_change_button = screen_button
 
 	var summary_panel := PanelContainer.new()
 	summary_panel.name = "SelectedDeckSummaryPanel"
@@ -820,6 +2377,7 @@ func _build_multiplayer_deck_controls() -> void:
 	multiplayer_container.add_child(summary_panel)
 	if create_seek_button != null:
 		multiplayer_container.move_child(summary_panel, create_seek_button.get_index())
+	multiplayer_container.move_child(screen_button, summary_panel.get_index())
 	_multiplayer_deck_summary_panel = summary_panel
 
 	var summary_row := HBoxContainer.new()
@@ -897,7 +2455,11 @@ func _get_saved_deck_name(saved_deck: Dictionary) -> String:
 func _get_saved_deck_validation(saved_deck: Dictionary) -> Dictionary:
 	if saved_deck.is_empty():
 		return {"is_valid": false, "error": "Deck is missing."}
-	return _deck_validator.validate_deck(saved_deck.get("cards", {}))
+	return _deck_validator.validate_deck(
+		saved_deck.get("cards", {}),
+		saved_deck.get("special_setup", {}),
+		saved_deck.get("reinforcements", {})
+	)
 
 func _get_saved_decks_for_current_identity() -> Array[Dictionary]:
 	if _uses_server_account_storage():
@@ -952,43 +2514,47 @@ static func _should_ignore_account_deck_sync_update(deck_id: String, deleted_loo
 		return true
 	return bool(deleted_lookup.get(resolved_deck_id, false))
 
-func _mark_active_profile_account_decks_synced(deck_ids: Array) -> void:
+func _mark_active_profile_account_decks_synced(deck_ids: Array, defer_save: bool = false) -> bool:
 	if _local_profile_store == null or _local_profile_id.is_empty() or deck_ids.is_empty():
-		return
-	_local_profile_store.mark_account_decks_synced(_local_profile_id, deck_ids)
-
-func _mirror_remote_account_deck_locally(deck: Dictionary) -> void:
-	if _local_profile_store == null or _local_profile_id.is_empty() or deck.is_empty():
-		return
-	_local_profile_store.upsert_saved_deck(_local_profile_id, deck, false)
+		return false
+	return _local_profile_store.mark_account_decks_synced(_local_profile_id, deck_ids, defer_save)
 
 static func _merge_account_deck_catalogs(
 	remote_decks: Array[Dictionary],
 	local_decks: Array[Dictionary],
 	synced_lookup: Dictionary,
-	deleted_lookup: Dictionary
+	deleted_lookup: Dictionary,
+	pending_saves: Dictionary
 ) -> Dictionary:
 	var visible_decks: Array[Dictionary] = []
 	var remote_deck_lookup: Dictionary = {}
-	var local_migration_decks: Array[Dictionary] = []
+	var decks_to_upload: Array[Dictionary] = []
 	for remote_deck in remote_decks:
 		var remote_id := str(remote_deck.get("deck_id", "")).strip_edges()
 		if _should_ignore_account_deck_sync_update(remote_id, deleted_lookup) or remote_deck_lookup.has(remote_id):
 			continue
 		remote_deck_lookup[remote_id] = true
-		visible_decks.append(remote_deck.duplicate(true))
+		visible_decks.append(pending_saves.get(remote_id, remote_deck))
+	for pending_id in pending_saves:
+		if _should_ignore_account_deck_sync_update(pending_id, deleted_lookup):
+			continue
+		var pending_deck: Dictionary = pending_saves[pending_id]
+		decks_to_upload.append(pending_deck)
+		if not remote_deck_lookup.has(pending_id):
+			visible_decks.append(pending_deck)
 	for local_deck in local_decks:
 		var local_id := str(local_deck.get("deck_id", "")).strip_edges()
-		if _should_ignore_account_deck_sync_update(local_id, deleted_lookup) or remote_deck_lookup.has(local_id):
+		if _should_ignore_account_deck_sync_update(local_id, deleted_lookup) \
+				or remote_deck_lookup.has(local_id) or pending_saves.has(local_id):
 			continue
 		if bool(synced_lookup.get(local_id, false)):
 			continue
 		var copied_local_deck := local_deck.duplicate(true)
 		visible_decks.append(copied_local_deck)
-		local_migration_decks.append(copied_local_deck.duplicate(true))
+		decks_to_upload.append(copied_local_deck)
 	return {
 		"visible_decks": visible_decks,
-		"local_migration_decks": local_migration_decks,
+		"decks_to_upload": decks_to_upload,
 	}
 
 func _upsert_account_deck_cache(deck: Dictionary) -> void:
@@ -1031,6 +2597,11 @@ func _find_menu_card_template(card_name: String) -> Card:
 	var lookup_key := CardCatalogScript.to_lookup_key(resolved_name)
 	if _menu_card_templates.has(lookup_key):
 		return _menu_card_templates[lookup_key] as Card
+	# The menu template cache is built in the background after startup to keep
+	# launch fast. If a lookup happens before it finishes, fall back to a direct
+	# catalog instantiation so god icons still resolve immediately.
+	if not _menu_card_templates_built:
+		return CardCatalogScript.instantiate_card_by_name(resolved_name)
 	return null
 
 func _get_saved_deck_god_template(saved_deck: Dictionary) -> Card:
@@ -1061,26 +2632,37 @@ func _get_menu_card_art_texture(art_path: String) -> Texture2D:
 func _refresh_multiplayer_deck_picker_button() -> void:
 	if _deck_picker_button == null:
 		return
-	if _multiplayer_deck_entries.is_empty():
-		_deck_picker_button.text = "Change Deck: No saved decks"
-		_deck_picker_button.tooltip_text = "No saved decks yet."
-		_deck_picker_button.disabled = true
-		return
-	var selected_entry: Dictionary = _get_selected_multiplayer_deck_entry()
-	if selected_entry.is_empty():
-		_deck_picker_button.text = "Change Deck: Choose a deck"
-		_deck_picker_button.tooltip_text = "Choose one of your saved decks."
-		_deck_picker_button.disabled = false
-		return
-	var deck_name := str(selected_entry.get("deck_name", "Deck"))
-	if bool(selected_entry.get("is_legal", false)):
-		_deck_picker_button.text = "Change Deck: %s" % deck_name
-		_deck_picker_button.tooltip_text = "Current multiplayer deck: %s" % deck_name
+	var button_text := ""
+	var button_tooltip := ""
+	var disabled := false
+	if _is_account_sign_in_required():
+		button_text = "Change Deck: Sign in required"
+		button_tooltip = "Sign in to load your account decks."
+		disabled = true
+	elif _multiplayer_deck_entries.is_empty():
+		button_text = "Change Deck: No saved decks"
+		button_tooltip = "No saved decks yet."
+		disabled = true
 	else:
-		var reason := str(selected_entry.get("reason", "")).strip_edges()
-		_deck_picker_button.text = "Change Deck: %s (Unavailable)" % deck_name
-		_deck_picker_button.tooltip_text = reason if not reason.is_empty() else "This deck is unavailable for multiplayer."
-	_deck_picker_button.disabled = false
+		var selected_entry: Dictionary = _get_selected_multiplayer_deck_entry()
+		if selected_entry.is_empty():
+			button_text = "Change Deck: Choose a deck"
+			button_tooltip = "Choose one of your saved decks."
+		else:
+			var deck_name := str(selected_entry.get("deck_name", "Deck"))
+			if bool(selected_entry.get("is_legal", false)):
+				button_text = "Change Deck: %s" % deck_name
+				button_tooltip = "Current multiplayer deck: %s" % deck_name
+			else:
+				var reason := str(selected_entry.get("reason", "")).strip_edges()
+				button_text = "Change Deck: %s (Unavailable)" % deck_name
+				button_tooltip = reason if not reason.is_empty() else "This deck is unavailable for multiplayer."
+	for change_deck_button in [_deck_picker_button, _multiplayer_deck_change_button]:
+		if change_deck_button == null or not is_instance_valid(change_deck_button):
+			continue
+		change_deck_button.text = button_text
+		change_deck_button.tooltip_text = button_tooltip
+		change_deck_button.disabled = disabled
 
 func _make_multiplayer_deck_entry_row(entry: Dictionary) -> Control:
 	var row := PanelContainer.new()
@@ -1210,9 +2792,10 @@ func _rebuild_multiplayer_deck_popup() -> void:
 func _position_multiplayer_deck_popup() -> void:
 	if _deck_picker_popup == null or not is_instance_valid(_deck_picker_popup):
 		return
-	if _deck_picker_button == null or not is_instance_valid(_deck_picker_button):
+	var anchor_button := _get_deck_popup_anchor_button()
+	if anchor_button == null or not is_instance_valid(anchor_button):
 		return
-	var button_rect: Rect2 = _deck_picker_button.get_global_rect()
+	var button_rect: Rect2 = anchor_button.get_global_rect()
 	var viewport_rect: Rect2 = get_viewport().get_visible_rect()
 	var popup_width: float = minf(maxf(button_rect.size.x, 520.0), maxf(320.0, viewport_rect.size.x - 24.0))
 	var row_count: int = maxi(1, _multiplayer_deck_entries.size())
@@ -1225,8 +2808,13 @@ func _position_multiplayer_deck_popup() -> void:
 	_deck_picker_popup.position = Vector2(popup_x, popup_y)
 	_deck_picker_popup.size = Vector2(popup_width, popup_height)
 
+func _get_deck_popup_anchor_button() -> Button:
+	if _deck_popup_anchor_button != null and is_instance_valid(_deck_popup_anchor_button):
+		return _deck_popup_anchor_button
+	return _deck_picker_button
+
 func _show_multiplayer_deck_popup() -> void:
-	if _deck_picker_popup == null or _deck_picker_button == null:
+	if _deck_picker_popup == null or _get_deck_popup_anchor_button() == null:
 		return
 	_rebuild_multiplayer_deck_popup()
 	_deck_picker_popup.visible = true
@@ -1236,9 +2824,11 @@ func _hide_multiplayer_deck_popup() -> void:
 	if _deck_picker_popup != null and is_instance_valid(_deck_picker_popup):
 		_deck_picker_popup.visible = false
 
-func _toggle_multiplayer_deck_popup() -> void:
+func _toggle_multiplayer_deck_popup(anchor_button: Button = null) -> void:
 	if _deck_picker_popup == null or not is_instance_valid(_deck_picker_popup):
 		return
+	if anchor_button != null:
+		_deck_popup_anchor_button = anchor_button
 	if _deck_picker_popup.visible:
 		_hide_multiplayer_deck_popup()
 		return
@@ -1336,6 +2926,9 @@ func _update_multiplayer_deck_hint() -> void:
 				_multiplayer_deck_summary_art.modulate = Color(1.0, 1.0, 1.0, 1.0) if is_legal else Color(0.74, 0.74, 0.74, 0.82)
 	if deck_hint_label == null:
 		return
+	if _is_account_sign_in_required():
+		deck_hint_label.text = "Sign in to load your account decks."
+		return
 	if selected_entry.is_empty():
 		if _multiplayer_deck_entries.is_empty():
 			deck_hint_label.text = "No saved decks yet. Build one before you create or join a seek."
@@ -1357,24 +2950,1101 @@ func _get_selected_multiplayer_deck() -> Dictionary:
 		return {}
 	return (selected_entry.get("saved_deck", {}) as Dictionary).duplicate(true)
 
+func _build_seek_tabs() -> void:
+	if seek_list == null:
+		return
+	multiplayer_container.visibility_changed.connect(_on_ladder_lobby_visibility_changed)
+	_seek_action_row = HBoxContainer.new()
+	_seek_action_row.add_theme_constant_override("separation", 8)
+	multiplayer_container.add_child(_seek_action_row)
+	multiplayer_container.move_child(_seek_action_row, seek_list.get_index() + 1)
+	var ladder_row := HBoxContainer.new()
+	ladder_row.add_theme_constant_override("separation", 8)
+	multiplayer_container.add_child(ladder_row)
+	if ip_line_edit != null:
+		multiplayer_container.move_child(ladder_row, ip_line_edit.get_index())
+	_ladder_button = Button.new()
+	_ladder_button.text = "Ladder"
+	_ladder_button.pressed.connect(_open_bot_ladder)
+	_ladder_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	ladder_row.add_child(_ladder_button)
+	_quarantined_bots_button = Button.new()
+	_quarantined_bots_button.text = "Quarantined Bots"
+	_quarantined_bots_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_quarantined_bots_button.pressed.connect(_open_bot_ladder.bind(true))
+	ladder_row.add_child(_quarantined_bots_button)
+	_update_quarantined_bots_button()
+	# Bot match hosting commands live in the seek list itself now (no separate
+	# "View Bot Matches" tab). Bot matches are listed alongside player seeks,
+	# with player matches sorted first.
+	_host_another_bot_match_button = Button.new()
+	_host_another_bot_match_button.text = "Host One Bot Match"
+	_host_another_bot_match_button.pressed.connect(_on_host_another_bot_match_pressed)
+	_seek_action_row.add_child(_host_another_bot_match_button)
+	_host_bot_match_button = Button.new()
+	_host_bot_match_button.text = "Host Bot Matches"
+	_host_bot_match_button.pressed.connect(_on_host_bot_match_pressed)
+	_seek_action_row.add_child(_host_bot_match_button)
+	_host_bo3_bot_matches_button = Button.new()
+	_host_bo3_bot_matches_button.text = "Host Bo3 Bot Matches"
+	_host_bo3_bot_matches_button.pressed.connect(_on_host_bo3_bot_matches_pressed)
+	_seek_action_row.add_child(_host_bo3_bot_matches_button)
+	_host_top_50_bot_matches_button = Button.new()
+	_host_top_50_bot_matches_button.text = "Host Top 50 Bot Matches"
+	_host_top_50_bot_matches_button.pressed.connect(_on_host_bot_match_pressed.bind(true))
+	_host_top_50_bot_matches_button.hide()
+	_seek_action_row.add_child(_host_top_50_bot_matches_button)
+	_stop_hosting_bot_matches_button = Button.new()
+	_stop_hosting_bot_matches_button.text = "Stop Hosting Bot Matches"
+	_stop_hosting_bot_matches_button.pressed.connect(_on_stop_hosting_bot_matches_pressed)
+	_seek_action_row.add_child(_stop_hosting_bot_matches_button)
+	_stop_hosting_bot_matches_button.hide()
+	_host_own_bot_button = Button.new()
+	_host_own_bot_button.text = "Host Match for Your Bot"
+	_host_own_bot_button.pressed.connect(_open_my_bot_picker.bind(false))
+	_seek_action_row.add_child(_host_own_bot_button)
+	_host_bot_gauntlet_button = Button.new()
+	_host_bot_gauntlet_button.text = "Host Gauntlet for Your Bot"
+	_host_bot_gauntlet_button.pressed.connect(_open_my_bot_picker.bind(true))
+	_seek_action_row.add_child(_host_bot_gauntlet_button)
+	_apply_seek_action_button_sizing()
+	# Bot league architecture quarantined: do not build its UI surface.
+	pass
+
+## Debug-only roster of everyone signed in to the connected lobby. The lobby
+## refuses this request on release builds, so the control only exists in debug.
+func _build_players_online_controls() -> void:
+	if not OS.is_debug_build() or multiplayer_container == null:
+		return
+	if _players_online_label != null and is_instance_valid(_players_online_label):
+		return
+	_players_online_label = Label.new()
+	_players_online_label.name = "PlayersOnlineLabel"
+	_players_online_label.text = "Players online: sign in to the lobby."
+	_players_online_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_players_online_label.modulate = Color(0.72, 0.86, 0.98)
+	_players_online_label.add_theme_font_size_override("font_size", 13)
+	_players_online_label.visible = false
+	multiplayer_container.add_child(_players_online_label)
+	if seek_list != null:
+		multiplayer_container.move_child(_players_online_label, seek_list.get_index())
+
+func _build_recent_activity_panel() -> void:
+	if is_instance_valid(_recent_activity_panel):
+		return
+	_recent_activity_panel = PanelContainer.new()
+	_recent_activity_panel.name = "RecentMatchActivity"
+	_recent_activity_panel.mouse_filter = Control.MOUSE_FILTER_PASS
+	var panel_style := StyleBoxFlat.new()
+	panel_style.bg_color = Color(0.035, 0.045, 0.065, 0.94)
+	panel_style.border_color = Color("c7a35a", 0.78)
+	panel_style.set_border_width_all(1)
+	panel_style.set_corner_radius_all(12)
+	panel_style.content_margin_left = 14
+	panel_style.content_margin_right = 14
+	panel_style.content_margin_top = 12
+	panel_style.content_margin_bottom = 12
+	_recent_activity_panel.add_theme_stylebox_override("panel", panel_style)
+	var content := VBoxContainer.new()
+	content.add_theme_constant_override("separation", 8)
+	_recent_activity_panel.add_child(content)
+	var title := Label.new()
+	title.text = "Recent Results"
+	title.add_theme_font_size_override("font_size", 21)
+	title.add_theme_color_override("font_color", Color("eac67d"))
+	content.add_child(title)
+	var subtitle := Label.new()
+	subtitle.text = "Ranked match activity"
+	subtitle.add_theme_font_size_override("font_size", 13)
+	subtitle.add_theme_color_override("font_color", Color("a7b3c8"))
+	content.add_child(subtitle)
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	content.add_child(scroll)
+	_recent_activity_rows = VBoxContainer.new()
+	_recent_activity_rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_recent_activity_rows.add_theme_constant_override("separation", 7)
+	scroll.add_child(_recent_activity_rows)
+	add_child(_recent_activity_panel)
+	_recent_activity_timer = Timer.new()
+	_recent_activity_timer.name = "RecentMatchActivityRefresh"
+	_recent_activity_timer.wait_time = 30.0
+	_recent_activity_timer.timeout.connect(_request_recent_match_activity)
+	add_child(_recent_activity_timer)
+	_render_recent_match_activities([])
+	_layout_recent_activity_panel()
+
+func _layout_recent_activity_panel() -> void:
+	if not is_instance_valid(_recent_activity_panel):
+		return
+	var viewport_size := get_viewport().get_visible_rect().size
+	var panel_width := minf(320.0, maxf(250.0, viewport_size.x * 0.26))
+	var panel_height := minf(500.0, maxf(300.0, viewport_size.y - 48.0))
+	_recent_activity_panel.position = Vector2(24.0, (viewport_size.y - panel_height) * 0.5).floor()
+	_recent_activity_panel.size = Vector2(panel_width, panel_height)
+	_recent_activity_panel.visible = menu_container != null and menu_container.visible \
+		and multiplayer_container != null and multiplayer_container.visible \
+		and viewport_size.x >= 1180.0 and viewport_size.y >= 560.0
+
+func _render_recent_match_activities(raw_activities: Variant) -> void:
+	if not is_instance_valid(_recent_activity_rows):
+		return
+	for child in _recent_activity_rows.get_children():
+		_recent_activity_rows.remove_child(child)
+		child.queue_free()
+	var activities: Array = raw_activities if raw_activities is Array else []
+	if activities.is_empty():
+		_add_recent_activity_label("No recent ranked results yet.", Color("a7b3c8"))
+		return
+	for raw_activity in activities:
+		if not raw_activity is Dictionary:
+			continue
+		var activity: Dictionary = raw_activity
+		var announcement := str(activity.get("message", "")).strip_edges()
+		var winner_name := str(activity.get("winner_name", "")).strip_edges()
+		var loser_name := str(activity.get("loser_name", "")).strip_edges()
+		var rank_achievement := str(activity.get("rank_achievement", "")).strip_edges()
+		var ladder_update := str(activity.get("ladder_update", "")).strip_edges()
+		if not winner_name.is_empty() and not loser_name.is_empty() and not announcement.contains("has been eliminated"):
+			if not rank_achievement.is_empty():
+				announcement = "%s reached %s by defeating %s" % [winner_name, rank_achievement, loser_name]
+			else:
+				announcement = "%s defeated %s" % [winner_name, loser_name]
+		if not ladder_update.is_empty():
+			var update_sentence := "%s %s" % [winner_name, ladder_update] if not winner_name.is_empty() else ladder_update
+			update_sentence = _capitalize_first_letter(update_sentence.strip_edges())
+			if not update_sentence.is_empty():
+				announcement = "%s. %s." % [announcement.trim_suffix("."), update_sentence] if not announcement.is_empty() else update_sentence
+		if announcement.is_empty():
+			continue
+		var card := PanelContainer.new()
+		var card_style := StyleBoxFlat.new()
+		card_style.bg_color = Color(1.0, 1.0, 1.0, 0.035)
+		card_style.set_corner_radius_all(7)
+		card_style.content_margin_left = 9
+		card_style.content_margin_right = 9
+		card_style.content_margin_top = 8
+		card_style.content_margin_bottom = 8
+		card.add_theme_stylebox_override("panel", card_style)
+		var label := Label.new()
+		label.text = announcement
+		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		label.add_theme_font_size_override("font_size", 15)
+		label.add_theme_color_override("font_color", Color("f1eee6"))
+		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		card.add_child(label)
+		_recent_activity_rows.add_child(card)
+
+func _add_recent_activity_label(message: String, tint: Color) -> void:
+	var label := Label.new()
+	label.text = message
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.add_theme_font_size_override("font_size", 15)
+	label.add_theme_color_override("font_color", tint)
+	_recent_activity_rows.add_child(label)
+
+func _capitalize_first_letter(text: String) -> String:
+	if text.is_empty():
+		return text
+	return text.substr(0, 1).to_upper() + text.substr(1)
+
+func _request_recent_match_activity() -> void:
+	if multiplayer_container == null or not multiplayer_container.is_visible_in_tree() \
+			or lobby_client == null or not _has_active_lobby_connection() \
+			or not lobby_client.is_authenticated() or not lobby_client.supports_bot_ladder:
+		return
+	lobby_client.request_bot_match_history()
+
+func _on_host_bot_match_pressed(top_50: bool = false) -> void:
+	if top_50 and (lobby_client == null or not lobby_client.can_host_top_50_bot_matches):
+		return
+	if top_50 and _bot_match_hosting_enabled and _top_50_bot_hosting:
+		_on_stop_hosting_bot_matches_pressed()
+		return
+	_bot_match_hosting_enabled = true
+	_default_bot_hosting = false
+	_top_50_bot_hosting = top_50
+	_bo3_bot_hosting = false
+	_request_continuous_bot_match()
+
+func _on_host_bo3_bot_matches_pressed() -> void:
+	if _bot_match_hosting_enabled and _bo3_bot_hosting:
+		_on_stop_hosting_bot_matches_pressed()
+		return
+	_bot_match_hosting_enabled = true
+	_default_bot_hosting = false
+	_top_50_bot_hosting = false
+	_bo3_bot_hosting = true
+	_request_continuous_bot_match()
+
+func _on_stop_hosting_bot_matches_pressed() -> void:
+	_stop_local_bot_match_worker()
+	status_label.text = "Stopped hosting bot matches."
+	_refresh_seek_list()
+
+func _on_host_another_bot_match_pressed() -> void:
+	_request_local_bot_match(false)
+
+func _on_seed_bot_league_pressed() -> void:
+	if lobby_client == null or not lobby_client.is_authenticated():
+		status_label.text = "Sign in to seed the bot league."
+		return
+	_seed_bot_league_button.disabled = true
+	_finalize_bot_league_button.disabled = true
+	status_label.text = "Seeding bot league..."
+	lobby_client.request_seed_bot_league()
+
+func _on_finalize_bot_league_pressed() -> void:
+	if lobby_client == null or not lobby_client.is_authenticated():
+		status_label.text = "Sign in to finalize the bot league."
+		return
+	_seed_bot_league_button.disabled = true
+	_finalize_bot_league_button.disabled = true
+	status_label.text = "Finalizing bot league..."
+	lobby_client.request_finalize_bot_league()
+
+func _on_status_bot_league_pressed() -> void:
+	if lobby_client == null or not lobby_client.is_authenticated():
+		status_label.text = "Sign in to view bot league status."
+		return
+	status_label.text = "Requesting bot league status..."
+	lobby_client.request_bot_league_status()
+
+func _request_continuous_bot_match(max_slots: int = -1) -> void:
+	if not _bot_match_hosting_enabled or (_default_bot_hosting and _has_pending_continuous_bot_match()):
+		_update_host_bot_match_button()
+		return
+	# Fill every open hosting slot instead of maintaining a single match:
+	# each pending request holds one slot, and assignment results and match
+	# closes call back here to keep the pool topped up. When max_slots is set
+	# (used by the default sign-in hosting), only keep that many matches.
+	var effective_max := max_slots
+	if effective_max < 0 and _default_bot_hosting:
+		effective_max = 1
+	var open_slots := _get_local_bot_match_capacity() \
+		- _get_local_bot_match_count() - _pending_local_bot_match_modes.size()
+	if effective_max >= 0:
+		open_slots = mini(open_slots, effective_max)
+	for _slot in range(open_slots):
+		_request_local_bot_match(true)
+	_update_host_bot_match_button()
+
+func _schedule_continuous_bot_match_retry(delay_seconds: float = 15.0) -> void:
+	if not _bot_match_hosting_enabled:
+		return
+	if not is_instance_valid(_bot_match_retry_timer):
+		_bot_match_retry_timer = Timer.new()
+		_bot_match_retry_timer.name = "ContinuousBotMatchRetry"
+		_bot_match_retry_timer.one_shot = true
+		_bot_match_retry_timer.timeout.connect(_request_continuous_bot_match)
+		add_child(_bot_match_retry_timer)
+	_bot_match_retry_timer.start(maxf(1.0, delay_seconds))
+
+func _request_local_bot_match(continuous: bool, bot_id: String = "") -> void:
+	if lobby_client == null or not lobby_client.is_authenticated():
+		_bot_match_hosting_enabled = false if continuous else _bot_match_hosting_enabled
+		status_label.text = "Sign in to host a bot match."
+		_update_host_bot_match_button()
+		return
+	var maximum_matches := _get_local_bot_match_capacity()
+	if maximum_matches <= _get_local_bot_match_count() + _pending_local_bot_match_modes.size():
+		status_label.text = "No additional bot match slots are available on this computer."
+		if continuous and _bot_match_hosting_enabled:
+			_schedule_continuous_bot_match_retry()
+		return
+	if not lobby_client.bot_work_assignment_received.is_connected(_on_local_bot_work_assigned):
+		lobby_client.bot_work_assignment_received.connect(_on_local_bot_work_assigned)
+	if not lobby_client.bot_work_result_received.is_connected(_on_local_bot_work_result):
+		lobby_client.bot_work_result_received.connect(_on_local_bot_work_result)
+	_pending_local_bot_match_modes.append(continuous)
+	_pending_local_bot_match_best_of.append(3 if _bo3_bot_hosting else 1)
+	_custom_bot_ids_pending.append(bot_id)
+	_update_host_bot_match_button()
+	status_label.text = "Requesting a bot match for this computer..."
+	var excluded: Array = _host_bot_gauntlet_opponents.keys() if not _host_bot_gauntlet_id.is_empty() else []
+	lobby_client.request_bot_work(bot_id, excluded, continuous and _top_50_bot_hosting, 3 if _bo3_bot_hosting else 1)
+
+func _open_my_bot_picker(for_gauntlet: bool = false) -> void:
+	_choose_bot_gauntlet = for_gauntlet
+	if lobby_client == null or not lobby_client.is_authenticated():
+		status_label.text = "Sign in to host matches for your submitted bots."
+		return
+	if not lobby_client.my_bots_received.is_connected(_on_my_bots_received):
+		lobby_client.my_bots_received.connect(_on_my_bots_received)
+	if not lobby_client.bot_deleted.is_connected(_on_bot_deleted):
+		lobby_client.bot_deleted.connect(_on_bot_deleted)
+	lobby_client.request_my_bots()
+	status_label.text = "Loading your submitted bots..."
+
+func _on_my_bots_received(bots: Array) -> void:
+	_my_bot_entries = bots
+	if _my_bot_entries.is_empty():
+		status_label.text = "Submit a bot from the deck builder before hosting it."
+		return
+	if not is_instance_valid(_my_bot_dialog):
+		_my_bot_dialog = AcceptDialog.new()
+		_my_bot_dialog.title = "Choose Your Bot"
+		_my_bot_dialog.dialog_text = "Select a submitted bot to host."
+		_my_bot_option = OptionButton.new()
+		_my_bot_dialog.add_child(_my_bot_option)
+		add_child(_my_bot_dialog)
+		_my_bot_dialog.confirmed.connect(_start_selected_bot_match)
+	_my_bot_option.clear()
+	for bot: Dictionary in _my_bot_entries:
+		var bot_label := "%s · %s" % [str(bot.get("deck_name", "Bot")), str(bot.get("god_name", ""))]
+		if bool(bot.get("quarantined", false)):
+			bot_label += " (quarantined)"
+		_my_bot_option.add_item(bot_label)
+	_my_bot_dialog.popup_centered()
+
+func _on_bot_deleted(success: bool, message: String, _bot_id: String) -> void:
+	status_label.text = message
+	if success:
+		lobby_client.request_my_bots()
+		if is_instance_valid(_bot_ladder_view):
+			_request_bot_ladder()
+
+func _on_bot_ladder_delete_requested(list_id: String) -> void:
+	if lobby_client == null or not lobby_client.is_authenticated():
+		return
+	lobby_client.delete_bot(list_id)
+
+func _on_bot_ladder_quarantine_requested(list_id: String, quarantined: bool) -> void:
+	if lobby_client == null or not lobby_client.is_authenticated():
+		return
+	lobby_client.set_bot_quarantined(list_id, quarantined)
+
+func _on_bot_quarantined(success: bool, message: String, _bot_id: String, _quarantined: bool) -> void:
+	status_label.text = message
+	if success:
+		lobby_client.request_my_bots()
+		if is_instance_valid(_bot_ladder_view):
+			# The detail panel caches the old flag; return to the refreshed list.
+			_bot_ladder_view.close_deck()
+			_request_bot_ladder()
+
+func _on_bot_ladder_add_deck_requested(deck: Dictionary) -> void:
+	if _local_profile_store == null:
+		return
+	var profile_id: String = _local_profile_store.get_current_profile_id()
+	if profile_id.is_empty():
+		profile_id = str(lobby_client.current_profile_id).strip_edges() if lobby_client != null else ""
+	if profile_id.is_empty():
+		status_label.text = "Sign in to save decks."
+		return
+	var deck_name := str(deck.get("name", "Bot deck")).strip_edges()
+	if deck_name.is_empty():
+		deck_name = "Bot deck"
+	var saved: Dictionary = _local_profile_store.save_deck(
+		profile_id,
+		deck_name,
+		deck.get("cards", {}),
+		"",
+		deck.get("special_setup", {}),
+		deck.get("reinforcements", {})
+	)
+	if saved.is_empty():
+		status_label.text = "Could not save that deck."
+	else:
+		_on_local_account_deck_saved(profile_id, saved)
+		status_label.text = "Saved %s to your decks." % str(saved.get("name", deck_name))
+
+func _start_selected_bot_match() -> void:
+	if _my_bot_option == null or _my_bot_option.selected < 0 or _my_bot_option.selected >= _my_bot_entries.size():
+		return
+	var bot_id := str((_my_bot_entries[_my_bot_option.selected] as Dictionary).get("bot_id", ""))
+	if bot_id.is_empty():
+		return
+	if _choose_bot_gauntlet:
+		_host_bot_gauntlet_id = bot_id
+		_host_bot_gauntlet_remaining = 10
+		_host_bot_gauntlet_opponents.clear()
+	else:
+		_host_bot_gauntlet_id = ""
+		_host_bot_gauntlet_remaining = 0
+		_host_bot_gauntlet_opponents.clear()
+	_request_local_bot_match(false, bot_id)
+
+func _update_host_bot_match_button() -> void:
+	if not is_instance_valid(_host_bot_match_button):
+		return
+	var signed_in := lobby_client != null and lobby_client.is_authenticated()
+	var regular_hosting := _bot_match_hosting_enabled and not _default_bot_hosting and not _top_50_bot_hosting and not _bo3_bot_hosting
+	var top_50_hosting := _bot_match_hosting_enabled and _top_50_bot_hosting
+	var bo3_hosting := _bot_match_hosting_enabled and _bo3_bot_hosting
+	var capacity := _get_local_bot_match_capacity()
+	var local_match_count := _get_local_bot_match_count() + _pending_local_bot_match_modes.size()
+	var has_capacity := local_match_count < capacity
+	_host_bot_match_button.disabled = not signed_in or capacity <= 0 or (regular_hosting and not has_capacity)
+	if is_instance_valid(_host_bo3_bot_matches_button):
+		_host_bo3_bot_matches_button.text = "Stop Bo3 Bot Hosting" if bo3_hosting else "Host Bo3 Bot Matches"
+		_host_bo3_bot_matches_button.disabled = not bo3_hosting and capacity <= 0
+	if is_instance_valid(_host_top_50_bot_matches_button):
+		_host_top_50_bot_matches_button.visible = signed_in and lobby_client.can_host_top_50_bot_matches
+		_host_top_50_bot_matches_button.text = "Stop Top 50 Hosting" if top_50_hosting else "Host Top 50 Bot Matches"
+		_host_top_50_bot_matches_button.disabled = not top_50_hosting and capacity <= 0
+	if is_instance_valid(_stop_hosting_bot_matches_button):
+		_stop_hosting_bot_matches_button.visible = _bot_match_hosting_enabled or local_match_count > 0 \
+			or not _local_bot_match_submitting.is_empty()
+	if is_instance_valid(_host_another_bot_match_button):
+		# Bot match hosting commands are always shown in the seek list.
+		_host_another_bot_match_button.visible = true
+		_host_another_bot_match_button.text = "Host Another Bot Match" \
+			if _get_local_bot_match_count() > 0 else "Host One Bot Match"
+		_host_another_bot_match_button.disabled = lobby_client == null or not lobby_client.is_authenticated() or not has_capacity
+	if is_instance_valid(_host_own_bot_button):
+		_host_own_bot_button.visible = true
+	if is_instance_valid(_host_bot_gauntlet_button):
+		_host_bot_gauntlet_button.visible = true
+
+func _get_local_bot_match_capacity() -> int:
+	if OS.get_name() not in ["Windows", "macOS", "Linux"] or OS.get_processor_count() < 4:
+		return 0
+	var memory := OS.get_memory_info()
+	var available_bytes := int(memory.get("available", 0))
+	if available_bytes < LOCAL_BOT_MATCH_MIN_AVAILABLE_BYTES:
+		return 0
+	var processor_count := OS.get_processor_count()
+	var processor_capacity := maxi(
+		1,
+		int((processor_count - LOCAL_BOT_MATCH_RESERVED_CORES) / float(LOCAL_BOT_MATCH_CORES_PER_WORKER))
+	)
+	@warning_ignore("integer_division")
+	var memory_capacity := maxi(
+		1,
+		int((available_bytes - LOCAL_BOT_MATCH_MIN_AVAILABLE_BYTES) / LOCAL_BOT_MATCH_MEMORY_PER_WORKER)
+	)
+	var capacity := mini(LOCAL_BOT_MATCH_MAX_WORKERS, mini(processor_capacity, memory_capacity))
+	# Watching a hosted match runs a full game client on top of the background
+	# workers, so reserve one worker slot while a match is on screen.
+	if _get_active_embedded_game() != null:
+		capacity = maxi(1, capacity - 1)
+	return capacity
+
+func _get_local_bot_match_count() -> int:
+	return _local_bot_match_workers.size()
+
+func _has_pending_continuous_bot_match() -> bool:
+	return _pending_local_bot_match_modes.has(true)
+
+func _has_active_continuous_bot_match() -> bool:
+	for continuous in _continuous_bot_match_ids.values():
+		if bool(continuous):
+			return true
+	return false
+
+func _on_local_bot_work_assigned(job: Dictionary) -> void:
+	if _pending_local_bot_match_modes.is_empty():
+		if lobby_client != null:
+			lobby_client.cancel_bot_work(str(job.get("job_id", "")))
+		return
+	var continuous := false
+	continuous = _pending_local_bot_match_modes.pop_front()
+	var request_best_of := 1
+	if not _pending_local_bot_match_best_of.is_empty():
+		request_best_of = _pending_local_bot_match_best_of.pop_front()
+	var custom_bot_id: String = _custom_bot_ids_pending.pop_front() if not _custom_bot_ids_pending.is_empty() else ""
+	if (continuous and not _bot_match_hosting_enabled) or lobby_client == null or not lobby_client.is_authenticated():
+		if lobby_client != null:
+			lobby_client.cancel_bot_work(str(job.get("job_id", "")))
+		_update_local_bot_hosting_state()
+		return
+	if _get_local_bot_match_count() >= _get_local_bot_match_capacity():
+		lobby_client.cancel_bot_work(str(job.get("job_id", "")))
+		if continuous:
+			_schedule_continuous_bot_match_retry()
+		_update_local_bot_hosting_state()
+		return
+	var decks: Array = job.get("decks", [])
+	if decks.size() != 2:
+		_watch_next_local_bot_match_pending = false
+		lobby_client.cancel_bot_work(str(job.get("job_id", "")))
+		_bot_match_hosting_enabled = false if continuous else _bot_match_hosting_enabled
+		_update_local_bot_hosting_state()
+		return
+	if not _host_bot_gauntlet_id.is_empty():
+		var opponent_id := str((decks[1] as Dictionary).get("bot_list_id", ""))
+		if not opponent_id.is_empty():
+			_host_bot_gauntlet_opponents[opponent_id] = true
+	var first_id := "BOT_LOCAL_A_%s" % str(job["job_id"])
+	var second_id := "BOT_LOCAL_B_%s" % str(job["job_id"])
+	var players: Array[String] = [first_id, second_id]
+	var submissions := {first_id: decks[0], second_id: decks[1]}
+	var identities := {
+		first_id: {"is_bot": true, "player_name": str(decks[0].get("deck_name", "Bot")),
+			"rank_badge": {"rank_name": str(RankedProgressionScript.summarize_bot_stars(int(decks[0].get("stars", 0)))["name"])}},
+		second_id: {"is_bot": true, "player_name": str(decks[1].get("deck_name", "Bot")),
+			"rank_badge": {"rank_name": str(RankedProgressionScript.summarize_bot_stars(int(decks[1].get("stars", 0)))["name"])}},
+	}
+	var match_port := _allocate_local_bot_match_port()
+	if match_port <= 0:
+		_watch_next_local_bot_match_pending = false
+		lobby_client.cancel_bot_work(str(job["job_id"]))
+		if continuous:
+			_schedule_continuous_bot_match_retry()
+		_update_local_bot_hosting_state()
+		return
+	var session := MatchSessionScript.new(str(job["job_id"]), str(job["job_id"]), "127.0.0.1", match_port, players, submissions, identities)
+	session.is_ranked = true
+	session.configure_series_format(int(job.get("best_of", request_best_of)))
+	session.set_spectator_visible_player_indices("local_volunteer_host", [0, 1])
+	if _local_bot_match_supervisor == null:
+		_local_bot_match_supervisor = MatchSupervisorScript.new()
+		_local_bot_match_supervisor.name = "LocalBotMatchSupervisor"
+		_local_bot_match_supervisor.match_closed.connect(_on_local_bot_match_closed)
+		add_child(_local_bot_match_supervisor)
+	if not _local_bot_match_supervisor.start_shared_bot_match(session):
+		_watch_next_local_bot_match_pending = false
+		lobby_client.cancel_bot_work(session.match_id)
+		if continuous:
+			_schedule_continuous_bot_match_retry()
+		_update_local_bot_hosting_state()
+		return
+	_local_bot_match_workers[session.match_id] = {
+		"session": session,
+		"continuous": continuous,
+		"custom_bot_id": custom_bot_id,
+	}
+	if _local_bot_match_lease_timer == null:
+		_local_bot_match_lease_timer = Timer.new()
+		_local_bot_match_lease_timer.name = "LocalBotMatchLeaseRefresh"
+		_local_bot_match_lease_timer.wait_time = LOCAL_BOT_MATCH_LEASE_REFRESH_SECONDS
+		_local_bot_match_lease_timer.timeout.connect(_refresh_local_bot_match_leases)
+		add_child(_local_bot_match_lease_timer)
+	if _local_bot_match_lease_timer.is_stopped():
+		_local_bot_match_lease_timer.start()
+	if _watch_next_local_bot_match_pending:
+		_watch_next_local_bot_match_pending = false
+		call_deferred("_watch_local_bot_match", session.match_id)
+	_continuous_bot_match_ids[session.match_id] = continuous
+	_refresh_seek_list()
+	status_label.text = "Running %d bot match%s on this computer." % [
+		_get_local_bot_match_count(), "es" if _get_local_bot_match_count() != 1 else "",
+	]
+	lobby_client.report_bot_work_started(session.match_id)
+	_update_host_bot_match_button()
+
+func _allocate_local_bot_match_port() -> int:
+	var used_ports := {}
+	for worker: Dictionary in _local_bot_match_workers.values():
+		var session = worker.get("session", null)
+		if session != null:
+			used_ports[int(session.match_port)] = true
+	for _attempt in range(20):
+		var port := randi_range(40000, 60000)
+		if not used_ports.has(port):
+			return port
+	return -1
+
+func _refresh_local_bot_match_leases() -> void:
+	if lobby_client == null or not lobby_client.is_authenticated():
+		return
+	for match_id in _local_bot_match_workers:
+		lobby_client.report_bot_work_started(str(match_id), _get_local_bot_match_turn_count(str(match_id)))
+
+## Live turn number for a locally hosted bot match, or 0 when unavailable.
+func _get_local_bot_match_turn_count(match_id: String) -> int:
+	if _local_bot_match_supervisor == null:
+		return 0
+	return _local_bot_match_supervisor.get_bot_match_turn_count(match_id)
+
+func _on_local_bot_match_closed(match_id: String, _room_id: String, final_status: String) -> void:
+	var worker: Dictionary = _local_bot_match_workers.get(match_id, {})
+	if worker.is_empty():
+		return
+	_local_bot_match_workers.erase(match_id)
+	if _local_bot_match_workers.is_empty():
+		_local_bot_match_lease_timer.stop()
+	var continuous := bool(worker.get("continuous", false))
+	var finished := final_status == MatchSessionScript.STATUS_FINISHED
+	var review := {}
+	if finished:
+		review = JsonStoreScript.load_dictionary(ServerPathsScript.get_bot_review_path(match_id), {}, "LocalBotMatchWorker")
+	var winner_index := int(review.get("winner_index", -1))
+	var submitting := winner_index in [0, 1] and lobby_client != null and lobby_client.is_authenticated()
+	if submitting:
+		_local_bot_match_submitting[match_id] = continuous
+		lobby_client.submit_bot_work_result(match_id, winner_index, int(review.get("turns", 1)))
+	else:
+		_continuous_bot_match_ids.erase(match_id)
+		if lobby_client != null:
+			lobby_client.cancel_bot_work(match_id)
+	_update_local_bot_hosting_state()
+	_refresh_seek_list()
+	if not submitting and finished and _bot_match_hosting_enabled:
+		if _default_bot_hosting:
+			_request_continuous_bot_match(1)
+		else:
+			_request_continuous_bot_match()
+	elif not finished and continuous and _bot_match_hosting_enabled:
+		_schedule_continuous_bot_match_retry()
+
+func _on_local_bot_work_result(job_id: String, success: bool, message: String) -> void:
+	if job_id.is_empty():
+		status_label.text = message
+		_watch_next_local_bot_match_pending = false
+		var continuous_request := false
+		if not _pending_local_bot_match_modes.is_empty():
+			continuous_request = _pending_local_bot_match_modes.pop_front()
+		if not _pending_local_bot_match_best_of.is_empty():
+			_pending_local_bot_match_best_of.pop_front()
+		if not _custom_bot_ids_pending.is_empty():
+			_custom_bot_ids_pending.pop_front()
+		if not _host_bot_gauntlet_id.is_empty():
+			_host_bot_gauntlet_id = ""
+			_host_bot_gauntlet_remaining = 0
+		if continuous_request and _bot_match_hosting_enabled \
+				and lobby_client != null and lobby_client.is_authenticated():
+			_schedule_continuous_bot_match_retry()
+		_update_host_bot_match_button()
+		return
+	status_label.text = message if success else "Local bot match result was not accepted."
+	if not _host_bot_gauntlet_id.is_empty():
+		if success:
+			_host_bot_gauntlet_remaining -= 1
+			if _host_bot_gauntlet_remaining > 0:
+				_request_local_bot_match(false, _host_bot_gauntlet_id)
+			else:
+				_host_bot_gauntlet_id = ""
+				_host_bot_gauntlet_opponents.clear()
+				status_label.text = "Your bot completed its 10 match gauntlet."
+		else:
+			_host_bot_gauntlet_id = ""
+			_host_bot_gauntlet_remaining = 0
+			_host_bot_gauntlet_opponents.clear()
+	if not success and lobby_client != null:
+		lobby_client.cancel_bot_work(job_id)
+	_local_bot_match_submitting.erase(job_id)
+	_continuous_bot_match_ids.erase(job_id)
+	_update_host_bot_match_button()
+	if success and lobby_client != null:
+		lobby_client.request_bot_match_history()
+	if _bot_match_hosting_enabled:
+		if _default_bot_hosting:
+			_request_continuous_bot_match(1)
+		else:
+			_request_continuous_bot_match()
+
+func _on_bot_league_result_received(result: Dictionary) -> void:
+	var request := str(result.get("request", ""))
+	var success := bool(result.get("success", false))
+	var message := str(result.get("message", ""))
+	_seed_bot_league_button.disabled = false
+	_finalize_bot_league_button.disabled = false
+	if request == LobbyProtocolScript.SEED_BOT_LEAGUE:
+		var gods = result.get("gods", {})
+		if success:
+			var counts := {}
+			var total := 0
+			for god_name in gods.keys():
+				var info = gods[god_name]
+				var count := int(info.get("count", 0))
+				counts[str(god_name)] = count
+				total += count
+			status_label.text = "Bot league seeded: %d bots across %d gods." % [total, gods.size()]
+			print("[Bot League] seeded: %s" % JSON.stringify(counts))
+		else:
+			status_label.text = "Seed failed: %s" % message
+	elif request == LobbyProtocolScript.FINALIZE_BOT_LEAGUE:
+		var summary = result.get("summary", {})
+		if success:
+			var kept := []
+			var quarantined := []
+			var removed := 0
+			for god_name in summary.keys():
+				var info = summary[god_name]
+				kept.append("%s kept: %s" % [str(god_name), str(info.get("kept", ""))])
+				quarantined.append("%s quarantined: %s" % [str(god_name), str(info.get("quarantined", ""))])
+				removed += int(info.get("removed", 0))
+			status_label.text = "Bot league finalized: %d removed." % removed
+			print("[Bot League] kept: %s" % JSON.stringify(kept))
+			print("[Bot League] quarantined: %s" % JSON.stringify(quarantined))
+		else:
+			status_label.text = "Finalize failed: %s" % message
+	_update_host_bot_match_button()
+
+func _on_bot_league_status_received(status: Dictionary) -> void:
+	var league_mode := bool(status.get("league_mode", false))
+	var gods: Array = status.get("gods", [])
+	var target := int(status.get("target_matches_per_bot", 50))
+	var lines: Array[String] = []
+	lines.append("League mode: %s" % ["on" if league_mode else "off"])
+	lines.append("League bots: %d, matches played: %d (target %d each)" % [
+		int(status.get("total_bots", 0)), int(status.get("total_matches", 0)), target])
+	for god in gods:
+		var god_name := str(god.get("god_name", ""))
+		var league_bots: Array = god.get("league_bots", [])
+		lines.append("")
+		lines.append("%s: %d bots, %d matches played" % [
+			god_name, league_bots.size(), int(god.get("matches_played", 0))])
+		for bot in league_bots:
+			lines.append("  %s: %d-%d-%d, %d ★, %d/%d matches" % [
+				str(bot.get("deck_name", "")),
+				int(bot.get("wins", 0)), int(bot.get("losses", 0)), int(bot.get("draws", 0)),
+				int(bot.get("stars", 0)), int(bot.get("matches", 0)), target])
+	var dialog := AcceptDialog.new()
+	dialog.title = "Bot League Status"
+	var dialog_text := ""
+	for i in lines.size():
+		dialog_text += lines[i]
+		if i < lines.size() - 1:
+			dialog_text += "\n"
+	dialog.dialog_text = dialog_text
+	add_child(dialog)
+	dialog.popup_centered()
+	status_label.text = "Bot league: %d bots, %d matches played." % [
+		int(status.get("total_bots", 0)), int(status.get("total_matches", 0))]
+	print("[Bot League] status: %s" % JSON.stringify(status))
+
+func _on_run_league_round_robin_pressed() -> void:
+	if lobby_client == null or not lobby_client.is_authenticated():
+		status_label.text = "Sign in to run the league round robin."
+		return
+	_run_league_round_robin_button.disabled = true
+	status_label.text = "Scheduling league round robin..."
+	lobby_client.request_league_round_robin()
+
+func _on_league_round_robin_result_received(result: Dictionary) -> void:
+	var success := bool(result.get("success", false))
+	var message := str(result.get("message", ""))
+	_run_league_round_robin_button.disabled = false
+	if success:
+		var total := int(result.get("total_matches", 0))
+		var per_bot := int(result.get("matches_per_bot", 0))
+		var count := int(result.get("bot_count", 0))
+		status_label.text = "League round robin scheduled: %d matches (%d per bot, %d bots)." % [total, per_bot, count]
+		print("[Bot League] round robin scheduled: %d matches, %d per bot, %d bots" % [total, per_bot, count])
+	else:
+		status_label.text = "Schedule failed: %s" % message
+
+func _on_clear_league_bots_pressed() -> void:
+	if lobby_client == null or not lobby_client.is_authenticated():
+		status_label.text = "Sign in to clear league bots."
+		return
+	_clear_league_bots_button.disabled = true
+	status_label.text = "Clearing league bots..."
+	lobby_client.request_clear_league_bots()
+
+func _on_clear_league_bots_result_received(result: Dictionary) -> void:
+	_clear_league_bots_button.disabled = false
+	var removed := int(result.get("removed", 0))
+	status_label.text = "Cleared %d league bots." % removed
+	print("[Bot League] cleared %d league bots" % removed)
+
+func _on_rebuild_league_records_pressed() -> void:
+	if lobby_client == null or not lobby_client.is_authenticated():
+		status_label.text = "Sign in to rebuild league records."
+		return
+	_rebuild_league_records_button.disabled = true
+	status_label.text = "Rebuilding league records from match history..."
+	lobby_client.request_rebuild_league_records()
+
+func _on_rebuild_league_records_result_received(result: Dictionary) -> void:
+	_rebuild_league_records_button.disabled = false
+	var re_registered := int(result.get("re_registered", 0))
+	var replayed := int(result.get("replayed", 0))
+	var league_result_count := int(result.get("league_result_count", 0))
+	status_label.text = "League records rebuilt: %d re-registered, %d results replayed (%d league results found)." % [re_registered, replayed, league_result_count]
+	print("[Bot League] rebuilt: %d re-registered, %d replayed, %d league results found" % [re_registered, replayed, league_result_count])
+
+func _on_dump_bot_deck_results_pressed() -> void:
+	if lobby_client == null or not lobby_client.is_authenticated():
+		status_label.text = "Sign in to dump bot deck results."
+		return
+	_dump_bot_deck_results_button.disabled = true
+	status_label.text = "Dumping bot deck results to console..."
+	lobby_client.request_dump_bot_deck_results()
+
+func _on_dump_bot_deck_results_result_received(result: Dictionary) -> void:
+	_dump_bot_deck_results_button.disabled = false
+	var total := int(result.get("total", 0))
+	var league_count := int(result.get("league_count", 0))
+	var non_league_count := int(result.get("non_league_count", 0))
+	status_label.text = "Dumped %d results (%d league, %d non-league) to console." % [total, league_count, non_league_count]
+	print("[Bot League] dump: %d total results, %d league, %d non-league" % [total, league_count, non_league_count])
+
+func _stop_local_bot_match_worker() -> void:
+	_bot_match_hosting_enabled = false
+	_default_bot_hosting = false
+	_top_50_bot_hosting = false
+	_watch_next_local_bot_match_pending = false
+	if is_instance_valid(_bot_match_retry_timer):
+		_bot_match_retry_timer.stop()
+	if is_instance_valid(_local_bot_match_lease_timer):
+		_local_bot_match_lease_timer.stop()
+	_pending_local_bot_match_modes.clear()
+	_pending_local_bot_match_best_of.clear()
+	_custom_bot_ids_pending.clear()
+	_bo3_bot_hosting = false
+	for match_id in _local_bot_match_submitting.keys():
+		if lobby_client != null:
+			lobby_client.cancel_bot_work(str(match_id))
+	_local_bot_match_submitting.clear()
+	_continuous_bot_match_ids.clear()
+	for match_id in _local_bot_match_workers:
+		if lobby_client != null:
+			lobby_client.cancel_bot_work(str(match_id))
+	_local_bot_match_workers.clear()
+	if is_instance_valid(_local_bot_match_supervisor):
+		_local_bot_match_supervisor.clear("Volunteer stopped hosting bot matches.")
+	_update_host_bot_match_button()
+
+func _update_local_bot_hosting_state() -> void:
+	_update_host_bot_match_button()
+
+## Start hosting a single bot match by default when a player signs into
+## multiplayer. It recurs when the match finishes. Does nothing when there is no
+## hosting capacity, when hosting is already enabled, or when the player already
+## has a pending match action, so it never blocks playing or spectating.
+func _maybe_start_default_bot_hosting() -> void:
+	if _bot_match_hosting_enabled:
+		return
+	if lobby_client == null or not lobby_client.is_authenticated():
+		return
+	if _get_local_bot_match_capacity() <= 0:
+		return
+	if _has_pending_new_seek_action() or not _get_saved_active_match().is_empty():
+		return
+	_default_bot_hosting = true
+	_top_50_bot_hosting = false
+	_bot_match_hosting_enabled = true
+	# Host exactly one match at a time by default; it recurs when it finishes.
+	_request_continuous_bot_match(1)
+	_update_host_bot_match_button()
+	status_label.text = "Hosting a bot match by default."
+
+## Free bot hosting space when the player needs it to play or spectate.
+func _yield_bot_hosting_for_play() -> void:
+	if not _bot_match_hosting_enabled:
+		return
+	_stop_local_bot_match_worker()
+	_refresh_seek_list()
+	status_label.text = "Giving up bot match space to play or spectate."
+
+func _on_bot_match_history_received(history: Dictionary) -> void:
+	_bot_match_live = history.get("live_matches", [])
+	_render_recent_match_activities(history.get("activities", []))
+	_refresh_seek_list()
+
 func _refresh_seek_list() -> void:
 	if seek_list == null:
 		return
 	seek_list.clear()
-	if _open_seek_rooms.is_empty():
-		seek_list.add_item("No open seeks or live matches right now.")
-		seek_list.set_item_disabled(0, true)
-		return
+	# Bot seeks come first, followed by other open seeks and live rooms.
 	for room in _open_seek_rooms:
 		var host_name := str(room.get("host_name", "Host")).strip_edges()
+		if room.has("match_player_names"):
+			host_name = " vs ".join(room["match_player_names"])
+		elif bool(room.get("host_is_bot", false)):
+			host_name += "  ·  Bot"
+			if _get_room_is_ranked(room) and room.has("bot_stars"):
+				host_name += "  ·  %d★" % int(room["bot_stars"])
 		var member_count := int(room.get("member_count", 0))
 		var max_players := int(room.get("max_players", 2))
 		var room_status := str(room.get("status", "waiting")).strip_edges().to_lower()
 		var status := "Live" if room_status == LobbyRoomScript.STATUS_IN_MATCH else room_status.capitalize()
-		var rank_tag := "" if bool(room.get("is_ranked", true)) else "[Unranked]  "
-		var action_hint := "  Click to Observe" if room_status == LobbyRoomScript.STATUS_IN_MATCH else "  Click to Join"
-		seek_list.add_item("%s%s  %d/%d  %s%s" % [rank_tag, host_name, member_count, max_players, status, action_hint])
-		seek_list.set_item_metadata(seek_list.get_item_count() - 1, room.duplicate(true))
+		var rank_tag := "[%s]  " % _format_seek_format_label(room)
+		var action_hint := "  Click to Join"
+		if room_status == LobbyRoomScript.STATUS_IN_MATCH:
+			if bool(room.get("viewer_can_rejoin", false)):
+				action_hint = "  Click to Rejoin"
+			elif bool(room.get("spectatable", false)):
+				action_hint = "  Click to Watch"
+			elif bool(room.get("local_bot_match", false)):
+				# Client-hosted bot challenge whose host reported no spectate
+				# endpoint (no UPnP/older client): there is no stream to join.
+				action_hint = "  Not watchable"
+			else:
+				action_hint = "  Click to Observe"
+		var row_index: int = seek_list.add_item("%s%s  %d/%d  %s%s" % [rank_tag, host_name, member_count, max_players, status, action_hint])
+		seek_list.set_item_metadata(row_index, room.duplicate(true))
+		_apply_match_row_rank_outline(row_index, _get_room_row_leagues(room), room.get("match_rank_names", []))
+		var request_next_match_id := str(room.get("request_next_match_id", ""))
+		if not request_next_match_id.is_empty() and _has_active_lobby_connection():
+			var action_index: int = seek_list.add_item("    Request Next")
+			seek_list.set_item_metadata(action_index, request_next_match_id)
+			seek_list.set_item_tooltip(action_index, "Tell the player in this match you'd like to play them next.")
+	# Bot matches: volunteer live matches plus matches hosted on this computer,
+	# listed after the lobby rooms and ordered by bot rank (highest matchup
+	# first), not start time.
+	var live_entries: Array[Dictionary] = []
+	var listed_live_job_ids := {}
+	for match_entry: Dictionary in _bot_match_live:
+		var live_players: Array = match_entry.get("players", [])
+		if live_players.size() != 2:
+			continue
+		var job_id := str(match_entry.get("match_id", "")).trim_prefix("volunteer_")
+		listed_live_job_ids[job_id] = true
+		if _local_bot_match_submitting.has(job_id):
+			continue
+		var local_match := _local_bot_match_workers.has(job_id)
+		var live_label := "Watch on this computer" if local_match else "Live · volunteer"
+		var live_rank_names: Array = []
+		var live_leagues: Array = []
+		var live_stars: Array = []
+		for live_player in live_players:
+			var live_rank := str(live_player.get("rank", "")).strip_edges()
+			live_rank_names.append(live_rank)
+			var live_player_stars := int(live_player.get("stars", 0))
+			live_stars.append(live_player_stars)
+			live_leagues.append(
+				RankBadgeCatalog.league_for_rank(live_rank)
+				if not live_rank.is_empty()
+				else _league_for_bot_stars(live_player_stars)
+			)
+		live_entries.append({
+			"label": "%s vs %s  ·  %s" % [live_players[0].get("name", "Bot"), live_players[1].get("name", "Bot"), live_label],
+			"local_match_id": job_id if local_match else "",
+			"leagues": live_leagues,
+			"stars": live_stars,
+			"rank_names": live_rank_names,
+			"turn_count": _get_local_bot_match_turn_count(job_id) if local_match \
+				else maxi(0, int(match_entry.get("turn_count", 0))),
+			"started_unix": int(match_entry.get("played_unix", 0)),
+		})
+	for raw_match_id in _local_bot_match_workers.keys():
+		var local_job_id := str(raw_match_id)
+		if listed_live_job_ids.has(local_job_id) or _local_bot_match_submitting.has(local_job_id):
+			continue
+		var worker: Dictionary = _local_bot_match_workers[raw_match_id]
+		var session = worker.get("session", null)
+		if session == null:
+			continue
+		var local_players: Array = session.get_public_player_names()
+		if local_players.size() != 2:
+			continue
+		var local_rank_names: Array = []
+		var local_leagues: Array = []
+		var local_stars: Array = []
+		for badge in session.get_public_rank_badges():
+			var badge_rank := str(badge.get("rank_name", "")).strip_edges()
+			local_rank_names.append(badge_rank)
+			local_leagues.append(RankBadgeCatalog.league_for_rank(badge_rank))
+		for bot_stars in session.get_public_bot_player_stars():
+			local_stars.append(int(bot_stars))
+		live_entries.append({
+			"label": "%s vs %s  ·  Watch on this computer" % [local_players[0], local_players[1]],
+			"local_match_id": local_job_id,
+			"leagues": local_leagues,
+			"stars": local_stars,
+			"rank_names": local_rank_names,
+			"turn_count": _get_local_bot_match_turn_count(local_job_id),
+			"started_unix": int(session.created_unix),
+		})
+	for live_entry in live_entries:
+		_fill_live_bot_match_sort_keys(live_entry)
+	live_entries.sort_custom(_compare_live_bot_match_entries)
+	for live_entry in live_entries:
+		var entry_label := str(live_entry["label"])
+		var entry_turn_count := int(live_entry["turn_count"])
+		if entry_turn_count > 0:
+			entry_label += "  ·  Turn %d" % entry_turn_count
+		var live_index: int = seek_list.add_item(entry_label)
+		var local_match_id := str(live_entry.get("local_match_id", ""))
+		if local_match_id.is_empty():
+			seek_list.set_item_disabled(live_index, true)
+		else:
+			seek_list.set_item_metadata(live_index, {"local_bot_match_id": local_match_id})
+		_apply_match_row_rank_outline(live_index, live_entry["leagues"], live_entry["rank_names"])
+	if seek_list.get_item_count() == 0:
+		seek_list.add_item("No open seeks or live matches right now.")
+		seek_list.set_item_disabled(0, true)
+	_apply_seek_list_scrollbar_style()
+
+## Colors a match row with a rank outline: half one player's rank color, half
+## the other's, so cross-rank matchups stand out while scanning the list.
+func _apply_match_row_rank_outline(index: int, leagues: Array, rank_names: Variant = null) -> void:
+	var known: Array[int] = []
+	for league in leagues:
+		var value := int(league)
+		if value >= 0 and value < RankBadgeCatalog.LEAGUE_COLORS.size():
+			known.append(value)
+	if known.is_empty() or seek_list == null:
+		return
+	seek_list.set_item_icon(index, MatchRankOutline.ring_texture(known))
+	var names: Array = rank_names if rank_names is Array else []
+	if names.size() == 2 and not str(names[0]).is_empty() and not str(names[1]).is_empty():
+		seek_list.set_item_tooltip(index, "%s vs %s" % [str(names[0]), str(names[1])])
+
+## Fills the private sort keys live bot match rows order by: the matchup's
+## strongest league, then its weaker half, then star counts. Unknown ranks
+## (league/stars of -1) are ignored so they never outrank known ones.
+func _fill_live_bot_match_sort_keys(entry: Dictionary) -> void:
+	var known_leagues: Array[int] = []
+	for league in entry.get("leagues", []):
+		if int(league) >= 0:
+			known_leagues.append(int(league))
+	known_leagues.sort()
+	var known_stars: Array[int] = []
+	for stars in entry.get("stars", []):
+		if int(stars) >= 0:
+			known_stars.append(int(stars))
+	known_stars.sort()
+	entry["_league_high"] = known_leagues.back() if not known_leagues.is_empty() else -1
+	entry["_league_low"] = known_leagues.front() if not known_leagues.is_empty() else -1
+	entry["_stars_high"] = known_stars.back() if not known_stars.is_empty() else -1
+	entry["_stars_low"] = known_stars.front() if not known_stars.is_empty() else -1
+
+## Hosted bot matches order by bot rank (highest matchup first), not start
+## time; start time only breaks ties between equally ranked matchups.
+func _compare_live_bot_match_entries(a: Dictionary, b: Dictionary) -> bool:
+	for key in ["_league_high", "_league_low", "_stars_high", "_stars_low"]:
+		var a_value := int(a.get(key, -1))
+		var b_value := int(b.get(key, -1))
+		if a_value != b_value:
+			return a_value > b_value
+	return int(a.get("started_unix", 0)) > int(b.get("started_unix", 0))
+
+func _get_room_row_leagues(room: Dictionary) -> Array:
+	var rank_names: Variant = room.get("match_rank_names", [])
+	if rank_names is Array and not (rank_names as Array).is_empty():
+		var rank_leagues: Array = []
+		for rank_name in rank_names:
+			rank_leagues.append(RankBadgeCatalog.league_for_rank(str(rank_name)))
+		return rank_leagues
+	var bot_stars_list: Variant = room.get("bot_stars_list", [])
+	if bot_stars_list is Array and not (bot_stars_list as Array).is_empty():
+		var bot_leagues: Array = []
+		for stars in bot_stars_list:
+			bot_leagues.append(_league_for_bot_stars(int(stars)))
+		return bot_leagues
+	if _get_room_is_ranked(room) and room.has("bot_stars"):
+		return [_league_for_bot_stars(int(room["bot_stars"]))]
+	return []
+
+func _league_for_bot_stars(stars: int) -> int:
+	if stars < 0:
+		return -1
+	return int(RankedProgressionScript.summarize_bot_stars(stars)["league"])
+
+func _format_seek_format_label(room: Dictionary) -> String:
+	return "Bo%d %s" % [
+		_get_room_best_of(room),
+		"Rated" if _get_room_is_ranked(room) else "Unrated",
+	]
+
+func _get_room_best_of(room: Dictionary) -> int:
+	var raw_value = room.get("best_of", 1)
+	if raw_value is int or raw_value is float:
+		return 3 if int(raw_value) == 3 else 1
+	var text := str(raw_value).strip_edges().to_lower()
+	return 3 if text in ["3", "bo3", "best_of_3", "best-of-3"] else 1
+
+func _get_room_is_ranked(room: Dictionary) -> bool:
+	if not room.has("is_ranked"):
+		return true
+	var raw_value = room.get("is_ranked")
+	if raw_value is bool:
+		return bool(raw_value)
+	if raw_value is int or raw_value is float:
+		return int(raw_value) != 0
+	var text := str(raw_value).strip_edges().to_lower()
+	if text in ["true", "1", "yes", "y", "on", "rated"]:
+		return true
+	if text in ["false", "0", "no", "n", "off", "unrated"]:
+		return false
+	return true
 
 func _refresh_multiplayer_action_state() -> void:
 	var has_legal_deck := not _get_selected_multiplayer_deck().is_empty()
@@ -1383,8 +4053,14 @@ func _refresh_multiplayer_action_state() -> void:
 		create_seek_button.disabled = not has_legal_deck or in_room
 	if _create_unranked_seek_button != null:
 		_create_unranked_seek_button.disabled = not has_legal_deck or in_room
+	if _create_bo3_ranked_seek_button != null:
+		_create_bo3_ranked_seek_button.disabled = not has_legal_deck or in_room
+	if _create_bo3_unranked_seek_button != null:
+		_create_bo3_unranked_seek_button.disabled = not has_legal_deck or in_room
 	if leave_seek_button != null:
 		leave_seek_button.visible = in_room
+	if leave_match_button != null:
+		leave_match_button.visible = _has_forfeitable_active_match()
 	if ready_button != null:
 		ready_button.visible = false
 
@@ -1418,15 +4094,80 @@ func _queue_room_list_refresh(show_status: bool = true) -> void:
 		status_label.text = "Refreshing seeks and live matches..."
 	lobby_client.list_rooms()
 
+func _request_players_online() -> void:
+	if _players_online_label == null or not is_instance_valid(_players_online_label):
+		return
+	if lobby_client == null or not is_instance_valid(lobby_client):
+		_players_online_label.visible = false
+		return
+	if not lobby_client.is_authenticated():
+		_players_online_label.visible = false
+		return
+	if not lobby_client.can_see_players_online:
+		_players_online_label.visible = false
+		return
+	_players_online_label.visible = true
+	_players_online_label.text = "Players online: loading..."
+	_players_online_request_pending = true
+	_players_online_request_time = Time.get_ticks_msec() / 1000.0
+	lobby_client.request_players_online()
+
+func _on_players_online_received(players: Array) -> void:
+	_render_players_online(players)
+
+func _render_players_online(players: Array) -> void:
+	_players_online_request_pending = false
+	if _players_online_label == null or not is_instance_valid(_players_online_label):
+		return
+	var names: Array[String] = []
+	var offline_count := 0
+	for player in players:
+		if not (player is Dictionary):
+			continue
+		var entry := player as Dictionary
+		if not bool(entry.get("is_connected", true)):
+			offline_count += 1
+			continue
+		var name := str(entry.get("username", "")).strip_edges()
+		if name.is_empty():
+			name = str(entry.get("player_name", "")).strip_edges()
+		if name.is_empty():
+			continue
+		if bool(entry.get("is_local", false)):
+			name += " (local)"
+		names.append(name)
+	names.sort()
+	if names.is_empty():
+		_players_online_label.text = "Players online: none"
+	else:
+		_players_online_label.text = "Players online (%d): %s" % [names.size(), ", ".join(names)]
+	if offline_count > 0:
+		_players_online_label.text += "  ·  %d reconnecting" % offline_count
+	_players_online_label.visible = true
+
+func _clear_players_online() -> void:
+	_players_online_refresh_elapsed = 0.0
+	_players_online_request_pending = false
+	if _players_online_label == null or not is_instance_valid(_players_online_label):
+		return
+	_players_online_label.visible = false
+	_players_online_label.text = "Players online: not connected."
+
 func _on_seek_item_clicked(index: int, _at_position: Vector2, _mouse_button_index: int) -> void:
 	if seek_list == null or index < 0 or index >= seek_list.get_item_count():
 		return
 	if seek_list.is_item_disabled(index):
 		return
-	if not _current_room_snapshot.is_empty():
-		status_label.text = "Leave your current seek before joining another."
-		return
 	var room_entry = seek_list.get_item_metadata(index)
+	if room_entry is Dictionary and (room_entry as Dictionary).has("local_bot_match_id"):
+		_watch_local_bot_match(str((room_entry as Dictionary)["local_bot_match_id"]))
+		return
+	if room_entry is String:
+		if _has_active_lobby_connection():
+			lobby_client.request_next(room_entry)
+		else:
+			_show_lobby_notice("Reconnect to the lobby to request the next match.")
+		return
 	if not (room_entry is Dictionary):
 		return
 	var room_data := room_entry as Dictionary
@@ -1434,61 +4175,170 @@ func _on_seek_item_clicked(index: int, _at_position: Vector2, _mouse_button_inde
 	var room_id := str(room_data.get("room_id", "")).strip_edges()
 	if room_id.is_empty():
 		return
+	var can_rejoin := bool(room_data.get("viewer_can_rejoin", false))
+	if not _current_room_snapshot.is_empty() and room_status == LobbyRoomScript.STATUS_IN_MATCH and not can_rejoin:
+		status_label.text = "Leave your current seek before observing another match."
+		return
 	if room_status == LobbyRoomScript.STATUS_IN_MATCH:
-		_on_observe_match_requested(room_id)
+		if can_rejoin:
+			_on_rejoin_match_requested(room_id)
+			return
+		if bool(room_data.get("local_bot_match", false)) and not bool(room_data.get("spectatable", false)):
+			status_label.text = "That bot challenge can't be watched live from the host's network."
+			return
+		var has_bot := bool(room_data.get("host_is_bot", false)) or bool(room_data.get("is_bot_self_play", false))
+		_on_observe_match_requested(room_id, has_bot)
 		return
 	if _get_selected_multiplayer_deck().is_empty():
 		status_label.text = "Choose a saved legal deck before joining a seek."
 		return
-	_on_join_seek_requested(room_id)
+	_on_join_seek_requested(room_id, bool(room_data.get("host_is_bot", false)))
+
+func _watch_local_bot_match(match_id: String) -> void:
+	var worker: Dictionary = _local_bot_match_workers.get(match_id, {})
+	var session = worker.get("session", null)
+	if worker.is_empty() or session == null:
+		status_label.text = "That hosted bot match has already finished."
+		_refresh_seek_list()
+		return
+	var match_info: Dictionary = session.to_spectator_match_info("local_volunteer_host")
+	match_info["local_volunteer_host"] = true
+	status_label.text = "Watching your hosted bot match..."
+	_launch_assigned_match(false, "127.0.0.1", int(session.match_port), match_info)
+
+func _on_watch_next_local_bot_match_requested() -> void:
+	var active_game := _get_active_embedded_game()
+	if active_game == null:
+		return
+	var current_match_info = active_game.get("_current_match_info")
+	if not (current_match_info is Dictionary) \
+			or not bool(current_match_info.get("local_volunteer_host", false)):
+		return
+	var current_match_id := str(current_match_info.get("match_id", ""))
+	var available_entries: Array[Dictionary] = []
+	for raw_match_id in _local_bot_match_workers.keys():
+		var match_id := str(raw_match_id)
+		if match_id == current_match_id:
+			continue
+		var worker: Dictionary = _local_bot_match_workers.get(match_id, {})
+		var session = worker.get("session", null)
+		if session == null:
+			continue
+		var match_leagues: Array = []
+		var match_stars: Array = []
+		for badge in session.get_public_rank_badges():
+			match_leagues.append(RankBadgeCatalog.league_for_rank(str(badge.get("rank_name", "")).strip_edges()))
+		for bot_stars in session.get_public_bot_player_stars():
+			match_stars.append(int(bot_stars))
+		var available_entry := {
+			"match_id": match_id,
+			"leagues": match_leagues,
+			"stars": match_stars,
+			"started_unix": int(session.created_unix),
+		}
+		_fill_live_bot_match_sort_keys(available_entry)
+		available_entries.append(available_entry)
+	# Follow the hosted bot match list's bot-rank ordering instead of start time.
+	available_entries.sort_custom(_compare_live_bot_match_entries)
+	if not available_entries.is_empty():
+		_watch_local_bot_match(str(available_entries[0]["match_id"]))
+		return
+	if _watch_next_local_bot_match_pending:
+		return
+	_watch_next_local_bot_match_pending = true
+	if not _has_pending_continuous_bot_match() and not _has_active_continuous_bot_match():
+		if lobby_client == null or not lobby_client.is_authenticated() \
+				or _get_local_bot_match_count() + _pending_local_bot_match_modes.size() >= _get_local_bot_match_capacity():
+			_watch_next_local_bot_match_pending = false
+			status_label.text = "No other hosted bot match is available right now."
+			return
+		_request_local_bot_match(false)
+	status_label.text = "Waiting for the next hosted bot match..."
+
+func _on_request_next_received(requester_name: String) -> void:
+	_show_lobby_notice("%s would like to play you next." % requester_name)
+
+func _on_request_next_result(message: String) -> void:
+	_show_lobby_notice(message)
+	_queue_room_list_refresh(false)
+
+func _show_lobby_notice(message: String) -> void:
+	if message.is_empty():
+		return
+	if not is_instance_valid(_request_next_notices):
+		_request_next_notices = VBoxContainer.new()
+		_request_next_notices.name = "RequestNextNotices"
+		_request_next_notices.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_request_next_notices.z_index = 2200
+		add_child(_request_next_notices)
+		_request_next_notices.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+		_request_next_notices.offset_left = -240.0
+		_request_next_notices.offset_right = 240.0
+		_request_next_notices.offset_top = 20.0
+		_request_next_notices.offset_bottom = 20.0
+	if _request_next_notices.get_child_count() >= 4:
+		var oldest := _request_next_notices.get_child(0)
+		_request_next_notices.remove_child(oldest)
+		oldest.queue_free()
+	var panel := PanelContainer.new()
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.07, 0.09, 0.14, 0.96)
+	style.set_corner_radius_all(8)
+	style.content_margin_left = 16.0
+	style.content_margin_right = 16.0
+	style.content_margin_top = 10.0
+	style.content_margin_bottom = 10.0
+	panel.add_theme_stylebox_override("panel", style)
+	var label := Label.new()
+	label.text = message
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(label)
+	_request_next_notices.add_child(panel)
+	get_tree().create_timer(8.0).timeout.connect(panel.queue_free)
 
 func _on_refresh_seeks_pressed() -> void:
 	var target_error := _validate_multiplayer_target()
 	if not target_error.is_empty():
 		status_label.text = target_error
 		return
-	var auth_error := _validate_auth_inputs()
+	var auth_error := _get_lobby_auth_input_error()
 	if not auth_error.is_empty():
 		status_label.text = auth_error
 		return
 	_pending_host_room_creation = false
 	_pending_join_room_id = ""
+	_pending_rejoin_room_id = ""
+	_pending_observe_room_id = ""
+	_pending_seek_switch_join_room_id = ""
 	_pending_local_lobby_launch_on_connect_failure = false
 	multiplayer_container.visible = true
 	_connect_to_browseable_lobby("Connecting to lobby...")
 
 func _on_create_seek_pressed() -> void:
-	var target_error := _validate_multiplayer_target()
-	if not target_error.is_empty():
-		status_label.text = target_error
-		return
-	var auth_error := _validate_auth_inputs()
-	if not auth_error.is_empty():
-		status_label.text = auth_error
-		return
-	if _get_selected_multiplayer_deck().is_empty():
-		status_label.text = "Choose a saved legal deck before creating a seek."
-		return
-	if not _current_room_snapshot.is_empty():
-		status_label.text = "Leave your current seek before creating another."
-		return
-	_pending_host_room_creation = true
-	_pending_room_is_ranked = true
-	_pending_join_room_id = ""
-	_pending_observe_room_id = ""
-	_pending_local_lobby_launch_on_connect_failure = false
-	multiplayer_container.visible = true
-	_connect_to_browseable_lobby("Connecting to lobby...")
+	_on_create_seek_option_pressed(true, 1)
 
 func _on_create_unranked_seek_pressed() -> void:
+	_on_create_seek_option_pressed(false, 1)
+
+func _on_create_bo3_ranked_seek_pressed() -> void:
+	_on_create_seek_option_pressed(true, 3)
+
+func _on_create_bo3_unranked_seek_pressed() -> void:
+	_on_create_seek_option_pressed(false, 3)
+
+func _on_create_seek_option_pressed(is_ranked: bool, best_of: int) -> void:
 	var target_error := _validate_multiplayer_target()
 	if not target_error.is_empty():
 		status_label.text = target_error
 		return
-	var auth_error := _validate_auth_inputs()
+	var auth_error := _get_lobby_auth_input_error()
 	if not auth_error.is_empty():
 		status_label.text = auth_error
 		return
+	_yield_bot_hosting_for_play()
 	if _get_selected_multiplayer_deck().is_empty():
 		status_label.text = "Choose a saved legal deck before creating a seek."
 		return
@@ -1496,68 +4346,139 @@ func _on_create_unranked_seek_pressed() -> void:
 		status_label.text = "Leave your current seek before creating another."
 		return
 	_pending_host_room_creation = true
-	_pending_room_is_ranked = false
+	_pending_room_is_ranked = is_ranked
+	_pending_room_best_of = 3 if best_of == 3 else 1
 	_pending_join_room_id = ""
+	_pending_rejoin_room_id = ""
 	_pending_observe_room_id = ""
+	_pending_seek_switch_join_room_id = ""
 	_pending_local_lobby_launch_on_connect_failure = false
 	multiplayer_container.visible = true
 	_connect_to_browseable_lobby("Connecting to lobby...")
 
-func _on_join_seek_requested(room_id: String) -> void:
+func _on_join_seek_requested(room_id: String, has_bot: bool = false) -> void:
 	var target_error := _validate_multiplayer_target()
 	if not target_error.is_empty():
 		status_label.text = target_error
 		return
-	var auth_error := _validate_auth_inputs()
+	var auth_error := _get_lobby_auth_input_error()
 	if not auth_error.is_empty():
 		status_label.text = auth_error
 		return
+	_yield_bot_hosting_for_play()
+	status_label.text = "Joining seek..."
+	_begin_match_loading(has_bot, true)
+	# Paint feedback before deck validation and lobby work begin.
+	await get_tree().process_frame
+	await get_tree().process_frame
 	if _get_selected_multiplayer_deck().is_empty():
+		_finish_match_loading()
 		status_label.text = "Choose a saved legal deck before joining a seek."
 		return
-	if not _current_room_snapshot.is_empty():
-		status_label.text = "Leave your current seek before joining a new one."
+	var current_room_status := str(_current_room_snapshot.get("status", "")).strip_edges().to_lower()
+	if not _current_room_snapshot.is_empty() and current_room_status == LobbyRoomScript.STATUS_IN_MATCH:
+		_finish_match_loading()
+		status_label.text = "Finish or forfeit your active match before joining another seek."
 		return
+	var normalized_room_id := room_id.strip_edges().to_upper()
+	var current_room_id := str(_current_room_snapshot.get("room_id", "")).strip_edges().to_upper()
 	_pending_host_room_creation = false
-	_pending_join_room_id = room_id.strip_edges().to_upper()
+	_pending_join_room_id = normalized_room_id
+	_pending_rejoin_room_id = ""
 	_pending_observe_room_id = ""
+	_pending_seek_switch_join_room_id = normalized_room_id if not _current_room_snapshot.is_empty() and current_room_id != normalized_room_id else ""
 	_pending_local_lobby_launch_on_connect_failure = false
 	multiplayer_container.visible = true
 	_connect_to_browseable_lobby("Connecting to lobby...")
 
-func _on_observe_match_requested(room_id: String) -> void:
+func _on_observe_match_requested(room_id: String, has_bot: bool) -> void:
 	var target_error := _validate_multiplayer_target()
 	if not target_error.is_empty():
 		status_label.text = target_error
 		return
-	var auth_error := _validate_auth_inputs()
+	var auth_error := _get_lobby_auth_input_error()
 	if not auth_error.is_empty():
 		status_label.text = auth_error
 		return
+	_yield_bot_hosting_for_play()
 	if not _current_room_snapshot.is_empty():
 		status_label.text = "Leave your current seek before observing another match."
 		return
 	_pending_host_room_creation = false
 	_pending_join_room_id = ""
+	_pending_rejoin_room_id = ""
 	_pending_observe_room_id = room_id.strip_edges().to_upper()
+	_observe_room_in_flight = ""
+	_observe_auth_retry_used = false
+	_pending_seek_switch_join_room_id = ""
 	_pending_local_lobby_launch_on_connect_failure = false
 	room_code_line_edit.text = room_id.strip_edges().to_upper()
 	multiplayer_container.visible = true
+	if has_bot:
+		_begin_match_loading(true, true)
 	_connect_to_browseable_lobby("Connecting to live match...")
+
+func _on_rejoin_match_requested(room_id: String) -> void:
+	var target_error := _validate_multiplayer_target()
+	if not target_error.is_empty():
+		status_label.text = target_error
+		return
+	var auth_error := _get_lobby_auth_input_error()
+	if not auth_error.is_empty():
+		status_label.text = auth_error
+		return
+	_clear_declined_active_match_rejoin()
+	var normalized_room_id := room_id.strip_edges().to_upper()
+	_pending_host_room_creation = false
+	_pending_join_room_id = ""
+	_pending_rejoin_room_id = normalized_room_id
+	_manual_rejoin_room_id = normalized_room_id
+	_pending_observe_room_id = ""
+	_pending_seek_switch_join_room_id = ""
+	_pending_local_lobby_launch_on_connect_failure = false
+	room_code_line_edit.text = normalized_room_id
+	multiplayer_container.visible = true
+	_connect_to_browseable_lobby("Rejoining live match...")
 
 func _on_leave_seek_pressed() -> void:
 	if lobby_client == null:
 		return
+	_pending_seek_switch_join_room_id = ""
 	_clear_current_seek_state()
 	status_label.text = "Leaving seek..."
 	lobby_client.leave_room()
 
+func _has_forfeitable_active_match() -> bool:
+	if lobby_client == null:
+		return false
+	var active_match_info = lobby_client.current_active_match_info
+	if active_match_info == null or not (active_match_info is Dictionary) or active_match_info.is_empty():
+		return false
+	if bool((active_match_info as Dictionary).get("observer_mode", false)):
+		return false
+	return true
+
+func _on_leave_match_pressed() -> void:
+	if not _has_forfeitable_active_match():
+		return
+	_clear_declined_active_match_rejoin()
+	_clear_saved_match_resume()
+	status_label.text = "Leaving and forfeiting your active match..."
+	_abandon_current_lobby_match()
+	_refresh_multiplayer_action_state()
+	_queue_room_list_refresh(false)
+
 func _connect_to_browseable_lobby(connect_status: String, connect_serial: int = 0) -> void:
+	if _lobby_suspended_for_practice:
+		return
 	if connect_serial > 0 and connect_serial != _authenticated_lobby_connect_serial:
 		return
+	var expected_connect_serial := _authenticated_lobby_connect_serial
 	var target_error := _validate_multiplayer_target()
 	if not target_error.is_empty():
+		_finish_match_loading()
 		status_label.text = target_error
+		_abort_startup_autologin(target_error, false)
 		return
 	var target_lobby_ip := _get_lobby_ip()
 	if _should_reuse_active_lobby_connection(target_lobby_ip):
@@ -1572,7 +4493,9 @@ func _connect_to_browseable_lobby(connect_status: String, connect_serial: int = 
 		status_label.text = "Closing previous lobby session..."
 		await get_tree().process_frame
 		await get_tree().create_timer(FRESH_LOBBY_RECONNECT_DELAY_SECONDS).timeout
-		if connect_serial > 0 and connect_serial != _authenticated_lobby_connect_serial:
+		if _lobby_suspended_for_practice:
+			return
+		if expected_connect_serial != _authenticated_lobby_connect_serial:
 			return
 	status_label.text = connect_status
 
@@ -1591,29 +4514,56 @@ func _connect_to_browseable_lobby(connect_status: String, connect_serial: int = 
 		_get_configured_lobby_port(),
 		_local_profile_id,
 		_get_selected_auth_mode(),
-		_get_auth_password()
+		_get_auth_password(),
+		_get_selected_account_public_username(),
+		_selected_account_accepts_game_updates
 	)
 	if connect_err != OK:
+		_finish_match_loading()
 		status_label.text = "Could not connect to the lobby."
+		_cleanup_lobby_client()
+		_set_connected_server_version("")
+		_abort_startup_autologin("Could not connect to the lobby.", true)
+	else:
+		_begin_lobby_sign_in_watchdog()
 
 func _maybe_connect_authenticated_lobby(connect_status: String = "Connecting to lobby...", connect_serial: int = 0) -> void:
+	if _lobby_suspended_for_practice:
+		return
 	if connect_serial > 0 and connect_serial != _authenticated_lobby_connect_serial:
 		return
-	if _get_selected_auth_mode() not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+	if _get_selected_auth_mode() not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
 		return
-	var auth_error := _validate_auth_inputs()
+	var auth_error := _get_lobby_auth_input_error()
 	if not auth_error.is_empty():
+		_clear_unauthenticated_lobby_transport()
 		status_label.text = auth_error
+		_abort_startup_autologin(auth_error, true)
 		return
 	var target_error := _validate_multiplayer_target()
 	if not target_error.is_empty():
+		_clear_unauthenticated_lobby_transport()
 		status_label.text = target_error
+		_abort_startup_autologin(target_error, false)
 		return
 	_pending_host_room_creation = false
 	_pending_join_room_id = ""
+	_pending_rejoin_room_id = ""
 	_pending_observe_room_id = ""
+	_pending_seek_switch_join_room_id = ""
 	_pending_local_lobby_launch_on_connect_failure = false
 	_connect_to_browseable_lobby(connect_status, connect_serial)
+
+func _has_lobby_resume_credentials() -> bool:
+	if _account_switch_pending:
+		return false
+	return not _lobby_session_id.strip_edges().is_empty() \
+		and not _lobby_reconnect_token.strip_edges().is_empty()
+
+func _get_lobby_auth_input_error() -> String:
+	if _has_lobby_resume_credentials():
+		return ""
+	return _validate_auth_inputs()
 
 func _deferred_authenticated_lobby_connect(connect_status: String = "Connecting to lobby...", connect_serial: int = 0) -> void:
 	if connect_serial > 0 and connect_serial != _authenticated_lobby_connect_serial:
@@ -1629,11 +4579,13 @@ func _run_pending_multiplayer_action() -> void:
 		return
 	if _pending_host_room_creation:
 		var is_ranked := _pending_room_is_ranked
+		var best_of := _pending_room_best_of
 		_pending_host_room_creation = false
 		_pending_room_is_ranked = true
+		_pending_room_best_of = 1
 		_pending_local_lobby_launch_on_connect_failure = false
-		status_label.text = "Creating seek..."
-		lobby_client.create_room(is_ranked)
+		status_label.text = "Creating Bo%d %s seek..." % [best_of, "rated" if is_ranked else "unrated"]
+		lobby_client.create_room(is_ranked, best_of)
 		return
 	if not _pending_join_room_id.is_empty():
 		var room_id := _pending_join_room_id
@@ -1641,9 +4593,24 @@ func _run_pending_multiplayer_action() -> void:
 		status_label.text = "Joining seek %s..." % room_id
 		lobby_client.join_room(room_id)
 		return
+	# Smoke clients enter via _join_smoke_room, which records the room CODE (not the
+	# join_id used above). Convert it to a join now that the lobby session is live.
+	if not _pending_join_room_code.is_empty():
+		var smoke_room_code := _pending_join_room_code
+		_pending_join_room_code = ""
+		status_label.text = "Joining seek %s..." % smoke_room_code
+		lobby_client.join_room(smoke_room_code)
+		return
+	if not _pending_rejoin_room_id.is_empty():
+		var rejoin_room_id := _pending_rejoin_room_id
+		_pending_rejoin_room_id = ""
+		status_label.text = "Rejoining match %s..." % rejoin_room_id
+		lobby_client.rejoin_room(rejoin_room_id)
+		return
 	if not _pending_observe_room_id.is_empty():
 		var observe_room_id := _pending_observe_room_id
 		_pending_observe_room_id = ""
+		_observe_room_in_flight = observe_room_id
 		status_label.text = "Observing match %s..." % observe_room_id
 		lobby_client.observe_room(observe_room_id)
 		return
@@ -1677,33 +4644,158 @@ func _is_server_runtime_launch() -> bool:
 
 func _begin_startup_prompts() -> void:
 	_startup_prompt_gate_open = true
+	if OS.get_name() == "Android" and _release_updates_enabled():
+		_android_updater.cleanup_completed_update(AppReleaseInfoScript.get_current_version())
+		var pending: Dictionary = _android_updater.pending_update()
+		if not pending.is_empty():
+			_begin_required_update(
+				str(pending.version),
+				AppReleaseInfoScript.get_release_page_url_for_version(str(pending.version)),
+				AppReleaseInfoScript.get_download_url_for_version(str(pending.version), AppReleaseInfoScript.ANDROID_ASSET_NAME),
+				_get_file_size(AndroidSelfUpdaterScript.DOWNLOAD_PATH),
+				str(pending.sha256)
+			)
+			_complete_startup_prompts()
+			return
 	if _should_check_for_updates():
+		# Run the update check alongside sign-in instead of in front of it;
+		# its completion handlers still funnel through _complete_startup_prompts.
 		_start_update_check()
-		return
 	_complete_startup_prompts()
 
 func _complete_startup_prompts() -> void:
 	if not _startup_prompt_gate_open:
 		return
 	_startup_prompt_gate_open = false
+	if _startup_autologin_pending:
+		_startup_autologin_pending = false
+		_startup_autologin_in_progress = true
+		_set_startup_loading_status("Signing in with saved account...")
+		_startup_trace("_complete_startup_prompts -> autologin")
+		call_deferred("_deferred_startup_autologin_connect")
+		return
 	_maybe_show_auth_onboarding()
 
+func _deferred_startup_autologin_connect() -> void:
+	await get_tree().process_frame
+	if not _startup_autologin_in_progress:
+		return
+	# Transport/authentication can start immediately; expensive follow-up work
+	# waits for Multiplayer instead of competing with local UI interaction.
+	_startup_trace("_deferred_startup_autologin_connect (background)")
+	_queue_authenticated_lobby_connect("Signing in with saved account...")
+
+func _wait_for_startup_splash_settled() -> void:
+	# When the splash is disabled the animation never starts, so return
+	# immediately rather than waiting for a finished flag nobody sets.
+	if not _startup_splash_animation_started:
+		return
+	var deadline_ms := Time.get_ticks_msec() + int(STARTUP_SPLASH_SETTLE_TIMEOUT_SECONDS * 1000.0)
+	while not _startup_splash_animation_finished and Time.get_ticks_msec() < deadline_ms:
+		var tree := get_tree()
+		if tree == null or not is_instance_valid(self):
+			return
+		await tree.process_frame
+
+func _abort_startup_autologin(message: String, show_auth_prompt: bool) -> void:
+	if not _startup_autologin_in_progress:
+		return
+	_startup_autologin_in_progress = false
+	_startup_trace("_abort_startup_autologin: %s" % message)
+	_set_startup_loading_status(message)
+	if show_auth_prompt:
+		_show_auth_recovery_prompt(message)
+	else:
+		_finish_startup_loading()
+
 func _should_check_for_updates() -> bool:
-	if not _smoke_config.is_empty():
+	if not _release_updates_enabled():
 		return false
 	return AppReleaseInfoScript.is_release_version(AppReleaseInfoScript.get_current_version())
+
+func _release_updates_enabled() -> bool:
+	return not OS.is_debug_build() \
+		and not Engine.is_editor_hint() \
+		and _smoke_config.is_empty() \
+		and not _is_server_runtime_launch()
+
+func _maybe_check_for_server_required_update(server_version: String) -> void:
+	if not _release_updates_enabled():
+		return
+	if server_version.is_empty() or _server_version_update_check_requested:
+		return
+	if _is_auto_updating or (_update_prompt_overlay != null and is_instance_valid(_update_prompt_overlay)):
+		return
+	if not AppReleaseInfoScript.is_release_version(server_version):
+		return
+	var current_version := AppReleaseInfoScript.get_current_version()
+	if AppReleaseInfoScript.compare_versions(current_version, server_version) >= 0:
+		return
+	_server_version_update_check_requested = true
+	if status_label != null:
+		status_label.text = "Server is running %s. Checking for update..." % server_version
+	if OS.get_name() in ["Windows", "macOS", "Android"]:
+		_begin_required_update(
+			server_version,
+			AppReleaseInfoScript.get_release_page_url_for_version(server_version),
+			AppReleaseInfoScript.get_download_url_for_version(
+				server_version,
+				str(AppReleaseInfoScript.get_asset_names_for_platform(OS.get_name())[0])
+			),
+			0,
+			"",
+			false,
+			AppReleaseInfoScript.get_download_url_for_version(
+				server_version,
+				"%s.sha256" % str(AppReleaseInfoScript.get_asset_names_for_platform(OS.get_name())[0])
+			)
+		)
+		return
+	_start_update_check(
+		"Server requires %s, but no matching public release was found." % server_version,
+		"Server requires %s, but public releases could not be checked." % server_version
+	)
 
 func _ensure_update_check_request() -> void:
 	if _update_check_request != null and is_instance_valid(_update_check_request):
 		return
 	_update_check_request = HTTPRequest.new()
 	_update_check_request.name = "LatestReleaseRequest"
-	_update_check_request.timeout = 5.0
+	_update_check_request.timeout = UPDATE_CHECK_TIMEOUT_SECONDS
+	_update_check_request.use_threads = true
 	_update_check_request.request_completed.connect(_on_update_check_request_completed)
 	add_child(_update_check_request)
 
-func _start_update_check() -> void:
+func _start_update_check(
+	no_update_status: String = "",
+	failure_status: String = "",
+	reset_attempts: bool = true
+) -> void:
+	if not _release_updates_enabled():
+		_finish_update_check_without_update()
+		return
+	if _update_check_in_flight:
+		if not no_update_status.is_empty():
+			_update_check_no_update_status = no_update_status
+		if not failure_status.is_empty():
+			_update_check_failure_status = failure_status
+		return
+	if reset_attempts:
+		_update_check_attempt = 0
+	if not no_update_status.is_empty():
+		_update_check_no_update_status = no_update_status
+	if not failure_status.is_empty():
+		_update_check_failure_status = failure_status
+	_begin_update_check_attempt()
+
+func _begin_update_check_attempt() -> void:
 	_ensure_update_check_request()
+	_update_check_attempt += 1
+	_update_check_in_flight = true
+	_write_update_log(
+		"release_check_started attempt=%d current=%s"
+		% [_update_check_attempt, AppReleaseInfoScript.get_current_version()]
+	)
 	var headers := PackedStringArray([
 		"Accept: application/vnd.github+json",
 		"User-Agent: OtherGods",
@@ -1711,7 +4803,47 @@ func _start_update_check() -> void:
 	])
 	var request_error := _update_check_request.request(AppReleaseInfoScript.RELEASES_API_URL, headers)
 	if request_error != OK:
-		_complete_startup_prompts()
+		_update_check_in_flight = false
+		_handle_update_check_failure("request_start_error=%d" % request_error)
+
+func _handle_update_check_failure(reason: String) -> void:
+	_write_update_log(
+		"release_check_failed attempt=%d reason=%s"
+		% [_update_check_attempt, reason]
+	)
+	if _update_check_attempt < UPDATE_CHECK_MAX_ATTEMPTS:
+		var tree := get_tree()
+		if tree != null:
+			_update_check_retry_serial += 1
+			var expected_serial := _update_check_retry_serial
+			var retry_timer := tree.create_timer(UPDATE_CHECK_RETRY_DELAY_SECONDS)
+			retry_timer.timeout.connect(
+				Callable(self, "_retry_update_check").bind(expected_serial)
+			)
+			return
+	var failure_status := ""
+	if not _update_check_failure_status.is_empty():
+		failure_status = _update_check_failure_status
+	_finish_update_check_without_update(failure_status)
+
+func _retry_update_check(expected_serial: int) -> void:
+	if expected_serial != _update_check_retry_serial:
+		return
+	if _update_check_in_flight or _is_auto_updating:
+		return
+	_begin_update_check_attempt()
+
+func _finish_update_check_without_update(status_override: String = "") -> void:
+	_update_check_in_flight = false
+	_update_check_retry_serial += 1
+	var resolved_status := status_override
+	if resolved_status.is_empty():
+		resolved_status = _update_check_no_update_status
+	_update_check_no_update_status = ""
+	_update_check_failure_status = ""
+	if not resolved_status.is_empty() and status_label != null:
+		status_label.text = resolved_status
+	_complete_startup_prompts()
 
 func _on_update_check_request_completed(
 	result: int,
@@ -1719,33 +4851,76 @@ func _on_update_check_request_completed(
 	_headers: PackedStringArray,
 	body: PackedByteArray
 ) -> void:
+	_update_check_in_flight = false
+	_update_check_retry_serial += 1
 	if result != HTTPRequest.RESULT_SUCCESS or response_code < 200 or response_code >= 300:
-		_complete_startup_prompts()
+		_handle_update_check_failure(
+			"result=%d response_code=%d" % [result, response_code]
+		)
 		return
 	var parsed = JSON.parse_string(body.get_string_from_utf8())
 	if not (parsed is Dictionary):
-		_complete_startup_prompts()
+		_handle_update_check_failure("invalid_json")
 		return
 	var payload := parsed as Dictionary
 	var latest_version := AppReleaseInfoScript.normalize_version(str(payload.get("tag_name", "")))
+	_write_update_log(
+		"release_check_completed current=%s latest=%s"
+		% [AppReleaseInfoScript.get_current_version(), latest_version]
+	)
 	if not _should_prompt_for_update(latest_version):
-		_complete_startup_prompts()
+		_finish_update_check_without_update()
 		return
 	var release_url := str(payload.get("html_url", AppReleaseInfoScript.RELEASES_PAGE_URL)).strip_edges()
 	if release_url.is_empty():
 		release_url = AppReleaseInfoScript.RELEASES_PAGE_URL
 	var download_url := ""
+	var download_size := 0
+	var download_sha256 := ""
+	var download_sha256_url := ""
 	var assets: Array = payload.get("assets", [])
-	var windows_asset_names := AppReleaseInfoScript.WINDOWS_ASSET_NAMES
-	for asset_name in windows_asset_names:
+	var platform_asset_names := AppReleaseInfoScript.get_asset_names_for_platform(OS.get_name())
+	var macos_appcast_available := OS.get_name() == "macOS" \
+		and _release_assets_include_name(assets, AppReleaseInfoScript.MACOS_APPCAST_ASSET_NAME)
+	for asset_name in platform_asset_names:
 		for asset in assets:
 			if str(asset.get("name", "")) != asset_name:
 				continue
 			download_url = str(asset.get("browser_download_url", "")).strip_edges()
+			download_size = int(asset.get("size", 0))
+			download_sha256 = _parse_sha256_digest(str(asset.get("digest", "")))
+			download_sha256_url = _get_release_asset_download_url(assets, "%s.sha256" % asset_name)
 			break
 		if not download_url.is_empty():
 			break
-	_begin_required_update(latest_version, release_url, download_url)
+	# Desktop releases can be published without Android signing configured.
+	# Keep the current Android client usable until its APK is available.
+	if OS.get_name() == "Android" and download_url.is_empty():
+		_finish_update_check_without_update()
+		return
+	_update_check_no_update_status = ""
+	_update_check_failure_status = ""
+	_begin_required_update(
+		latest_version,
+		release_url,
+		download_url,
+		download_size,
+		download_sha256,
+		macos_appcast_available,
+		download_sha256_url
+	)
+
+func _release_assets_include_name(assets: Array, asset_name: String) -> bool:
+	for asset in assets:
+		if str(asset.get("name", "")) == asset_name:
+			return true
+	return false
+
+func _get_release_asset_download_url(assets: Array, asset_name: String) -> String:
+	for asset in assets:
+		if str(asset.get("name", "")) == asset_name:
+			return str(asset.get("browser_download_url", "")).strip_edges()
+	return ""
 
 func _should_prompt_for_update(latest_version: String) -> bool:
 	if not AppReleaseInfoScript.is_release_version(latest_version):
@@ -1761,10 +4936,60 @@ func _should_prompt_for_update(latest_version: String) -> bool:
 			_local_profile_store.remember_dismissed_release_version("")
 	return true
 
-func _begin_required_update(latest_version: String, release_url: String, download_url: String = "") -> void:
-	if not download_url.is_empty() and OS.get_name() == "Windows":
-		_show_update_prompt(latest_version, release_url, download_url, true)
+func _should_defer_required_update() -> bool:
+	return _match_launch_queued or (
+		game_container != null and game_container.visible and _get_active_embedded_game() != null
+	)
+
+func _begin_required_update(
+	latest_version: String,
+	release_url: String,
+	download_url: String = "",
+	download_size: int = 0,
+	download_sha256: String = "",
+	macos_appcast_available: bool = false,
+	download_sha256_url: String = ""
+) -> void:
+	if not _release_updates_enabled():
+		_complete_startup_prompts()
+		return
+	# Lobby recovery can discover a new build while the current game is still
+	# running. Keep its release metadata and wait until the player leaves it.
+	if _should_defer_required_update():
+		_deferred_required_update = {
+			"latest_version": latest_version,
+			"release_url": release_url,
+			"download_url": download_url,
+			"download_size": download_size,
+			"download_sha256": download_sha256,
+			"macos_appcast_available": macos_appcast_available,
+			"download_sha256_url": download_sha256_url,
+		}
+		_write_update_log("update_deferred_until_menu latest=%s" % latest_version)
+		return
+	_write_update_log(
+		"update_required current=%s latest=%s download_bytes=%d"
+		% [AppReleaseInfoScript.get_current_version(), latest_version, download_size]
+	)
+	if not download_url.is_empty() and OS.get_name() in ["Windows", "macOS", "Android"]:
+		if _consume_pending_update_failure(latest_version, release_url, download_url, download_size, download_sha256, download_sha256_url):
+			_complete_startup_prompts()
+			return
+		_show_update_prompt(
+			latest_version,
+			release_url,
+			download_url,
+			true,
+			download_size,
+			download_sha256,
+			download_sha256_url,
+			OS.get_name() not in ["macOS", "Android"]
+		)
 		call_deferred("_on_update_prompt_auto_update_pressed")
+		return
+	if OS.get_name() == "macOS":
+		_show_update_prompt(latest_version, release_url, "", true, 0, "", "", false)
+		_present_macos_update_failure("This release is missing its macOS download. Try again when the release is complete.")
 		return
 	var open_error := OS.shell_open(release_url)
 	if open_error == OK:
@@ -1773,16 +4998,44 @@ func _begin_required_update(latest_version: String, release_url: String, downloa
 		status_label.text = "Update %s is available, but the release page could not be opened automatically." % latest_version
 	_complete_startup_prompts()
 
-func _show_update_prompt(latest_version: String, release_url: String, download_url: String = "", auto_update: bool = false) -> void:
+func _show_update_prompt(
+	latest_version: String,
+	release_url: String,
+	download_url: String = "",
+	auto_update: bool = false,
+	download_size: int = 0,
+	download_sha256: String = "",
+	download_sha256_url: String = "",
+	use_startup_loading_bar: bool = true
+) -> void:
 	if _update_prompt_overlay != null and is_instance_valid(_update_prompt_overlay):
 		return
 	_pending_update_release_version = latest_version
 	_pending_update_release_url = release_url
 	_pending_update_download_url = download_url
+	_pending_update_download_size = download_size
+	_pending_update_download_sha256 = download_sha256
+	_pending_update_download_sha256_url = download_sha256_url
 	_automatic_update_required = auto_update
+	_update_uses_startup_loading_bar = auto_update and use_startup_loading_bar \
+		and _startup_loading_overlay != null \
+		and is_instance_valid(_startup_loading_overlay) \
+		and _startup_loading_bar != null \
+		and is_instance_valid(_startup_loading_bar)
+	if _update_uses_startup_loading_bar:
+		var update_size_message := ""
+		if download_size > 0:
+			update_size_message = " (%.1f MB)" % (float(download_size) / BYTES_PER_MIB)
+		_set_update_download_progress(0.0)
+		_set_update_download_status(
+			"Updating Other Gods to %s%s.\nKeep Other Gods open; it will restart automatically."
+			% [latest_version, update_size_message]
+		)
+		return
 
 	_update_prompt_overlay = Control.new()
 	_update_prompt_overlay.name = "UpdatePromptOverlay"
+	_update_prompt_overlay.z_index = 2300
 	_update_prompt_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_update_prompt_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(_update_prompt_overlay)
@@ -1833,7 +5086,15 @@ func _show_update_prompt(latest_version: String, release_url: String, download_u
 	var current_version := AppReleaseInfoScript.get_current_version()
 	var body_label := Label.new()
 	if auto_update:
-		body_label.text = "You're running %s. Installing %s now." % [current_version, latest_version]
+		var size_message := ""
+		if download_size > 0:
+			size_message = " The download is %.1f MB." % (float(download_size) / BYTES_PER_MIB)
+		var install_instructions := "Keep Other Gods open; it will restart automatically."
+		if OS.get_name() == "Android":
+			install_instructions = "Android will ask you to confirm installation after the download."
+		body_label.text = (
+			"You're running %s. Installing %s now.%s\n" + install_instructions
+		) % [current_version, latest_version, size_message]
 	else:
 		body_label.text = "You're running %s, and the latest release is %s." % [current_version, latest_version]
 	body_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -1844,6 +5105,7 @@ func _show_update_prompt(latest_version: String, release_url: String, download_u
 	button_row.alignment = BoxContainer.ALIGNMENT_END
 	button_row.add_theme_constant_override("separation", 8)
 	content.add_child(button_row)
+	_update_button_row = button_row
 
 	if not auto_update:
 		var later_button := Button.new()
@@ -1856,13 +5118,21 @@ func _show_update_prompt(latest_version: String, release_url: String, download_u
 	update_button.text = "Open Download Page"
 	update_button.custom_minimum_size = Vector2(180, 38)
 	update_button.pressed.connect(_on_update_prompt_open_pressed)
-	if not auto_update:
-		button_row.add_child(update_button)
+	button_row.add_child(update_button)
+	_update_open_button = update_button
 
-	if not download_url.is_empty() and OS.get_name() == "Windows":
-		if not auto_update:
+	var support_button := Button.new()
+	support_button.text = "Open Update Log Folder"
+	support_button.custom_minimum_size = Vector2(190, 38)
+	support_button.pressed.connect(_on_update_prompt_support_pressed)
+	support_button.visible = false
+	button_row.add_child(support_button)
+	_update_support_button = support_button
+
+	if (not download_url.is_empty() and OS.get_name() in ["Windows", "macOS", "Android"]) or auto_update:
+		if not download_url.is_empty():
 			var auto_button := Button.new()
-			auto_button.text = "Update Now"
+			auto_button.text = "Retry Update" if auto_update else "Update Now"
 			auto_button.custom_minimum_size = Vector2(130, 38)
 			auto_button.pressed.connect(_on_update_prompt_auto_update_pressed)
 			button_row.add_child(auto_button)
@@ -1870,6 +5140,8 @@ func _show_update_prompt(latest_version: String, release_url: String, download_u
 
 		var progress_label := Label.new()
 		progress_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		progress_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		progress_label.custom_minimum_size = Vector2(420, 44)
 		progress_label.visible = false
 		content.add_child(progress_label)
 		_update_download_status_label = progress_label
@@ -1882,14 +5154,33 @@ func _show_update_prompt(latest_version: String, release_url: String, download_u
 		button_row.visible = false
 
 func _dismiss_update_prompt() -> void:
+	if _update_checksum_request != null and is_instance_valid(_update_checksum_request):
+		_update_checksum_request.cancel_request()
+		_update_checksum_request.queue_free()
+	_update_checksum_request = null
 	if _update_download_request != null and is_instance_valid(_update_download_request):
 		_update_download_request.cancel_request()
 		_update_download_request.queue_free()
 	_update_download_request = null
+	if _update_curl_process_id > 0 and OS.is_process_running(_update_curl_process_id):
+		OS.kill(_update_curl_process_id)
+	_update_curl_process_id = 0
+	_update_curl_download_path = ""
+	_update_curl_fallback_started = false
 	_is_auto_updating = false
+	_android_install_permission_pending = false
+	_update_uses_startup_loading_bar = false
 	_update_now_button = null
+	_update_open_button = null
+	_update_support_button = null
+	_update_button_row = null
 	_update_download_status_label = null
 	_pending_update_download_url = ""
+	_pending_update_download_size = 0
+	_pending_update_download_sha256 = ""
+	_pending_update_download_sha256_url = ""
+	_update_download_attempt = 0
+	_last_logged_update_percent = -10
 	_automatic_update_required = false
 	if _update_prompt_overlay != null and is_instance_valid(_update_prompt_overlay):
 		_update_prompt_overlay.queue_free()
@@ -1910,32 +5201,227 @@ func _on_update_prompt_open_pressed() -> void:
 		status_label.text = "Opened the latest release page in your browser."
 	else:
 		status_label.text = "Couldn't open the latest release page automatically."
+	if OS.get_name() == "macOS" and _automatic_update_required:
+		return
 	_dismiss_update_prompt()
 	_complete_startup_prompts()
 
+func _on_update_prompt_support_pressed() -> void:
+	var open_error := OS.shell_open(OS.get_user_data_dir())
+	if status_label == null:
+		return
+	if open_error == OK:
+		status_label.text = "Opened the folder containing update.log."
+	else:
+		status_label.text = "Couldn't open the update log folder automatically."
+
 func _on_update_prompt_auto_update_pressed() -> void:
+	if not _release_updates_enabled():
+		_dismiss_update_prompt()
+		_complete_startup_prompts()
+		return
 	if _is_auto_updating:
 		return
 	_is_auto_updating = true
+	if OS.get_name() == "Android" and _android_updater.has_cached_update(_pending_update_release_version, _pending_update_download_sha256):
+		_apply_update_and_restart(AndroidSelfUpdaterScript.DOWNLOAD_PATH)
+		return
+	_update_download_attempt = 0
+	_update_curl_process_id = 0
+	_update_curl_download_path = ""
+	_update_curl_fallback_started = false
+	_last_logged_update_percent = -10
 	if _update_now_button != null and is_instance_valid(_update_now_button):
 		_update_now_button.disabled = true
-	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
-		_update_download_status_label.text = "Downloading..."
-		_update_download_status_label.visible = true
+	if OS.get_name() == "macOS" and _update_button_row != null:
+		_update_button_row.visible = false
+	var size_message := ""
+	if _pending_update_download_size > 0:
+		size_message = " (%.1f MB)" % (
+			float(_pending_update_download_size) / BYTES_PER_MIB
+		)
+	_set_update_download_progress(0.0)
+	var download_instructions := "Keep Other Gods open until it restarts."
+	if OS.get_name() == "Android":
+		download_instructions = "Keep Other Gods open. Android will ask you to confirm the update."
+	_set_update_download_status(
+		"Starting %s%s download...\n%s"
+		% [_pending_update_release_version, size_message, download_instructions]
+	)
 
+	var preflight_failure := _check_update_download_preflight()
+	if not preflight_failure.is_empty():
+		_on_auto_update_failed(preflight_failure)
+		return
+	if _pending_update_download_sha256.is_empty():
+		if _pending_update_download_sha256_url.is_empty():
+			_on_auto_update_failed(
+				"Automatic update could not verify the release checksum. Install manually from the release page."
+			)
+			return
+		_begin_update_checksum_download()
+		return
+	_begin_auto_update_download()
+
+func _begin_update_checksum_download() -> void:
+	if not _is_auto_updating:
+		return
+	if _update_checksum_request != null and is_instance_valid(_update_checksum_request):
+		_update_checksum_request.cancel_request()
+		_update_checksum_request.queue_free()
+	_update_checksum_request = HTTPRequest.new()
+	_update_checksum_request.name = "UpdateChecksumRequest"
+	_update_checksum_request.use_threads = true
+	_update_checksum_request.timeout = UPDATE_CHECK_TIMEOUT_SECONDS
+	_update_checksum_request.request_completed.connect(_on_update_checksum_request_completed)
+	add_child(_update_checksum_request)
+	_set_update_download_progress(0.0)
+	_set_update_download_status("Verifying %s release checksum..." % _pending_update_release_version)
+	_write_update_log(
+		"checksum_download_started version=%s url=%s"
+		% [_pending_update_release_version, _pending_update_download_sha256_url]
+	)
+	var request_error := _update_checksum_request.request(
+		_pending_update_download_sha256_url,
+		PackedStringArray(["User-Agent: OtherGods"])
+	)
+	if request_error != OK:
+		if _update_checksum_request != null and is_instance_valid(_update_checksum_request):
+			_update_checksum_request.queue_free()
+		_update_checksum_request = null
+		_on_auto_update_failed(
+			"Automatic update could not fetch the release checksum (%s)." % _error_code_name(request_error)
+		)
+
+func _on_update_checksum_request_completed(
+	result: int,
+	response_code: int,
+	_headers: PackedStringArray,
+	body: PackedByteArray
+) -> void:
+	if _update_checksum_request != null and is_instance_valid(_update_checksum_request):
+		_update_checksum_request.queue_free()
+	_update_checksum_request = null
+	if result != HTTPRequest.RESULT_SUCCESS or response_code < 200 or response_code >= 300:
+		_on_auto_update_failed(
+			"Automatic update could not fetch the release checksum (%s, HTTP %d)."
+			% [_http_request_result_name(result), response_code]
+		)
+		return
+	var parsed_sha256 := _parse_sha256_text(body.get_string_from_utf8())
+	if parsed_sha256.is_empty():
+		_on_auto_update_failed("Automatic update received an invalid release checksum.")
+		return
+	_pending_update_download_sha256 = parsed_sha256
+	_write_update_log(
+		"checksum_download_completed version=%s sha256=%s"
+		% [_pending_update_release_version, _pending_update_download_sha256]
+	)
+	_begin_auto_update_download()
+
+func _cleanup_windows_update_artifacts() -> void:
+	await get_tree().create_timer(1.0).timeout
+	for update_path in [
+		OS.get_user_data_dir() + "/self_update_staging",
+		OS.get_user_data_dir() + "/self_update_runner",
+	]:
+		for attempt in range(1, UPDATE_CLEANUP_MAX_ATTEMPTS + 1):
+			if _clear_update_staging_root(update_path):
+				if attempt > 1:
+					_write_update_log(
+						"update_artifact_cleanup_completed attempt=%d path=%s"
+						% [attempt, update_path]
+					)
+				break
+			if attempt == UPDATE_CLEANUP_MAX_ATTEMPTS:
+				_write_update_log(
+					"update_artifact_cleanup_failed attempts=%d path=%s"
+					% [UPDATE_CLEANUP_MAX_ATTEMPTS, update_path]
+				)
+				break
+			await get_tree().create_timer(UPDATE_CLEANUP_RETRY_DELAY_SECONDS).timeout
+
+func _check_update_download_preflight() -> String:
+	var user_data_dir := OS.get_user_data_dir()
+	var write_test_path := user_data_dir.path_join(
+		"update-download-write-test-%d.tmp" % OS.get_process_id()
+	)
+	DirAccess.remove_absolute(write_test_path)
+	var write_test := FileAccess.open(write_test_path, FileAccess.WRITE)
+	if write_test == null:
+		_write_update_log("download_preflight_failed reason=user_data_not_writable path=%s" % user_data_dir)
+		return (
+			"Other Gods cannot write the update download folder. "
+			+ "Security software or folder permissions may be blocking it."
+		)
+	write_test.store_string("ok")
+	write_test.close()
+	var remove_error := DirAccess.remove_absolute(write_test_path)
+	if remove_error != OK or FileAccess.file_exists(write_test_path):
+		_write_update_log(
+			"download_preflight_failed reason=write_test_cleanup error=%d path=%s"
+			% [remove_error, write_test_path]
+		)
+		return "Other Gods could not prepare its update download folder."
+
+	var available_bytes := -1
+	var user_dir := DirAccess.open(user_data_dir)
+	if user_dir != null:
+		available_bytes = user_dir.get_space_left()
+	var required_bytes := UPDATE_DOWNLOAD_MINIMUM_FREE_MARGIN_BYTES
+	if _pending_update_download_size > 0:
+		required_bytes += _pending_update_download_size * 2
+	_write_update_log(
+		"download_preflight_ok available_bytes=%d required_bytes=%d path=%s"
+		% [available_bytes, required_bytes, user_data_dir]
+	)
+	if available_bytes > 0 and available_bytes < required_bytes:
+		return (
+			"Not enough free disk space to download and stage the update. "
+			+ "Free at least %.1f GB and try again."
+		) % (float(required_bytes - available_bytes) / 1073741824.0)
+	return ""
+
+func _begin_auto_update_download() -> void:
+	if not _is_auto_updating:
+		return
+	if _update_download_request != null and is_instance_valid(_update_download_request):
+		_update_download_request.queue_free()
+	_update_download_request = null
+	_update_download_attempt += 1
 	var zip_path := OS.get_user_data_dir() + "/update_download.zip"
+	if OS.get_name() == "Android":
+		zip_path = AndroidSelfUpdaterScript.DOWNLOAD_PATH
 	if FileAccess.file_exists(zip_path):
 		DirAccess.remove_absolute(zip_path)
+	_set_update_download_progress(0.0)
 
 	_update_download_request = HTTPRequest.new()
 	_update_download_request.name = "UpdateDownloadRequest"
 	_update_download_request.download_file = zip_path
 	_update_download_request.use_threads = true
+	_update_download_request.timeout = 0.0
 	_update_download_request.request_completed.connect(_on_auto_update_download_completed.bind(zip_path))
 	add_child(_update_download_request)
+	_write_update_log(
+		"download_started transport=godot version=%s attempt=%d expected_bytes=%d url=%s"
+		% [
+			_pending_update_release_version,
+			_update_download_attempt,
+			_pending_update_download_size,
+			_pending_update_download_url,
+		]
+	)
 
-	if _update_download_request.request(_pending_update_download_url) != OK:
-		_on_auto_update_failed("Failed to start download.")
+	var request_error := _update_download_request.request(
+		_pending_update_download_url,
+		PackedStringArray(["User-Agent: OtherGods"])
+	)
+	if request_error != OK:
+		_retry_auto_update_download_or_fail(
+			"Built-in downloader could not start (%s)." % _error_code_name(request_error),
+			true
+		)
 
 func _on_auto_update_download_completed(
 	result: int,
@@ -1944,14 +5430,286 @@ func _on_auto_update_download_completed(
 	_body: PackedByteArray,
 	zip_path: String
 ) -> void:
+	var downloaded_size := _get_file_size(zip_path)
+	_write_update_log(
+		"download_completed transport=godot result=%s response_code=%d bytes=%d expected_bytes=%d"
+		% [
+			_http_request_result_name(result),
+			response_code,
+			downloaded_size,
+			_pending_update_download_size,
+		]
+	)
 	if result != HTTPRequest.RESULT_SUCCESS or response_code < 200 or response_code >= 300:
-		_on_auto_update_failed("Download failed (HTTP %d)." % response_code)
+		var skip_builtin_retries := result in [2, 3, 5, 10, 11]
+		_retry_auto_update_download_or_fail(
+			"Built-in downloader failed (%s, HTTP %d)."
+			% [_http_request_result_name(result), response_code],
+			skip_builtin_retries
+		)
 		return
+	var validation_failure := _validate_downloaded_update(zip_path, "godot")
+	if not validation_failure.is_empty():
+		_retry_auto_update_download_or_fail(validation_failure)
+		return
+	if _update_download_request != null and is_instance_valid(_update_download_request):
+		_update_download_request.queue_free()
+	_update_download_request = null
 	_apply_update_and_restart(zip_path)
 
+func _retry_auto_update_download_or_fail(message: String, skip_builtin_retries: bool = false) -> void:
+	_write_update_log(
+		"download_attempt_failed transport=godot version=%s attempt=%d skip_retries=%s message=%s"
+		% [
+			_pending_update_release_version,
+			_update_download_attempt,
+			str(skip_builtin_retries),
+			message,
+		]
+	)
+	if _update_download_request != null and is_instance_valid(_update_download_request):
+		_update_download_request.queue_free()
+	_update_download_request = null
+	if skip_builtin_retries or _update_download_attempt >= UPDATE_DOWNLOAD_MAX_ATTEMPTS:
+		if OS.get_name() == "Windows" and not _update_curl_fallback_started:
+			_begin_windows_curl_download(message)
+			return
+		_on_auto_update_failed(message)
+		return
+	_set_update_download_status(
+		"%s\nRetrying download (%d of %d)..."
+		% [message, _update_download_attempt + 1, UPDATE_DOWNLOAD_MAX_ATTEMPTS]
+	)
+	await get_tree().create_timer(UPDATE_DOWNLOAD_RETRY_DELAY_SECONDS).timeout
+	if _is_auto_updating:
+		_begin_auto_update_download()
+
+func _begin_windows_curl_download(previous_failure: String) -> void:
+	_update_curl_fallback_started = true
+	var curl_path := _resolve_windows_curl_path()
+	if curl_path.is_empty():
+		_write_update_log("download_fallback_unavailable reason=curl_missing")
+		_on_auto_update_failed(
+			"%s Windows' fallback downloader was not available." % previous_failure
+		)
+		return
+	var zip_path := OS.get_user_data_dir() + "/update_download_windows.zip"
+	var error_path := OS.get_user_data_dir() + "/update_download_windows_error.txt"
+	DirAccess.remove_absolute(zip_path)
+	DirAccess.remove_absolute(error_path)
+	var built_in_partial_path := OS.get_user_data_dir() + "/update_download.zip"
+	var partial_size := _get_file_size(built_in_partial_path)
+	var can_resume_partial := (
+		partial_size > 0
+		and _pending_update_download_size > 0
+		and partial_size < _pending_update_download_size
+	)
+	if can_resume_partial:
+		var resume_move_error := DirAccess.rename_absolute(built_in_partial_path, zip_path)
+		can_resume_partial = resume_move_error == OK
+		_write_update_log(
+			"download_fallback_resume bytes=%d moved=%s error=%d"
+			% [partial_size, str(can_resume_partial), resume_move_error]
+		)
+	_update_curl_download_path = zip_path
+	_set_update_download_status(
+		"%s\nTrying Windows' built-in downloader..."
+		% previous_failure
+	)
+	var args := PackedStringArray([
+		"--fail",
+		"--location",
+		"--silent",
+		"--show-error",
+		"--retry",
+		"4",
+		"--retry-delay",
+		"2",
+		"--connect-timeout",
+		"20",
+		"--speed-limit",
+		"1024",
+		"--speed-time",
+		"90",
+		"--user-agent",
+		"OtherGods",
+	])
+	if can_resume_partial:
+		args.append_array([
+			"--continue-at",
+			"-",
+		])
+	args.append_array([
+		"--output",
+		zip_path,
+		"--stderr",
+		error_path,
+		_pending_update_download_url,
+	])
+	_update_curl_process_id = OS.create_process(curl_path, args, false)
+	if _update_curl_process_id == -1:
+		_update_curl_process_id = 0
+		_write_update_log(
+			"download_fallback_failed reason=curl_launch_failed path=%s" % curl_path
+		)
+		_on_auto_update_failed(
+			"%s Windows blocked its fallback downloader from starting." % previous_failure
+		)
+		return
+	_write_update_log(
+		"download_started transport=windows_curl version=%s pid=%d expected_bytes=%d url=%s"
+		% [
+			_pending_update_release_version,
+			_update_curl_process_id,
+			_pending_update_download_size,
+			_pending_update_download_url,
+		]
+	)
+	while OS.is_process_running(_update_curl_process_id):
+		if not _is_auto_updating:
+			OS.kill(_update_curl_process_id)
+			_update_curl_process_id = 0
+			return
+		await get_tree().create_timer(WINDOWS_CURL_POLL_SECONDS).timeout
+	_update_curl_process_id = 0
+	var error_text := _read_update_text_file(error_path).replace("\r", " ").replace("\n", " ").strip_edges()
+	var downloaded_size := _get_file_size(zip_path)
+	_write_update_log(
+		"download_completed transport=windows_curl bytes=%d expected_bytes=%d error=%s"
+		% [downloaded_size, _pending_update_download_size, error_text.left(500)]
+	)
+	var validation_failure := _validate_downloaded_update(zip_path, "windows_curl")
+	if not validation_failure.is_empty():
+		if not error_text.is_empty():
+			validation_failure += " Windows reported: %s" % error_text.left(240)
+		_on_auto_update_failed(validation_failure)
+		return
+	DirAccess.remove_absolute(error_path)
+	_update_curl_download_path = ""
+	_apply_update_and_restart(zip_path)
+
+func _resolve_windows_curl_path() -> String:
+	var windows_dir := OS.get_environment("WINDIR").strip_edges()
+	var candidates := PackedStringArray()
+	if not windows_dir.is_empty():
+		candidates.append(windows_dir.path_join("System32/curl.exe"))
+	candidates.append("C:/Windows/System32/curl.exe")
+	for candidate in candidates:
+		if FileAccess.file_exists(candidate):
+			return candidate
+	return ""
+
+func _validate_downloaded_update(zip_path: String, transport: String) -> String:
+	var downloaded_size := _get_file_size(zip_path)
+	var transport_label := _download_transport_label(transport)
+	if downloaded_size <= 0:
+		return "The %s download was empty." % transport_label
+	if (
+		_pending_update_download_size > 0
+		and downloaded_size != _pending_update_download_size
+	):
+		return (
+			"The %s download was incomplete (%.1f of %.1f MB)."
+			% [
+				transport_label,
+				float(downloaded_size) / BYTES_PER_MIB,
+				float(_pending_update_download_size) / BYTES_PER_MIB,
+			]
+		)
+	if _pending_update_download_sha256.is_empty():
+		return "The %s download could not be verified because the release did not provide a SHA-256 checksum." % transport_label
+	var downloaded_sha256 := FileAccess.get_sha256(zip_path).to_lower()
+	_write_update_log(
+		"download_hash transport=%s expected=%s actual=%s"
+		% [transport, _pending_update_download_sha256, downloaded_sha256]
+	)
+	if downloaded_sha256 != _pending_update_download_sha256:
+		return "The %s download failed SHA-256 verification." % transport_label
+	return ""
+
+func _download_transport_label(transport: String) -> String:
+	if transport == "windows_curl":
+		return "Windows fallback"
+	return "built-in"
+
+func _http_request_result_name(result: int) -> String:
+	match result:
+		0:
+			return "success"
+		1:
+			return "chunked_body_size_mismatch"
+		2:
+			return "cant_connect"
+		3:
+			return "cant_resolve"
+		4:
+			return "connection_error"
+		5:
+			return "tls_handshake_error"
+		6:
+			return "no_response"
+		7:
+			return "body_size_limit_exceeded"
+		8:
+			return "body_decompress_failed"
+		9:
+			return "request_failed"
+		10:
+			return "download_file_cant_open"
+		11:
+			return "download_file_write_error"
+		12:
+			return "redirect_limit_reached"
+		13:
+			return "timeout"
+		_:
+			return "unknown_%d" % result
+
+func _error_code_name(error_code: int) -> String:
+	return "%s (%d)" % [error_string(error_code), error_code]
+
+func _read_update_text_file(path: String) -> String:
+	if path.is_empty() or not FileAccess.file_exists(path):
+		return ""
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return ""
+	var text := file.get_as_text()
+	file.close()
+	return text
+
 func _apply_update_and_restart(zip_path: String) -> void:
-	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
-		_update_download_status_label.text = "Applying update..."
+	if not _release_updates_enabled():
+		_is_auto_updating = false
+		_dismiss_update_prompt()
+		_complete_startup_prompts()
+		return
+	if OS.get_name() == "Android":
+		_set_update_download_progress(1.0)
+		_set_update_download_status("Verifying Android update and opening the installer...")
+		await get_tree().process_frame
+		_present_android_install_result(_android_updater.install(
+			_pending_update_release_version, _pending_update_download_sha256
+		))
+		return
+	_set_update_download_progress(1.0)
+	_set_update_download_status(
+		"Download complete. Verifying and unpacking the update...\n"
+		+ ("Keep Other Gods open; it will restart automatically." if OS.get_name() == "macOS"
+			else "Keep Other Gods open; an updater window will take over before the game reopens.")
+	)
+	await get_tree().process_frame
+	_write_update_log(
+		"apply_started version=%s archive=%s"
+		% [_pending_update_release_version, zip_path]
+	)
+	if OS.get_name() == "macOS":
+		var install_error: String = await MacOSSelfUpdaterScript.install(
+			get_tree(), zip_path, _pending_update_release_version, _set_update_download_status
+		)
+		if not install_error.is_empty():
+			_on_auto_update_failed(install_error)
+		return
 
 	var current_exe := OS.get_executable_path()
 	if current_exe.is_empty():
@@ -1965,11 +5723,21 @@ func _apply_update_and_restart(zip_path: String) -> void:
 		_on_auto_update_failed("Couldn't create the update staging folder.")
 		return
 
+	_set_update_download_status(
+		"Opening update archive...\n"
+		+ "This may take a moment on slower disks or while Windows scans the download."
+	)
+	await get_tree().process_frame
 	var zip := ZIPReader.new()
 	if zip.open(zip_path) != OK:
 		_on_auto_update_failed("Failed to open downloaded archive.")
 		return
 
+	_set_update_download_status(
+		"Unpacking update files...\n"
+		+ "Other Gods will close and reopen automatically after the installer starts."
+	)
+	await get_tree().process_frame
 	var extracted_files := _extract_update_archive_to_staging(zip, staging_root)
 	zip.close()
 	DirAccess.remove_absolute(zip_path)
@@ -1983,85 +5751,505 @@ func _apply_update_and_restart(zip_path: String) -> void:
 		_on_auto_update_failed("The downloaded update archive had an unexpected layout.")
 		return
 
+	_set_update_download_status("Preparing updater files...")
+	await get_tree().process_frame
 	var exe_dir := current_exe.get_base_dir()
 	var current_exe_name := current_exe.get_file()
-	var target_exe_name := "OtherGods.exe"
-	if target_exe_name.is_empty():
-		target_exe_name = current_exe_name
+	var target_exe_name := current_exe_name
+	if target_exe_name.is_empty() or not target_exe_name.to_lower().ends_with(".exe"):
+		target_exe_name = AppReleaseInfoScript.PREFERRED_WINDOWS_EXECUTABLE_NAME
 	if not _align_staged_windows_build_names(staging_root, extracted_files, target_exe_name):
 		_clear_update_staging_root(staging_root)
 		_on_auto_update_failed("The downloaded update didn't contain a usable app build.")
 		return
 
-	var batch_dir := OS.get_user_data_dir() + "/self_update_runner"
-	if not _clear_update_staging_root(batch_dir):
+	var runner_dir := OS.get_user_data_dir() + "/self_update_runner"
+	if not _clear_update_staging_root(runner_dir):
 		_on_auto_update_failed("Couldn't clear the updater runner folder.")
 		return
-	if DirAccess.make_dir_recursive_absolute(batch_dir) != OK:
+	if DirAccess.make_dir_recursive_absolute(runner_dir) != OK:
 		_on_auto_update_failed("Couldn't create the updater runner folder.")
 		return
 
-	var current_exe_win := current_exe.replace("/", "\\")
 	var target_exe_path := exe_dir.path_join(target_exe_name)
-	var target_exe_win := target_exe_path.replace("/", "\\")
-	var current_pck_win := exe_dir.path_join("%s.pck" % current_exe_name.get_basename()).replace("/", "\\")
-	var target_pck_win := exe_dir.path_join("%s.pck" % target_exe_name.get_basename()).replace("/", "\\")
-	var exe_dir_win := exe_dir.replace("/", "\\")
-	var staging_root_win := staging_root.replace("/", "\\")
-	var bat_path := batch_dir + "/updater.bat"
-	var bat_path_win := bat_path.replace("/", "\\")
-	var bat_content := (
-		"@echo off\r\n"
-		+ "setlocal\r\n"
-		+ "set retry_count=0\r\n"
-		+ ":copy_retry\r\n"
-		+ "timeout /t 1 /nobreak >nul\r\n"
-		+ "xcopy /E /I /Y \"" + staging_root_win + "\\*\" \"" + exe_dir_win + "\\\" >nul\r\n"
-		+ "if %errorlevel% lss 4 goto copy_ok\r\n"
-		+ "set /a retry_count+=1\r\n"
-		+ "if %retry_count% lss 15 goto copy_retry\r\n"
-		+ "if %errorlevel% geq 4 goto copy_failed\r\n"
-		+ ":copy_ok\r\n"
-		+ "if /I not \"" + current_exe_win + "\"==\"" + target_exe_win + "\" del /f /q \"" + current_exe_win + "\" 2>nul\r\n"
-		+ "if /I not \"" + current_pck_win + "\"==\"" + target_pck_win + "\" del /f /q \"" + current_pck_win + "\" 2>nul\r\n"
-		+ "start \"\" \"" + target_exe_win + "\"\r\n"
-		+ "rd /s /q \"" + staging_root_win + "\"\r\n"
-		+ "rd /s /q \"" + batch_dir.replace("/", "\\") + "\" 2>nul\r\n"
-		+ "(goto) 2>nul & del \"%~f0\"\r\n"
-		+ "exit /b 0\r\n"
-		+ ":copy_failed\r\n"
-		+ "start \"\" \"" + current_exe_win + "\"\r\n"
-		+ "(goto) 2>nul & del \"%~f0\"\r\n"
-		+ "exit /b 1\r\n"
+	var staged_target_exe_path := staging_root.path_join(target_exe_name)
+	var current_pck_path := exe_dir.path_join("%s.pck" % current_exe_name.get_basename())
+	var target_pck_path := exe_dir.path_join("%s.pck" % target_exe_name.get_basename())
+	var powershell_path := "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+	var script_path := runner_dir.path_join("updater.ps1")
+	var update_log_path := ProjectSettings.globalize_path(UPDATE_LOG_PATH)
+	var failure_marker_path := ProjectSettings.globalize_path(UPDATE_FAILURE_MARKER_PATH)
+	_set_update_download_status("Verifying the staged game executable...")
+	await get_tree().process_frame
+	var staged_exe_sha256 := FileAccess.get_sha256(staged_target_exe_path).to_lower()
+	if staged_exe_sha256.is_empty():
+		_on_auto_update_failed("Couldn't verify the staged game executable.")
+		return
+	if _can_write_to_windows_update_target(exe_dir):
+		_set_update_download_status(
+			"Starting the verified updater...\n"
+			+ "A separate updater window will install the files, then Other Gods will reopen."
+		)
+		await get_tree().process_frame
+		var native_updater_failure := await _launch_native_windows_updater(
+			staged_target_exe_path,
+			exe_dir,
+			target_exe_path,
+			staged_exe_sha256,
+			runner_dir,
+			update_log_path,
+			failure_marker_path
+		)
+		if native_updater_failure.is_empty():
+			return
+		_write_update_log(
+			"native_updater_fallback_to_powershell reason=%s" % native_updater_failure
+		)
+		_set_update_download_status(
+			"The verified updater could not start. Trying the Windows permission flow..."
+		)
+	elif _update_download_status_label != null and is_instance_valid(_update_download_status_label):
+		_set_update_download_status("Requesting Windows permission to install update...")
+	var script_content := (
+		"param([switch]$Elevated)\r\n"
+		+ "$ErrorActionPreference = 'Stop'\r\n"
+		+ "$sourceDir = " + _powershell_string_literal(staging_root) + "\r\n"
+		+ "$targetDir = " + _powershell_string_literal(exe_dir) + "\r\n"
+		+ "$currentExe = " + _powershell_string_literal(current_exe) + "\r\n"
+		+ "$targetExe = " + _powershell_string_literal(target_exe_path) + "\r\n"
+		+ "$stagedTargetExe = " + _powershell_string_literal(staged_target_exe_path) + "\r\n"
+		+ "$currentPck = " + _powershell_string_literal(current_pck_path) + "\r\n"
+		+ "$targetPck = " + _powershell_string_literal(target_pck_path) + "\r\n"
+		+ "$logPath = " + _powershell_string_literal(update_log_path) + "\r\n"
+		+ "$failureMarkerPath = " + _powershell_string_literal(failure_marker_path) + "\r\n"
+		+ "$powershellPath = " + _powershell_string_literal(powershell_path) + "\r\n"
+		+ "$gamePid = " + str(OS.get_process_id()) + "\r\n"
+		+ "function Write-UpdateLog([string]$message) {\r\n"
+		+ "    try {\r\n"
+		+ "        Add-Content -LiteralPath $logPath -Value (('{0} {1}' -f (Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'), $message)) -Encoding UTF8\r\n"
+		+ "    } catch {}\r\n"
+		+ "}\r\n"
+		+ "function Write-UpdateFailure([string]$message) {\r\n"
+		+ "    try { Set-Content -LiteralPath $failureMarkerPath -Value $message -Encoding UTF8 } catch {}\r\n"
+		+ "}\r\n"
+		+ "function Start-AvailableClient {\r\n"
+		+ "    $restartExe = if (Test-Path -LiteralPath $currentExe) { $currentExe } else { $targetExe }\r\n"
+		+ "    if (Test-Path -LiteralPath $restartExe) {\r\n"
+		+ "        Start-Process -FilePath $restartExe -WorkingDirectory $targetDir\r\n"
+		+ "    }\r\n"
+		+ "}\r\n"
+		+ "Write-UpdateLog ('runner_started elevated={0} target={1}' -f $Elevated.IsPresent, $targetExe)\r\n"
+		+ "try { Wait-Process -Id $gamePid -ErrorAction SilentlyContinue } catch {}\r\n"
+		+ "$copySucceeded = $false\r\n"
+		+ "$lastCopyError = ''\r\n"
+		+ "$needsElevation = $false\r\n"
+		+ "for ($attempt = 1; $attempt -le 15; $attempt++) {\r\n"
+		+ "    try {\r\n"
+		+ "        Get-ChildItem -LiteralPath $sourceDir -Force | Copy-Item -Destination $targetDir -Recurse -Force -ErrorAction Stop\r\n"
+		+ "        if (-not (Test-Path -LiteralPath $targetExe)) { throw 'Updated executable is missing after copy.' }\r\n"
+		+ "        $sourceHash = (Get-FileHash -LiteralPath $stagedTargetExe -Algorithm SHA256).Hash\r\n"
+		+ "        $targetHash = (Get-FileHash -LiteralPath $targetExe -Algorithm SHA256).Hash\r\n"
+		+ "        if ($sourceHash -ne $targetHash) { throw 'Updated executable did not pass hash verification.' }\r\n"
+		+ "        $copySucceeded = $true\r\n"
+		+ "        Write-UpdateLog ('copy_verified attempt={0} elevated={1}' -f $attempt, $Elevated.IsPresent)\r\n"
+		+ "        break\r\n"
+		+ "    } catch {\r\n"
+		+ "        $lastCopyError = $_.Exception.Message\r\n"
+		+ "        Write-UpdateLog ('copy_attempt_failed attempt={0} elevated={1} error={2}' -f $attempt, $Elevated.IsPresent, $lastCopyError)\r\n"
+		+ "        if (-not $Elevated.IsPresent -and ($_.Exception -is [System.UnauthorizedAccessException] -or $_.FullyQualifiedErrorId -match 'UnauthorizedAccess')) {\r\n"
+		+ "            $needsElevation = $true\r\n"
+		+ "            break\r\n"
+		+ "        }\r\n"
+		+ "        Start-Sleep -Seconds 1\r\n"
+		+ "    }\r\n"
+		+ "}\r\n"
+		+ "if (-not $copySucceeded -and -not $Elevated.IsPresent) {\r\n"
+		+ "    Write-UpdateLog ('requesting_elevation permission_error={0}' -f $needsElevation)\r\n"
+		+ "    try {\r\n"
+		+ "        $escapedScriptPath = $MyInvocation.MyCommand.Path.Replace('\"', '\"\"')\r\n"
+		+ "        $elevatedArgs = '-NoProfile -ExecutionPolicy Bypass -File \"{0}\" -Elevated' -f $escapedScriptPath\r\n"
+		+ "        Start-Process -FilePath $powershellPath -ArgumentList $elevatedArgs -Verb RunAs -WindowStyle Hidden -ErrorAction Stop\r\n"
+		+ "        exit 0\r\n"
+		+ "    } catch {\r\n"
+		+ "        $failureMessage = 'Windows blocked the updater elevation prompt or PowerShell runner: {0}' -f $_.Exception.Message\r\n"
+		+ "        Write-UpdateLog ('elevation_failed error={0}' -f $_.Exception.Message)\r\n"
+		+ "        Write-UpdateFailure $failureMessage\r\n"
+		+ "        Start-AvailableClient\r\n"
+		+ "        exit 1\r\n"
+		+ "    }\r\n"
+		+ "}\r\n"
+		+ "if (-not $copySucceeded) {\r\n"
+		+ "    $failureMessage = 'Windows security or permissions blocked replacing the app files: {0}' -f $lastCopyError\r\n"
+		+ "    Write-UpdateLog ('update_failed_after_elevation error={0}' -f $lastCopyError)\r\n"
+		+ "    Write-UpdateFailure $failureMessage\r\n"
+		+ "    Start-AvailableClient\r\n"
+		+ "    exit 1\r\n"
+		+ "}\r\n"
+		+ "if ($currentExe -ne $targetExe -and (Test-Path -LiteralPath $currentExe)) {\r\n"
+		+ "    Remove-Item -LiteralPath $currentExe -Force -ErrorAction SilentlyContinue\r\n"
+		+ "}\r\n"
+		+ "if ($currentPck -ne $targetPck -and (Test-Path -LiteralPath $currentPck)) {\r\n"
+		+ "    Remove-Item -LiteralPath $currentPck -Force -ErrorAction SilentlyContinue\r\n"
+		+ "}\r\n"
+		+ "Start-Process -FilePath $targetExe -WorkingDirectory $targetDir\r\n"
+		+ "Write-UpdateLog 'update_complete restart_started'\r\n"
+		+ "Remove-Item -LiteralPath $failureMarkerPath -Force -ErrorAction SilentlyContinue\r\n"
+		+ "Remove-Item -LiteralPath $sourceDir -Recurse -Force -ErrorAction SilentlyContinue\r\n"
+		+ "exit 0\r\n"
 	)
-	var bat_file := FileAccess.open(bat_path, FileAccess.WRITE)
-	if bat_file == null:
+	var script_file := FileAccess.open(script_path, FileAccess.WRITE)
+	if script_file == null:
 		_on_auto_update_failed("Failed to write updater script.")
 		return
-	bat_file.store_string(bat_content)
-	bat_file.close()
+	script_file.store_string(script_content)
+	script_file.close()
 
-	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
-		_update_download_status_label.text = "Restarting to finish update..."
-	var updater_pid := OS.create_process("C:/Windows/System32/cmd.exe", ["/c", bat_path_win])
+	_set_update_download_status("Checking Windows updater permissions...")
+	await get_tree().process_frame
+	var preflight_failure := _run_windows_updater_preflight(powershell_path, runner_dir)
+	if not preflight_failure.is_empty():
+		_on_auto_update_failed(preflight_failure)
+		return
+
+	_set_update_download_status(
+		"Starting Windows updater...\n"
+		+ "Other Gods will close now and reopen after the update finishes. If Windows asks, choose Yes."
+	)
+	await get_tree().process_frame
+	var updater_pid := OS.create_process(
+		powershell_path,
+		["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script_path]
+	)
 	if updater_pid == -1:
 		_on_auto_update_failed("Failed to launch the updater.")
 		return
+	_write_update_log(
+		"updater_launched version=%s pid=%d target=%s"
+		% [_pending_update_release_version, updater_pid, target_exe_path]
+	)
 	get_tree().quit()
+
+func _can_write_to_windows_update_target(target_dir: String) -> bool:
+	var marker_path := target_dir.path_join(
+		".othergods-update-write-test-%d.tmp" % OS.get_process_id()
+	)
+	DirAccess.remove_absolute(marker_path)
+	var marker_file := FileAccess.open(marker_path, FileAccess.WRITE)
+	if marker_file == null:
+		_write_update_log("native_updater_target_not_writable target=%s" % target_dir)
+		return false
+	marker_file.store_string("ok")
+	marker_file.close()
+	var remove_error := DirAccess.remove_absolute(marker_path)
+	var writable := remove_error == OK and not FileAccess.file_exists(marker_path)
+	_write_update_log(
+		"native_updater_target_preflight writable=%s remove_error=%d target=%s"
+		% [str(writable), remove_error, target_dir]
+	)
+	return writable
+
+func _launch_native_windows_updater(
+	staged_exe_path: String,
+	target_dir: String,
+	target_exe_path: String,
+	expected_sha256: String,
+	runner_dir: String,
+	update_log_path: String,
+	failure_marker_path: String
+) -> String:
+	var handshake_path := runner_dir.path_join("native_updater.ready")
+	DirAccess.remove_absolute(handshake_path)
+	var args := PackedStringArray([
+		"--",
+		"self_update=windows_native",
+		"update_target_dir=%s" % target_dir,
+		"update_target_exe=%s" % target_exe_path,
+		"update_wait_pid=%d" % OS.get_process_id(),
+		"update_handshake=%s" % handshake_path,
+		"update_expected_sha256=%s" % expected_sha256,
+		"update_version=%s" % _pending_update_release_version,
+		"update_log_path=%s" % update_log_path,
+		"update_failure_marker=%s" % failure_marker_path,
+	])
+	var updater_pid := OS.create_process(staged_exe_path, args, false)
+	if updater_pid == -1:
+		return "Windows blocked launching the staged updater executable."
+	_write_update_log(
+		"native_updater_process_started version=%s pid=%d staged=%s"
+		% [_pending_update_release_version, updater_pid, staged_exe_path]
+	)
+	_set_update_download_status(
+		"Opening updater window...\n"
+		+ "Keep it open; it will replace the files and restart Other Gods."
+	)
+
+	var elapsed_seconds := 0.0
+	while elapsed_seconds < WINDOWS_NATIVE_UPDATER_HANDSHAKE_SECONDS:
+		if FileAccess.file_exists(handshake_path):
+			DirAccess.remove_absolute(handshake_path)
+			_write_update_log(
+				"native_updater_ready version=%s pid=%d"
+				% [_pending_update_release_version, updater_pid]
+			)
+			_set_update_download_status(
+				"Updater is ready.\n"
+				+ "Other Gods will close now. The updater window will stay open until the game reopens."
+			)
+			await get_tree().process_frame
+			get_tree().quit()
+			return ""
+		if not OS.is_process_running(updater_pid):
+			return "The staged updater exited before it was ready."
+		await get_tree().create_timer(0.1).timeout
+		elapsed_seconds += 0.1
+
+	if OS.is_process_running(updater_pid):
+		OS.kill(updater_pid)
+	return "The staged updater did not start within %.0f seconds." % (
+		WINDOWS_NATIVE_UPDATER_HANDSHAKE_SECONDS
+	)
+
+func _run_windows_updater_preflight(powershell_path: String, runner_dir: String) -> String:
+	if not FileAccess.file_exists(powershell_path):
+		_write_update_log("updater_preflight_failed reason=powershell_missing path=%s" % powershell_path)
+		return (
+			"Automatic update could not start because Windows PowerShell was not found. "
+			+ "Install the update manually from the release page."
+		)
+	var marker_path := runner_dir.path_join("preflight.ok")
+	var preflight_path := runner_dir.path_join("preflight.ps1")
+	if FileAccess.file_exists(marker_path):
+		DirAccess.remove_absolute(marker_path)
+	var preflight_file := FileAccess.open(preflight_path, FileAccess.WRITE)
+	if preflight_file == null:
+		_write_update_log("updater_preflight_failed reason=preflight_write_failed")
+		return (
+			"Automatic update could not write its Windows updater preflight script. "
+			+ "A security setting or antivirus may be blocking app updates."
+		)
+	preflight_file.store_string(
+		"$ErrorActionPreference = 'Stop'\r\n"
+		+ "Set-Content -LiteralPath "
+		+ _powershell_string_literal(marker_path)
+		+ " -Value 'ok' -Encoding ASCII\r\n"
+	)
+	preflight_file.close()
+
+	var output: Array = []
+	var exit_code := OS.execute(
+		powershell_path,
+		["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", preflight_path],
+		output,
+		true,
+		false
+	)
+	var marker_written := FileAccess.file_exists(marker_path)
+	DirAccess.remove_absolute(preflight_path)
+	if marker_written:
+		DirAccess.remove_absolute(marker_path)
+	if exit_code == 0 and marker_written:
+		_write_update_log("updater_preflight_ok")
+		return ""
+
+	var output_text := _join_process_output(output)
+	_write_update_log(
+		"updater_preflight_failed exit_code=%d marker=%s output=%s"
+		% [exit_code, str(marker_written), output_text]
+	)
+	var detail := ""
+	if not output_text.is_empty():
+		detail = " Windows reported: %s" % output_text.left(220)
+	return (
+		"Automatic update could not run its Windows PowerShell updater.%s "
+		+ "This is usually caused by Windows security policy, antivirus, Smart App Control, "
+		+ "Controlled Folder Access, AppLocker, or a managed work/school PC. "
+		+ "Install manually from the release page or allow Other Gods and PowerShell to run the updater."
+	) % detail
+
+func _consume_pending_update_failure(
+	latest_version: String, release_url: String, download_url: String,
+	download_size: int, sha256: String, sha256_url: String
+) -> bool:
+	if OS.get_name() not in ["Windows", "macOS"] or not FileAccess.file_exists(UPDATE_FAILURE_MARKER_PATH):
+		return false
+	var file := FileAccess.open(UPDATE_FAILURE_MARKER_PATH, FileAccess.READ)
+	var message := ""
+	if file != null:
+		message = file.get_as_text().strip_edges()
+		file.close()
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(UPDATE_FAILURE_MARKER_PATH))
+	if message.is_empty():
+		message = "The previous automatic update attempt failed after the app restarted."
+	_write_update_log(
+		"previous_update_failure latest=%s message=%s" % [latest_version, message]
+	)
+	_show_update_prompt(latest_version, release_url, download_url, true, download_size, sha256, sha256_url)
+	if OS.get_name() == "macOS":
+		_present_macos_update_failure(message)
+	else:
+		_present_windows_update_fallback(message)
+	return true
+
+func _present_macos_update_failure(message: String) -> void:
+	var version := _pending_update_release_version
+	var release_url := _pending_update_release_url
+	var download_url := _pending_update_download_url
+	var download_size := _pending_update_download_size
+	var sha256 := _pending_update_download_sha256
+	var sha256_url := _pending_update_download_sha256_url
+	_dismiss_update_prompt()
+	_finish_startup_loading()
+	_show_update_prompt(version, release_url, download_url, true, download_size, sha256, sha256_url, false)
+	_update_button_row.visible = true
+	_update_support_button.visible = true
+	_set_update_download_status("Automatic update could not finish.\n%s\nRetry the update or use Open Download Page to install it manually." % message)
+	if status_label != null:
+		status_label.text = "Update %s is required. %s" % [version, message]
+	_complete_startup_prompts()
+
+func _present_windows_update_fallback(message: String) -> void:
+	var fallback_message := (
+		"%s\n\n"
+		+ "The latest release page has been opened. Use Open Update Log Folder for diagnostics. "
+		+ "If this PC uses antivirus, "
+		+ "Smart App Control, Controlled Folder Access, AppLocker, or work/school device policy, "
+		+ "allow Other Gods; protected install folders may also require Windows PowerShell."
+	) % message
+	if _update_prompt_overlay == null or not is_instance_valid(_update_prompt_overlay):
+		_show_update_prompt(
+			_pending_update_release_version,
+			_pending_update_release_url,
+			_pending_update_download_url,
+			false,
+			_pending_update_download_size,
+			_pending_update_download_sha256,
+			_pending_update_download_sha256_url
+		)
+	if status_label != null:
+		status_label.text = message
+	if _update_button_row != null and is_instance_valid(_update_button_row):
+		_update_button_row.visible = true
+	if _update_open_button != null and is_instance_valid(_update_open_button):
+		_update_open_button.visible = true
+		_update_open_button.disabled = false
+		_update_open_button.grab_focus()
+	if _update_support_button != null and is_instance_valid(_update_support_button):
+		_update_support_button.visible = true
+		_update_support_button.disabled = false
+	if _update_now_button != null and is_instance_valid(_update_now_button):
+		_update_now_button.disabled = false
+	_set_update_download_status(fallback_message)
+	OS.shell_open(_pending_update_release_url)
+	_complete_startup_prompts()
+
+func _powershell_string_literal(value: String) -> String:
+	return "'%s'" % value.replace("'", "''")
+
+func _parse_sha256_digest(raw_digest: String) -> String:
+	var normalized := raw_digest.strip_edges().to_lower()
+	if normalized.begins_with("sha256:"):
+		normalized = normalized.trim_prefix("sha256:")
+	if normalized.length() != 64:
+		return ""
+	for index in range(normalized.length()):
+		var code := normalized.unicode_at(index)
+		var is_digit := code >= 48 and code <= 57
+		var is_lower_hex := code >= 97 and code <= 102
+		if not is_digit and not is_lower_hex:
+			return ""
+	return normalized
+
+func _parse_sha256_text(raw_text: String) -> String:
+	var normalized := raw_text.replace("\r", " ").replace("\n", " ")
+	for token in normalized.split(" ", false):
+		var parsed := _parse_sha256_digest(token)
+		if not parsed.is_empty():
+			return parsed
+	return ""
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_FOCUS_IN and _android_install_permission_pending:
+		call_deferred("_resume_android_install_permission")
+
+func _resume_android_install_permission() -> void:
+	if not _android_install_permission_pending:
+		return
+	_android_install_permission_pending = false
+	_present_android_install_result(_android_updater.install(
+		_pending_update_release_version, _pending_update_download_sha256, false
+	))
+
+func _present_android_install_result(result: Dictionary) -> void:
+	var install_status := str(result.get("status", "error"))
+	if install_status == "error":
+		_on_auto_update_failed(str(result.get("message", "Android could not install the update.")))
+		return
+	_is_auto_updating = false
+	_android_install_permission_pending = install_status == "permission_required"
+	_write_update_log("android_install status=%s version=%s" % [install_status, _pending_update_release_version])
+	if _update_button_row != null:
+		_update_button_row.visible = true
+	if _update_now_button != null:
+		_update_now_button.disabled = false
+		_update_now_button.text = "Install update"
+	_set_update_download_status(str(result.message))
 
 func _on_auto_update_failed(message: String) -> void:
 	_is_auto_updating = false
-	if _automatic_update_required:
-		if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
-			_update_download_status_label.text = "%s Opening the release page..." % message
-		OS.shell_open(_pending_update_release_url)
-		_dismiss_update_prompt()
-		_complete_startup_prompts()
+	_write_update_log(
+		"update_failed version=%s message=%s"
+		% [_pending_update_release_version, message]
+	)
+	if OS.get_name() == "Android":
+		_android_install_permission_pending = false
+		if _update_button_row != null:
+			_update_button_row.visible = true
+		if _update_now_button != null:
+			_update_now_button.disabled = false
+			_update_now_button.text = "Retry update"
+		_set_update_download_status(message)
 		return
+	if _automatic_update_required:
+		# Keep the reason visible in the app. Opening a browser silently leaves
+		# players on the old build with no explanation of what went wrong.
+		if OS.get_name() == "macOS":
+			_present_macos_update_failure(message)
+			return
+		_automatic_update_required = false
+		_present_windows_update_fallback(message)
+		return
+	if _update_support_button != null and is_instance_valid(_update_support_button):
+		_update_support_button.visible = true
+		_update_support_button.disabled = false
 	if _update_now_button != null and is_instance_valid(_update_now_button):
 		_update_now_button.disabled = false
-	if _update_download_status_label != null and is_instance_valid(_update_download_status_label):
-		_update_download_status_label.text = message
+	_set_update_download_status(message)
+
+func _join_process_output(output: Array) -> String:
+	var parts: Array[String] = []
+	for entry in output:
+		parts.append(str(entry))
+	return " ".join(parts).replace("\r", " ").replace("\n", " ").strip_edges()
+
+func _get_file_size(path: String) -> int:
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return -1
+	var file_size := file.get_length()
+	file.close()
+	return file_size
+
+func _write_update_log(message: String) -> void:
+	var timestamp := Time.get_datetime_string_from_system()
+	var file := FileAccess.open(UPDATE_LOG_PATH, FileAccess.READ_WRITE)
+	if file == null:
+		file = FileAccess.open(UPDATE_LOG_PATH, FileAccess.WRITE)
+	if file == null:
+		return
+	file.seek_end()
+	file.store_line("%s %s" % [timestamp, message])
+	file.flush()
+	file.close()
 
 func _extract_update_archive_to_staging(zip: ZIPReader, staging_root: String) -> Array[String]:
 	var extracted_files: Array[String] = []
@@ -2071,6 +6259,9 @@ func _extract_update_archive_to_staging(zip: ZIPReader, staging_root: String) ->
 		var archive_path := archive_path_raw.replace("\\", "/")
 		if archive_path.is_empty() or archive_path.ends_with("/"):
 			continue
+		if not _is_safe_update_archive_path(archive_path):
+			_write_update_log("archive_rejected unsafe_path=%s" % archive_path)
+			return []
 		var output_path := staging_root.path_join(archive_path)
 		if DirAccess.make_dir_recursive_absolute(output_path.get_base_dir()) != OK:
 			return []
@@ -2085,6 +6276,15 @@ func _extract_update_archive_to_staging(zip: ZIPReader, staging_root: String) ->
 		extracted_files.append(archive_path)
 	return extracted_files
 
+func _is_safe_update_archive_path(archive_path: String) -> bool:
+	var normalized := archive_path.replace("\\", "/").strip_edges()
+	if normalized.is_empty() or normalized.begins_with("/") or normalized.contains(":"):
+		return false
+	for segment in normalized.split("/"):
+		if segment.is_empty() or segment == "." or segment == "..":
+			return false
+	return true
+
 func _align_staged_windows_build_names(
 	staging_root: String,
 	extracted_files: Array[String],
@@ -2094,9 +6294,15 @@ func _align_staged_windows_build_names(
 		return false
 	var staged_executable := ""
 	for relative_path in extracted_files:
-		if relative_path.to_lower().ends_with(".exe"):
+		if relative_path.get_file().to_lower() == target_exe_name.to_lower():
 			staged_executable = relative_path
 			break
+	if staged_executable.is_empty():
+		for relative_path in extracted_files:
+			var lower_name := relative_path.get_file().to_lower()
+			if lower_name.ends_with(".exe") and not lower_name.contains("console"):
+				staged_executable = relative_path
+				break
 	if staged_executable.is_empty():
 		return false
 
@@ -2208,18 +6414,10 @@ func _build_bug_report_controls() -> void:
 	if _report_bug_button == null:
 		_report_bug_button = Button.new()
 		_report_bug_button.name = "ReportBugButton"
-		_report_bug_button.text = "Report Bug"
-		_report_bug_button.custom_minimum_size = Vector2(120, 38)
-		_report_bug_button.anchor_left = 1.0
-		_report_bug_button.anchor_right = 1.0
-		_report_bug_button.anchor_top = 1.0
-		_report_bug_button.anchor_bottom = 1.0
-		_report_bug_button.offset_left = -142
-		_report_bug_button.offset_right = -18
-		_report_bug_button.offset_top = -54
-		_report_bug_button.offset_bottom = -16
+		_report_bug_button.text = "Report an Issue"
 		_report_bug_button.pressed.connect(_open_bug_report_overlay)
-		add_child(_report_bug_button)
+		menu_container.add_child(_report_bug_button)
+		menu_container.move_child(_report_bug_button, _settings_button.get_index() + 1)
 
 	if _bug_report_file_dialog == null:
 		_bug_report_file_dialog = FileDialog.new()
@@ -2239,6 +6437,7 @@ func _open_bug_report_overlay() -> void:
 
 	_bug_report_overlay = Control.new()
 	_bug_report_overlay.name = "BugReportOverlay"
+	_bug_report_overlay.z_index = 2250
 	_bug_report_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_bug_report_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(_bug_report_overlay)
@@ -2255,7 +6454,7 @@ func _open_bug_report_overlay() -> void:
 	_bug_report_overlay.add_child(center)
 
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(640, 0)
+	panel.custom_minimum_size.x = minf(640.0, get_viewport_rect().size.x - 32.0)
 	panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	var panel_style := StyleBoxFlat.new()
 	panel_style.bg_color = Color(0.08, 0.10, 0.16, 0.98)
@@ -2277,17 +6476,16 @@ func _open_bug_report_overlay() -> void:
 	panel.add_child(outer_margin)
 
 	var content := VBoxContainer.new()
-	content.custom_minimum_size = Vector2(640, 0)
 	content.add_theme_constant_override("separation", 10)
 	outer_margin.add_child(content)
 
 	var title := Label.new()
-	title.text = "Bug Report"
+	title.text = "Report an Issue"
 	title.add_theme_font_size_override("font_size", 22)
 	content.add_child(title)
 
 	var intro := Label.new()
-	intro.text = "Tell us what you expected to happen, what happened instead, and optionally attach a screenshot."
+	intro.text = "Describe the issue or the play you think a bot should have made. Your report will be sent to the game server."
 	intro.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	content.add_child(intro)
 
@@ -2307,7 +6505,7 @@ func _open_bug_report_overlay() -> void:
 
 	_bug_report_actual_edit = TextEdit.new()
 	_bug_report_actual_edit.custom_minimum_size = Vector2(0, 140)
-	_bug_report_actual_edit.placeholder_text = "Describe what the game actually did."
+	_bug_report_actual_edit.placeholder_text = "Include the cards, bot or match, and steps to reproduce the issue if you remember them."
 	_bug_report_actual_edit.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
 	content.add_child(_bug_report_actual_edit)
 
@@ -2361,10 +6559,11 @@ func _open_bug_report_overlay() -> void:
 	actions.add_child(cancel_btn)
 
 	var submit_btn := Button.new()
-	submit_btn.text = "Save Report"
+	submit_btn.text = "Submit Report"
 	submit_btn.custom_minimum_size = Vector2(130, 38)
 	submit_btn.pressed.connect(_submit_bug_report)
 	actions.add_child(submit_btn)
+	_bug_report_submit_button = submit_btn
 
 	_refresh_bug_report_screenshot_preview()
 	_bug_report_expected_edit.grab_focus()
@@ -2373,13 +6572,18 @@ func _close_bug_report_overlay() -> void:
 	if _bug_report_overlay == null:
 		return
 	if is_instance_valid(_bug_report_overlay):
+		_bug_report_overlay.hide()
 		_bug_report_overlay.queue_free()
 	_bug_report_overlay = null
 	_bug_report_expected_edit = null
 	_bug_report_actual_edit = null
 	_bug_report_status_label = null
+	_bug_report_submit_button = null
 	_bug_report_screenshot_label = null
 	_bug_report_screenshot_preview = null
+	_bug_report_selected_screenshot_path = ""
+	if is_instance_valid(_report_bug_button) and _report_bug_button.is_visible_in_tree():
+		_report_bug_button.grab_focus()
 
 func _open_bug_report_file_dialog() -> void:
 	if _bug_report_file_dialog == null:
@@ -2396,7 +6600,8 @@ func _clear_bug_report_screenshot() -> void:
 
 func _refresh_bug_report_screenshot_preview() -> void:
 	if _bug_report_screenshot_label != null:
-		_bug_report_screenshot_label.text = "No screenshot selected." if _bug_report_selected_screenshot_path.is_empty() else _bug_report_selected_screenshot_path
+		_bug_report_screenshot_label.text = "No screenshot selected." if _bug_report_selected_screenshot_path.is_empty() else _bug_report_selected_screenshot_path.get_file()
+		_bug_report_screenshot_label.tooltip_text = _bug_report_selected_screenshot_path
 	if _bug_report_screenshot_preview == null:
 		return
 	_bug_report_screenshot_preview.texture = null
@@ -2426,51 +6631,49 @@ func _submit_bug_report() -> void:
 		_set_bug_report_status("Please fill in what happened.")
 		_bug_report_actual_edit.grab_focus()
 		return
-
-	var report_id := "report_%d_%d" % [int(Time.get_unix_time_from_system()), Time.get_ticks_msec() % 100000]
-	var reports_dir := "user://bug_reports"
-	var screenshots_dir := reports_dir + "/screenshots"
-	_ensure_user_directory(reports_dir)
-	_ensure_user_directory(screenshots_dir)
-
-	var screenshot_saved_path := ""
-	if not _bug_report_selected_screenshot_path.is_empty():
-		screenshot_saved_path = _copy_bug_report_screenshot(_bug_report_selected_screenshot_path, screenshots_dir, report_id)
-		if screenshot_saved_path.is_empty():
-			_set_bug_report_status("The report text was ready, but the screenshot could not be copied.")
-			return
-
-	var report_data := {
-		"report_id": report_id,
-		"reported_at_unix": int(Time.get_unix_time_from_system()),
-		"reported_at_utc": Time.get_datetime_string_from_system(true, true),
-		"expected_behavior": expected_text,
-		"actual_behavior": actual_text,
-		"screenshot_original_path": _bug_report_selected_screenshot_path,
-		"screenshot_saved_path": screenshot_saved_path,
-		"profile_id": _local_profile_id,
-		"lobby_session_id": _lobby_session_id,
-		"selected_auth_mode": _get_selected_auth_mode(),
-		"menu_visible": menu_container.visible,
-		"game_visible": game_container.visible,
-		"pending_room_code": _pending_join_room_code,
-	}
-
-	var report_path := "%s/%s.json" % [reports_dir, report_id]
-	var file := FileAccess.open(report_path, FileAccess.WRITE)
-	if file == null:
-		_set_bug_report_status("Could not save the bug report file.")
+	if expected_text.length() > 1200 or actual_text.length() > 1200:
+		_set_bug_report_status("Keep each answer under 1200 characters.")
 		return
-	file.store_string(JSON.stringify(report_data, "\t"))
-	file.flush()
-	file.close()
+	if lobby_client == null:
+		_set_bug_report_status("Connect to the lobby and sign in before submitting a report.")
+		return
 
-	_set_bug_report_status("Bug report saved to %s" % report_path)
-	status_label.text = "Bug report saved to %s" % report_path
-	_bug_report_expected_edit.text = ""
-	_bug_report_actual_edit.text = ""
-	_bug_report_selected_screenshot_path = ""
-	_refresh_bug_report_screenshot_preview()
+	if not lobby_client.is_authenticated():
+		_set_bug_report_status("Connect to the lobby and sign in before submitting a report.")
+		return
+	var screenshot_jpeg := ""
+	if not _bug_report_selected_screenshot_path.is_empty():
+		screenshot_jpeg = _encode_bug_report_screenshot()
+		if screenshot_jpeg.is_empty():
+			_set_bug_report_status("Could not prepare the screenshot. Try a smaller image or clear the screenshot.")
+			return
+	if _bug_report_submit_button != null:
+		_bug_report_submit_button.disabled = true
+	_set_bug_report_status("Submitting report...")
+	lobby_client.submit_issue_report(expected_text, actual_text, screenshot_jpeg)
+
+func _encode_bug_report_screenshot() -> String:
+	var image := Image.new()
+	if image.load(_bug_report_selected_screenshot_path) != OK:
+		return ""
+	image.convert(Image.FORMAT_RGB8)
+	var max_dimension := maxi(image.get_width(), image.get_height())
+	if max_dimension > 480:
+		var scale_factor := 480.0 / float(max_dimension)
+		image.resize(maxi(1, int(image.get_width() * scale_factor)), maxi(1, int(image.get_height() * scale_factor)), Image.INTERPOLATE_LANCZOS)
+	for _attempt in range(5):
+		var jpeg_bytes := image.save_jpg_to_buffer(0.58)
+		if jpeg_bytes.size() <= 12000:
+			return Marshalls.raw_to_base64(jpeg_bytes)
+		image.resize(maxi(1, int(image.get_width() * 0.75)), maxi(1, int(image.get_height() * 0.75)), Image.INTERPOLATE_LANCZOS)
+	return ""
+
+func _on_bug_report_result(success: bool, message: String) -> void:
+	_set_bug_report_status(message)
+	if _bug_report_submit_button != null:
+		_bug_report_submit_button.disabled = success
+		if success:
+			_bug_report_submit_button.text = "Submitted"
 
 func _set_bug_report_status(message: String) -> void:
 	if _bug_report_status_label == null:
@@ -2478,45 +6681,57 @@ func _set_bug_report_status(message: String) -> void:
 	_bug_report_status_label.visible = not message.is_empty()
 	_bug_report_status_label.text = message
 
-func _ensure_user_directory(path: String) -> void:
-	var global_path := ProjectSettings.globalize_path(path)
-	DirAccess.make_dir_recursive_absolute(global_path)
-
-func _copy_bug_report_screenshot(source_path: String, screenshots_dir: String, report_id: String) -> String:
-	var source_file := FileAccess.open(source_path, FileAccess.READ)
-	if source_file == null:
-		return ""
-	var bytes := source_file.get_buffer(source_file.get_length())
-	source_file.close()
-	var extension := source_path.get_extension().to_lower()
-	if extension.is_empty():
-		extension = "png"
-	var destination_path := "%s/%s.%s" % [screenshots_dir, report_id, extension]
-	var destination_file := FileAccess.open(destination_path, FileAccess.WRITE)
-	if destination_file == null:
-		return ""
-	destination_file.store_buffer(bytes)
-	destination_file.flush()
-	destination_file.close()
-	return destination_path
-
-func _maybe_show_auth_onboarding() -> void:
+func _maybe_show_auth_onboarding(force_show: bool = false) -> void:
 	if _local_profile_store == null:
 		return
 	if _auth_onboarding_overlay != null and is_instance_valid(_auth_onboarding_overlay):
 		return
+	if not force_show and _should_continue_as_guest_locally():
+		_activate_stored_guest_session()
+		return
+	if not force_show and _start_saved_account_autologin_connect("Signing in with saved account..."):
+		return
 	_show_auth_onboarding()
 
-func _prompt_account_login() -> void:
+func _should_continue_as_guest_locally() -> bool:
+	if _local_profile_store == null:
+		return false
+	if _local_profile_store.get_preferred_auth_mode() != AUTH_MODE_GUEST:
+		return false
+	if _has_saved_or_pending_account_identity():
+		return false
+	return not _local_profile_store.get_guest_profile_id().is_empty()
+
+func _has_saved_or_pending_account_identity() -> bool:
+	if _local_profile_store == null:
+		return false
+	if not _get_saved_account_username().is_empty():
+		return true
+	if _has_pending_legacy_account_claim():
+		return true
+	return false
+
+func _has_pending_legacy_account_claim() -> bool:
+	return not _get_pending_legacy_claim_username().is_empty()
+
+func _activate_stored_guest_session() -> void:
+	_activate_guest_profile_session("Guest")
+	_finish_startup_loading()
+
+func _prompt_account_login(preferred_mode: String = AUTH_MODE_LOGIN) -> void:
 	_account_switch_pending = true
 	_account_switch_retry_attempts = 0
 	_cancel_pending_authenticated_lobby_connects()
+	var resolved_mode := _normalize_auth_mode(preferred_mode, AUTH_MODE_LOGIN)
+	if resolved_mode == AUTH_MODE_CLAIM_LEGACY and not _has_pending_legacy_account_claim():
+		resolved_mode = AUTH_MODE_LOGIN
 	_set_selected_account_username("")
+	_set_selected_account_public_username("", false)
 	if _local_profile_store != null:
-		_local_profile_store.set_preferred_auth_mode(AUTH_MODE_LOGIN)
-		_local_profile_store.clear_account_password()
+		_local_profile_store.set_preferred_auth_mode(resolved_mode)
 	_set_selected_account_password("")
-	_set_auth_mode(AUTH_MODE_LOGIN)
+	_selected_account_accepts_game_updates = false
+	_set_auth_mode(resolved_mode)
 	if _auth_onboarding_username_edit != null and is_instance_valid(_auth_onboarding_username_edit):
 		_auth_onboarding_username_edit.text = ""
 	if _password_line_edit != null:
@@ -2525,7 +6740,7 @@ func _prompt_account_login() -> void:
 		_auth_onboarding_password_edit.text = ""
 	if _auth_onboarding_overlay == null or not is_instance_valid(_auth_onboarding_overlay):
 		_show_auth_onboarding()
-	_begin_auth_onboarding_account_flow(AUTH_MODE_LOGIN)
+	_begin_auth_onboarding_account_flow(resolved_mode)
 
 func _is_account_logged_in() -> bool:
 	return not _get_effective_account_username().is_empty()
@@ -2544,18 +6759,173 @@ func _normalize_auth_mode(auth_mode: String, fallback_mode: String = AUTH_MODE_L
 	var resolved_auth_mode := auth_mode.strip_edges().to_lower()
 	match resolved_auth_mode:
 		AUTH_MODE_GUEST, LobbyProtocolScript.LOGIN_GUEST:
-			return fallback_mode
+			return AUTH_MODE_GUEST
 		AUTH_MODE_LOGIN, LobbyProtocolScript.LOGIN_ACCOUNT:
 			return AUTH_MODE_LOGIN
 		AUTH_MODE_REGISTER, LobbyProtocolScript.REGISTER_ACCOUNT:
 			return AUTH_MODE_REGISTER
+		AUTH_MODE_CLAIM_LEGACY, LobbyProtocolScript.CLAIM_LEGACY_ACCOUNT:
+			return AUTH_MODE_CLAIM_LEGACY
 		_:
 			return fallback_mode
 
 func _get_saved_account_username() -> String:
 	if _local_profile_store == null:
 		return ""
+	if _local_profile_store.has_method("get_last_account_email"):
+		return _local_profile_store.get_last_account_email()
 	return _local_profile_store.get_last_account_username()
+
+func _get_saved_account_password() -> String:
+	if _local_profile_store == null:
+		return ""
+	return _local_profile_store.get_last_account_password()
+
+func _get_pending_legacy_claim_username() -> String:
+	if _local_profile_store == null:
+		return ""
+	if not _local_profile_store.has_method("get_pending_legacy_account_claim_username"):
+		return ""
+	return _local_profile_store.get_pending_legacy_account_claim_username()
+
+func _get_pending_legacy_claim_password() -> String:
+	if _local_profile_store == null:
+		return ""
+	if not _local_profile_store.has_method("get_pending_legacy_account_claim_password"):
+		return ""
+	return _local_profile_store.get_pending_legacy_account_claim_password()
+
+func _is_saved_account_auto_login_enabled() -> bool:
+	if _local_profile_store == null:
+		return false
+	return _local_profile_store.get_account_auto_login_enabled()
+
+func _should_auto_login_saved_account() -> bool:
+	return _should_allow_startup_auto_login() \
+		and _is_saved_account_auto_login_enabled() \
+		and (
+			_get_saved_account_lobby_resume().is_empty() == false \
+			or (not _get_saved_account_username().is_empty() and not _get_saved_account_password().is_empty())
+		)
+
+func _should_allow_startup_auto_login() -> bool:
+	return true
+
+func _is_saved_account_password_save_enabled() -> bool:
+	if _local_profile_store == null:
+		return false
+	if _local_profile_store.has_method("get_account_password_save_enabled"):
+		return _local_profile_store.get_account_password_save_enabled()
+	return not _local_profile_store.get_last_account_password().is_empty()
+
+func _get_saved_account_lobby_resume() -> Dictionary:
+	if _local_profile_store == null:
+		return {}
+	var selected_email := _get_selected_account_username().strip_edges().to_lower()
+	var candidate_profile_ids: Array[String] = []
+	if not _local_profile_id.strip_edges().is_empty():
+		candidate_profile_ids.append(_local_profile_id.strip_edges())
+	var resume_profile_id := _get_resume_profile_id()
+	if not resume_profile_id.strip_edges().is_empty() and resume_profile_id not in candidate_profile_ids:
+		candidate_profile_ids.append(resume_profile_id.strip_edges())
+	for profile_id in candidate_profile_ids:
+		var resume := _get_saved_lobby_resume_for_profile(profile_id)
+		if _is_usable_saved_lobby_resume(resume, selected_email):
+			return resume
+	return {}
+
+func _is_usable_saved_lobby_resume(resume: Dictionary, selected_email: String = "") -> bool:
+	if resume.is_empty():
+		return false
+	var session_id := str(resume.get("session_id", "")).strip_edges()
+	var reconnect_token := str(resume.get("reconnect_token", "")).strip_edges()
+	if session_id.is_empty() or reconnect_token.is_empty():
+		return false
+	var resume_email := str(resume.get("email", "")).strip_edges().to_lower()
+	if not selected_email.strip_edges().is_empty() and not resume_email.is_empty() and resume_email != selected_email.strip_edges().to_lower():
+		return false
+	var lobby_ip := str(resume.get("lobby_ip", "")).strip_edges()
+	if lobby_ip.is_empty() and _get_configured_lobby_host().is_empty():
+		return false
+	return true
+
+func _prepare_saved_account_autologin() -> bool:
+	if not _should_allow_startup_auto_login():
+		return false
+	if not _is_saved_account_auto_login_enabled():
+		return false
+	var resume := _get_saved_account_lobby_resume()
+	var saved_email := _get_saved_account_username().strip_edges().to_lower()
+	var saved_password := _get_saved_account_password()
+	if resume.is_empty():
+		if saved_email.is_empty() or saved_password.is_empty():
+			return false
+		_set_selected_account_username(saved_email)
+		_set_selected_account_password(saved_password)
+		_lobby_session_id = ""
+		_lobby_reconnect_token = ""
+		_set_auth_mode(AUTH_MODE_LOGIN)
+		return true
+	var resume_email := str(resume.get("email", "")).strip_edges().to_lower()
+	if not resume_email.is_empty():
+		_set_selected_account_username(resume_email)
+	elif not saved_email.is_empty():
+		_set_selected_account_username(saved_email)
+	if not saved_password.is_empty():
+		_set_selected_account_password(saved_password)
+	var resume_username := str(resume.get("username", "")).strip_edges()
+	if not resume_username.is_empty():
+		_set_selected_account_public_username(resume_username, false)
+	_lobby_session_id = str(resume.get("session_id", "")).strip_edges()
+	_lobby_reconnect_token = str(resume.get("reconnect_token", "")).strip_edges()
+	var resume_host := str(resume.get("lobby_ip", "")).strip_edges()
+	if not resume_host.is_empty() and ip_line_edit != null:
+		ip_line_edit.text = resume_host
+	_current_lobby_ip = resume_host
+	_set_auth_mode(_normalize_auth_mode(str(resume.get("auth_mode", AUTH_MODE_LOGIN)), AUTH_MODE_LOGIN))
+	return not _lobby_session_id.is_empty() and not _lobby_reconnect_token.is_empty()
+
+func _select_saved_account_profile_if_available(account_email: String = "", public_username: String = "") -> bool:
+	if _local_profile_store == null:
+		return false
+	var lookup_values: Array[String] = []
+	var normalized_email := account_email.strip_edges().to_lower()
+	if not normalized_email.is_empty():
+		lookup_values.append(normalized_email)
+	var normalized_username := public_username.strip_edges()
+	if not normalized_username.is_empty() and normalized_username not in lookup_values:
+		lookup_values.append(normalized_username)
+	for lookup_value in lookup_values:
+		var step_started_ms := Time.get_ticks_msec()
+		var profile_id := str(_local_profile_store.find_profile_id_by_account_username(lookup_value)).strip_edges()
+		_startup_trace("profile select: account username scan %dms" % (Time.get_ticks_msec() - step_started_ms))
+		if profile_id.is_empty():
+			step_started_ms = Time.get_ticks_msec()
+			profile_id = str(_local_profile_store.find_profile_id_by_display_name(lookup_value)).strip_edges()
+			_startup_trace("profile select: display name scan %dms" % (Time.get_ticks_msec() - step_started_ms))
+		if profile_id.is_empty():
+			continue
+		_local_profile_id = profile_id
+		step_started_ms = Time.get_ticks_msec()
+		_refresh_open_deck_builder_saved_decks()
+		_startup_trace("profile select: deck builder decks refreshed %dms" % (Time.get_ticks_msec() - step_started_ms))
+		step_started_ms = Time.get_ticks_msec()
+		_refresh_profile_summary_from_local_history(_local_profile_id)
+		_startup_trace("profile select: profile summary refreshed %dms" % (Time.get_ticks_msec() - step_started_ms))
+		step_started_ms = Time.get_ticks_msec()
+		_update_resume_controls()
+		_startup_trace("profile select: resume controls updated %dms" % (Time.get_ticks_msec() - step_started_ms))
+		return true
+	return false
+
+func _start_saved_account_autologin_connect(connect_status: String) -> bool:
+	if not _prepare_saved_account_autologin():
+		return false
+	_startup_autologin_in_progress = true
+	_set_startup_loading_status(connect_status)
+	_set_startup_loading_progress(0.84, 0.35)
+	_queue_authenticated_lobby_connect(connect_status)
+	return true
 
 func _get_editable_account_username() -> String:
 	if _auth_onboarding_username_edit != null \
@@ -2570,6 +6940,11 @@ func _set_selected_account_username(username: String, sync_field: bool = true) -
 	_selected_account_username = username.strip_edges()
 	if sync_field and player_name_line_edit != null:
 		player_name_line_edit.text = _selected_account_username
+
+func _set_selected_account_public_username(username: String, sync_field: bool = true) -> void:
+	_selected_account_public_username = username.strip_edges()
+	if sync_field and _auth_onboarding_public_username_edit != null:
+		_auth_onboarding_public_username_edit.text = _selected_account_public_username
 
 func _set_selected_account_password(password: String, sync_field: bool = true) -> void:
 	_selected_account_password = password
@@ -2613,9 +6988,20 @@ func _get_connected_account_username() -> String:
 	var lobby_auth_mode := _normalize_auth_mode(str(lobby_client.current_auth_mode), "")
 	if not str(lobby_client.current_account_id).strip_edges().is_empty():
 		return lobby_username
-	if lobby_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+	if lobby_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
 		return lobby_username
 	return ""
+
+func _get_connected_account_email() -> String:
+	if _account_switch_pending:
+		return ""
+	if lobby_client == null:
+		return ""
+	if not lobby_client.is_authenticated():
+		return ""
+	if str(lobby_client.current_account_id).strip_edges().is_empty():
+		return ""
+	return str(lobby_client.current_email).strip_edges().to_lower()
 
 func _get_effective_account_username() -> String:
 	if _account_switch_pending:
@@ -2626,11 +7012,11 @@ func _get_effective_account_username() -> String:
 	return _logged_in_account_username.strip_edges()
 
 func _get_preferred_account_username() -> String:
-	var connected_username := _get_connected_account_username()
-	if not connected_username.is_empty():
-		return connected_username
+	var connected_email := _get_connected_account_email()
+	if not connected_email.is_empty():
+		return connected_email
 	var auth_mode := _get_selected_auth_mode()
-	if auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+	if auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
 		return ""
 	if not _selected_account_username.is_empty():
 		return _selected_account_username
@@ -2646,18 +7032,30 @@ func _get_effective_identity_name(default_name: String = "Player") -> String:
 	var account_username := _get_effective_account_username()
 	if not account_username.is_empty():
 		return account_username
+	if _is_guest_session_active() and _local_profile_store != null and not _local_profile_id.is_empty():
+		var guest_display_name := str(_local_profile_store.get_profile_display_name(_local_profile_id, "")).strip_edges()
+		if not guest_display_name.is_empty():
+			return guest_display_name
+	var auth_mode := _get_selected_auth_mode()
+	if auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
+		var local_profile_display_name := _get_local_profile_display_name("")
+		if not local_profile_display_name.is_empty():
+			var selected_email := _get_selected_account_username()
+			var email_display_name := _display_name_from_account_email(selected_email).to_lower() if not selected_email.is_empty() else ""
+			if local_profile_display_name.find("@") >= 0:
+				local_profile_display_name = ""
+			elif not email_display_name.is_empty() and local_profile_display_name.to_lower() == email_display_name:
+				local_profile_display_name = ""
+		if not local_profile_display_name.is_empty():
+			return local_profile_display_name
 	var fallback_name := default_name.strip_edges()
 	if fallback_name.is_empty():
 		fallback_name = "Player"
-	if _get_selected_auth_mode() in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
-		var selected_account_username := _get_selected_account_username()
-		if not selected_account_username.is_empty():
-			return selected_account_username
 	return fallback_name
 
 func _get_selected_account_username() -> String:
 	var auth_mode := _get_selected_auth_mode()
-	if auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+	if auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
 		return ""
 	if not _selected_account_username.is_empty():
 		return _selected_account_username
@@ -2669,6 +7067,31 @@ func _get_selected_account_username() -> String:
 		return saved_account_username
 	return ""
 
+func _get_selected_account_public_username() -> String:
+	var connected_username := _get_connected_account_username()
+	if not connected_username.is_empty():
+		return connected_username
+	if not _selected_account_public_username.is_empty():
+		return _selected_account_public_username
+	if _auth_onboarding_public_username_edit != null and is_instance_valid(_auth_onboarding_public_username_edit):
+		var editable_username := _auth_onboarding_public_username_edit.text.strip_edges()
+		if not editable_username.is_empty():
+			return editable_username
+	if player_name_line_edit != null and not player_name_line_edit.text.strip_edges().is_empty():
+		var player_name: String = player_name_line_edit.text.strip_edges()
+		if player_name.find("@") < 0:
+			return player_name
+	return ""
+
+func _get_local_profile_display_name(default_name: String = "") -> String:
+	if _local_profile_store == null or _local_profile_id.is_empty():
+		return default_name.strip_edges()
+	var profile: Dictionary = _local_profile_store.get_profile(_local_profile_id)
+	var profile_display_name := str(profile.get("display_name", "")).strip_edges()
+	if not profile_display_name.is_empty():
+		return profile_display_name
+	return default_name.strip_edges()
+
 func _get_active_profile_display_name(default_name: String = "Player") -> String:
 	var resolved_default := default_name.strip_edges()
 	if resolved_default.is_empty():
@@ -2676,56 +7099,89 @@ func _get_active_profile_display_name(default_name: String = "Player") -> String
 	var active_account_username := _get_effective_account_username()
 	if not active_account_username.is_empty():
 		return active_account_username
-	var selected_account_username := _get_selected_account_username()
-	if not selected_account_username.is_empty():
-		return selected_account_username
-	if _local_profile_store != null and not _local_profile_id.is_empty():
-		var profile: Dictionary = _local_profile_store.get_profile(_local_profile_id)
-		var profile_display_name := str(profile.get("display_name", "")).strip_edges()
-		if not profile_display_name.is_empty():
-			return profile_display_name
+	var local_profile_display_name := _get_local_profile_display_name("")
+	if not local_profile_display_name.is_empty():
+		return local_profile_display_name
+	var selected_public_username := _get_selected_account_public_username()
+	var auth_mode := _get_selected_auth_mode()
+	if auth_mode in [AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY] and not selected_public_username.is_empty():
+		return selected_public_username
+	var selected_account_email := _get_selected_account_username()
+	if auth_mode in [AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY] and not selected_account_email.is_empty():
+		return _display_name_from_account_email(selected_account_email)
 	return _get_effective_identity_name(resolved_default)
 
 func _activate_account_profile(
-	account_username: String,
+	account_email: String,
 	preferred_profile_id: String = "",
 	auth_mode: String = AUTH_MODE_LOGIN,
 	persist_password: bool = false,
-	prefer_preferred_profile_id: bool = false
+	prefer_preferred_profile_id: bool = false,
+	public_username: String = ""
 ) -> String:
 	_ensure_local_profile_store()
-	var resolved_username := account_username.strip_edges()
-	if _local_profile_store == null or resolved_username.is_empty():
+	var resolved_email := account_email.strip_edges().to_lower()
+	if _local_profile_store == null or resolved_email.is_empty():
 		return _local_profile_id
+	var resolved_public_username := public_username.strip_edges()
+	if resolved_public_username.is_empty():
+		resolved_public_username = _display_name_from_account_email(resolved_email)
 	var profile: Dictionary = _local_profile_store.activate_account_session(
-		resolved_username,
+		resolved_email,
 		preferred_profile_id,
 		auth_mode,
 		_get_auth_password(),
 		persist_password,
-		prefer_preferred_profile_id
+		prefer_preferred_profile_id,
+		resolved_public_username
 	)
-	_set_selected_account_username(resolved_username)
+	_set_selected_account_username(resolved_email)
+	_set_selected_account_public_username(resolved_public_username, false)
 	_local_profile_id = str(profile.get("profile_id", _local_profile_id)).strip_edges()
 	return _local_profile_id
 
+func _display_name_from_account_email(email: String) -> String:
+	var normalized_email := email.strip_edges()
+	var at_index := normalized_email.find("@")
+	if at_index > 0:
+		var local_part := normalized_email.substr(0, at_index).strip_edges()
+		if not local_part.is_empty():
+			return local_part
+	return "Player"
+
+func _is_valid_account_email(email: String) -> bool:
+	var normalized_email := email.strip_edges()
+	var at_index := normalized_email.find("@")
+	if at_index <= 0 or at_index != normalized_email.rfind("@"):
+		return false
+	var local_part := normalized_email.substr(0, at_index)
+	var domain_part := normalized_email.substr(at_index + 1)
+	if local_part.is_empty() or domain_part.is_empty():
+		return false
+	if domain_part.find(".") <= 0 or domain_part.ends_with("."):
+		return false
+	return true
+
 func _on_switch_account_pressed() -> void:
 	_account_switch_pending = true
+	var preferred_mode := AUTH_MODE_REGISTER if _is_guest_session_active() else AUTH_MODE_LOGIN
 	_cleanup_lobby(true)
 	_logged_in_account_username = ""
 	_current_profile_summary.clear()
 	_refresh_profile_summary_label()
 	_refresh_account_identity_label()
 	_refresh_auth_controls()
-	_prompt_account_login()
+	_prompt_account_login(preferred_mode)
 
 func _show_auth_onboarding() -> void:
 	_auth_onboarding_selected_mode = AUTH_MODE_LOGIN
 	_auth_onboarding_overlay = Control.new()
 	_auth_onboarding_overlay.name = "AuthOnboardingOverlay"
+	_auth_onboarding_overlay.z_index = 2300
 	_auth_onboarding_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_auth_onboarding_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(_auth_onboarding_overlay)
+	UIFontScript.apply_default_font(_auth_onboarding_overlay)
 
 	var shade := ColorRect.new()
 	shade.color = Color(0.02, 0.03, 0.06, 0.84)
@@ -2771,35 +7227,58 @@ func _show_auth_onboarding() -> void:
 
 	var title := Label.new()
 	title.text = "Sign In"
-	title.add_theme_font_size_override("font_size", 22)
+	title.add_theme_font_size_override("font_size", AUTH_TITLE_FONT_SIZE)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	inner.add_child(title)
 
 	var body := Label.new()
-	body.text = "Use your account to keep decks, stats, and match history tied to your profile."
+	body.text = ""
+	body.visible = false
 	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	body.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	body.add_theme_font_size_override("font_size", AUTH_BODY_FONT_SIZE)
 	inner.add_child(body)
 
-	var button_column := VBoxContainer.new()
-	button_column.add_theme_constant_override("separation", 8)
-	inner.add_child(button_column)
+	_auth_onboarding_action_button_column = VBoxContainer.new()
+	_auth_onboarding_action_button_column.add_theme_constant_override("separation", 8)
+	inner.add_child(_auth_onboarding_action_button_column)
 
-	var login_btn := Button.new()
-	login_btn.text = "Login"
-	login_btn.custom_minimum_size = Vector2(0, 40)
-	login_btn.pressed.connect(func() -> void:
+	_auth_onboarding_login_mode_button = Button.new()
+	_auth_onboarding_login_mode_button.text = "Login"
+	_auth_onboarding_login_mode_button.custom_minimum_size = Vector2(0, AUTH_BUTTON_MIN_HEIGHT)
+	_apply_button_text_sizing(_auth_onboarding_login_mode_button, AUTH_BUTTON_FONT_SIZE, AUTH_BUTTON_MIN_HEIGHT)
+	_auth_onboarding_login_mode_button.pressed.connect(func() -> void:
 		_begin_auth_onboarding_account_flow(AUTH_MODE_LOGIN)
 	)
-	button_column.add_child(login_btn)
+	_auth_onboarding_action_button_column.add_child(_auth_onboarding_login_mode_button)
 
-	var register_btn := Button.new()
-	register_btn.text = "Create Account"
-	register_btn.custom_minimum_size = Vector2(0, 40)
-	register_btn.pressed.connect(func() -> void:
+	_auth_onboarding_register_mode_button = Button.new()
+	_auth_onboarding_register_mode_button.text = "Create Account"
+	_auth_onboarding_register_mode_button.custom_minimum_size = Vector2(0, AUTH_BUTTON_MIN_HEIGHT)
+	_apply_button_text_sizing(_auth_onboarding_register_mode_button, AUTH_BUTTON_FONT_SIZE, AUTH_BUTTON_MIN_HEIGHT)
+	_auth_onboarding_register_mode_button.pressed.connect(func() -> void:
 		_begin_auth_onboarding_account_flow(AUTH_MODE_REGISTER)
 	)
-	button_column.add_child(register_btn)
+	_auth_onboarding_action_button_column.add_child(_auth_onboarding_register_mode_button)
+
+	_auth_onboarding_claim_mode_button = Button.new()
+	_auth_onboarding_claim_mode_button.text = "Claim Old Account"
+	_auth_onboarding_claim_mode_button.custom_minimum_size = Vector2(0, AUTH_BUTTON_MIN_HEIGHT)
+	_apply_button_text_sizing(_auth_onboarding_claim_mode_button, AUTH_BUTTON_FONT_SIZE, AUTH_BUTTON_MIN_HEIGHT)
+	_auth_onboarding_claim_mode_button.pressed.connect(func() -> void:
+		_begin_auth_onboarding_account_flow(AUTH_MODE_CLAIM_LEGACY)
+	)
+	_auth_onboarding_action_button_column.add_child(_auth_onboarding_claim_mode_button)
+
+	_auth_onboarding_guest_button = Button.new()
+	_auth_onboarding_guest_button.text = "Continue as Guest"
+	_auth_onboarding_guest_button.tooltip_text = "Decks save only on this device."
+	_auth_onboarding_guest_button.custom_minimum_size = Vector2(0, AUTH_BUTTON_MIN_HEIGHT)
+	_apply_button_text_sizing(_auth_onboarding_guest_button, AUTH_BUTTON_FONT_SIZE, AUTH_BUTTON_MIN_HEIGHT)
+	_auth_onboarding_guest_button.pressed.connect(func() -> void:
+		_continue_as_guest()
+	)
+	_auth_onboarding_action_button_column.add_child(_auth_onboarding_guest_button)
 
 	_auth_onboarding_mode_hint_label = Label.new()
 	_auth_onboarding_mode_hint_label.text = ""
@@ -2807,12 +7286,27 @@ func _show_auth_onboarding() -> void:
 	_auth_onboarding_mode_hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_auth_onboarding_mode_hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_auth_onboarding_mode_hint_label.modulate = Color(0.76, 0.80, 0.92)
+	_auth_onboarding_mode_hint_label.add_theme_font_size_override("font_size", AUTH_BODY_FONT_SIZE)
 	inner.add_child(_auth_onboarding_mode_hint_label)
 
+	_auth_onboarding_public_username_edit = LineEdit.new()
+	_auth_onboarding_public_username_edit.placeholder_text = "Username"
+	_auth_onboarding_public_username_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_auth_onboarding_public_username_edit.visible = false
+	_apply_line_edit_text_sizing(_auth_onboarding_public_username_edit, AUTH_CONTROL_FONT_SIZE, AUTH_FIELD_MIN_HEIGHT)
+	_auth_onboarding_public_username_edit.text_changed.connect(func(_new_text: String) -> void:
+		_refresh_auth_onboarding_form_state()
+	)
+	_auth_onboarding_public_username_edit.text_submitted.connect(func(_text: String) -> void:
+		_submit_auth_onboarding()
+	)
+	inner.add_child(_auth_onboarding_public_username_edit)
+
 	_auth_onboarding_username_edit = LineEdit.new()
-	_auth_onboarding_username_edit.placeholder_text = "Account username"
+	_auth_onboarding_username_edit.placeholder_text = "Email or username"
 	_auth_onboarding_username_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_auth_onboarding_username_edit.visible = false
+	_apply_line_edit_text_sizing(_auth_onboarding_username_edit, AUTH_CONTROL_FONT_SIZE, AUTH_FIELD_MIN_HEIGHT)
 	_auth_onboarding_username_edit.text_changed.connect(func(_new_text: String) -> void:
 		_refresh_auth_onboarding_form_state()
 	)
@@ -2826,6 +7320,7 @@ func _show_auth_onboarding() -> void:
 	_auth_onboarding_password_edit.secret = true
 	_auth_onboarding_password_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_auth_onboarding_password_edit.visible = false
+	_apply_line_edit_text_sizing(_auth_onboarding_password_edit, AUTH_CONTROL_FONT_SIZE, AUTH_FIELD_MIN_HEIGHT)
 	_auth_onboarding_password_edit.text_changed.connect(func(_new_text: String) -> void:
 		_refresh_auth_onboarding_form_state()
 	)
@@ -2833,6 +7328,32 @@ func _show_auth_onboarding() -> void:
 		_submit_auth_onboarding()
 	)
 	inner.add_child(_auth_onboarding_password_edit)
+	var forgot_password_button := Button.new()
+	forgot_password_button.text = "Forgot password?"
+	_apply_button_text_sizing(forgot_password_button, AUTH_CONTROL_FONT_SIZE, AUTH_FIELD_MIN_HEIGHT)
+	forgot_password_button.pressed.connect(_show_password_recovery)
+	inner.add_child(forgot_password_button)
+
+	_auth_onboarding_auto_login_toggle = CheckButton.new()
+	_auth_onboarding_auto_login_toggle.text = "Auto login on this device"
+	_auth_onboarding_auto_login_toggle.tooltip_text = "Restores your account session on this device after a successful sign-in."
+	_auth_onboarding_auto_login_toggle.visible = false
+	_apply_button_text_sizing(_auth_onboarding_auto_login_toggle, AUTH_CONTROL_FONT_SIZE, AUTH_FIELD_MIN_HEIGHT)
+	inner.add_child(_auth_onboarding_auto_login_toggle)
+
+	_auth_onboarding_save_password_toggle = CheckButton.new()
+	_auth_onboarding_save_password_toggle.text = "Save login details on this device"
+	_auth_onboarding_save_password_toggle.tooltip_text = "Stores your account password locally on this device. Use only on devices you trust."
+	_auth_onboarding_save_password_toggle.visible = false
+	_apply_button_text_sizing(_auth_onboarding_save_password_toggle, AUTH_CONTROL_FONT_SIZE, AUTH_FIELD_MIN_HEIGHT)
+	inner.add_child(_auth_onboarding_save_password_toggle)
+
+	_auth_onboarding_game_updates_toggle = CheckButton.new()
+	_auth_onboarding_game_updates_toggle.text = "Send me game updates by email"
+	_auth_onboarding_game_updates_toggle.tooltip_text = "Optional. You can change this later in Settings under Account."
+	_auth_onboarding_game_updates_toggle.visible = false
+	_apply_button_text_sizing(_auth_onboarding_game_updates_toggle, AUTH_CONTROL_FONT_SIZE, AUTH_FIELD_MIN_HEIGHT)
+	inner.add_child(_auth_onboarding_game_updates_toggle)
 
 	var continue_row := HBoxContainer.new()
 	continue_row.add_theme_constant_override("separation", 8)
@@ -2840,8 +7361,9 @@ func _show_auth_onboarding() -> void:
 
 	_auth_onboarding_continue_button = Button.new()
 	_auth_onboarding_continue_button.text = "Login"
-	_auth_onboarding_continue_button.custom_minimum_size = Vector2(0, 40)
+	_auth_onboarding_continue_button.custom_minimum_size = Vector2(0, AUTH_BUTTON_MIN_HEIGHT)
 	_auth_onboarding_continue_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_apply_button_text_sizing(_auth_onboarding_continue_button, AUTH_BUTTON_FONT_SIZE, AUTH_BUTTON_MIN_HEIGHT)
 	_auth_onboarding_continue_button.pressed.connect(func() -> void:
 		_submit_auth_onboarding()
 	)
@@ -2851,50 +7373,263 @@ func _show_auth_onboarding() -> void:
 	_begin_auth_onboarding_account_flow(launch_auth_mode)
 	_refresh_auth_onboarding_form_state()
 
+func _show_password_recovery() -> void:
+	if _password_recovery_dialog != null:
+		_password_recovery_dialog.popup_centered()
+		return
+	_cancel_pending_authenticated_lobby_connects()
+	_password_recovery_dialog = AcceptDialog.new()
+	_password_recovery_dialog.title = "Recover your account"
+	_password_recovery_dialog.ok_button_text = "Close"
+	_password_recovery_dialog.min_size = Vector2i(520, 430)
+	add_child(_password_recovery_dialog)
+	_password_recovery_dialog.confirmed.connect(_close_password_recovery)
+	_password_recovery_dialog.canceled.connect(_close_password_recovery)
+	var content := VBoxContainer.new()
+	content.add_theme_constant_override("separation", 10)
+	_password_recovery_dialog.add_child(content)
+	_password_recovery_status = Label.new()
+	_password_recovery_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_password_recovery_status.text = "Enter your account email to receive a 6-digit recovery code. Enter the code below and choose a new password."
+	content.add_child(_password_recovery_status)
+	_password_recovery_email = LineEdit.new()
+	_password_recovery_email.placeholder_text = "Account email address"
+	_password_recovery_email.max_length = 254
+	_password_recovery_email.text = _auth_onboarding_username_edit.text if _auth_onboarding_username_edit != null else ""
+	content.add_child(_password_recovery_email)
+	_password_recovery_send = Button.new()
+	_password_recovery_send.text = "Email recovery code"
+	_password_recovery_send.pressed.connect(func() -> void: _submit_password_recovery(false))
+	content.add_child(_password_recovery_send)
+	_password_recovery_token = LineEdit.new()
+	_password_recovery_token.placeholder_text = "6-digit recovery code"
+	_password_recovery_token.max_length = LobbyProtocolScript.PASSWORD_RESET_CODE_LENGTH
+	_password_recovery_token.virtual_keyboard_type = LineEdit.KEYBOARD_TYPE_NUMBER
+	content.add_child(_password_recovery_token)
+	_password_recovery_password = LineEdit.new()
+	_password_recovery_password.placeholder_text = "New password (at least %d characters)" % _get_account_min_password_length()
+	_password_recovery_password.secret = true
+	_password_recovery_password.max_length = 1024
+	content.add_child(_password_recovery_password)
+	_password_recovery_confirm = LineEdit.new()
+	_password_recovery_confirm.placeholder_text = "Confirm new password"
+	_password_recovery_confirm.secret = true
+	_password_recovery_confirm.max_length = 1024
+	content.add_child(_password_recovery_confirm)
+	_password_recovery_submit = Button.new()
+	_password_recovery_submit.text = "Reset password"
+	_password_recovery_submit.pressed.connect(func() -> void: _submit_password_recovery(true))
+	content.add_child(_password_recovery_submit)
+	for control in content.get_children():
+		if control is LineEdit:
+			_apply_line_edit_text_sizing(control, AUTH_CONTROL_FONT_SIZE, AUTH_FIELD_MIN_HEIGHT)
+		elif control is Button:
+			_apply_button_text_sizing(control, AUTH_CONTROL_FONT_SIZE, AUTH_FIELD_MIN_HEIGHT)
+	_password_recovery_dialog.popup_centered()
+	_password_recovery_email.grab_focus()
+
+func _set_password_recovery_busy(busy: bool) -> void:
+	_password_recovery_busy = busy
+	_password_recovery_send.disabled = busy
+	_password_recovery_submit.disabled = busy
+	for edit in [_password_recovery_email, _password_recovery_token, _password_recovery_password, _password_recovery_confirm]:
+		edit.editable = not busy
+
+func _submit_password_recovery(completing: bool) -> void:
+	if _password_recovery_busy:
+		return
+	var email := _password_recovery_email.text.strip_edges().to_lower()
+	var token := _password_recovery_token.text.strip_edges().to_lower()
+	var password := _password_recovery_password.text
+	if not _is_valid_account_email(email):
+		_password_recovery_status.text = "Enter your account email address."
+		return
+	if completing:
+		if not LobbyProtocolScript.is_valid_password_reset_code(token):
+			_password_recovery_status.text = "Enter the 6-digit recovery code from your email."
+			return
+		if password.length() < _get_account_min_password_length():
+			_password_recovery_status.text = "Choose a password of at least %d characters." % _get_account_min_password_length()
+			return
+		if password != _password_recovery_confirm.text:
+			_password_recovery_status.text = "The new passwords do not match."
+			return
+	_set_password_recovery_busy(true)
+	_password_recovery_status.text = "Resetting password..." if completing else "Requesting recovery email..."
+	_cleanup_lobby_client()
+	lobby_client = LobbyClientScript.new()
+	lobby_client.name = "LobbyPeer"
+	lobby_client.use_default_multiplayer = true
+	_attach_lobby_client(lobby_client)
+	lobby_client.password_reset_result.connect(_on_password_recovery_result)
+	lobby_client.connection_failed.connect(_on_password_recovery_error)
+	lobby_client.disconnected_from_lobby.connect(func() -> void: _on_password_recovery_error("The lobby disconnected. Please try again."))
+	var error := lobby_client.connect_to_server(_get_lobby_ip(), email, "", "", _get_configured_lobby_port(), "",
+		"reset_password" if completing else "request_password_reset", password if completing else "", "", false, token if completing else "")
+	if error != OK and _password_recovery_busy:
+		_on_password_recovery_error("Could not connect to the lobby for password recovery.")
+
+func _on_password_recovery_error(message: String) -> void:
+	if _password_recovery_dialog == null:
+		return
+	_cleanup_lobby_client()
+	_set_password_recovery_busy(false)
+	_password_recovery_status.text = message
+
+func _on_password_recovery_result(completed: bool, success: bool, message: String) -> void:
+	if _password_recovery_dialog == null:
+		return
+	_cleanup_lobby_client()
+	_set_password_recovery_busy(false)
+	_password_recovery_status.text = message
+	if completed and success:
+		_set_selected_account_username(_password_recovery_email.text.strip_edges().to_lower())
+		_set_selected_account_password("")
+		_clear_saved_lobby_resume()
+		_clear_saved_match_resume()
+		_lobby_session_id = ""
+		_lobby_reconnect_token = ""
+		if _local_profile_store != null:
+			_local_profile_store.clear_account_password()
+		if _auth_onboarding_username_edit != null:
+			_auth_onboarding_username_edit.text = _password_recovery_email.text.strip_edges().to_lower()
+		if _auth_onboarding_password_edit != null:
+			_auth_onboarding_password_edit.text = ""
+		_password_recovery_token.text = ""
+		_password_recovery_password.text = ""
+		_password_recovery_confirm.text = ""
+		_begin_auth_onboarding_account_flow(AUTH_MODE_LOGIN)
+		_set_auth_onboarding_hint(message)
+
+func _close_password_recovery() -> void:
+	_cleanup_lobby_client()
+	_password_recovery_busy = false
+	_password_recovery_dialog.queue_free()
+	_password_recovery_dialog = null
+	_password_recovery_email = null
+	_password_recovery_token = null
+	_password_recovery_password = null
+	_password_recovery_confirm = null
+	_password_recovery_status = null
+	_password_recovery_send = null
+	_password_recovery_submit = null
+
+func _refresh_auth_onboarding_action_buttons() -> void:
+	var auth_mode := _auth_onboarding_selected_mode
+	var show_login := auth_mode != AUTH_MODE_LOGIN
+	var show_register := auth_mode != AUTH_MODE_REGISTER
+	var show_claim := _has_pending_legacy_account_claim() and auth_mode != AUTH_MODE_CLAIM_LEGACY
+	var show_guest := not _has_saved_or_pending_account_identity() and not _is_account_logged_in()
+	if _auth_onboarding_login_mode_button != null:
+		_auth_onboarding_login_mode_button.visible = show_login
+	if _auth_onboarding_register_mode_button != null:
+		_auth_onboarding_register_mode_button.visible = show_register
+	if _auth_onboarding_claim_mode_button != null:
+		_auth_onboarding_claim_mode_button.visible = show_claim
+	if _auth_onboarding_guest_button != null:
+		_auth_onboarding_guest_button.visible = show_guest
+	if _auth_onboarding_action_button_column != null:
+		_auth_onboarding_action_button_column.visible = show_login or show_register or show_claim or show_guest
+
 func _begin_auth_onboarding_account_flow(auth_mode: String) -> void:
-	if auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+	if auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
+		auth_mode = AUTH_MODE_LOGIN
+	if auth_mode == AUTH_MODE_CLAIM_LEGACY and not _has_pending_legacy_account_claim():
 		auth_mode = AUTH_MODE_LOGIN
 	_auth_onboarding_selected_mode = auth_mode
+	_refresh_auth_onboarding_action_buttons()
 	if auth_mode == AUTH_MODE_REGISTER:
-		_set_auth_onboarding_hint("New account passwords must be at least %d characters." % _get_account_min_password_length())
+		_set_auth_onboarding_hint("Create a username, add your email, and choose a password of at least %d characters." % _get_account_min_password_length())
+	elif auth_mode == AUTH_MODE_CLAIM_LEGACY:
+		_set_auth_onboarding_hint("Add an email to your old username account. Your username and saved password are prefilled when available.")
 	else:
 		_set_auth_onboarding_hint("")
+	if _auth_onboarding_public_username_edit != null:
+		_auth_onboarding_public_username_edit.visible = auth_mode in [AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]
+		if auth_mode == AUTH_MODE_CLAIM_LEGACY:
+			var legacy_username := _get_pending_legacy_claim_username()
+			if legacy_username.is_empty():
+				legacy_username = _selected_account_public_username
+			if _auth_onboarding_public_username_edit.text.strip_edges().is_empty() and not legacy_username.is_empty():
+				_auth_onboarding_public_username_edit.text = legacy_username
+		elif _auth_onboarding_public_username_edit.text.strip_edges().is_empty() and not _selected_account_public_username.is_empty():
+			_auth_onboarding_public_username_edit.text = _selected_account_public_username
 	if _auth_onboarding_username_edit != null:
 		_auth_onboarding_username_edit.visible = true
+		_auth_onboarding_username_edit.placeholder_text = "Email or username" if auth_mode == AUTH_MODE_LOGIN else "Email address"
 		if _auth_onboarding_username_edit.text.strip_edges().is_empty():
 			var saved_username := ""
-			if _local_profile_store != null:
+			if auth_mode == AUTH_MODE_CLAIM_LEGACY:
+				saved_username = ""
+			elif _local_profile_store != null:
 				saved_username = _local_profile_store.get_last_account_username()
 			if saved_username.is_empty():
 				saved_username = _selected_account_username
 			_auth_onboarding_username_edit.text = saved_username
 	if _auth_onboarding_password_edit != null:
 		_auth_onboarding_password_edit.visible = true
-		if _local_profile_store != null:
-			_auth_onboarding_password_edit.text = _local_profile_store.get_last_account_password()
+		if auth_mode == AUTH_MODE_CLAIM_LEGACY:
+			var legacy_password := _get_pending_legacy_claim_password()
+			if legacy_password.is_empty():
+				legacy_password = _selected_account_password
+			_auth_onboarding_password_edit.text = legacy_password
 		else:
-			_auth_onboarding_password_edit.text = ""
+			var saved_password := _get_saved_account_password()
+			var saved_email := _get_saved_account_username().strip_edges().to_lower()
+			var selected_email := _get_selected_account_username().strip_edges().to_lower()
+			if auth_mode == AUTH_MODE_LOGIN \
+					and _auth_onboarding_password_edit.text.is_empty() \
+					and not saved_password.is_empty() \
+					and (selected_email.is_empty() or saved_email.is_empty() or selected_email == saved_email):
+				_auth_onboarding_password_edit.text = saved_password
+			elif auth_mode != AUTH_MODE_LOGIN:
+				_auth_onboarding_password_edit.text = ""
+	if _auth_onboarding_auto_login_toggle != null:
+		_auth_onboarding_auto_login_toggle.visible = true
+		_auth_onboarding_auto_login_toggle.set_pressed_no_signal(_is_saved_account_auto_login_enabled())
+	if _auth_onboarding_save_password_toggle != null:
+		_auth_onboarding_save_password_toggle.visible = true
+		_auth_onboarding_save_password_toggle.set_pressed_no_signal(_is_saved_account_password_save_enabled())
+	if _auth_onboarding_game_updates_toggle != null:
+		_auth_onboarding_game_updates_toggle.visible = auth_mode in [AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]
+		_auth_onboarding_game_updates_toggle.set_pressed_no_signal(_selected_account_accepts_game_updates)
 	if _auth_onboarding_continue_button != null:
 		_auth_onboarding_continue_button.visible = true
-		_auth_onboarding_continue_button.text = "Create Account" if auth_mode == AUTH_MODE_REGISTER else "Login"
+		if auth_mode == AUTH_MODE_REGISTER:
+			_auth_onboarding_continue_button.text = "Create Account"
+		elif auth_mode == AUTH_MODE_CLAIM_LEGACY:
+			_auth_onboarding_continue_button.text = "Add Email"
+		else:
+			_auth_onboarding_continue_button.text = "Login"
 	_refresh_auth_onboarding_form_state()
-	if _auth_onboarding_username_edit != null and _auth_onboarding_username_edit.text.strip_edges().is_empty():
+	if _auth_onboarding_public_username_edit != null and _auth_onboarding_public_username_edit.visible \
+			and _auth_onboarding_public_username_edit.text.strip_edges().is_empty():
+		_auth_onboarding_public_username_edit.grab_focus()
+	elif _auth_onboarding_username_edit != null and _auth_onboarding_username_edit.text.strip_edges().is_empty():
 		_auth_onboarding_username_edit.grab_focus()
 	elif _auth_onboarding_password_edit != null:
 		_auth_onboarding_password_edit.grab_focus()
 
 func _submit_auth_onboarding() -> bool:
 	var auth_mode := _auth_onboarding_selected_mode
-	if auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+	if auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
 		return false
-	var username := ""
+	var email := ""
+	var public_username := ""
 	var password := ""
 	if _auth_onboarding_username_edit != null:
-		username = _auth_onboarding_username_edit.text.strip_edges()
+		email = _auth_onboarding_username_edit.text.strip_edges().to_lower()
+	if _auth_onboarding_public_username_edit != null:
+		public_username = _auth_onboarding_public_username_edit.text.strip_edges()
 	if _auth_onboarding_password_edit != null:
 		password = _auth_onboarding_password_edit.text
-	if username.is_empty():
-		_set_auth_onboarding_hint("Enter an account username to continue.", true)
+	if auth_mode in [AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY] and public_username.is_empty():
+		_set_auth_onboarding_hint("Enter a username to continue.", true)
+		if _auth_onboarding_public_username_edit != null:
+			_auth_onboarding_public_username_edit.grab_focus()
+		return false
+	if email.is_empty():
+		_set_auth_onboarding_hint("Enter your email or username to continue." if auth_mode == AUTH_MODE_LOGIN else "Enter your email address to continue.", true)
 		if _auth_onboarding_username_edit != null:
 			_auth_onboarding_username_edit.grab_focus()
 		return false
@@ -2903,27 +7638,44 @@ func _submit_auth_onboarding() -> bool:
 		if _auth_onboarding_password_edit != null:
 			_auth_onboarding_password_edit.grab_focus()
 		return false
-	var credential_error := _validate_account_auth_details(auth_mode, username, password)
+	var credential_error := _validate_account_auth_details(auth_mode, email, password, public_username)
 	if not credential_error.is_empty():
 		_set_auth_onboarding_hint(credential_error, true)
-		if _auth_onboarding_password_edit != null:
+		if auth_mode in [AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY] and not _is_valid_account_public_username(public_username) \
+				and _auth_onboarding_public_username_edit != null:
+			_auth_onboarding_public_username_edit.grab_focus()
+		elif not _is_valid_account_email(email) and _auth_onboarding_username_edit != null:
+			_auth_onboarding_username_edit.grab_focus()
+		elif _auth_onboarding_password_edit != null:
 			_auth_onboarding_password_edit.grab_focus()
 		return false
-	_set_selected_account_username(username)
+	_set_selected_account_username(email)
+	_set_selected_account_public_username(public_username, false)
+	_selected_account_accepts_game_updates = _auth_onboarding_game_updates_toggle != null \
+		and _auth_onboarding_game_updates_toggle.button_pressed
 	_set_selected_account_password(password)
-	_prepare_submitted_account_auth(username)
+	if _local_profile_store != null:
+		var auto_login_enabled := _auth_onboarding_auto_login_toggle != null \
+			and _auth_onboarding_auto_login_toggle.button_pressed
+		var save_password_enabled := _auth_onboarding_save_password_toggle != null \
+			and _auth_onboarding_save_password_toggle.button_pressed
+		_local_profile_store.set_preferred_auth_mode(auth_mode)
+		_local_profile_store.set_account_auto_login_enabled(auto_login_enabled)
+		_local_profile_store.set_account_password_save_enabled(save_password_enabled)
+	_prepare_submitted_account_auth(email)
 	_complete_auth_onboarding(auth_mode, "Account details saved. Open Multiplayer to sign in.")
 	return true
 
-func _prepare_submitted_account_auth(username: String) -> void:
-	var requested_username := username.strip_edges()
-	if requested_username.is_empty():
+func _prepare_submitted_account_auth(email: String) -> void:
+	var requested_email := email.strip_edges().to_lower()
+	if requested_email.is_empty():
 		return
 	_cancel_pending_authenticated_lobby_connects()
-	var requested_key := requested_username.to_lower()
-	var connected_key := _get_connected_account_username().strip_edges().to_lower()
-	var logged_key := _logged_in_account_username.strip_edges().to_lower()
-	if connected_key == requested_key and (logged_key.is_empty() or logged_key == requested_key):
+	var requested_key := requested_email.to_lower()
+	var connected_key := _get_connected_account_email().strip_edges().to_lower()
+	var connected_username_key := _get_connected_account_username().strip_edges().to_lower()
+	var auth_mode := _auth_onboarding_selected_mode
+	if (connected_key == requested_key or connected_username_key == requested_key) and auth_mode != AUTH_MODE_CLAIM_LEGACY:
 		return
 	_account_switch_pending = true
 	_account_switch_retry_attempts = 0
@@ -2935,7 +7687,11 @@ func _get_launch_auth_mode() -> String:
 	if _local_profile_store == null:
 		return AUTH_MODE_LOGIN
 	var preferred_auth_mode: String = _local_profile_store.get_preferred_auth_mode()
-	if preferred_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+	if preferred_auth_mode == AUTH_MODE_CLAIM_LEGACY and not _has_pending_legacy_account_claim():
+		preferred_auth_mode = AUTH_MODE_LOGIN
+	if preferred_auth_mode == AUTH_MODE_GUEST and _has_saved_or_pending_account_identity():
+		preferred_auth_mode = AUTH_MODE_LOGIN
+	if preferred_auth_mode in [AUTH_MODE_GUEST, AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
 		return preferred_auth_mode
 	var saved_username: String = _get_saved_account_username()
 	if not saved_username.is_empty():
@@ -2949,11 +7705,38 @@ func _should_prompt_for_account_recovery(message: String) -> bool:
 	return normalized_message in [
 		"that account was not found.",
 		"incorrect password.",
+		"that email address already has an account.",
+		"that account already has an email address. log in with email instead.",
 	]
 
+func _has_pending_account_sign_in_attempt() -> bool:
+	if _account_switch_pending:
+		return true
+	if _get_selected_auth_mode() not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
+		return false
+	return not _selected_account_username.strip_edges().is_empty() \
+		and not _selected_account_password.is_empty()
+
 func _show_auth_recovery_prompt(message: String) -> void:
-	_maybe_show_auth_onboarding()
-	_begin_auth_onboarding_account_flow(AUTH_MODE_LOGIN)
+	if not _is_multiplayer_screen_active() and not _account_switch_pending \
+			and (_auth_onboarding_overlay == null or not is_instance_valid(_auth_onboarding_overlay)):
+		# Keep background server failures from taking over local play.
+		_background_lobby_auth_error = message
+		return
+	var recovery_auth_mode := AUTH_MODE_LOGIN
+	if _get_selected_auth_mode() == AUTH_MODE_CLAIM_LEGACY \
+			or _auth_onboarding_selected_mode == AUTH_MODE_CLAIM_LEGACY:
+		recovery_auth_mode = AUTH_MODE_CLAIM_LEGACY
+	_maybe_show_auth_onboarding(true)
+	_begin_auth_onboarding_account_flow(recovery_auth_mode)
+	_set_auth_onboarding_hint(message, true)
+
+func _show_current_auth_prompt(message: String) -> void:
+	var auth_mode := _get_selected_auth_mode()
+	if auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
+		auth_mode = AUTH_MODE_LOGIN
+	_maybe_show_auth_onboarding(true)
+	_begin_auth_onboarding_account_flow(auth_mode)
 	_set_auth_onboarding_hint(message, true)
 
 func _set_auth_onboarding_hint(message: String, is_error: bool = false) -> void:
@@ -2970,15 +7753,19 @@ func _refresh_auth_onboarding_form_state() -> void:
 		_auth_onboarding_password_edit.placeholder_text = "Account password (min %d characters)" % min_password_length if auth_mode == AUTH_MODE_REGISTER else "Account password"
 	if _auth_onboarding_continue_button == null:
 		return
-	if auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+	if auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
 		_auth_onboarding_continue_button.disabled = true
 		return
-	var username := _auth_onboarding_username_edit.text.strip_edges() if _auth_onboarding_username_edit != null else ""
+	var email := _auth_onboarding_username_edit.text.strip_edges().to_lower() if _auth_onboarding_username_edit != null else ""
+	var public_username := _auth_onboarding_public_username_edit.text.strip_edges() if _auth_onboarding_public_username_edit != null else ""
 	var password := _auth_onboarding_password_edit.text if _auth_onboarding_password_edit != null else ""
-	var can_submit := not username.is_empty() and not password.is_empty()
+	var valid_identifier := _is_valid_account_login_identifier(email) if auth_mode == AUTH_MODE_LOGIN else _is_valid_account_email(email)
+	var can_submit := valid_identifier and not password.is_empty()
+	if auth_mode in [AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
+		can_submit = can_submit and _is_valid_account_public_username(public_username)
 	if auth_mode == AUTH_MODE_REGISTER:
 		can_submit = can_submit and password.strip_edges().length() >= min_password_length
-		if not can_submit and not username.is_empty() and not password.is_empty():
+		if not can_submit and not email.is_empty() and not password.is_empty():
 			_set_auth_onboarding_hint("Passwords for new accounts must be at least %d characters." % min_password_length, true)
 		elif _auth_onboarding_mode_hint_label != null and _auth_onboarding_mode_hint_label.visible \
 				and str(_auth_onboarding_mode_hint_label.text).begins_with("Passwords for new accounts must be at least "):
@@ -2988,7 +7775,19 @@ func _refresh_auth_onboarding_form_state() -> void:
 func _get_account_min_password_length() -> int:
 	return int(AccountStoreScript.MIN_PASSWORD_LENGTH)
 
-func _validate_account_auth_details(auth_mode: String, _username: String, password: String) -> String:
+func _validate_account_auth_details(
+	auth_mode: String,
+	email: String,
+	password: String,
+	public_username: String = ""
+) -> String:
+	if auth_mode == AUTH_MODE_LOGIN and not _is_valid_account_login_identifier(email):
+		return "Enter a valid email address or username."
+	if auth_mode != AUTH_MODE_LOGIN and not _is_valid_account_email(email):
+		return "Enter a valid email address."
+	if auth_mode in [AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
+		if not _is_valid_account_public_username(public_username):
+			return "Username can only use 3-24 letters, numbers, and underscores."
 	if auth_mode != AUTH_MODE_REGISTER:
 		return ""
 	var min_password_length := _get_account_min_password_length()
@@ -2996,11 +7795,27 @@ func _validate_account_auth_details(auth_mode: String, _username: String, passwo
 		return "Passwords for new accounts must be at least %d characters." % min_password_length
 	return ""
 
+func _is_valid_account_login_identifier(identifier: String) -> bool:
+	return _is_valid_account_email(identifier) if identifier.contains("@") else _is_valid_account_public_username(identifier)
+
+func _is_valid_account_public_username(username: String) -> bool:
+	var normalized_username := username.strip_edges()
+	if normalized_username.length() < int(AccountStoreScript.MIN_USERNAME_LENGTH):
+		return false
+	if normalized_username.length() > int(AccountStoreScript.MAX_USERNAME_LENGTH):
+		return false
+	for char_index in range(normalized_username.length()):
+		var codepoint := normalized_username.unicode_at(char_index)
+		var is_letter_or_number := (codepoint >= 48 and codepoint <= 57) \
+			or (codepoint >= 65 and codepoint <= 90) \
+			or (codepoint >= 97 and codepoint <= 122)
+		var is_allowed_symbol := codepoint == 95
+		if not is_letter_or_number and not is_allowed_symbol:
+			return false
+	return true
+
 func _complete_auth_onboarding(auth_mode: String, message: String) -> void:
 	_set_auth_mode(auth_mode)
-	var selected_account_username := _get_selected_account_username()
-	if not selected_account_username.is_empty():
-		_activate_account_profile(selected_account_username, "", auth_mode, true)
 	multiplayer_container.visible = false
 	ready_button.visible = false
 	status_label.text = message
@@ -3015,8 +7830,20 @@ func _complete_auth_onboarding(auth_mode: String, message: String) -> void:
 	if multiplayer_button != null:
 		multiplayer_button.grab_focus()
 	_dismiss_auth_onboarding()
-	if auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+	if auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
 		_queue_authenticated_lobby_connect("Signing in to lobby...")
+
+func _continue_as_guest() -> void:
+	_cancel_pending_authenticated_lobby_connects()
+	_cleanup_lobby(true)
+	var guest_display_name := _activate_guest_profile_session("Guest")
+	multiplayer_container.visible = false
+	ready_button.visible = false
+	status_label.text = "Continuing as %s. Decks save on this device only." % guest_display_name
+	show_menu()
+	if multiplayer_button != null:
+		multiplayer_button.grab_focus()
+	_dismiss_auth_onboarding()
 
 func _dismiss_auth_onboarding() -> void:
 	if _auth_onboarding_overlay == null:
@@ -3024,10 +7851,20 @@ func _dismiss_auth_onboarding() -> void:
 	if is_instance_valid(_auth_onboarding_overlay):
 		_auth_onboarding_overlay.queue_free()
 	_auth_onboarding_overlay = null
+	_auth_onboarding_action_button_column = null
+	_auth_onboarding_login_mode_button = null
+	_auth_onboarding_register_mode_button = null
+	_auth_onboarding_claim_mode_button = null
+	_auth_onboarding_guest_button = null
 	_auth_onboarding_mode_hint_label = null
 	_auth_onboarding_username_edit = null
+	_auth_onboarding_public_username_edit = null
 	_auth_onboarding_password_edit = null
+	_auth_onboarding_auto_login_toggle = null
+	_auth_onboarding_save_password_toggle = null
+	_auth_onboarding_game_updates_toggle = null
 	_auth_onboarding_continue_button = null
+	_finish_startup_loading()
 
 func _on_deck_builder_pressed() -> void:
 	var existing := game_container.get_node_or_null("DeckBuilder")
@@ -3047,6 +7884,7 @@ func _on_deck_builder_pressed() -> void:
 		)
 	if db.has_method("configure_friends"):
 		db.configure_friends(_get_friend_usernames())
+	db.account_deck_saved_locally.connect(_on_local_account_deck_saved)
 	if db.has_signal("account_deck_deleted_locally") and not db.account_deck_deleted_locally.is_connected(_on_deck_builder_account_deck_deleted_locally):
 		db.account_deck_deleted_locally.connect(_on_deck_builder_account_deck_deleted_locally)
 	if db.has_signal("send_deck_to_friend_requested") and not db.send_deck_to_friend_requested.is_connected(_on_deck_builder_send_deck_to_friend_requested):
@@ -3062,13 +7900,248 @@ func _on_deck_builder_pressed() -> void:
 	show_game()
 
 func _open_rules_overlay() -> void:
+	_open_document_overlay("Rules", "Rules and tutorial reference.", RULES_DOC_PATH, "RulesOverlay", rules_button)
+
+func _on_story_pressed() -> void:
+	if game_container.get_node_or_null("Story") != null:
+		return
+	_build_startup_loading_overlay()
+	_set_startup_loading_status("Loading story...")
+	# Paint the loading screen before loading the story scene and its assets.
+	await RenderingServer.frame_post_draw
+	var story_scene := load(STORY_STEP_ONE_SCENE_PATH) as PackedScene
+	if story_scene == null:
+		_remove_startup_loading_overlay()
+		return
+	_match_launch_queued = false
+	_hide_embedded_games()
+	var story_game := story_scene.instantiate()
+	story_game.name = "Story"
+	game_container.add_child(story_game)
+	_bind_game_signals()
+	_show_embedded_game("Story")
+	show_game()
+	_set_startup_loading_status("Preparing board...")
+	await story_game.story_board_ready
+	_set_startup_loading_progress(1.0)
+	_remove_startup_loading_overlay()
+
+func _on_popup_book_pressed() -> void:
+	get_tree().change_scene_to_file(POPUP_BOOK_SCENE_PATH)
+
+func _open_tutorial_overlay() -> void:
+	if _rules_overlay != null and is_instance_valid(_rules_overlay):
+		return
+
+	_tutorial_lessons = _get_tutorial_lessons()
+	if _tutorial_lessons.is_empty():
+		return
+	_tutorial_lesson_index = clampi(_tutorial_lesson_index, 0, _tutorial_lessons.size() - 1)
+	_tutorial_step_index = 0
+	_tutorial_lesson_buttons.clear()
+
+	_rules_overlay = Control.new()
+	_rules_overlay.name = "TutorialOverlay"
+	_rules_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_rules_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	_rules_overlay_focus_button = tutorial_button
+	add_child(_rules_overlay)
+
+	var shade := ColorRect.new()
+	shade.color = Color(0.02, 0.03, 0.06, 0.88)
+	shade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	shade.mouse_filter = Control.MOUSE_FILTER_STOP
+	_rules_overlay.add_child(shade)
+
+	var outer_margin := MarginContainer.new()
+	outer_margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	outer_margin.add_theme_constant_override("margin_left", 36)
+	outer_margin.add_theme_constant_override("margin_right", 36)
+	outer_margin.add_theme_constant_override("margin_top", 32)
+	outer_margin.add_theme_constant_override("margin_bottom", 32)
+	outer_margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_rules_overlay.add_child(outer_margin)
+
+	var panel := PanelContainer.new()
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	var panel_style := StyleBoxFlat.new()
+	panel_style.bg_color = Color(0.08, 0.10, 0.16, 0.98)
+	panel_style.border_color = Color(0.54, 0.76, 1.0, 0.95)
+	panel_style.corner_radius_top_left = 12
+	panel_style.corner_radius_top_right = 12
+	panel_style.corner_radius_bottom_left = 12
+	panel_style.corner_radius_bottom_right = 12
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		panel_style.set_border_width(side as Side, 2)
+	panel.add_theme_stylebox_override("panel", panel_style)
+	outer_margin.add_child(panel)
+
+	var inner_margin := MarginContainer.new()
+	inner_margin.add_theme_constant_override("margin_left", 18)
+	inner_margin.add_theme_constant_override("margin_right", 18)
+	inner_margin.add_theme_constant_override("margin_top", 18)
+	inner_margin.add_theme_constant_override("margin_bottom", 18)
+	panel.add_child(inner_margin)
+
+	var root := VBoxContainer.new()
+	root.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	root.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	root.add_theme_constant_override("separation", 12)
+	inner_margin.add_child(root)
+
+	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", 10)
+	root.add_child(header)
+
+	var heading_box := VBoxContainer.new()
+	heading_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	heading_box.add_theme_constant_override("separation", 2)
+	header.add_child(heading_box)
+
+	var overlay_title := Label.new()
+	overlay_title.text = "Tutorial"
+	overlay_title.add_theme_font_size_override("font_size", 24)
+	heading_box.add_child(overlay_title)
+
+	var overlay_intro := Label.new()
+	overlay_intro.text = "Work through compact lessons, then jump directly into the part of the game they teach."
+	overlay_intro.modulate = Color(0.78, 0.83, 0.95)
+	overlay_intro.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	heading_box.add_child(overlay_intro)
+
+	var close_header_btn := Button.new()
+	close_header_btn.text = "Close"
+	close_header_btn.custom_minimum_size = Vector2(100, 34)
+	close_header_btn.pressed.connect(_close_rules_overlay)
+	header.add_child(close_header_btn)
+
+	var main_row := HBoxContainer.new()
+	main_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	main_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	main_row.add_theme_constant_override("separation", 14)
+	root.add_child(main_row)
+
+	var lesson_scroll := ScrollContainer.new()
+	lesson_scroll.custom_minimum_size = Vector2(240, 420)
+	lesson_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	main_row.add_child(lesson_scroll)
+
+	var lesson_list := VBoxContainer.new()
+	lesson_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	lesson_list.add_theme_constant_override("separation", 6)
+	lesson_scroll.add_child(lesson_list)
+
+	for i in range(_tutorial_lessons.size()):
+		var lesson := _tutorial_lessons[i]
+		var lesson_btn := Button.new()
+		lesson_btn.text = "%d. %s" % [i + 1, String(lesson.get("title", "Lesson"))]
+		lesson_btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		lesson_btn.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		lesson_btn.custom_minimum_size = Vector2(220, 38)
+		lesson_btn.pressed.connect(_select_tutorial_lesson.bind(i))
+		lesson_list.add_child(lesson_btn)
+		_tutorial_lesson_buttons.append(lesson_btn)
+
+	var lesson_panel := PanelContainer.new()
+	lesson_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	lesson_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var lesson_style := StyleBoxFlat.new()
+	lesson_style.bg_color = Color(0.12, 0.14, 0.20, 0.86)
+	lesson_style.border_color = Color(0.28, 0.36, 0.48, 0.8)
+	lesson_style.corner_radius_top_left = 8
+	lesson_style.corner_radius_top_right = 8
+	lesson_style.corner_radius_bottom_left = 8
+	lesson_style.corner_radius_bottom_right = 8
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		lesson_style.set_border_width(side as Side, 1)
+	lesson_panel.add_theme_stylebox_override("panel", lesson_style)
+	main_row.add_child(lesson_panel)
+
+	var lesson_margin := MarginContainer.new()
+	lesson_margin.add_theme_constant_override("margin_left", 18)
+	lesson_margin.add_theme_constant_override("margin_right", 18)
+	lesson_margin.add_theme_constant_override("margin_top", 18)
+	lesson_margin.add_theme_constant_override("margin_bottom", 18)
+	lesson_panel.add_child(lesson_margin)
+
+	var lesson_content := VBoxContainer.new()
+	lesson_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	lesson_content.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	lesson_content.add_theme_constant_override("separation", 10)
+	lesson_margin.add_child(lesson_content)
+
+	_tutorial_title_label = Label.new()
+	_tutorial_title_label.add_theme_font_size_override("font_size", 22)
+	_tutorial_title_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	lesson_content.add_child(_tutorial_title_label)
+
+	_tutorial_progress_label = Label.new()
+	_tutorial_progress_label.modulate = Color(0.70, 0.78, 0.90)
+	lesson_content.add_child(_tutorial_progress_label)
+
+	var separator := HSeparator.new()
+	lesson_content.add_child(separator)
+
+	var step_scroll := ScrollContainer.new()
+	step_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	step_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	step_scroll.custom_minimum_size = Vector2(0, 260)
+	lesson_content.add_child(step_scroll)
+
+	var step_box := VBoxContainer.new()
+	step_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	step_box.add_theme_constant_override("separation", 10)
+	step_scroll.add_child(step_box)
+
+	_tutorial_step_title_label = Label.new()
+	_tutorial_step_title_label.add_theme_font_size_override("font_size", 18)
+	_tutorial_step_title_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	step_box.add_child(_tutorial_step_title_label)
+
+	_tutorial_step_body_label = Label.new()
+	_tutorial_step_body_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_tutorial_step_body_label.modulate = Color(0.90, 0.92, 0.97)
+	step_box.add_child(_tutorial_step_body_label)
+
+	_tutorial_try_label = Label.new()
+	_tutorial_try_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_tutorial_try_label.modulate = Color(0.96, 0.86, 0.56)
+	step_box.add_child(_tutorial_try_label)
+
+	var actions := HBoxContainer.new()
+	actions.alignment = BoxContainer.ALIGNMENT_END
+	actions.add_theme_constant_override("separation", 8)
+	lesson_content.add_child(actions)
+
+	_tutorial_action_button = Button.new()
+	_tutorial_action_button.custom_minimum_size = Vector2(160, 38)
+	_tutorial_action_button.pressed.connect(_on_tutorial_action_pressed)
+	actions.add_child(_tutorial_action_button)
+
+	_tutorial_prev_button = Button.new()
+	_tutorial_prev_button.text = "Previous"
+	_tutorial_prev_button.custom_minimum_size = Vector2(110, 38)
+	_tutorial_prev_button.pressed.connect(_on_tutorial_prev_pressed)
+	actions.add_child(_tutorial_prev_button)
+
+	_tutorial_next_button = Button.new()
+	_tutorial_next_button.text = "Next"
+	_tutorial_next_button.custom_minimum_size = Vector2(110, 38)
+	_tutorial_next_button.pressed.connect(_on_tutorial_next_pressed)
+	actions.add_child(_tutorial_next_button)
+
+	_refresh_tutorial_lesson_view()
+	_tutorial_next_button.grab_focus()
+
+func _open_document_overlay(title_text: String, intro_text: String, doc_path: String, overlay_name: String, focus_button: Button) -> void:
 	if _rules_overlay != null and is_instance_valid(_rules_overlay):
 		return
 
 	_rules_overlay = Control.new()
-	_rules_overlay.name = "RulesOverlay"
+	_rules_overlay.name = overlay_name
 	_rules_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_rules_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	_rules_overlay_focus_button = focus_button
 	add_child(_rules_overlay)
 
 	var shade := ColorRect.new()
@@ -3114,12 +8187,12 @@ func _open_rules_overlay() -> void:
 	inner_margin.add_child(content)
 
 	var title := Label.new()
-	title.text = "Rules"
+	title.text = title_text
 	title.add_theme_font_size_override("font_size", 24)
 	content.add_child(title)
 
 	var intro := Label.new()
-	intro.text = "New player rules reference."
+	intro.text = intro_text
 	intro.modulate = Color(0.78, 0.83, 0.95)
 	content.add_child(intro)
 
@@ -3132,7 +8205,7 @@ func _open_rules_overlay() -> void:
 	rules_view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	rules_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	rules_view.custom_minimum_size = Vector2(0, 420)
-	rules_view.text = _get_rules_display_text()
+	rules_view.text = _get_document_display_text(doc_path)
 	content.add_child(rules_view)
 
 	var actions := HBoxContainer.new()
@@ -3148,31 +8221,905 @@ func _open_rules_overlay() -> void:
 
 	close_btn.grab_focus()
 
+func _get_tutorial_lessons() -> Array[Dictionary]:
+	return [
+		{
+			"title": "First Orientation",
+			"lesson_id": "orientation",
+			"mode": "practice",
+			"steps": [
+				{
+					"title": "Win By Protecting Followers",
+					"body": "Followers are your life total. Each player starts at 100, and attacks aimed at a God damage that player's Followers. Your plan is to protect your own Followers while building a board that can safely attack theirs.",
+					"try": "Open the rules reference whenever you want the full written version of a lesson.",
+					"action": "rules"
+				},
+				{
+					"title": "Read The Main Menu",
+					"body": "Deck Builder creates legal decks, Tutorial teaches the game, Rules opens the full reference, Practice vs Thor starts a local match, and Multiplayer uses saved legal decks.",
+					"try": "After this lesson, use Deck Builder before Practice so you understand what you are bringing to the board.",
+					"action": "deck_builder"
+				},
+				{
+					"title": "Read A Card",
+					"body": "Every card has a name, type, culture, cost, and rules text. Creatures also care about Strength, Resilience, Speed, and Level. Subtypes such as Warrior, Spirit, Dragon, and Mage are real mechanical tags.",
+					"try": "In Deck Builder, hover or select cards and read their stats before adding them.",
+					"action": "deck_builder"
+				}
+			]
+		},
+		{
+			"title": "Build A Deck",
+			"lesson_id": "deck_building",
+			"mode": "deck_builder",
+			"steps": [
+				{
+					"title": "Start With The Legal Shell",
+					"body": "A legal deck has exactly 1 God, up to 3 Powers, and at least 40 regular cards. It may also have Reinforcements up to one-third of its regular cards plus Powers, rounded down.",
+					"try": "Open Deck Builder, pick a God, then add two or three compatible Powers.",
+					"action": "deck_builder"
+				},
+				{
+					"title": "Respect Copy And Culture Limits",
+					"body": "Regular non-Legendary cards allow up to 3 copies. A specific Legendary allows 1 copy, and total Legendaries are limited by deck size. Powers must match your God's culture or be Neutral, and some Gods have stricter rules.",
+					"try": "Trust the deck builder's legality warnings; those warnings come from the same validation path used for play.",
+					"action": "deck_builder"
+				},
+				{
+					"title": "Use A Beginner Mix",
+					"body": "For a first deck, aim for 16 to 20 Creatures, a few Spells or Charms for interaction, a few Hexes if you want traps, and Equipment only when you have enough Creatures to carry it.",
+					"try": "Save a legal deck so Practice vs Thor and Multiplayer can use it.",
+					"action": "deck_builder"
+				}
+			]
+		},
+		{
+			"title": "Board And Turn Flow",
+			"lesson_id": "board_flow",
+			"mode": "practice",
+			"steps": [
+				{
+					"title": "Learn The Zones",
+					"body": "Each player has a God Slot, up to three Power Slots, five Frontline lanes, five Reserve lanes, Hand, Deck, Graveyard, and Abyss. Frontline and Reserve slots line up as lanes, so position matters.",
+					"try": "In Practice, watch how Frontline cards are exposed while Reserve cards are more protected.",
+					"action": "practice"
+				},
+				{
+					"title": "Choose Upkeep Resources",
+					"body": "At the start of upkeep, you gain 1 automatic mana before choosing +4 mana or +1 card. The first game turn has no automatic mana, and God Death removes only the automatic mana. The resource choices stay the same.",
+					"try": "Choose mana when you can spend it now; choose draw when your hand needs help.",
+					"action": "practice"
+				},
+				{
+					"title": "Move Through The Turn",
+					"body": "After upkeep, your turn moves through Main, Combat, and End. Main is for playing cards, summoning, unlocking Powers, moving Creatures, and preparing attacks. Combat is where eligible Frontline Creatures attack.",
+					"try": "In your first practice game, spend Main Phase building a board before making risky attacks.",
+					"action": "practice"
+				}
+			]
+		},
+		{
+			"title": "Creatures And Stances",
+			"lesson_id": "creatures",
+			"mode": "practice",
+			"steps": [
+				{
+					"title": "Summon Creatures",
+					"body": "Creatures can enter Frontline or Reserve if the space is legal and empty. You choose Aggressive, Defensive, or Stealth as they enter. You normally get one normal Creature summon each turn.",
+					"try": "Summon one Creature in Practice and notice which action markers are spent.",
+					"action": "practice"
+				},
+				{
+					"title": "Use Minor And Major Actions",
+					"body": "Each Creature normally gets one Minor Action and one Major Action per turn. Minor Actions include movement, stance changes, and picking up friendly Equipment. Major Actions include attacking and major abilities.",
+					"try": "Move a Creature or change its stance before you attack.",
+					"action": "practice"
+				},
+				{
+					"title": "Pick The Right Stance",
+					"body": "Aggressive Creatures attack. Defensive Creatures block with Resilience. Stealth is face-down Defensive mode and spends both normal summon actions, making it safer but more committal.",
+					"try": "Put attackers in Aggressive and protectors in Defensive until the rhythm feels natural.",
+					"action": "practice"
+				}
+			]
+		},
+		{
+			"title": "Combat",
+			"lesson_id": "combat",
+			"mode": "practice",
+			"steps": [
+				{
+					"title": "Declare Legal Attacks",
+					"body": "An attacker must be your Aggressive Frontline Creature, able to spend a Major Action, not Sleeping, not blocked by a status, and not summoned after the first resolved attack of the turn. The game blocks all attacks on turn 1.",
+					"try": "When an attack is unavailable, read the prompt or disabled-action reason before changing the board.",
+					"action": "practice"
+				},
+				{
+					"title": "Expect Interception",
+					"body": "Before an attack resolves, the defender may intercept. Interception depends on row, stance, Speed, target depth, statuses, and engagement restrictions. Reach lets a Creature intercept regardless of position.",
+					"try": "Attack the enemy God only after checking which enemy Creatures can step in.",
+					"action": "practice"
+				},
+				{
+					"title": "Resolve Combat Stats",
+					"body": "Aggressive defenders compare Strength against Strength. Defensive defenders compare your attacker's Strength against their Resilience. Attacking into too much Resilience can cost you Followers and heal the defender.",
+					"try": "Avoid attacking a Defensive Creature unless your Strength beats its Resilience.",
+					"action": "practice"
+				}
+			]
+		},
+		{
+			"title": "Reactions And Advanced Cards",
+			"lesson_id": "reactions",
+			"mode": "practice",
+			"steps": [
+				{
+					"title": "Use The Stack",
+					"body": "Spells, abilities, attacks, and reactive Charms can go onto the Action Stack. The most recent action resolves first after both players pass Priority.",
+					"try": "When Priority appears, slow down and decide whether the pending action is worth answering.",
+					"action": "practice"
+				},
+				{
+					"title": "Respect Speed",
+					"body": "Responses usually need Speed 2 or higher and must be equal to or faster than the action they answer. Speed also affects interception and several card abilities.",
+					"try": "Save fast cards for actions that actually change the turn.",
+					"action": "practice"
+				},
+				{
+					"title": "Prepare Hexes, Charms, Powers, And Structures",
+					"body": "Hexes and some Charms can be prepared face-down. Powers begin face-down and must be unlocked. Equipment and Structures create ongoing board value, but they also ask you to defend the lanes they occupy.",
+					"try": "Play a practice game where your goal is to unlock all Powers and use at least one prepared card.",
+					"action": "practice"
+				}
+			]
+		},
+		{
+			"title": "Play Full Matches",
+			"lesson_id": "full_match",
+			"mode": "practice",
+			"steps": [
+				{
+					"title": "Use A Turn Checklist",
+					"body": "At the start of each turn, check Follower totals, lethal threats, and the upkeep option you need. Before attacking, check interceptors, Speed, defender stance, and possible Charm responses.",
+					"try": "Play Practice vs Thor with the goal of making one deliberate attack per turn.",
+					"action": "practice"
+				},
+				{
+					"title": "Enter Multiplayer Prepared",
+					"body": "Multiplayer asks you to choose a saved legal deck, refresh seeks, create or join rooms, ready up, and resume interrupted matches when needed. Spectating live matches is also useful.",
+					"try": "After two or three practice games, bring the same saved deck into Multiplayer.",
+					"action": "rules"
+				},
+				{
+					"title": "Keep The Reference Nearby",
+					"body": "The Rules button now opens the full rules and tutorial reference. Use it for glossary terms, deck construction limits, combat details, and the full match checklist.",
+					"try": "Open the reference when a card or prompt uses a word you do not recognize yet.",
+					"action": "rules"
+				}
+			]
+		}
+	]
+
+func _select_tutorial_lesson(index: int) -> void:
+	if _tutorial_lessons.is_empty():
+		return
+	_tutorial_lesson_index = clampi(index, 0, _tutorial_lessons.size() - 1)
+	_tutorial_step_index = 0
+	_refresh_tutorial_lesson_view()
+
+func _select_tutorial_step(index: int) -> void:
+	if _tutorial_lessons.is_empty():
+		return
+	var lesson := _tutorial_lessons[_tutorial_lesson_index]
+	var steps: Array = lesson.get("steps", [])
+	if steps.is_empty():
+		return
+	_tutorial_step_index = clampi(index, 0, steps.size() - 1)
+	_refresh_tutorial_lesson_view()
+
+func _refresh_tutorial_lesson_view() -> void:
+	if _tutorial_lessons.is_empty() or _tutorial_title_label == null:
+		return
+	_tutorial_lesson_index = clampi(_tutorial_lesson_index, 0, _tutorial_lessons.size() - 1)
+	var lesson := _tutorial_lessons[_tutorial_lesson_index]
+	var steps: Array = lesson.get("steps", [])
+	if steps.is_empty():
+		return
+	_tutorial_step_index = clampi(_tutorial_step_index, 0, steps.size() - 1)
+	var step: Dictionary = steps[_tutorial_step_index]
+
+	_tutorial_title_label.text = String(lesson.get("title", "Lesson"))
+	_tutorial_progress_label.text = "Lesson %d of %d | Step %d of %d" % [
+		_tutorial_lesson_index + 1,
+		_tutorial_lessons.size(),
+		_tutorial_step_index + 1,
+		steps.size()
+	]
+	_tutorial_step_title_label.text = String(step.get("title", "Step"))
+	_tutorial_step_body_label.text = String(step.get("body", ""))
+	var try_text := String(step.get("try", ""))
+	_tutorial_try_label.visible = not try_text.is_empty()
+	_tutorial_try_label.text = "Try it: %s" % try_text
+
+	for i in range(_tutorial_lesson_buttons.size()):
+		var lesson_btn := _tutorial_lesson_buttons[i]
+		if lesson_btn == null or not is_instance_valid(lesson_btn):
+			continue
+		var button_lesson := _tutorial_lessons[i]
+		var prefix := "> " if i == _tutorial_lesson_index else ""
+		lesson_btn.text = "%s%d. %s" % [prefix, i + 1, String(button_lesson.get("title", "Lesson"))]
+		lesson_btn.modulate = Color(1.0, 1.0, 1.0, 1.0) if i == _tutorial_lesson_index else Color(0.76, 0.82, 0.92, 1.0)
+
+	if _tutorial_prev_button != null:
+		_tutorial_prev_button.disabled = _tutorial_lesson_index == 0 and _tutorial_step_index == 0
+	if _tutorial_next_button != null:
+		var at_final_step := _tutorial_lesson_index == _tutorial_lessons.size() - 1 and _tutorial_step_index == steps.size() - 1
+		_tutorial_next_button.text = "Done" if at_final_step else "Next"
+	if _tutorial_action_button != null:
+		var mode := String(lesson.get("mode", "practice"))
+		_tutorial_action_button.text = "Start Deck Lesson" if mode == "deck_builder" else "Start Practice Lesson"
+		_tutorial_action_button.visible = true
+		_tutorial_action_button.disabled = mode == "practice" and not _is_practice_thor_enabled()
+
+func _on_tutorial_prev_pressed() -> void:
+	if _tutorial_step_index > 0:
+		_select_tutorial_step(_tutorial_step_index - 1)
+		return
+	if _tutorial_lesson_index <= 0:
+		return
+	_tutorial_lesson_index -= 1
+	var lesson := _tutorial_lessons[_tutorial_lesson_index]
+	var steps: Array = lesson.get("steps", [])
+	_tutorial_step_index = maxi(0, steps.size() - 1)
+	_refresh_tutorial_lesson_view()
+
+func _on_tutorial_next_pressed() -> void:
+	if _tutorial_lessons.is_empty():
+		return
+	var lesson := _tutorial_lessons[_tutorial_lesson_index]
+	var steps: Array = lesson.get("steps", [])
+	if _tutorial_step_index < steps.size() - 1:
+		_select_tutorial_step(_tutorial_step_index + 1)
+		return
+	if _tutorial_lesson_index < _tutorial_lessons.size() - 1:
+		_tutorial_lesson_index += 1
+		_tutorial_step_index = 0
+		_refresh_tutorial_lesson_view()
+		return
+	_close_rules_overlay()
+
+func _on_tutorial_action_pressed() -> void:
+	if _tutorial_lessons.is_empty():
+		return
+	var lesson := _tutorial_lessons[_tutorial_lesson_index]
+	_start_interactive_tutorial_lesson(lesson)
+
+func _start_interactive_tutorial_lesson(lesson: Dictionary) -> void:
+	var lesson_copy := lesson.duplicate(true)
+	_close_rules_overlay()
+	var mode := String(lesson_copy.get("mode", "practice"))
+	if mode == "deck_builder":
+		_start_deck_builder_tutorial_lesson(lesson_copy)
+		return
+	_start_practice_tutorial_lesson(lesson_copy)
+
+func _start_deck_builder_tutorial_lesson(lesson: Dictionary) -> void:
+	_on_deck_builder_pressed()
+	_begin_tutorial_coach(lesson, null, "deck_builder")
+
+func _start_practice_tutorial_lesson(lesson: Dictionary) -> void:
+	_close_tutorial_coach_overlay()
+	var practice_game := await _start_practice_match({
+		"tutorial_lesson_id": String(lesson.get("lesson_id", "")),
+		"tutorial_lesson_title": String(lesson.get("title", "Tutorial")),
+	})
+	if practice_game != null:
+		_begin_tutorial_coach(lesson, practice_game, "practice")
+
+func _begin_tutorial_coach(lesson: Dictionary, target: Node, mode: String) -> void:
+	_close_tutorial_coach_overlay()
+	_tutorial_coach_lesson = lesson.duplicate(true)
+	_tutorial_coach_mode = mode
+	_tutorial_coach_target = target
+	_tutorial_coach_steps = _get_interactive_tutorial_steps(String(lesson.get("lesson_id", "")), mode)
+	_tutorial_coach_step_index = 0
+	_tutorial_coach_step_complete = false
+	_tutorial_coach_seen_stack = false
+	_tutorial_coach_baseline = _capture_tutorial_coach_state()
+	_build_tutorial_coach_overlay()
+	_refresh_tutorial_coach_view()
+
+func _get_interactive_tutorial_steps(lesson_id: String, mode: String) -> Array[Dictionary]:
+	if mode == "deck_builder":
+		return [
+			{
+				"title": "Choose A God",
+				"body": "Use the God filter or card list to put exactly one God into the deck. Your God determines the cultures and Powers the deck can use.",
+				"check": "manual"
+			},
+			{
+				"title": "Add Powers",
+				"body": "Add up to three Powers that match the God or are Neutral. Powers start face-down in the match and become tools you unlock with mana.",
+				"check": "manual"
+			},
+			{
+				"title": "Build The Regular Deck",
+				"body": "Add at least 40 regular cards. Use enough Creatures to contest the board, then add Spells, Hexes, Charms, Equipment, and Structures for support.",
+				"check": "manual"
+			},
+			{
+				"title": "Save A Legal Deck",
+				"body": "When the deck builder says the deck is legal, save it. Practice and Multiplayer both use saved legal decks.",
+				"check": "manual"
+			}
+		]
+	match lesson_id:
+		"orientation":
+			return [
+				{
+					"title": "Practice Board Opened",
+					"body": "This is the real board. Your Followers are your life total, your hand is at the bottom, and Thor is the opponent.",
+					"check": "open_practice"
+				},
+				{
+					"title": "Choose Upkeep",
+					"body": "Choose the mana well for more mana, or click your deck to draw a card.",
+					"check": "choose_upkeep"
+				},
+				{
+					"title": "Put A Creature On Board",
+					"body": "Select a Creature from hand, choose a stance, then click an empty friendly Frontline or Reserve slot.",
+					"check": "summon_creature"
+				},
+				{
+					"title": "End The Turn",
+					"body": "Use End Turn when you have spent the actions you want. Thor will take the next turn.",
+					"check": "end_turn"
+				}
+			]
+		"board_flow":
+			return [
+				{
+					"title": "Resolve Upkeep",
+					"body": "Every turn starts with upkeep. Choose mana or draw before trying normal actions.",
+					"check": "choose_upkeep"
+				},
+				{
+					"title": "Use The Lanes",
+					"body": "Summon a Creature into the Frontline or Reserve. Each column is a lane, and the back row is safer.",
+					"check": "summon_creature"
+				},
+				{
+					"title": "Spend A Creature Action",
+					"body": "Move, change stance, or use a Creature action. Creatures normally have one Minor Action and one Major Action each turn.",
+					"check": "spend_creature_action"
+				},
+				{
+					"title": "Pass Control",
+					"body": "End the turn and watch how the current player changes.",
+					"check": "end_turn"
+				}
+			]
+		"creatures":
+			return [
+				{
+					"title": "Resolve Upkeep",
+					"body": "Choose an upkeep option so the Creature actions unlock for the turn.",
+					"check": "choose_upkeep"
+				},
+				{
+					"title": "Summon A Creature",
+					"body": "Try Aggressive for an attacker or Defensive for a protector. Stealth is face-down Defensive mode.",
+					"check": "summon_creature"
+				},
+				{
+					"title": "See Defensive Or Stealth",
+					"body": "Put at least one friendly Creature in Defensive or Stealth. Defensive Creatures use RES when attacked.",
+					"check": "defensive_or_stealth"
+				},
+				{
+					"title": "Spend An Action",
+					"body": "Use movement, stance change, or another Creature action so the action markers matter on the board.",
+					"check": "spend_creature_action"
+				}
+			]
+		"combat":
+			return [
+				{
+					"title": "Build A Board",
+					"body": "Resolve upkeep and summon a Creature. Turn 1 attacks are blocked, so this lesson starts by preparing an attacker.",
+					"check": "summon_creature"
+				},
+				{
+					"title": "Reach Your Next Turn",
+					"body": "End the first turn, let Thor act, then choose upkeep when control returns to you.",
+					"check": "player_turn_after_first"
+				},
+				{
+					"title": "Declare An Attack",
+					"body": "Use an Aggressive Frontline Creature to attack an enemy card or Thor's God. Interception may change the final defender.",
+					"check": "attack_used"
+				}
+			]
+		"reactions":
+			return [
+				{
+					"title": "Create A Stack Window",
+					"body": "Play a card, summon a visible Creature, or declare an attack. Stack windows are where responses and Priority happen.",
+					"check": "stack_seen_or_manual"
+				},
+				{
+					"title": "Pass Or Respond",
+					"body": "If the game offers Priority and you do not need to answer, pass. Fast cards are best saved for actions that matter.",
+					"check": "manual"
+				},
+				{
+					"title": "Prepare A Future Response",
+					"body": "If you have a Hex or Charm, prepare it into an empty friendly zone. If your hand does not contain one, mark this step done and continue.",
+					"check": "prepared_card_or_manual"
+				},
+				{
+					"title": "Unlock A Power",
+					"body": "Pay mana to unlock a face-down Power. If this deck has no Powers, mark the step done after checking the Power slots.",
+					"check": "power_unlocked_or_manual"
+				}
+			]
+		"full_match":
+			return [
+				{
+					"title": "Use The Start-Of-Turn Checklist",
+					"body": "Check both Follower totals, choose upkeep, and decide whether this turn needs mana or cards.",
+					"check": "choose_upkeep"
+				},
+				{
+					"title": "Make A Plan Before Combat",
+					"body": "Play or reposition at least one card before attacking. Ask which enemy card can stop your best threat.",
+					"check": "summon_or_action"
+				},
+				{
+					"title": "Attack With A Purpose",
+					"body": "Make one attack only when it improves your board, threatens Followers, or removes an important defender.",
+					"check": "attack_used_or_manual"
+				},
+				{
+					"title": "Finish The Lesson In The Match",
+					"body": "Keep playing from here. Use Rules as a reference and let the prompts be the source of truth for exact targeting.",
+					"check": "manual"
+				}
+			]
+	return [
+		{
+			"title": "Start Practice",
+			"body": "Use the real board to complete this lesson.",
+			"check": "open_practice"
+		},
+		{
+			"title": "Resolve Upkeep",
+			"body": "Choose mana or draw to begin the turn.",
+			"check": "choose_upkeep"
+		}
+	]
+
+func _build_tutorial_coach_overlay() -> void:
+	_tutorial_coach_overlay = Control.new()
+	_tutorial_coach_overlay.name = "TutorialCoachOverlay"
+	_tutorial_coach_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_tutorial_coach_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_tutorial_coach_overlay)
+
+	var margin := MarginContainer.new()
+	margin.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+	margin.offset_left = -430
+	margin.offset_right = -18
+	margin.offset_top = 18
+	margin.offset_bottom = 0
+	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_tutorial_coach_overlay.add_child(margin)
+
+	_tutorial_coach_panel = PanelContainer.new()
+	_tutorial_coach_panel.custom_minimum_size = Vector2(410, 0)
+	_tutorial_coach_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	var panel_style := StyleBoxFlat.new()
+	panel_style.bg_color = Color(0.07, 0.09, 0.14, 0.95)
+	panel_style.border_color = Color(0.98, 0.78, 0.34, 0.95)
+	panel_style.corner_radius_top_left = 8
+	panel_style.corner_radius_top_right = 8
+	panel_style.corner_radius_bottom_left = 8
+	panel_style.corner_radius_bottom_right = 8
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		panel_style.set_border_width(side as Side, 2)
+	_tutorial_coach_panel.add_theme_stylebox_override("panel", panel_style)
+	margin.add_child(_tutorial_coach_panel)
+
+	var inner := MarginContainer.new()
+	inner.add_theme_constant_override("margin_left", 14)
+	inner.add_theme_constant_override("margin_right", 14)
+	inner.add_theme_constant_override("margin_top", 14)
+	inner.add_theme_constant_override("margin_bottom", 14)
+	_tutorial_coach_panel.add_child(inner)
+
+	var content := VBoxContainer.new()
+	content.add_theme_constant_override("separation", 9)
+	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	inner.add_child(content)
+
+	_tutorial_coach_title_label = Label.new()
+	_tutorial_coach_title_label.add_theme_font_size_override("font_size", 20)
+	_tutorial_coach_title_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	content.add_child(_tutorial_coach_title_label)
+
+	_tutorial_coach_progress_label = Label.new()
+	_tutorial_coach_progress_label.modulate = Color(0.72, 0.80, 0.92)
+	content.add_child(_tutorial_coach_progress_label)
+
+	var separator := HSeparator.new()
+	content.add_child(separator)
+
+	_tutorial_coach_step_title_label = Label.new()
+	_tutorial_coach_step_title_label.add_theme_font_size_override("font_size", 16)
+	_tutorial_coach_step_title_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	content.add_child(_tutorial_coach_step_title_label)
+
+	_tutorial_coach_body_label = Label.new()
+	_tutorial_coach_body_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_tutorial_coach_body_label.modulate = Color(0.90, 0.92, 0.97)
+	content.add_child(_tutorial_coach_body_label)
+
+	_tutorial_coach_status_label = Label.new()
+	_tutorial_coach_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_tutorial_coach_status_label.modulate = Color(0.98, 0.84, 0.46)
+	content.add_child(_tutorial_coach_status_label)
+
+	var actions := HBoxContainer.new()
+	actions.alignment = BoxContainer.ALIGNMENT_END
+	actions.add_theme_constant_override("separation", 8)
+	content.add_child(actions)
+
+	var rules_btn := Button.new()
+	rules_btn.text = "Rules"
+	rules_btn.custom_minimum_size = Vector2(84, 34)
+	rules_btn.pressed.connect(_open_rules_overlay)
+	actions.add_child(rules_btn)
+
+	var end_btn := Button.new()
+	end_btn.text = "End Tutorial"
+	end_btn.custom_minimum_size = Vector2(116, 34)
+	end_btn.pressed.connect(_on_tutorial_coach_end_pressed)
+	actions.add_child(end_btn)
+
+	_tutorial_coach_next_button = Button.new()
+	_tutorial_coach_next_button.custom_minimum_size = Vector2(120, 34)
+	_tutorial_coach_next_button.pressed.connect(_on_tutorial_coach_next_pressed)
+	actions.add_child(_tutorial_coach_next_button)
+
+func _refresh_tutorial_coach_view() -> void:
+	if _tutorial_coach_overlay == null or _tutorial_coach_steps.is_empty():
+		return
+	_tutorial_coach_step_index = clampi(_tutorial_coach_step_index, 0, _tutorial_coach_steps.size() - 1)
+	var step := _tutorial_coach_steps[_tutorial_coach_step_index]
+	_tutorial_coach_step_complete = _is_tutorial_coach_step_complete(step)
+	var check := String(step.get("check", "manual"))
+	var is_manual := check == "manual" or check.ends_with("_or_manual")
+	var at_final_step := _tutorial_coach_step_index == _tutorial_coach_steps.size() - 1
+
+	_tutorial_coach_title_label.text = String(_tutorial_coach_lesson.get("title", "Tutorial Lesson"))
+	_tutorial_coach_progress_label.text = "Step %d of %d" % [_tutorial_coach_step_index + 1, _tutorial_coach_steps.size()]
+	_tutorial_coach_step_title_label.text = String(step.get("title", "Objective"))
+	_tutorial_coach_body_label.text = String(step.get("body", ""))
+	if _tutorial_coach_step_complete:
+		_tutorial_coach_status_label.text = "Objective complete."
+	elif is_manual:
+		_tutorial_coach_status_label.text = "Do this on the board, then mark the step done."
+	else:
+		_tutorial_coach_status_label.text = "Waiting for you to complete this objective in the game."
+	if _tutorial_coach_next_button != null:
+		if at_final_step:
+			_tutorial_coach_next_button.text = "Finish"
+		elif is_manual and not _tutorial_coach_step_complete:
+			_tutorial_coach_next_button.text = "Mark Done"
+		else:
+			_tutorial_coach_next_button.text = "Next"
+		_tutorial_coach_next_button.disabled = not _tutorial_coach_step_complete and not is_manual
+
+func _poll_tutorial_coach() -> void:
+	if _tutorial_coach_overlay == null or not is_instance_valid(_tutorial_coach_overlay):
+		return
+	if _tutorial_coach_mode == "practice":
+		if _tutorial_coach_target == null or not is_instance_valid(_tutorial_coach_target):
+			_close_tutorial_coach_overlay()
+			return
+		var gm := _get_tutorial_coach_game_manager()
+		if gm != null and not gm.action_stack.is_empty():
+			_tutorial_coach_seen_stack = true
+	if _tutorial_coach_steps.is_empty():
+		return
+	var step := _tutorial_coach_steps[_tutorial_coach_step_index]
+	var complete := _is_tutorial_coach_step_complete(step)
+	if complete != _tutorial_coach_step_complete:
+		_tutorial_coach_step_complete = complete
+		_refresh_tutorial_coach_view()
+
+func _on_tutorial_coach_next_pressed() -> void:
+	if _tutorial_coach_steps.is_empty():
+		_close_tutorial_coach_overlay()
+		return
+	var step := _tutorial_coach_steps[_tutorial_coach_step_index]
+	var check := String(step.get("check", "manual"))
+	var is_manual := check == "manual" or check.ends_with("_or_manual")
+	if not _is_tutorial_coach_step_complete(step) and not is_manual:
+		_refresh_tutorial_coach_view()
+		return
+	if _tutorial_coach_step_index >= _tutorial_coach_steps.size() - 1:
+		_close_tutorial_coach_overlay()
+		return
+	_tutorial_coach_step_index += 1
+	_tutorial_coach_step_complete = false
+	_refresh_tutorial_coach_view()
+
+func _on_tutorial_coach_end_pressed() -> void:
+	_close_tutorial_coach_overlay()
+	_return_to_menu()
+
+func _close_tutorial_coach_overlay() -> void:
+	if _tutorial_coach_overlay != null and is_instance_valid(_tutorial_coach_overlay):
+		_tutorial_coach_overlay.queue_free()
+	_tutorial_coach_overlay = null
+	_tutorial_coach_panel = null
+	_tutorial_coach_title_label = null
+	_tutorial_coach_progress_label = null
+	_tutorial_coach_step_title_label = null
+	_tutorial_coach_body_label = null
+	_tutorial_coach_status_label = null
+	_tutorial_coach_next_button = null
+	_tutorial_coach_lesson.clear()
+	_tutorial_coach_steps.clear()
+	_tutorial_coach_step_index = 0
+	_tutorial_coach_step_complete = false
+	_tutorial_coach_mode = ""
+	_tutorial_coach_target = null
+	_tutorial_coach_baseline.clear()
+	_tutorial_coach_seen_stack = false
+
+func _capture_tutorial_coach_state() -> Dictionary:
+	var gm := _get_tutorial_coach_game_manager()
+	var player := _get_tutorial_coach_player()
+	var opponent := _get_tutorial_coach_opponent()
+	return {
+		"turn_number": gm.turn_number if gm != null else 0,
+		"player_mana": player.mana if player != null else 0,
+		"player_board_creatures": _count_player_board_creatures(player),
+		"player_board_cards": _count_player_board_cards(player),
+		"player_actions_spent": _count_player_spent_creature_actions(player),
+		"player_attacks_used": _count_player_attacks_used(player),
+		"player_unlocked_powers": _count_player_unlocked_powers(player),
+		"player_prepared_cards": _count_player_prepared_cards(player),
+		"opponent_followers": opponent.followers if opponent != null else 100,
+	}
+
+func _get_tutorial_coach_game_manager() -> GameManager:
+	if _tutorial_coach_target == null or not is_instance_valid(_tutorial_coach_target):
+		return null
+	return _tutorial_coach_target.get("game_manager") as GameManager
+
+func _get_tutorial_coach_player() -> Player:
+	if _tutorial_coach_target == null or not is_instance_valid(_tutorial_coach_target):
+		return null
+	return _tutorial_coach_target.get("player1") as Player
+
+func _get_tutorial_coach_opponent() -> Player:
+	if _tutorial_coach_target == null or not is_instance_valid(_tutorial_coach_target):
+		return null
+	return _tutorial_coach_target.get("player2") as Player
+
+func _is_tutorial_coach_step_complete(step: Dictionary) -> bool:
+	var check := String(step.get("check", "manual"))
+	match check:
+		"manual":
+			return false
+		"open_practice":
+			return _get_tutorial_coach_game_manager() != null
+		"choose_upkeep":
+			return _tutorial_check_choose_upkeep()
+		"summon_creature":
+			return _count_player_board_creatures(_get_tutorial_coach_player()) > int(_tutorial_coach_baseline.get("player_board_creatures", 0))
+		"frontline_creature":
+			return _count_player_frontline_creatures(_get_tutorial_coach_player()) > 0
+		"defensive_or_stealth":
+			return _player_has_defensive_or_stealth_creature(_get_tutorial_coach_player())
+		"spend_creature_action":
+			return _count_player_spent_creature_actions(_get_tutorial_coach_player()) > int(_tutorial_coach_baseline.get("player_actions_spent", 0))
+		"end_turn":
+			return _tutorial_check_end_turn()
+		"player_turn_after_first":
+			return _tutorial_check_player_turn_after_first()
+		"attack_used":
+			return _tutorial_check_attack_used()
+		"stack_seen_or_manual":
+			return _tutorial_coach_seen_stack
+		"prepared_card_or_manual":
+			return _count_player_prepared_cards(_get_tutorial_coach_player()) > int(_tutorial_coach_baseline.get("player_prepared_cards", 0))
+		"power_unlocked_or_manual":
+			return _tutorial_check_power_unlocked()
+		"summon_or_action":
+			return _count_player_board_cards(_get_tutorial_coach_player()) > int(_tutorial_coach_baseline.get("player_board_cards", 0)) \
+				or _count_player_spent_creature_actions(_get_tutorial_coach_player()) > int(_tutorial_coach_baseline.get("player_actions_spent", 0))
+		"attack_used_or_manual":
+			return _tutorial_check_attack_used()
+	return false
+
+func _tutorial_check_choose_upkeep() -> bool:
+	var gm := _get_tutorial_coach_game_manager()
+	if gm == null:
+		return false
+	return gm.has_resolved_turn_upkeep() and gm.turn_number >= int(_tutorial_coach_baseline.get("turn_number", 0))
+
+func _tutorial_check_end_turn() -> bool:
+	var gm := _get_tutorial_coach_game_manager()
+	var player := _get_tutorial_coach_player()
+	if gm == null or player == null:
+		return false
+	return gm.turn_number > int(_tutorial_coach_baseline.get("turn_number", 0)) or gm.current_player != player
+
+func _tutorial_check_player_turn_after_first() -> bool:
+	var gm := _get_tutorial_coach_game_manager()
+	var player := _get_tutorial_coach_player()
+	if gm == null or player == null:
+		return false
+	return gm.current_player == player and gm.turn_number > int(_tutorial_coach_baseline.get("turn_number", 0)) and gm.has_resolved_turn_upkeep()
+
+func _tutorial_check_attack_used() -> bool:
+	var opponent := _get_tutorial_coach_opponent()
+	if _count_player_attacks_used(_get_tutorial_coach_player()) > int(_tutorial_coach_baseline.get("player_attacks_used", 0)):
+		return true
+	return opponent != null and opponent.followers < int(_tutorial_coach_baseline.get("opponent_followers", 100))
+
+func _tutorial_check_power_unlocked() -> bool:
+	var player := _get_tutorial_coach_player()
+	if player == null:
+		return false
+	if _count_player_powers(player) == 0:
+		return true
+	return _count_player_unlocked_powers(player) > int(_tutorial_coach_baseline.get("player_unlocked_powers", 0))
+
+func _count_player_board_cards(player: Player) -> int:
+	if player == null:
+		return 0
+	var count := 0
+	for zone in player.frontline_zones + player.reserve_zones:
+		count += zone.cards.size()
+	return count
+
+func _count_player_board_creatures(player: Player) -> int:
+	if player == null:
+		return 0
+	var count := 0
+	for zone in player.frontline_zones + player.reserve_zones:
+		for card in zone.cards:
+			if card != null and card.card_type == Card.CardType.CREATURE:
+				count += 1
+	return count
+
+func _count_player_frontline_creatures(player: Player) -> int:
+	if player == null:
+		return 0
+	var count := 0
+	for zone in player.frontline_zones:
+		for card in zone.cards:
+			if card != null and card.card_type == Card.CardType.CREATURE:
+				count += 1
+	return count
+
+func _player_has_defensive_or_stealth_creature(player: Player) -> bool:
+	if player == null:
+		return false
+	for zone in player.frontline_zones + player.reserve_zones:
+		for card in zone.cards:
+			if card == null or card.card_type != Card.CardType.CREATURE:
+				continue
+			if card.is_stealth or card.creature_mode == Card.CreatureMode.DEFENSIVE:
+				return true
+	return false
+
+func _count_player_spent_creature_actions(player: Player) -> int:
+	if player == null:
+		return 0
+	var count := 0
+	for zone in player.frontline_zones + player.reserve_zones:
+		for card in zone.cards:
+			if card == null or card.card_type != Card.CardType.CREATURE:
+				continue
+			if card.creature_major_action_used:
+				count += 1
+			count += card.creature_minor_actions_used
+	return count
+
+func _count_player_attacks_used(player: Player) -> int:
+	if player == null:
+		return 0
+	var count := 0
+	for zone in player.frontline_zones + player.reserve_zones:
+		for card in zone.cards:
+			if card != null and card.card_type == Card.CardType.CREATURE and card.has_attacked_this_turn:
+				count += 1
+	return count
+
+func _count_player_powers(player: Player) -> int:
+	if player == null:
+		return 0
+	var count := 0
+	for zone in player.power_zones:
+		count += zone.cards.size()
+	return count
+
+func _count_player_unlocked_powers(player: Player) -> int:
+	if player == null:
+		return 0
+	var count := 0
+	for zone in player.power_zones:
+		for card in zone.cards:
+			if card != null and not card.is_face_down:
+				count += 1
+	return count
+
+func _count_player_prepared_cards(player: Player) -> int:
+	if player == null:
+		return 0
+	var count := 0
+	for zone in player.frontline_zones + player.reserve_zones:
+		for card in zone.cards:
+			if card != null and card.is_prepared:
+				count += 1
+	return count
+
 func _close_rules_overlay() -> void:
 	if _rules_overlay == null:
 		return
 	if is_instance_valid(_rules_overlay):
 		_rules_overlay.queue_free()
 	_rules_overlay = null
-	if rules_button != null:
+	if _rules_overlay_focus_button != null and is_instance_valid(_rules_overlay_focus_button):
+		_rules_overlay_focus_button.grab_focus()
+	elif rules_button != null:
 		rules_button.grab_focus()
+	_rules_overlay_focus_button = null
+	_tutorial_lesson_buttons.clear()
+	_tutorial_title_label = null
+	_tutorial_progress_label = null
+	_tutorial_step_title_label = null
+	_tutorial_step_body_label = null
+	_tutorial_try_label = null
+	_tutorial_prev_button = null
+	_tutorial_next_button = null
+	_tutorial_action_button = null
 
 func _get_rules_display_text() -> String:
-	var file := FileAccess.open(RULES_DOC_PATH, FileAccess.READ)
+	return _get_document_display_text(RULES_DOC_PATH)
+
+func _get_document_display_text(doc_path: String) -> String:
+	var file := FileAccess.open(doc_path, FileAccess.READ)
 	if file == null:
-		return "Unable to load the rules document at %s." % RULES_DOC_PATH
+		return "Unable to load the document at %s." % doc_path
 	return _format_rules_text(file.get_as_text())
 
 func _format_rules_text(markdown: String) -> String:
 	var formatted_lines: Array[String] = []
 	for raw_line in markdown.split("\n"):
-		var line := raw_line.rstrip("\r").replace("`", "")
+		var line := raw_line.rstrip("\r").replace("`", "").replace("**", "").replace("__", "")
 		if line.begins_with("# "):
 			formatted_lines.append(line.substr(2))
 			formatted_lines.append("")
 			continue
 		if line.begins_with("## "):
 			formatted_lines.append(line.substr(3))
+			formatted_lines.append("")
+			continue
+		if line.begins_with("### "):
+			formatted_lines.append(line.substr(4))
+			formatted_lines.append("")
+			continue
+		if line.begins_with("#### "):
+			formatted_lines.append(line.substr(5))
+			formatted_lines.append("")
 			continue
 		if line.begins_with("- "):
 			formatted_lines.append("- " + line.substr(2))
@@ -3182,32 +9129,56 @@ func _format_rules_text(markdown: String) -> String:
 
 func _on_card_test_pressed() -> void:
 	_match_launch_queued = false
-	_cleanup_lobby(true)
 	_show_embedded_game("CardTest")
 	show_game()
-	var card_test: CardTestGame = get_node("GameContainer/CardTest")
+	var card_test := get_node("GameContainer/CardTest") as CardTestGame
+	if card_test == null:
+		return
 	await card_test.start_game()
 
 func _on_practice_thor_pressed() -> void:
-	if not _is_practice_thor_enabled():
-		return
+	await _start_practice_match()
+
+func _start_practice_match(match_info: Dictionary = {}) -> PracticeThorGame:
+	if not _is_practice_thor_enabled() or _match_loading_overlay.visible:
+		return null
+	_begin_match_loading(true)
+	# Give the loading screen a frame before loading the practice scene and deck.
+	await get_tree().process_frame
+	await get_tree().process_frame
 	_refresh_multiplayer_deck_options()
 	var selected_practice_deck := _get_selected_multiplayer_deck()
 	_match_launch_queued = false
-	_cleanup_lobby(true)
-	var practice_game = _show_embedded_game("PracticeThor")
+	var practice_game := _show_embedded_game("PracticeThor") as PracticeThorGame
+	if practice_game == null:
+		_finish_match_loading()
+		return null
 	show_game()
-	if practice_game != null:
-		practice_game.set_player_practice_deck(selected_practice_deck)
-		await practice_game.start_game()
+	practice_game.set_player_practice_deck(selected_practice_deck)
+	var practice_info := match_info.duplicate()
+	practice_info["player_names"] = [_get_active_profile_display_name("Player"), "Thor"]
+	# Mark this as a bot match and supply rank badge data so the deck rank
+	# badges and player names appear in the match UI (CombatMockGame reads
+	# has_bot / rank_badges / bot_player_stars from _current_match_info).
+	practice_info["has_bot"] = true
+	var ranked_progress = _current_profile_summary.get("ranked_progress", {})
+	if ranked_progress is Dictionary and not ranked_progress.is_empty():
+		var local_rank_name := str(ranked_progress.get("rank_name", ""))
+		if not local_rank_name.is_empty():
+			practice_info["rank_badges"] = [{"rank_name": local_rank_name}, {}]
+	await practice_game.start_game(false, false, "127.0.0.1", 12345, practice_info)
+	return practice_game
 
 func _on_host_game_pressed() -> void:
+	print("[SMOKE-DIAG] _on_host_game_pressed entered")
 	var target_error := _validate_multiplayer_target()
 	if not target_error.is_empty():
+		print("[SMOKE-DIAG] host target_error=%s" % target_error)
 		status_label.text = target_error
 		return
 	var auth_error := _validate_auth_inputs()
 	if not auth_error.is_empty():
+		print("[SMOKE-DIAG] host auth_error=%s" % auth_error)
 		status_label.text = auth_error
 		return
 	_match_launch_queued = false
@@ -3278,14 +9249,21 @@ func _on_connect_pressed() -> void:
 		_get_configured_lobby_port(),
 		_local_profile_id,
 		_get_selected_auth_mode(),
-		_get_auth_password()
+		_get_auth_password(),
+		_get_selected_account_public_username(),
+		_selected_account_accepts_game_updates
 	)
 	if connect_err != OK:
 		status_label.text = "Could not connect to the lobby."
+		_cleanup_lobby_client()
+		_set_connected_server_version("")
+	else:
+		_begin_lobby_sign_in_watchdog()
 
 func _connect_local_host_to_dedicated_lobby() -> void:
 	var auth_error := _validate_auth_inputs()
 	if not auth_error.is_empty():
+		_clear_unauthenticated_lobby_transport()
 		status_label.text = auth_error
 		_fail_smoke_if_enabled("AUTH_ERROR:%s" % auth_error)
 		return
@@ -3327,10 +9305,14 @@ func _connect_local_host_to_dedicated_lobby() -> void:
 		_get_configured_lobby_port(),
 		_local_profile_id,
 		_get_selected_auth_mode(),
-		_get_auth_password()
+		_get_auth_password(),
+		_get_selected_account_public_username(),
+		_selected_account_accepts_game_updates
 	)
 	if connect_err != OK:
 		_queue_host_lobby_retry("Could not connect to dedicated lobby at %s." % _current_lobby_ip)
+	else:
+		_begin_lobby_sign_in_watchdog()
 
 func _on_ready_button_pressed() -> void:
 	status_label.text = "Your seek locks in automatically once your selected deck is valid."
@@ -3360,8 +9342,26 @@ func _bind_lobby_client_signals() -> void:
 		lobby_client.room_snapshot_updated.connect(_on_lobby_room_snapshot_updated)
 	if not lobby_client.room_error.is_connected(_on_lobby_room_error):
 		lobby_client.room_error.connect(_on_lobby_room_error)
+	if not lobby_client.request_next_received.is_connected(_on_request_next_received):
+		lobby_client.request_next_received.connect(_on_request_next_received)
+	if not lobby_client.request_next_result.is_connected(_on_request_next_result):
+		lobby_client.request_next_result.connect(_on_request_next_result)
+	if lobby_client.has_signal("issue_report_result") and not lobby_client.issue_report_result.is_connected(_on_bug_report_result):
+		lobby_client.issue_report_result.connect(_on_bug_report_result)
 	if not lobby_client.match_assigned.is_connected(_on_remote_match_assigned):
 		lobby_client.match_assigned.connect(_on_remote_match_assigned)
+	if lobby_client.has_signal("local_bot_match_assigned") and not lobby_client.local_bot_match_assigned.is_connected(_on_local_bot_match_assigned):
+		lobby_client.local_bot_match_assigned.connect(_on_local_bot_match_assigned)
+	if lobby_client.has_signal("local_bot_match_confirmed") and not lobby_client.local_bot_match_confirmed.is_connected(_on_local_bot_match_confirmed):
+		lobby_client.local_bot_match_confirmed.connect(_on_local_bot_match_confirmed)
+	if lobby_client.has_signal("match_spectator_approved") and not lobby_client.match_spectator_approved.is_connected(_on_match_spectator_approved):
+		lobby_client.match_spectator_approved.connect(_on_match_spectator_approved)
+	if lobby_client.has_signal("match_spectator_punch_requested") and not lobby_client.match_spectator_punch_requested.is_connected(_on_match_spectator_punch_requested):
+		lobby_client.match_spectator_punch_requested.connect(_on_match_spectator_punch_requested)
+	if not lobby_client.match_spectator_punch_relayed.is_connected(_on_match_spectator_punch_relayed):
+		lobby_client.match_spectator_punch_relayed.connect(_on_match_spectator_punch_relayed)
+	if lobby_client.has_signal("match_host_viability_requested") and not lobby_client.match_host_viability_requested.is_connected(_on_match_host_viability_requested):
+		lobby_client.match_host_viability_requested.connect(_on_match_host_viability_requested)
 	if not lobby_client.account_deck_list_received.is_connected(_on_account_deck_list_received):
 		lobby_client.account_deck_list_received.connect(_on_account_deck_list_received)
 	if not lobby_client.account_deck_saved.is_connected(_on_account_deck_saved):
@@ -3370,12 +9370,38 @@ func _bind_lobby_client_signals() -> void:
 		lobby_client.account_deck_deleted.connect(_on_account_deck_deleted)
 	if not lobby_client.profile_summary_received.is_connected(_on_profile_summary_received):
 		lobby_client.profile_summary_received.connect(_on_profile_summary_received)
+	if not lobby_client.rank_badge_result.is_connected(_on_rank_badge_result):
+		lobby_client.rank_badge_result.connect(_on_rank_badge_result)
+	if not lobby_client.bot_ladder_received.is_connected(_on_bot_ladder_received):
+		lobby_client.bot_ladder_received.connect(_on_bot_ladder_received)
+		lobby_client.bot_deck_received.connect(_on_bot_deck_received)
+		lobby_client.bot_match_history_received.connect(_on_bot_match_history_received)
+	if lobby_client.has_signal("bot_league_result_received") and not lobby_client.bot_league_result_received.is_connected(_on_bot_league_result_received):
+		lobby_client.bot_league_result_received.connect(_on_bot_league_result_received)
+	if lobby_client.has_signal("bot_league_status_received") and not lobby_client.bot_league_status_received.is_connected(_on_bot_league_status_received):
+		lobby_client.bot_league_status_received.connect(_on_bot_league_status_received)
+	if lobby_client.has_signal("league_round_robin_result_received") and not lobby_client.league_round_robin_result_received.is_connected(_on_league_round_robin_result_received):
+		lobby_client.league_round_robin_result_received.connect(_on_league_round_robin_result_received)
+	if lobby_client.has_signal("clear_league_bots_result_received") and not lobby_client.clear_league_bots_result_received.is_connected(_on_clear_league_bots_result_received):
+		lobby_client.clear_league_bots_result_received.connect(_on_clear_league_bots_result_received)
+	if lobby_client.has_signal("rebuild_league_records_result_received") and not lobby_client.rebuild_league_records_result_received.is_connected(_on_rebuild_league_records_result_received):
+		lobby_client.rebuild_league_records_result_received.connect(_on_rebuild_league_records_result_received)
+	if lobby_client.has_signal("dump_bot_deck_results_result_received") and not lobby_client.dump_bot_deck_results_result_received.is_connected(_on_dump_bot_deck_results_result_received):
+		lobby_client.dump_bot_deck_results_result_received.connect(_on_dump_bot_deck_results_result_received)
 	if lobby_client.has_signal("friends_state_received") and not lobby_client.friends_state_received.is_connected(_on_friends_state_received):
 		lobby_client.friends_state_received.connect(_on_friends_state_received)
+	if lobby_client.has_signal("account_settings_updated") and not lobby_client.account_settings_updated.is_connected(_on_account_settings_updated):
+		lobby_client.account_settings_updated.connect(_on_account_settings_updated)
+	if lobby_client.has_signal("players_online_received") and not lobby_client.players_online_received.is_connected(_on_players_online_received):
+		lobby_client.players_online_received.connect(_on_players_online_received)
 	if not lobby_client.connection_failed.is_connected(_on_lobby_connection_failed):
 		lobby_client.connection_failed.connect(_on_lobby_connection_failed)
 	if not lobby_client.disconnected_from_lobby.is_connected(_on_lobby_disconnected):
 		lobby_client.disconnected_from_lobby.connect(_on_lobby_disconnected)
+	if lobby_client.has_signal("lobby_auto_reconnect_started") and not lobby_client.lobby_auto_reconnect_started.is_connected(_on_lobby_auto_reconnect_started):
+		lobby_client.lobby_auto_reconnect_started.connect(_on_lobby_auto_reconnect_started)
+	if lobby_client.has_signal("lobby_auto_reconnect_failed") and not lobby_client.lobby_auto_reconnect_failed.is_connected(_on_lobby_auto_reconnect_failed):
+		lobby_client.lobby_auto_reconnect_failed.connect(_on_lobby_auto_reconnect_failed)
 	if not lobby_client.server_version_updated.is_connected(_on_server_version_updated):
 		lobby_client.server_version_updated.connect(_on_server_version_updated)
 	_set_connected_server_version(lobby_client.current_server_version)
@@ -3387,11 +9413,98 @@ func _on_lobby_connected() -> void:
 func _on_server_version_updated(version: String) -> void:
 	_set_connected_server_version(version)
 
+func _on_match_host_viability_requested() -> void:
+	# The lobby (re)asked whether this client can host. Re-run the probe and
+	# report the current result. Triggered after login and on demand.
+	call_deferred("_report_local_host_viability")
+
+## Run the UPnP reachability probe and tell the lobby whether this client can
+## host a player-hosted (listen-server) unranked match. No-op when not logged
+## into a remote lobby (local in-process lobby hosts never need to report).
+func _report_local_host_viability() -> void:
+	# Wait for Multiplayer before doing this optional hosting probe. Discovery
+	# and router requests are synchronous, so run them on a worker, not in the
+	# deferred callback on the UI thread.
+	if not _is_multiplayer_screen_active() and (_startup_autologin_in_progress or _pending_background_lobby_auth_completion.is_valid()):
+		return
+	if lobby_client == null or not lobby_client.is_authenticated():
+		return
+	if _is_local_lobby_host:
+		return
+	# Login and the server's viability request can arrive together.
+	if _host_viability_probe_thread != null:
+		return
+	var bind_port := _get_configured_match_port()
+	_host_viability_probe_client_id = lobby_client.get_instance_id()
+	_host_viability_probe_session_id = lobby_client.current_session_id
+	_host_viability_probe_thread = Thread.new()
+	# Only pass the port to the static probe; it never accesses scene nodes.
+	var start_error := _host_viability_probe_thread.start(HostReachabilityProbeScript.probe.bind(bind_port))
+	if start_error != OK:
+		_host_viability_probe_thread = null
+		lobby_client.report_host_viability(false, "", 0, bind_port)
+
+func _poll_host_viability_probe() -> void:
+	if _host_viability_probe_thread == null or _host_viability_probe_thread.is_alive():
+		return
+	# Join only after completion so this never waits for router discovery.
+	var result: Dictionary = _host_viability_probe_thread.wait_to_finish()
+	_host_viability_probe_thread = null
+	if lobby_client == null or not lobby_client.is_authenticated():
+		return
+	if lobby_client.get_instance_id() != _host_viability_probe_client_id \
+			or lobby_client.current_session_id != _host_viability_probe_session_id:
+		# A different login needs its own report; discard the old session's result.
+		_report_local_host_viability()
+		return
+	if _is_local_lobby_host:
+		return
+	lobby_client.report_host_viability(
+		bool(result.get("viable", false)),
+		str(result.get("reachable_ip", "")),
+		int(result.get("reachable_port", 0)),
+		int(result.get("bind_port", 0))
+	)
+
+## Remove the UPnP port mapping created for a player-hosted match, if any.
+## Best-effort: failures are ignored. Called when leaving a match back to menu.
+func _release_player_host_port_mapping() -> void:
+	if _player_host_external_port <= 0:
+		return
+	var port_to_release := _player_host_external_port
+	_player_host_external_port = 0
+	HostReachabilityProbeScript.remove_mapping(port_to_release)
+
 func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, player_name: String) -> void:
+	_update_quarantined_bots_button()
+	if _startup_autologin_in_progress and not _is_multiplayer_screen_active() and _smoke_config.is_empty():
+		_cancel_lobby_sign_in_watchdog()
+		_startup_autologin_in_progress = false
+		_background_lobby_auth_error = ""
+		_lobby_session_id = session_id
+		_lobby_reconnect_token = reconnect_token
+		_pending_background_lobby_auth_completion = Callable(self, "_on_lobby_login_succeeded").bind(session_id, reconnect_token, player_name)
+		# The main-menu deck picker needs the authenticated profile and deck list
+		# now; only the remaining lobby/rejoin handling waits for Multiplayer.
+		_capture_logged_in_profile(player_name)
+		_maybe_request_account_decks()
+		_refresh_account_identity_label()
+		_refresh_auth_controls()
+		_update_host_bot_match_button()
+		player_name_line_edit.text = _get_effective_identity_name(player_name)
+		return
+	_background_lobby_auth_error = ""
+	_lobby_auto_reconnect_was_active = false
 	_write_smoke_trace("lobby_login_succeeded session=%s player=%s host=%s" % [session_id, player_name, str(_is_local_lobby_host)])
 	if _retry_account_switch_if_identity_mismatch(player_name):
 		return
+	_cancel_lobby_sign_in_watchdog()
+	var finish_startup_loading_after_auth := _startup_autologin_in_progress
+	_startup_autologin_in_progress = false
+	_lobby_failure_update_check_requested = false
+	_sync_friend_observer_card_visibility()
 	_set_connected_server_version(lobby_client.current_server_version if lobby_client != null else "")
+	_update_host_bot_match_button()
 	_lobby_session_id = session_id
 	_lobby_reconnect_token = reconnect_token
 	_seek_list_request_pending = false
@@ -3403,19 +9516,52 @@ func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, play
 	_refresh_profile_summary_label()
 	_maybe_request_account_decks()
 	_maybe_request_profile_summary()
+	_request_bot_ladder()
 	_request_friends_state()
+	_request_players_online()
+	# Proactively report whether this client can host a player-hosted match so
+	# unranked seeks can use listen-server topology when viable. Best-effort and
+	# deferred so it never blocks login or the lobby UI.
+	call_deferred("_report_local_host_viability")
 	var resolved_identity_name := _get_effective_identity_name(player_name)
 	player_name_line_edit.text = resolved_identity_name
 	_refresh_open_deck_builder_saved_decks()
 	_update_resume_controls()
+	if finish_startup_loading_after_auth:
+		_set_startup_loading_status("Signed in as %s." % resolved_identity_name)
+		_finish_startup_loading()
+	# A lobby recovery during a match must not offer or launch the same match again.
+	if _match_launch_queued:
+		return
 	var active_match_info: Dictionary = {}
+	var restored_room: Dictionary = {}
 	if lobby_client != null:
 		active_match_info = lobby_client.current_active_match_info.duplicate(true)
+		restored_room = lobby_client.current_room_snapshot.duplicate(true)
+	if _maybe_leave_pending_room(restored_room, active_match_info):
+		return
 	if not active_match_info.is_empty():
 		if _has_pending_new_seek_action():
-			_abandon_current_lobby_match()
-			_clear_saved_match_resume()
+			_clear_pending_new_seek_actions(true)
+			_save_active_match_resume(active_match_info)
+			status_label.text = "Your active match is still running. Rejoining it instead of opening another seek."
+			call_deferred("_resume_active_match_from_lobby", active_match_info)
+			return
+		elif _should_wait_for_rematch_close(active_match_info):
+			if not restored_room.is_empty():
+				_apply_room_snapshot(restored_room)
+			status_label.text = "Waiting for the finished match to close so the rematch can start..."
+			return
+		elif _has_declined_active_match_rejoin(active_match_info):
+			_save_active_match_resume(active_match_info)
+			status_label.text = "Signed in as %s. Your live match is available to rejoin." % resolved_identity_name
+			return
 		elif not _should_suppress_active_match_auto_resume(active_match_info):
+			if _offer_active_match_rejoin(
+				active_match_info,
+				"Signed in as %s. Your active match is ready to rejoin." % resolved_identity_name
+			):
+				return
 			_save_active_match_resume(active_match_info)
 			status_label.text = "Signed in as %s. Rejoining your active match..." % resolved_identity_name
 			call_deferred("_resume_active_match_from_lobby", active_match_info)
@@ -3425,8 +9571,15 @@ func _on_lobby_login_succeeded(session_id: String, reconnect_token: String, play
 			_clear_saved_match_resume()
 	if not _get_saved_active_match().is_empty():
 		_clear_saved_match_resume()
+	if not restored_room.is_empty():
+		_clear_pending_new_seek_actions()
+		_apply_room_snapshot(restored_room)
+		return
 	status_label.text = "Signed in as %s." % resolved_identity_name
 	_run_pending_multiplayer_action()
+	# Signing into multiplayer hosts a single bot match by default, recurring
+	# when it finishes, unless the player has no space or is joining/playing.
+	_maybe_start_default_bot_hosting()
 
 func _on_lobby_reconnect_succeeded(
 	session_id: String,
@@ -3435,9 +9588,32 @@ func _on_lobby_reconnect_succeeded(
 	room: Dictionary,
 	active_match_info: Dictionary
 ) -> void:
+	_update_quarantined_bots_button()
+	if _startup_autologin_in_progress and not _is_multiplayer_screen_active() and _smoke_config.is_empty():
+		_cancel_lobby_sign_in_watchdog()
+		_startup_autologin_in_progress = false
+		_background_lobby_auth_error = ""
+		_lobby_session_id = session_id
+		_lobby_reconnect_token = reconnect_token
+		_pending_background_lobby_auth_completion = Callable(self, "_on_lobby_reconnect_succeeded").bind(session_id, reconnect_token, player_name, room.duplicate(true), active_match_info.duplicate(true))
+		# Restore decks on the main menu too, without waiting for Multiplayer.
+		_capture_logged_in_profile(player_name)
+		_maybe_request_account_decks()
+		_refresh_account_identity_label()
+		_refresh_auth_controls()
+		player_name_line_edit.text = _get_effective_identity_name(player_name)
+		return
 	_write_smoke_trace("lobby_reconnect_succeeded session=%s player=%s" % [session_id, player_name])
+	_background_lobby_auth_error = ""
+	_lobby_auto_reconnect_was_active = false
 	if _retry_account_switch_if_identity_mismatch(player_name):
 		return
+	_update_host_bot_match_button()
+	_cancel_lobby_sign_in_watchdog()
+	var finish_startup_loading_after_auth := _startup_autologin_in_progress
+	_startup_autologin_in_progress = false
+	_lobby_failure_update_check_requested = false
+	_sync_friend_observer_card_visibility()
 	_set_connected_server_version(lobby_client.current_server_version if lobby_client != null else "")
 	_lobby_session_id = session_id
 	_lobby_reconnect_token = reconnect_token
@@ -3450,16 +9626,47 @@ func _on_lobby_reconnect_succeeded(
 	_refresh_profile_summary_label()
 	_maybe_request_account_decks()
 	_maybe_request_profile_summary()
+	_request_bot_ladder()
 	_request_friends_state()
+	_request_players_online()
+	# Proactively report whether this client can host a player-hosted match so
+	# unranked seeks can use listen-server topology when viable. Best-effort and
+	# deferred so it never blocks login or the lobby UI.
+	call_deferred("_report_local_host_viability")
 	var resolved_identity_name := _get_effective_identity_name(player_name)
 	player_name_line_edit.text = resolved_identity_name
 	_refresh_open_deck_builder_saved_decks()
 	_update_resume_controls()
+	if finish_startup_loading_after_auth:
+		_set_startup_loading_status("Lobby session restored.")
+		_finish_startup_loading()
+	# A lobby recovery during a match must not offer or launch the same match again.
+	if _match_launch_queued:
+		return
+	if _maybe_leave_pending_room(room, active_match_info):
+		return
 	if not active_match_info.is_empty():
 		if _has_pending_new_seek_action():
-			_abandon_current_lobby_match()
-			_clear_saved_match_resume()
+			_clear_pending_new_seek_actions(true)
+			_save_active_match_resume(active_match_info)
+			status_label.text = "Your active match is still running. Rejoining it instead of opening another seek."
+			call_deferred("_resume_active_match_from_lobby", active_match_info)
+			return
+		elif _should_wait_for_rematch_close(active_match_info):
+			if not room.is_empty():
+				_apply_room_snapshot(room)
+			status_label.text = "Waiting for the finished match to close so the rematch can start..."
+			return
+		elif _has_declined_active_match_rejoin(active_match_info):
+			_save_active_match_resume(active_match_info)
+			status_label.text = "Lobby session restored. Your live match is available to rejoin."
+			return
 		elif not _should_suppress_active_match_auto_resume(active_match_info):
+			if _offer_active_match_rejoin(
+				active_match_info,
+				"Lobby session restored. Your active match is ready to rejoin."
+			):
+				return
 			_save_active_match_resume(active_match_info)
 			status_label.text = "Lobby session restored. Rejoining your active match..."
 			call_deferred("_resume_active_match_from_lobby", active_match_info)
@@ -3478,12 +9685,13 @@ func _on_lobby_reconnect_succeeded(
 		status_label.text = "Lobby session restored."
 		_run_pending_multiplayer_action()
 		return
+	_clear_pending_new_seek_actions()
 	_apply_room_snapshot(room)
-	status_label.text = "Lobby session restored."
 
 func _on_lobby_room_list_updated(rooms: Array) -> void:
 	_seek_list_request_pending = false
 	_open_seek_rooms.clear()
+	var other_rooms: Array[Dictionary] = []
 	var current_room_id := str(_current_room_snapshot.get("room_id", "")).strip_edges()
 	var current_room_still_visible := false
 	for room in rooms:
@@ -3495,13 +9703,26 @@ func _on_lobby_room_list_updated(rooms: Array) -> void:
 		var room_status := str(entry.get("status", "")).strip_edges().to_lower()
 		if room_status != LobbyRoomScript.STATUS_IN_MATCH and int(entry.get("member_count", 0)) >= int(entry.get("max_players", 2)):
 			continue
-		_open_seek_rooms.append(entry)
+		if room_status != LobbyRoomScript.STATUS_IN_MATCH and bool(entry.get("host_is_bot", false)):
+			_open_seek_rooms.append(entry)
+		else:
+			other_rooms.append(entry)
+	_open_seek_rooms.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return _get_room_is_ranked(a) and not _get_room_is_ranked(b)
+	)
+	_open_seek_rooms.append_array(other_rooms)
+	var retried_seek_switch := false
 	if not current_room_id.is_empty() and not current_room_still_visible:
 		_clear_current_seek_state()
+		retried_seek_switch = _retry_pending_seek_switch_after_room_clear()
 	_refresh_seek_list()
-	if _current_room_snapshot.is_empty():
+	if lobby_client != null and lobby_client.is_authenticated():
+		lobby_client.request_bot_match_history()
+	if _current_room_snapshot.is_empty() and not retried_seek_switch:
 		if _open_seek_rooms.is_empty():
 			status_label.text = "No open seeks or live matches right now. Create one to start a match."
+		elif _open_seek_rooms.any(func(room: Dictionary) -> bool: return bool(room.get("viewer_can_rejoin", false))):
+			status_label.text = "Your live match is available to rejoin."
 		else:
 			status_label.text = "Click a seek to join, or click a Live room to observe."
 	_refresh_multiplayer_action_state()
@@ -3516,12 +9737,19 @@ func _apply_room_snapshot(snapshot: Dictionary) -> void:
 	_current_room_snapshot = snapshot.duplicate(true)
 	var room_id := str(snapshot.get("room_id", "")).strip_edges()
 	if room_id.is_empty():
+		_clear_current_seek_state()
+		_retry_pending_seek_switch_after_room_clear()
 		return
+	if room_id.to_upper() == _pending_seek_switch_join_room_id:
+		_pending_seek_switch_join_room_id = ""
 	var room_status := str(snapshot.get("status", "")).strip_edges().to_lower()
 	if room_status == "in_match" and not _match_launch_queued and lobby_client != null:
 		var active_match_info: Dictionary = lobby_client.current_active_match_info.duplicate(true)
 		if not active_match_info.is_empty() and str(active_match_info.get("room_id", "")).strip_edges() == room_id:
-			if room_id == _pending_rematch_room_id and _should_suppress_active_match_auto_resume(active_match_info):
+			if _is_active_match_rejoin_offer_pending(active_match_info) or _has_declined_active_match_rejoin(active_match_info):
+				_save_active_match_resume(active_match_info)
+				return
+			if room_id == _pending_rematch_room_id:
 				status_label.text = "Waiting for the finished match to close so the rematch can start..."
 				return
 			if _has_pending_new_seek_action() or _should_suppress_active_match_auto_resume(active_match_info):
@@ -3541,10 +9769,13 @@ func _apply_room_snapshot(snapshot: Dictionary) -> void:
 
 	var member_lines: Array[String] = []
 	var local_member: Dictionary = {}
+	var has_disconnected_member := false
 	for member in snapshot.get("members", []):
 		var player_name := str(member.get("player_name", "Guest"))
 		var ready_text := "ready" if bool(member.get("is_ready", false)) else "waiting"
 		var connect_text := "online" if bool(member.get("is_connected", false)) else "offline"
+		if not bool(member.get("is_connected", false)):
+			has_disconnected_member = true
 		var host_text := " (host)" if bool(member.get("is_host", false)) else ""
 		var deck_text := "deck ok" if bool(member.get("has_valid_deck", false)) else "deck missing"
 		var selected_deck_name := str(member.get("selected_deck_name", "")).strip_edges()
@@ -3556,15 +9787,21 @@ func _apply_room_snapshot(snapshot: Dictionary) -> void:
 
 	var guidance := "Waiting for another player to join your seek."
 	if int(snapshot.get("member_count", 0)) >= int(snapshot.get("max_players", 2)):
-		guidance = "Both players are here. Launching automatically once both decks are valid."
+		if has_disconnected_member:
+			guidance = "Waiting for the disconnected player to return before launching."
+		else:
+			guidance = "Both players are here. Launching automatically once both decks are valid."
 	var local_deck_message := ""
 	var deck_error := str(local_member.get("deck_error", "")).strip_edges()
 	if not deck_error.is_empty():
+		if not _match_launch_queued:
+			_finish_match_loading()
 		local_deck_message = deck_error
 	elif not str(local_member.get("selected_deck_name", "")).strip_edges().is_empty():
 		local_deck_message = "Your deck: %s" % str(local_member.get("selected_deck_name", ""))
-	status_label.text = "Seek %s\n%s\n%s%s" % [
+	status_label.text = "Seek %s (%s)\n%s\n%s%s" % [
 		room_id,
+		_format_seek_format_label(snapshot),
 		"\n".join(member_lines),
 		guidance,
 		"\n%s" % local_deck_message if not local_deck_message.is_empty() else ""
@@ -3619,23 +9856,697 @@ func _on_local_match_assigned(match_info: Dictionary) -> void:
 	_write_smoke_result("MATCH_ASSIGNED_HOST:%s" % str(match_info))
 	call_deferred("_launch_host_match_after_lobby_handoff", match_info)
 
-func _on_remote_match_assigned(match_info: Dictionary) -> void:
+func _on_local_bot_match_assigned(match_info: Dictionary) -> void:
 	if _match_launch_queued:
 		return
+	_manual_rejoin_room_id = ""
+	_pending_rematch_room_id = ""
+	_pending_rematch_ready_submitted = false
+	_match_launch_queued = true
+	_write_smoke_trace("local_bot_match_assigned match=%s" % str(match_info.get("match_id", "")))
+	status_label.text = "Match found. Starting the bot challenge..."
+	call_deferred("_launch_local_bot_match", match_info)
+
+## Server-bot challenge matches run entirely in this client with in-process
+## authority (port 0 host); the lobby only records the reported result.
+func _launch_local_bot_match(match_info: Dictionary) -> void:
+	var decks: Dictionary = match_info.get("decks_by_session", {}) if match_info.get("decks_by_session", {}) is Dictionary else {}
+	var identities: Dictionary = match_info.get("identity_by_session", {}) if match_info.get("identity_by_session", {}) is Dictionary else {}
+	var session_ids: Array[String] = []
+	for session_id in match_info.get("player_session_ids", []):
+		session_ids.append(str(session_id))
+	var match_session = MatchSessionScript.new(
+		str(match_info.get("match_id", "")),
+		str(match_info.get("room_id", "")),
+		"127.0.0.1",
+		0,
+		session_ids,
+		decks,
+		identities
+	)
+	match_session.is_ranked = bool(match_info.get("is_ranked", false))
+	match_session.configure_series_format(int(match_info.get("best_of", 1)))
+	match_session.mark_active()
+	var local_match_info := match_info.duplicate(true)
+	local_match_info["player_index"] = 0
+	local_match_info["has_bot"] = true
+	local_match_info["local_bot_match"] = true
+	local_match_info["spectate_listen"] = true
+	await _launch_assigned_match(true, "127.0.0.1", 0, local_match_info, match_session)
+	var mock_game = get_node_or_null("GameContainer/MockGame")
+	if mock_game != null and not mock_game.local_ranked_match_ended.is_connected(_on_local_bot_match_game_ended):
+		mock_game.local_ranked_match_ended.connect(_on_local_bot_match_game_ended)
+	_flush_pending_spectator_approvals()
+	_begin_local_bot_spectate_advertising(local_match_info, mock_game)
+
+func _on_local_bot_match_game_ended(result: Dictionary) -> void:
+	if lobby_client == null or not lobby_client.is_authenticated():
+		return
+	lobby_client.submit_local_bot_match_result(result)
+
+func _on_local_bot_match_confirmed(success: bool, ranked_result: Dictionary, _message: String) -> void:
+	var mock_game = get_node_or_null("GameContainer/MockGame")
+	if success and mock_game != null and mock_game.has_method("apply_local_ranked_result"):
+		mock_game.apply_local_ranked_result(ranked_result)
+	_maybe_request_profile_summary()
+
+func _on_match_spectator_approved(match_id: String, observer_session_id: String, observer_match_token: String, visible_player_indices: Array) -> void:
+	_spectate_breadcrumb("host", "approval_received", {
+		"observer": observer_session_id, "match": match_id,
+		"token": "set" if not observer_match_token.is_empty() else "missing",
+	})
+	_ensure_local_bot_spectate_punch_submission(match_id)
+	if _try_apply_match_spectator(match_id, observer_session_id, observer_match_token, visible_player_indices):
+		return
+	# The match may still be launching; hold the approval until it is up.
+	var approvals: Array = _pending_spectator_approvals.get(match_id, [])
+	if not (approvals is Array):
+		approvals = []
+	approvals.append({
+		"match_id": match_id,
+		"observer_session_id": observer_session_id,
+		"observer_match_token": observer_match_token,
+		"visible_player_indices": visible_player_indices,
+	})
+	_pending_spectator_approvals[match_id] = approvals
+
+## Register a lobby-approved spectator on this client-hosted match and
+## acknowledge it so the lobby can safely point the spectator at us.
+func _try_apply_match_spectator(match_id: String, observer_session_id: String, observer_match_token: String, visible_player_indices: Array) -> bool:
+	var mock_game = get_node_or_null("GameContainer/MockGame")
+	if mock_game == null or not mock_game.has_method("apply_match_spectator"):
+		return false
+	if not mock_game.apply_match_spectator(match_id, observer_session_id, observer_match_token, visible_player_indices):
+		return false
+	if lobby_client != null and lobby_client.is_authenticated():
+		if _local_bot_spectate_punch.get("match_id") == match_id:
+			_local_bot_spectate_punch["next_bounce_msec"] = 0
+			_poll_local_bot_spectate_punch()
+		_spectate_breadcrumb("host", "approval_acked", {"observer": observer_session_id, "match": match_id})
+		lobby_client.ack_match_spectator(match_id, observer_session_id)
+	return true
+
+## Re-apply spectator approvals that arrived while the client-hosted match was
+## still launching.
+func _flush_pending_spectator_approvals() -> void:
+	if _pending_spectator_approvals.is_empty():
+		return
+	var pending: Dictionary = _pending_spectator_approvals.duplicate(true)
+	_pending_spectator_approvals.clear()
+	for match_id_variant in pending.keys():
+		var match_id := str(match_id_variant)
+		for approval in pending[match_id_variant]:
+			if not (approval is Dictionary):
+				continue
+			var approval_dict: Dictionary = approval
+			_try_apply_match_spectator(
+				match_id,
+				str(approval_dict.get("observer_session_id", "")),
+				str(approval_dict.get("observer_match_token", "")),
+				approval_dict.get("visible_player_indices", [])
+			)
+
+## If the client-hosted bot challenge bound a spectate port, probe UPnP
+## reachability on a worker and advertise the endpoint to the lobby so other
+## players can watch the match live from the seek list.
+func _begin_local_bot_spectate_advertising(local_match_info: Dictionary, mock_game) -> void:
+	if lobby_client == null or not lobby_client.is_authenticated():
+		return
+	var match_id := str(local_match_info.get("match_id", "")).strip_edges()
+	if match_id.is_empty() or mock_game == null or mock_game.network_manager == null:
+		return
+	var bound_port := int(mock_game.network_manager.get("last_bound_port"))
+	if bound_port <= 0:
+		# Binding failed; the match stays private (no spectate offer).
+		return
+	_spectate_breadcrumb("host", "spectate_advertising_started", {
+		"match": match_id, "port": bound_port, "local_lobby": str(_is_local_lobby_host),
+	})
+	if _is_local_lobby_host:
+		# This client spawned the lobby, so spectators sit on this machine or
+		# LAN. Advertise the LAN address directly: no UPnP mapping is needed,
+		# and the router's external IP would be unreachable for them anyway.
+		var lan_ip := _get_lan_spectate_ip()
+		lobby_client.submit_local_bot_match_spectate_info(match_id, true, lan_ip, bound_port, false, lan_ip, bound_port)
+		_spectate_breadcrumb("host", "endpoint_advertised", {
+			"match": match_id, "public": "%s:%d" % [lan_ip, bound_port],
+			"lan": "%s:%d" % [lan_ip, bound_port], "relay": "false",
+		})
+		return
+	# Public lobby: keep a reflector mapping alive even when UPnP succeeds, so
+	# the relay fallback is always available if the direct endpoint fails.
+	if lobby_client.current_punch_reflector_port > 0 and not _get_punch_reflector_host().is_empty():
+		_start_local_bot_spectate_punch(match_id, true)
+	if _local_bot_spectate_probe_thread != null:
+		return
+	_local_bot_spectate_match_id = match_id
+	_local_bot_spectate_bind_port = bound_port
+	_local_bot_spectate_client_id = lobby_client.get_instance_id()
+	_local_bot_spectate_session_id = lobby_client.current_session_id
+	_local_bot_spectate_probe_thread = Thread.new()
+	# Only pass the port to the static probe; it never accesses scene nodes.
+	var start_error := _local_bot_spectate_probe_thread.start(HostReachabilityProbeScript.probe.bind(bound_port))
+	if start_error != OK:
+		_local_bot_spectate_probe_thread = null
+		_start_local_bot_spectate_punch(match_id)
+		return
+
+## Best local address for same-machine/LAN spectators of a client-hosted bot
+## challenge on a locally hosted lobby. Prefers a private IPv4 (the address
+## other machines on this network use to reach us), then any non-loopback
+## IPv4, then loopback so a second window on this computer can still watch.
+func _get_lan_spectate_ip() -> String:
+	var any_ipv4 := ""
+	for address_variant in IP.get_local_addresses():
+		var address := str(address_variant).strip_edges()
+		if address.is_empty() or address.contains(":") or address.begins_with("127."):
+			continue
+		if address.begins_with("192.168.") or address.begins_with("10."):
+			return address
+		var parts := address.split(".")
+		if parts.size() == 4 and parts[0] == "172" and int(parts[1]) >= 16 and int(parts[1]) <= 31:
+			return address
+		if any_ipv4.is_empty():
+			any_ipv4 = address
+	return any_ipv4 if not any_ipv4.is_empty() else "127.0.0.1"
+
+## Private-only address shared with the lobby for same-LAN spectator shortcuts.
+## It is never used as the advertised public endpoint.
+func _get_spectate_lan_ip() -> String:
+	for address_variant in IP.get_local_addresses():
+		var address := PunchReflectorScript.normalize_ip(str(address_variant))
+		if PunchReflectorScript.is_private_ipv4(address) and not PunchReflectorScript.is_loopback_ipv4(address):
+			return address
+	return "127.0.0.1"
+
+## True only when the lobby itself is local/private. A public lobby must ignore
+## a host's RFC1918 spectate hint: 192.168.1.x is reused in millions of homes, so
+## matching our own subnet is not proof that the host is reachable privately.
+func _lobby_connection_is_private() -> bool:
+	if _is_local_lobby_host:
+		return true
+	var host := _get_punch_reflector_host().strip_edges().to_lower()
+	if host.is_empty():
+		return false
+	if host == "localhost":
+		return true
+	var ip := PunchReflectorScript.normalize_ip(host)
+	return PunchReflectorScript.is_loopback_ipv4(ip) or PunchReflectorScript.is_private_ipv4(ip)
+
+## Prefer a host's private endpoint only for a local/private lobby. The port must
+## come from the host's real ENet listener: UPnP's external port need not match
+## it. Public lobbies use the advertised endpoint and the punch/relay rendezvous,
+## which is the path that matters across the internet.
+func _resolve_spectate_server_endpoint(match_info: Dictionary, fallback_ip: String, fallback_port: int) -> Dictionary:
+	var result := {
+		"ip": fallback_ip,
+		"port": fallback_port,
+		"private_selected": false,
+	}
+	if not bool(match_info.get("observer_mode", false)):
+		return result
+	if not _lobby_connection_is_private():
+		return result
+	var candidate := PunchReflectorScript.normalize_ip(str(match_info.get("spectate_lan_ip", "")))
+	var candidate_port := int(match_info.get("spectate_lan_port", 0))
+	if candidate.is_empty() or candidate_port <= 0 or candidate_port > 65535:
+		return result
+	if PunchReflectorScript.is_loopback_ipv4(candidate):
+		result["ip"] = "127.0.0.1"
+		result["port"] = candidate_port
+		result["private_selected"] = true
+		return result
+	if not PunchReflectorScript.is_private_ipv4(candidate):
+		return result
+	for address_variant in IP.get_local_addresses():
+		if PunchReflectorScript.is_same_private_subnet(str(address_variant), candidate):
+			result["ip"] = candidate
+			result["port"] = candidate_port
+			result["private_selected"] = true
+			return result
+	return result
+
+func _poll_local_bot_spectate_probe() -> void:
+	if _local_bot_spectate_probe_thread != null and not _local_bot_spectate_probe_thread.is_alive():
+		var result: Dictionary = _local_bot_spectate_probe_thread.wait_to_finish()
+		_local_bot_spectate_probe_thread = null
+		var probe_match_id := _local_bot_spectate_match_id
+		var bound_port := _local_bot_spectate_bind_port
+		_local_bot_spectate_match_id = ""
+		_local_bot_spectate_bind_port = 0
+		if lobby_client != null and lobby_client.is_authenticated() \
+				and lobby_client.get_instance_id() == _local_bot_spectate_client_id \
+				and lobby_client.current_session_id == _local_bot_spectate_session_id:
+			var viable := bool(result.get("viable", false))
+			var reachable_ip := str(result.get("reachable_ip", ""))
+			var reachable_port := int(result.get("reachable_port", 0))
+			if viable and reachable_port > 0:
+				_local_bot_spectate_external_port = reachable_port
+				var lan_ip := _get_spectate_lan_ip()
+				lobby_client.submit_local_bot_match_spectate_info(
+					probe_match_id, true, reachable_ip, reachable_port, false, lan_ip, bound_port, true)
+				_spectate_breadcrumb("host", "endpoint_advertised", {
+					"match": probe_match_id, "public": "%s:%d" % [reachable_ip, reachable_port],
+					"lan": "%s:%d" % [lan_ip, bound_port], "relay": "true",
+				})
+			else:
+				# No UPnP mapping: advertise the reflector-learned endpoint and
+				# keep relaying. Upgrade a bounce-only loop if it is already alive.
+				_start_local_bot_spectate_punch(probe_match_id)
+	_poll_local_bot_spectate_punch()
+	_poll_match_punch_watch()
+
+## A spectator is trying to watch this challenge: if spectate advertising never
+## got an endpoint because the punch fallback hadn't started yet (no room list
+## received before launch), give punch one chance now that the approval carried
+## the lobby's reflector port.
+func _ensure_local_bot_spectate_punch_submission(match_id: String) -> void:
+	if lobby_client == null or not lobby_client.is_authenticated():
+		return
+	if _is_local_lobby_host:
+		return
+	if int(lobby_client.current_punch_reflector_port) <= 0 or _current_lobby_ip.strip_edges().is_empty():
+		return
+	# The UPnP probe can still be running when an approval arrives. Start punch
+	# fallback now if the reflector is known; if UPnP wins later, its endpoint
+	# report supersedes this one.
+	if not _local_bot_spectate_punch.is_empty():
+		return
+	var mock_game := get_node_or_null("GameContainer/MockGame")
+	if mock_game == null or mock_game.network_manager == null:
+		return
+	if int(mock_game.network_manager.get("last_bound_port")) <= 0:
+		return
+	_start_local_bot_spectate_punch(match_id, true)
+
+## Keep a reflector mapping alive from the ENet match server's own socket.
+## In bounce-only mode this arms the relay fallback without replacing a
+## successful UPnP endpoint. In advertising mode it also submits the
+## reflector-learned public endpoint after a failed UPnP probe.
+func _start_local_bot_spectate_punch(match_id: String, bounce_only: bool = false) -> void:
+	if match_id.is_empty():
+		return
+	if not _local_bot_spectate_punch.is_empty():
+		if str(_local_bot_spectate_punch.get("match_id", "")) != match_id:
+			_local_bot_spectate_punch = {}
+		else:
+			var already_bounce_only := bool(_local_bot_spectate_punch.get("bounce_only", false))
+			if already_bounce_only and not bounce_only:
+				_local_bot_spectate_punch["bounce_only"] = false
+				_local_bot_spectate_punch["submitted"] = false
+				_local_bot_spectate_punch["submit_attempts"] = 0
+				_local_bot_spectate_punch["next_submit_msec"] = 0
+				_spectate_breadcrumb("host", "punch_advertising_upgraded", {"match": match_id})
+			return
+	_spectate_breadcrumb("host", "punch_advertising_started", {
+		"match": match_id,
+		"reflector_port": lobby_client.current_punch_reflector_port if lobby_client != null else 0,
+		"bounce_only": str(bounce_only),
+	})
+	_local_bot_spectate_punch = {
+		"match_id": match_id,
+		"client_id": lobby_client.get_instance_id() if lobby_client != null else 0,
+		"session_id": lobby_client.current_session_id if lobby_client != null else "",
+		"next_bounce_msec": 0,
+		"next_submit_msec": Time.get_ticks_msec() + 600,
+		"submit_attempts": 0,
+		"submitted": bounce_only,
+		"bounce_only": bounce_only,
+		"traced_bounce": false,
+		"traced_submit": false,
+	}
+
+func _poll_local_bot_spectate_punch() -> void:
+	if _local_bot_spectate_punch.is_empty():
+		return
+	if lobby_client == null or lobby_client.get_instance_id() != int(_local_bot_spectate_punch.get("client_id", 0)):
+		_local_bot_spectate_punch = {}
+		return
+	if not lobby_client.is_authenticated():
+		return
+	if lobby_client.current_session_id != str(_local_bot_spectate_punch.get("session_id", "")):
+		_local_bot_spectate_punch = {}
+		return
+	var reflector_port := int(lobby_client.current_punch_reflector_port)
+	var reflector_host := _get_punch_reflector_host()
+	if reflector_port <= 0 or reflector_host.is_empty():
+		return
+	var mock_game := get_node_or_null("GameContainer/MockGame")
+	if mock_game == null or mock_game.network_manager == null:
+		return
+	var match_id := str(_local_bot_spectate_punch.get("match_id", ""))
+	var now_msec := Time.get_ticks_msec()
+	var submitted := bool(_local_bot_spectate_punch.get("submitted", false))
+	var bounce_only := bool(_local_bot_spectate_punch.get("bounce_only", false))
+	if now_msec >= int(_local_bot_spectate_punch.get("next_bounce_msec", 0)):
+		_local_bot_spectate_punch["next_bounce_msec"] = now_msec + (
+			SPECTATE_PUNCH_KEEPALIVE_INTERVAL_MSEC if submitted else SPECTATE_PUNCH_BOUNCE_INTERVAL_MSEC
+		)
+		mock_game.network_manager.send_punch_bounce(reflector_host, reflector_port, match_id, PunchReflectorScript.BOUNCE_KIND_HOST)
+		if not bool(_local_bot_spectate_punch.get("traced_bounce", false)):
+			_local_bot_spectate_punch["traced_bounce"] = true
+			_spectate_breadcrumb("host", "bounce_sent", {
+				"match": match_id, "reflector": "%s:%d" % [reflector_host, reflector_port],
+			})
+	if bounce_only:
+		return
+	# Keep re-advertising at the keepalive cadence. The server only merges a
+	# via-punch report while a fresh host bounce is on record, so six quick
+	# attempts can all land before the first UDP bounce arrives.
+	var was_submitted := submitted
+	if was_submitted and now_msec < int(_local_bot_spectate_punch.get("next_submit_msec", 0)):
+		return
+	if now_msec >= int(_local_bot_spectate_punch.get("next_submit_msec", 0)):
+		_local_bot_spectate_punch["next_submit_msec"] = now_msec + (
+			SPECTATE_PUNCH_KEEPALIVE_INTERVAL_MSEC if was_submitted else SPECTATE_PUNCH_SUBMIT_INTERVAL_MSEC
+		)
+		var attempts := int(_local_bot_spectate_punch.get("submit_attempts", 0)) + 1
+		_local_bot_spectate_punch["submit_attempts"] = attempts
+		_local_bot_spectate_punch["submitted"] = was_submitted or attempts >= SPECTATE_PUNCH_SUBMIT_ATTEMPTS
+		var lan_ip := _get_spectate_lan_ip()
+		var lan_port := int(mock_game.network_manager.get("last_bound_port"))
+		lobby_client.submit_local_bot_match_spectate_info(match_id, true, "", 0, true, lan_ip, lan_port, true)
+		if not bool(_local_bot_spectate_punch.get("traced_submit", false)):
+			_local_bot_spectate_punch["traced_submit"] = true
+			_spectate_breadcrumb("host", "endpoint_submitted_via_punch", {
+				"match": match_id, "attempt": attempts,
+				"lan": "%s:%d" % [lan_ip, lan_port], "relay": "true",
+			})
+
+func _get_punch_reflector_host() -> String:
+	var address := _current_lobby_ip.strip_edges()
+	if not (address.begins_with("ws://") or address.begins_with("wss://")):
+		return address
+	var authority := address.get_slice("://", 1).get_slice("/", 0)
+	if authority.begins_with("["):
+		return authority.get_slice("]", 0).trim_prefix("[")
+	return authority.get_slice(":", 0)
+
+## For punch-mode spectator assignments: while the match client is connecting,
+## bounce the lobby's reflector from the ENet client socket itself so the host
+## can punch this exact endpoint (and re-punch after every reconnect).
+func _arrange_match_punch_watch(match_info: Dictionary) -> void:
+	var reflector_port := int(match_info.get("punch_reflector_port", 0))
+	var relay_port := int(match_info.get("spectate_relay_port", 0))
+	var via_punch := bool(match_info.get("spectate_via_punch", false))
+	var via_relay := bool(match_info.get("spectate_via_relay", false)) and relay_port > 0
+	if not (via_punch or via_relay) \
+			or reflector_port <= 0 \
+			or _get_punch_reflector_host().is_empty():
+		return
+	var observer_session_id := str(match_info.get("observer_session_id", "")).strip_edges()
+	var match_id := str(match_info.get("match_id", "")).strip_edges()
+	if match_id.is_empty() or observer_session_id.is_empty():
+		return
+	_match_punch_watch = {
+		"match_id": match_id,
+		"reflector_port": reflector_port,
+		"relay_port": relay_port if via_relay else 0,
+		"via_relay": via_relay,
+		"observer_session_id": observer_session_id,
+		"peer_instance": 0,
+		"next_bounce_msec": 0,
+		"next_report_msec": 0,
+		"traced_bounce": false,
+		"traced_report": false,
+	}
+	_spectate_breadcrumb("spectator", "rendezvous_armed", {
+		"observer": observer_session_id, "match": match_id,
+		"via_punch": str(via_punch), "via_relay": str(via_relay),
+		"reflector_port": reflector_port, "relay_port": int(_match_punch_watch["relay_port"]),
+	})
+
+func _prime_match_punch_socket(host_ip: String, host_port: int, observer_token: String) -> Dictionary:
+	if not _has_active_lobby_connection():
+		_spectate_breadcrumb("spectator", "prime_skipped", {"reason": "lobby_disconnected"})
+		return {}
+	var match_id := str(_match_punch_watch["match_id"])
+	var observer_id := str(_match_punch_watch["observer_session_id"])
+	var relay_port := int(_match_punch_watch.get("relay_port", 0))
+	var relay_ip := _get_punch_reflector_host() if relay_port > 0 else ""
+	_spectate_breadcrumb("spectator", "prime_started", {
+		"observer": observer_id, "match": match_id,
+		"host": "%s:%d" % [host_ip, host_port],
+		"token": "set" if not observer_token.is_empty() else "missing",
+		"relay": "%s:%d" % [relay_ip, relay_port] if relay_port > 0 else "none",
+	})
+	var report_ready := func() -> bool:
+		if not _has_active_lobby_connection() or lobby_client.current_session_id != observer_id:
+			return false
+		lobby_client.submit_match_spectator_punch_ready(match_id, observer_id)
+		return true
+	var host_punch := PackedByteArray()
+	if not observer_token.is_empty():
+		host_punch = PunchReflectorScript.make_host_punch(match_id, observer_token)
+	var route: Dictionary = await PunchReflectorScript.prime_spectator_socket(
+		get_tree(), host_ip, host_port, _get_punch_reflector_host(), int(_match_punch_watch["reflector_port"]),
+		PunchReflectorScript.make_marker(PunchReflectorScript.BOUNCE_KIND_CLIENT, match_id, observer_id),
+		host_punch, report_ready, relay_ip, relay_port
+	)
+	_spectate_breadcrumb("spectator", "prime_finished", {
+		"observer": observer_id, "match": match_id,
+		"local_port": int(route.get("local_port", 0)),
+		"host_replied": str(bool(route.get("host_replied", false))),
+		"via_relay": str(bool(route.get("via_relay", false))),
+		"connect": "%s:%d" % [str(route.get("connect_ip", "")), int(route.get("connect_port", 0))],
+	})
+	return route
+
+func _on_match_spectator_punch_relayed(match_id: String) -> void:
+	if _match_punch_watch.get("match_id") != match_id:
+		return
+	_spectate_breadcrumb("spectator", "lobby_punched_our_endpoint", {
+		"observer": str(_match_punch_watch.get("observer_session_id", "")),
+		"match": match_id,
+	})
+	# The lobby now has a fresh spectator endpoint. Use it immediately instead
+	# of waiting for the next cadence tick; a late relay used to be only a hint.
+	_match_punch_watch["next_bounce_msec"] = 0
+	_match_punch_watch["next_report_msec"] = 0
+	if (_match_loading_overlay != null and _match_loading_overlay.visible
+			and not bool(_match_punch_watch.get("host_replied", false))):
+		_match_loading_hint_label.text = (
+			"The lobby received your UDP signal. Connecting through the lobby relay if the host cannot reach you directly…"
+			if bool(_match_punch_watch.get("via_relay", false))
+			else "The lobby received your UDP signal. Waiting for a direct reply from the host…"
+		)
+
+func _poll_match_punch_watch() -> void:
+	if _match_punch_watch.is_empty():
+		return
+	if lobby_client == null or not lobby_client.is_authenticated():
+		return
+	var match_id := str(_match_punch_watch.get("match_id", ""))
+	var reflector_port := int(_match_punch_watch.get("reflector_port", 0))
+	if match_id.is_empty() or reflector_port <= 0:
+		_match_punch_watch = {}
+		return
+	var mock_game := get_node_or_null("GameContainer/MockGame")
+	if mock_game == null or mock_game.network_manager == null:
+		# Still launching; punch config stays armed until the socket exists.
+		return
+	var enet_peer: ENetMultiplayerPeer = mock_game.network_manager.peer as ENetMultiplayerPeer
+	if enet_peer == null:
+		return
+	var connection_status := enet_peer.get_connection_status()
+	if connection_status != MultiplayerPeer.CONNECTION_CONNECTING:
+		return
+	var observer_session_id := str(_match_punch_watch.get("observer_session_id", ""))
+	var now_msec := Time.get_ticks_msec()
+	if int(_match_punch_watch.get("peer_instance", 0)) != enet_peer.get_instance_id():
+		# A fresh socket (retry loop) needs an immediate bounce and report.
+		_match_punch_watch["peer_instance"] = enet_peer.get_instance_id()
+		_match_punch_watch["next_bounce_msec"] = 0
+		_match_punch_watch["next_report_msec"] = 0
+	if now_msec < int(_match_punch_watch.get("next_bounce_msec", 0)):
+		return
+	_match_punch_watch["next_bounce_msec"] = now_msec + MATCH_PUNCH_WATCH_BOUNCE_INTERVAL_MSEC
+	# The reflector keys client bounces per observer; without the session id the
+	# lobby's relay lookup (client:<match>:<observer>) never matches, so the host
+	# never learns this spectator's endpoint and never punches it.
+	var bounce_err: Error = mock_game.network_manager.send_punch_bounce(
+		_get_punch_reflector_host(), reflector_port, match_id, PunchReflectorScript.BOUNCE_KIND_CLIENT, observer_session_id)
+	if bounce_err != OK:
+		_match_punch_watch["next_bounce_msec"] = now_msec + MATCH_PUNCH_WATCH_BOUNCE_INTERVAL_MSEC
+		_spectate_breadcrumb("spectator", "bounce_failed", {
+			"observer": observer_session_id, "match": match_id, "error": int(bounce_err),
+		})
+		return
+	if not bool(_match_punch_watch.get("traced_bounce", false)):
+		_match_punch_watch["traced_bounce"] = true
+		_spectate_breadcrumb("spectator", "bounce_sent", {
+			"observer": observer_session_id, "match": match_id,
+			"reflector_port": reflector_port, "peer": int(enet_peer.get_instance_id()),
+		})
+	if observer_session_id.is_empty() or now_msec < int(_match_punch_watch.get("next_report_msec", 0)):
+		return
+	_match_punch_watch["next_report_msec"] = now_msec + MATCH_PUNCH_WATCH_REPORT_INTERVAL_MSEC
+	lobby_client.submit_match_spectator_punch_ready(match_id, observer_session_id)
+	if not bool(_match_punch_watch.get("traced_report", false)):
+		_match_punch_watch["traced_report"] = true
+		_spectate_breadcrumb("spectator", "punch_ready_reported", {
+			"observer": observer_session_id, "match": match_id,
+		})
+
+## Single, greppable breadcrumb format for the whole spectate connection path.
+## Both console windows can be searched for `Spectate breadcrumb` to compare the
+## same observer/match across client, host, and lobby steps.
+func _spectate_breadcrumb(role: String, stage: String, details: Dictionary = {}) -> void:
+	var fields := details.duplicate()
+	if fields.is_empty() and not _match_punch_watch.is_empty():
+		fields["observer"] = str(_match_punch_watch.get("observer_session_id", ""))
+		fields["match"] = str(_match_punch_watch.get("match_id", ""))
+	var line := "Spectate breadcrumb role=%s stage=%s t=%d" % [role, stage, Time.get_ticks_msec()]
+	for key in fields.keys():
+		line += " %s=%s" % [str(key), str(fields[key])]
+	print(line)
+
+func _trace_spectator_punch_once(observer_id: String, detail: String) -> void:
+	var key := "%s|%s" % [observer_id, detail]
+	if _spectator_punch_skip_printed.has(key):
+		return
+	_spectator_punch_skip_printed[key] = true
+	print("Spectator punch observer=%s: %s" % [observer_id, detail])
+	_spectate_breadcrumb("host", "punch_result", {"observer": observer_id, "detail": detail})
+
+## A spectator approved for this client-hosted bot challenge bounced the
+## lobby's punch reflector; punch its endpoint from the match server socket so
+## its first ENet packets can get through restricted NATs.
+func _on_match_spectator_punch_requested(match_id: String, observer_session_id: String, punch_ip: String, punch_port: int) -> void:
+	if match_id.is_empty() or observer_session_id.is_empty() or punch_ip.is_empty() or punch_port <= 0:
+		_trace_spectator_punch_once(observer_session_id, "skipped: invalid payload")
+		return
+	var mock_game := get_node_or_null("GameContainer/MockGame")
+	if mock_game == null or mock_game.network_manager == null:
+		_trace_spectator_punch_once(observer_session_id, "skipped: match UI or transport is gone")
+		return
+	var active_match: Dictionary = mock_game.get("_current_match_info")
+	var active_match_id := str(active_match.get("match_id", ""))
+	if active_match_id != match_id:
+		_trace_spectator_punch_once(observer_session_id, "skipped: match id mismatch host=%s relay=%s" % [active_match_id, match_id])
+		return
+	var network_manager = mock_game.network_manager
+	if int(network_manager.get("last_bound_port")) <= 0:
+		# Spectate listener never bound (in-process fallback); nothing to punch.
+		_trace_spectator_punch_once(observer_session_id, "skipped: no bound spectate listener")
+		return
+	var host = mock_game.get("headless_match_host")
+	if host == null or host.match_session == null:
+		_trace_spectator_punch_once(observer_session_id, "skipped: match session is not ready")
+		return
+	var observer_token: String = host.match_session.get_spectator_match_token(observer_session_id)
+	if observer_token.is_empty():
+		_trace_spectator_punch_once(observer_session_id, "skipped: observer token is not registered")
+		return
+	var punch := PunchReflectorScript.make_host_punch(match_id, observer_token)
+	var resolved_punch_ip := PunchReflectorScript.normalize_ip(punch_ip)
+	_trace_spectator_punch_once(observer_session_id, "punching %s:%d" % [resolved_punch_ip, punch_port])
+	var punch_err: Error = network_manager.begin_spectator_punch(observer_session_id, resolved_punch_ip, punch_port, punch)
+	if punch_err != OK:
+		_trace_spectator_punch_once(observer_session_id, "start failed error=%d" % int(punch_err))
+		_write_smoke_trace("spectator_punch_start_failed match=%s error=%d" % [match_id, int(punch_err)])
+
+## Remove the UPnP port mapping created for spectating a client-hosted bot
+## challenge. Best-effort: failures are ignored.
+func _release_local_bot_spectate_mapping() -> void:
+	_local_bot_spectate_punch = {}
+	_match_punch_watch = {}
+	_spectator_punch_skip_printed.clear()
+	if _local_bot_spectate_external_port <= 0:
+		return
+	var port_to_release := _local_bot_spectate_external_port
+	_local_bot_spectate_external_port = 0
+	HostReachabilityProbeScript.remove_mapping(port_to_release)
+
+func _on_remote_match_assigned(match_info: Dictionary) -> void:
+	var is_manual_rejoin_assignment := _is_manual_rejoin_assignment(match_info)
+	if _match_launch_queued and not is_manual_rejoin_assignment:
+		return
+	_observe_room_in_flight = ""
+	_manual_rejoin_room_id = ""
 	_pending_rematch_room_id = ""
 	_pending_rematch_ready_submitted = false
 	_match_launch_queued = true
 	_save_active_match_resume(match_info)
 	_write_smoke_trace("remote_match_assigned match=%s" % str(match_info.get("match_id", "")))
+	# A player-hosted (listen-server) assignment for a remote lobby tells this
+	# client to run the authoritative match (is_match_host=true). Route it
+	# through the host launch path so it binds the local port and enables
+	# authoritative broadcasts, exactly like the in-process lobby host path.
+	if bool(match_info.get("is_match_host", false)) and not _uses_dedicated_match_server(match_info):
+		status_label.text = "Both players joined. Preparing the hosted match..."
+		_write_smoke_result("MATCH_ASSIGNED_PLAYER_HOST:%s" % str(match_info))
+		call_deferred("_launch_host_match_after_lobby_handoff", match_info)
+		return
 	var match_ip := str(match_info.get("server_ip", _current_lobby_ip))
 	var match_port := int(match_info.get("match_port", _get_configured_match_port()))
+	var endpoint := _resolve_spectate_server_endpoint(match_info, match_ip, match_port)
+	var resolved_match_ip := str(endpoint.get("ip", match_ip))
+	var resolved_match_port := int(endpoint.get("port", match_port))
+	var private_selected := bool(endpoint.get("private_selected", false))
+	if bool(match_info.get("observer_mode", false)):
+		var advertised_lan := PunchReflectorScript.normalize_ip(str(match_info.get("spectate_lan_ip", "")))
+		var advertised_lan_port := int(match_info.get("spectate_lan_port", 0))
+		print("Spectate endpoint observer=%s public=%s:%d lan=%s:%d selected=%s:%d" % [
+			str(match_info.get("observer_session_id", "")),
+			match_ip, match_port,
+			advertised_lan, advertised_lan_port,
+			resolved_match_ip, resolved_match_port,
+		])
+		_spectate_breadcrumb("spectator", "assignment_received", {
+			"observer": str(match_info.get("observer_session_id", "")),
+			"match": str(match_info.get("match_id", "")),
+			"public": "%s:%d" % [match_ip, match_port],
+			"lan": "%s:%d" % [advertised_lan, advertised_lan_port],
+			"selected": "%s:%d" % [resolved_match_ip, resolved_match_port],
+			"via_punch": str(bool(match_info.get("spectate_via_punch", false))),
+			"relay_enabled": str(bool(match_info.get("spectate_relay_enabled", false))),
+			"via_relay": str(bool(match_info.get("spectate_via_relay", false))),
+			"reflector_port": int(match_info.get("punch_reflector_port", 0)),
+		})
+		if not advertised_lan.is_empty() and not _lobby_connection_is_private():
+			_spectate_breadcrumb("spectator", "private_endpoint_ignored", {
+				"observer": str(match_info.get("observer_session_id", "")),
+				"match": str(match_info.get("match_id", "")),
+				"lan": "%s:%d" % [advertised_lan, advertised_lan_port],
+				"reason": "public_lobby_uses_advertised_endpoint",
+			})
+		elif not advertised_lan.is_empty() and advertised_lan_port <= 0:
+			_spectate_breadcrumb("spectator", "private_endpoint_missing_port", {
+				"observer": str(match_info.get("observer_session_id", "")),
+				"match": str(match_info.get("match_id", "")),
+				"lan": advertised_lan,
+				"reason": "old_lobby_or_host_did_not_report_bound_port",
+			})
+	if private_selected:
+		match_ip = resolved_match_ip
+		match_port = resolved_match_port
+		match_info["server_ip"] = match_ip
+		match_info["match_port"] = match_port
+		# Private endpoints are only a first choice. Keep spectate_via_punch
+		# intact so a blocked LAN listener still has the public relay fallback.
+		if bool(match_info.get("observer_mode", false)):
+			_spectate_breadcrumb("spectator", "private_endpoint_preferred", {
+				"observer": str(match_info.get("observer_session_id", "")),
+				"match": str(match_info.get("match_id", "")),
+				"endpoint": "%s:%d" % [match_ip, match_port],
+				"via_punch": str(bool(match_info.get("spectate_via_punch", false))),
+				"via_relay": str(bool(match_info.get("spectate_via_relay", false))),
+			})
+	_match_punch_watch = {}
+	if bool(match_info.get("observer_mode", false)):
+		# Hand the relay endpoint to MatchClient so a failed direct dial can
+		# retry through the lobby reflector instead of the same dead endpoint.
+		if bool(match_info.get("spectate_via_relay", false)) \
+				and int(match_info.get("spectate_relay_port", 0)) > 0:
+			match_info["spectate_relay_ip"] = _get_punch_reflector_host()
+		_arrange_match_punch_watch(match_info)
 	status_label.text = (
 		"Live match found. Connecting to %s..." % match_ip
 		if bool(match_info.get("observer_mode", false))
 		else "Match found. Connecting to %s..." % match_ip
 	)
 	_write_smoke_result("MATCH_ASSIGNED_CLIENT:%s" % str(match_info))
-	_cleanup_lobby(false)
 	call_deferred("_launch_assigned_match", false, match_ip, match_port, match_info)
 
 func _launch_assigned_match(
@@ -3645,24 +10556,262 @@ func _launch_assigned_match(
 	match_info: Dictionary = {},
 	server_match_session = null
 ) -> void:
-	var mock_game = _show_embedded_game("MockGame")
-	if mock_game != null and mock_game.has_method("_prepare_for_match_launch"):
-		mock_game._prepare_for_match_launch("Connecting to match...")
+	_begin_match_loading(_match_has_bot(match_info))
+	var is_observing := bool(match_info.get("observer_mode", false))
+	if is_observing:
+		_match_loading_hint_label.text = "Opening a direct connection to the host…"
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_show_embedded_game("MockGame")
 	show_game()
 	if is_host:
-		get_node("GameContainer/MockGame").start_game(true, false, server_ip, match_port, match_info, server_match_session)
+		await get_node("GameContainer/MockGame").start_game(true, false, server_ip, match_port, match_info, server_match_session)
+		show_game()
+		_flush_pending_spectator_approvals()
+		if _hunting_tactics_smoke_active:
+			await _drive_hunting_tactics_smoke(true)
+			return
 		_finish_smoke_if_enabled("PASS:host_launched_match")
 		return
-	var connect_delay_seconds := 0.4
-	if _uses_dedicated_match_server(match_info):
-		connect_delay_seconds = 1.1
-	await get_tree().create_timer(connect_delay_seconds).timeout
-	get_node("GameContainer/MockGame").start_game(false, true, server_ip, match_port, match_info)
+	# The lobby verifies player-host listeners before assigning the opponent;
+	# dedicated matches are likewise assigned only after the server is ready.
+	# Keep the short grace period only for the unverified in-process handoff.
+	# A punch-assigned spectator must prime the socket so the host can open its
+	# NAT toward us before the dial. A direct (UPnP) assignment dials the
+	# advertised endpoint immediately and only falls back to the relay on
+	# failure, so a healthy host is not penalized with a prime wait.
+	if not _match_punch_watch.is_empty() \
+			and match_info.get("match_id") == _match_punch_watch["match_id"] \
+			and bool(match_info.get("spectate_via_punch", false)):
+		var punch := await _prime_match_punch_socket(server_ip, match_port, str(match_info.get("observer_match_token", "")))
+		match_info["spectator_punch_local_port"] = int(punch.get("local_port", 0))
+		var host_port := int(punch.get("host_port", match_port))
+		var host_replied := bool(punch.get("host_replied", false))
+		var via_relay := bool(punch.get("via_relay", false))
+		var connect_ip := str(punch.get("connect_ip", server_ip))
+		var connect_port := int(punch.get("connect_port", host_port))
+		_match_punch_watch["host_replied"] = host_replied
+		_match_punch_watch["via_relay"] = via_relay
+		print("Spectator rendezvous: host reply=%s, remapped port=%s, relay=%s" % [
+			host_replied, host_port != match_port, via_relay,
+		])
+		_spectate_breadcrumb("spectator", "dial_endpoint_selected", {
+			"observer": str(_match_punch_watch.get("observer_session_id", "")),
+			"match": str(_match_punch_watch.get("match_id", "")),
+			"local_port": int(punch.get("local_port", 0)),
+			"direct_host": "%s:%d" % [server_ip, match_port],
+			"connect": "%s:%d" % [connect_ip, connect_port],
+			"host_replied": str(host_replied),
+			"via_relay": str(via_relay),
+		})
+		server_ip = connect_ip
+		match_port = connect_port
+		if via_relay and is_instance_valid(_match_loading_hint_label):
+			_match_loading_hint_label.text = "Connecting through the lobby relay…"
+	elif not _uses_dedicated_match_server(match_info) \
+			and str(match_info.get("server_mode", "")) != MatchSessionScript.SERVER_MODE_PLAYER_HOST:
+		await get_tree().create_timer(0.4).timeout
+	if is_observing:
+		_spectate_breadcrumb("spectator", "enet_dial_started", {
+			"observer": str(match_info.get("observer_session_id", "")),
+			"match": str(match_info.get("match_id", "")),
+			"connect": "%s:%d" % [server_ip, match_port],
+			"punch_local_port": int(match_info.get("spectator_punch_local_port", 0)),
+		})
+	await get_node("GameContainer/MockGame").start_game(false, true, server_ip, match_port, match_info)
+	show_game()
+	if is_observing:
+		_match_loading_lobby_button.text = "Back to lobby"
+		_match_loading_lobby_button.show()
+	if _hunting_tactics_smoke_active:
+		await _drive_hunting_tactics_smoke(false)
+		return
 	_finish_smoke_if_enabled("PASS:client_launched_match")
+
+func _match_has_bot(match_info: Dictionary) -> bool:
+	if match_info.has("has_bot"):
+		return bool(match_info["has_bot"])
+	# Older lobby servers still identify bot-hosted rooms in the seek list.
+	var room_id := str(match_info.get("room_id", ""))
+	for room in _open_seek_rooms:
+		if str(room.get("room_id", "")) == room_id:
+			return bool(room.get("host_is_bot", false)) or bool(room.get("is_bot_self_play", false))
+	return false
+
+# Called after match launch for the hunting_tactics_host / hunting_tactics_client
+# smoke roles. Attaches a gameplay-driving bot to the running CombatMockGame and
+# pumps frames until the host's server log shows the attack resolved (PASS), the
+# match ends, or the smoke times out (FAIL).
+func _drive_hunting_tactics_smoke(is_host: bool) -> void:
+	var mock_game = get_node_or_null("GameContainer/MockGame")
+	if mock_game == null or mock_game.game_manager == null or mock_game.match_manager == null:
+		_fail_smoke_if_enabled("hunting_tactics_missing_game")
+		return
+	_write_smoke_trace("hunting_tactics_drive:is_host=%s" % str(is_host))
+	var attach_wait_frames := maxi(60, int(_smoke_config.get("bot_attach_wait_frames", 900)))
+	var bot_ready := await _wait_for_hunting_tactics_bot_ready(mock_game, attach_wait_frames)
+	if not bot_ready:
+		_fail_smoke_if_enabled("hunting_tactics_bot_ready_timeout")
+		return
+	# Both smoke processes are networked clients of the dedicated match server, so
+	# both drive their local seat through the client's real NetworkedGameInput and
+	# answer prompts via match_client.game_event_received. HostHuntingTacticsBot
+	# reuses the full ThorPracticeBot main-phase/attack loop, so each bot will
+	# summon and attack when it can; the first qualifying attack triggers the
+	# hunting_tactics prompt on the dedicated server.
+	var host_bot = null
+	var client_bot = null
+	var local_idx := _get_hunting_tactics_local_player_index(mock_game)
+	if local_idx < 0:
+		_fail_smoke_if_enabled("hunting_tactics_missing_local_player")
+		return
+	var local_game_input = null
+	if mock_game.match_client != null and mock_game.match_client.has_method("get_game_input"):
+		local_game_input = mock_game.match_client.get_game_input()
+	if local_game_input == null:
+		# Fallback to a BotGameInput (processes locally) if no networked input exists.
+		local_game_input = BotGameInputScript.new(mock_game.match_manager, local_idx)
+	host_bot = HostHuntingTacticsBotScript.new()
+	host_bot.attach_networked(
+		mock_game.game_manager,
+		mock_game.match_manager,
+		local_game_input,
+		local_idx,
+		mock_game.match_client
+	)
+	host_bot.poll()
+	_hunting_tactics_bot_attached = true
+
+	var trace_path := str(_smoke_config.get("trace_file", "")).strip_edges()
+	var max_frames := maxi(600, int(_smoke_config.get("match_frames", 5400)))
+	var stall_frames := maxi(120, int(_smoke_config.get("stall_frames", 600)))
+	var last_snapshot := ""
+	var unchanged := 0
+	for frame_index in range(max_frames):
+		await get_tree().process_frame
+		if mock_game.game_manager != null and mock_game.game_manager.is_game_over:
+			_write_smoke_trace("hunting_tactics_drive:game_over")
+			break
+		# Outcome is read from the attached bot. The current purpose deck exercises
+		# Raven perish prompts, while the older smoke path can still report a
+		# Hunting Tactics exchange if that deck is restored.
+		var huginn_primed := bool(host_bot.get("huginn_prime_observed")) if host_bot != null else false
+		var muninn_primed := bool(host_bot.get("muninn_prime_observed")) if host_bot != null else false
+		if huginn_primed and muninn_primed:
+			_write_smoke_trace("raven_drive:huginn_muninn_primed frames=%d" % frame_index)
+			_finish_smoke_if_enabled("PASS:raven_%s huginn_muninn_primed" % ("host" if is_host else "client"))
+			_detach_hunting_tactics_bots(host_bot, client_bot)
+			return
+		var answered := bool(host_bot.get("hunting_tactics_answered")) if host_bot != null else false
+		var progressed := bool(host_bot.get("progressed_after_hunting_tactics")) if host_bot != null else false
+		if answered and progressed:
+			_write_smoke_trace("hunting_tactics_drive:answered_and_progressed frames=%d" % frame_index)
+			_finish_smoke_if_enabled("PASS:hunting_tactics_%s answered_and_progressed" % ("host" if is_host else "client"))
+			_detach_hunting_tactics_bots(host_bot, client_bot)
+			return
+		if answered and not progressed:
+			# Answered but the state never moved on -> the attack is stuck.
+			var snap := _read_smoke_trace_tail(trace_path)
+			if snap == last_snapshot:
+				unchanged += 1
+			else:
+				unchanged = 0
+				last_snapshot = snap
+			if unchanged > stall_frames:
+				_write_smoke_trace("hunting_tactics_drive:stalled_after_answer frames=%d" % frame_index)
+				_fail_smoke_if_enabled("FAIL:hunting_tactics_stuck_after_answer")
+				_detach_hunting_tactics_bots(host_bot, client_bot)
+				return
+	# Did not observe both Raven prime resolutions within the frame budget.
+	_fail_smoke_if_enabled("FAIL:raven_%s no_huginn_muninn_prime" % ("host" if is_host else "client"))
+
+func _wait_for_hunting_tactics_bot_ready(mock_game, max_frames: int) -> bool:
+	for frame_index in range(max_frames):
+		if _is_hunting_tactics_bot_ready(mock_game):
+			_write_smoke_trace("hunting_tactics_bot_ready frame=%d local=%d turn=%d" % [
+				frame_index,
+				_get_hunting_tactics_local_player_index(mock_game),
+				mock_game.game_manager.turn_number if mock_game != null and mock_game.game_manager != null else -1,
+			])
+			return true
+		await get_tree().process_frame
+	_write_smoke_trace("hunting_tactics_bot_not_ready local=%d turn=%d awaiting=%s" % [
+		_get_hunting_tactics_local_player_index(mock_game),
+		mock_game.game_manager.turn_number if mock_game != null and mock_game.game_manager != null else -1,
+		str(bool(mock_game.get("_awaiting_initial_full_state")) if mock_game != null else false),
+	])
+	return false
+
+func _is_hunting_tactics_bot_ready(mock_game) -> bool:
+	if mock_game == null or mock_game.game_manager == null or mock_game.match_manager == null:
+		return false
+	if mock_game.match_client == null:
+		return false
+	if bool(mock_game.get("_awaiting_initial_full_state")):
+		return false
+	if mock_game.game_manager.players.is_empty() or mock_game.game_manager.turn_number <= 0:
+		return false
+	var local_idx := _get_hunting_tactics_local_player_index(mock_game)
+	if local_idx < 0 or local_idx >= mock_game.game_manager.players.size():
+		return false
+	if mock_game.network_manager == null:
+		return true
+	var multiplayer_api = mock_game.network_manager.multiplayer
+	if multiplayer_api == null:
+		return false
+	var multiplayer_peer = multiplayer_api.multiplayer_peer
+	if multiplayer_peer == null:
+		return false
+	return multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED
+
+func _get_hunting_tactics_local_player_index(mock_game) -> int:
+	if mock_game == null:
+		return -1
+	if mock_game.network_manager != null:
+		return int(mock_game.network_manager.local_player_index)
+	if mock_game.game_manager != null and not mock_game.game_manager.players.is_empty():
+		return 0
+	return -1
+
+func _detach_hunting_tactics_bots(host_bot, client_bot) -> void:
+	if host_bot != null and host_bot.has_method("detach"):
+		host_bot.detach()
+	if client_bot != null and client_bot.has_method("detach"):
+		client_bot.detach()
+	_hunting_tactics_bot_attached = false
+
+func _read_smoke_trace_tail(trace_path: String) -> String:
+	if trace_path.is_empty() or not FileAccess.file_exists(trace_path):
+		return ""
+	var file := FileAccess.open(trace_path, FileAccess.READ)
+	if file == null:
+		return ""
+	var content := file.get_as_text()
+	file.close()
+	return content.substr(maxi(0, content.length() - 256))
+
+func _hunting_tactics_attack_resolved_in_log(log_path: String) -> bool:
+	return _hunting_tactics_log_contains(log_path, "[HT-DEBUG] _resolve: pushed to stack")
+
+func _hunting_tactics_attack_stuck_in_log(log_path: String) -> bool:
+	return _hunting_tactics_log_contains(log_path, "[HT-DEBUG] _resolve: build returned null")
+
+func _hunting_tactics_log_contains(log_path: String, needle: String) -> bool:
+	if log_path.is_empty() or not FileAccess.file_exists(log_path):
+		return false
+	var file := FileAccess.open(log_path, FileAccess.READ)
+	if file == null:
+		return false
+	# Only scan the tail to avoid re-reading the whole file each frame.
+	file.seek_end()
+	var log_size := file.get_position()
+	file.seek(maxi(0, log_size - 16384))
+	var tail := file.get_buffer(mini(16384, int(log_size))).get_string_from_utf8()
+	file.close()
+	return tail.find(needle) >= 0
 
 func _launch_host_match_after_lobby_handoff(match_info: Dictionary) -> void:
 	if _uses_dedicated_match_server(match_info):
-		await get_tree().create_timer(1.1).timeout
 		_launch_assigned_match(
 			false,
 			str(match_info.get("server_ip", _current_lobby_ip)),
@@ -3673,8 +10822,15 @@ func _launch_host_match_after_lobby_handoff(match_info: Dictionary) -> void:
 	var match_session = null
 	if lobby_server != null:
 		match_session = lobby_server.get_match_session(str(match_info.get("match_id", "")))
-	await get_tree().create_timer(0.75).timeout
-	_cleanup_lobby(false)
+	# Player-hosted matches against a remote lobby: the authoritative session
+	# lives in the lobby process, not here, so reconstruct a host-side
+	# MatchSession from the roster the lobby embedded in match_info. This gives
+	# HeadlessMatchHost enough to authenticate the opponent's join and seed both
+	# Player objects. (For the local in-process lobby smoke path the real
+	# match_session is used, as before.)
+	if match_session == null and bool(match_info.get("is_match_host", false)):
+		match_session = MatchSessionScript.from_match_info(match_info)
+		_player_host_external_port = int(match_info.get("host_reachable_port", 0))
 	_launch_assigned_match(
 		true,
 		str(match_info.get("server_ip", _current_lobby_ip)),
@@ -3687,46 +10843,177 @@ func _uses_dedicated_match_server(match_info: Dictionary) -> bool:
 	return str(match_info.get("server_mode", "")) == MatchSessionScript.SERVER_MODE_DEDICATED_HEADLESS
 
 func _on_lobby_room_error(message: String) -> void:
+	_finish_match_loading()
 	_write_smoke_trace("lobby_room_error %s" % message)
+	if not _observe_room_in_flight.is_empty() and message == LobbyProtocolScript.OBSERVE_ROOM_AUTH_ERROR:
+		var rejected_room_id := _observe_room_in_flight
+		_observe_room_in_flight = ""
+		if not _observe_auth_retry_used and lobby_client != null:
+			_observe_auth_retry_used = true
+			_pending_observe_room_id = rejected_room_id
+			if lobby_client.restore_lobby_session():
+				return
+			_pending_observe_room_id = ""
+		_show_lobby_notice(message)
+	if _maybe_handle_legacy_seek_switch_error(message):
+		return
+	_pending_seek_switch_join_room_id = ""
+	_manual_rejoin_room_id = ""
 	status_label.text = message
 	_set_friends_status(message)
+	if _settings_overlay != null and is_instance_valid(_settings_overlay):
+		_set_settings_account_status(message, true)
 	if _should_prompt_for_account_recovery(message):
 		_show_auth_recovery_prompt(message)
+	# In smoke mode the first select_deck for a freshly-registered account can race
+	# ahead of the proactive save_account_deck. Tolerate that transient error and
+	# let the room-snapshot retry loop select the deck once the save lands.
+	if not _smoke_config.is_empty() and message.find("saved deck was not found") >= 0:
+		return
 	_fail_smoke_if_enabled("ROOM_ERROR:%s" % message)
+
+func _maybe_handle_legacy_seek_switch_error(message: String) -> bool:
+	if message.strip_edges() != LEGACY_JOIN_WHILE_IN_ROOM_ERROR:
+		return false
+	if _pending_seek_switch_join_room_id.is_empty():
+		return false
+	if lobby_client == null or not lobby_client.is_authenticated():
+		_pending_seek_switch_join_room_id = ""
+		return false
+	var current_room_status := str(_current_room_snapshot.get("status", "")).strip_edges().to_lower()
+	if _current_room_snapshot.is_empty():
+		_retry_pending_seek_switch_after_room_clear()
+		return true
+	if current_room_status == LobbyRoomScript.STATUS_IN_MATCH:
+		_pending_seek_switch_join_room_id = ""
+		return false
+	var message_text := "Leaving your current seek before joining %s..." % _pending_seek_switch_join_room_id
+	status_label.text = message_text
+	_set_friends_status(message_text)
+	lobby_client.leave_room()
+	return true
+
+func _retry_pending_seek_switch_after_room_clear() -> bool:
+	if _pending_seek_switch_join_room_id.is_empty():
+		return false
+	if lobby_client == null or not lobby_client.is_authenticated():
+		_pending_seek_switch_join_room_id = ""
+		return false
+	var room_id := _pending_seek_switch_join_room_id
+	_pending_seek_switch_join_room_id = ""
+	_pending_join_room_id = ""
+	status_label.text = "Joining seek %s..." % room_id
+	lobby_client.join_room(room_id)
+	return true
 
 func _on_lobby_status_changed(message: String) -> void:
 	_write_smoke_trace("lobby_status %s" % message)
 	status_label.text = message
 
 func _on_lobby_connection_failed(message: String) -> void:
+	_finish_match_loading()
 	_write_smoke_trace("lobby_connection_failed %s" % message)
+	_cancel_lobby_sign_in_watchdog()
+	var restore_auth_prompt := _startup_autologin_in_progress
+	var manual_auth_prompt := _has_pending_account_sign_in_attempt()
+	_startup_autologin_in_progress = false
+	_manual_rejoin_room_id = ""
 	_set_connected_server_version("")
 	_seek_list_request_pending = false
 	_seek_auto_refresh_elapsed = 0.0
+	_clear_players_online()
+	if _is_lobby_auto_reconnecting():
+		if status_label != null:
+			status_label.text = "Connection lost. Reconnecting to the lobby..."
+		return
 	if _should_retry_host_lobby_connect():
 		_queue_host_lobby_retry(message)
 		return
+	_cleanup_lobby_client()
+	_set_connected_server_version("")
+	_account_switch_pending = false
+	_account_switch_retry_attempts = 0
 	_logged_in_account_username = ""
 	_refresh_account_identity_label()
 	status_label.text = message
+	if restore_auth_prompt or manual_auth_prompt or _should_prompt_for_account_recovery(message):
+		_show_auth_recovery_prompt(message)
+	_maybe_check_for_update_after_lobby_failure(message)
 	if _should_ignore_lobby_failure_for_smoke():
 		return
 	_fail_smoke_if_enabled("CONNECTION_FAILED:%s" % message)
 
 func _on_lobby_disconnected() -> void:
+	_update_quarantined_bots_button()
+	_stop_local_bot_match_worker()
+	_finish_match_loading()
+	_close_rank_badge_picker()
+	_refresh_ranked_ladder()
+	_request_bot_ladder()
 	_write_smoke_trace("lobby_disconnected")
+	_cancel_lobby_sign_in_watchdog()
+	var restore_auth_prompt := _startup_autologin_in_progress
+	_startup_autologin_in_progress = false
+	_manual_rejoin_room_id = ""
+	_pending_seek_switch_join_room_id = ""
 	_set_connected_server_version("")
 	_seek_list_request_pending = false
 	_seek_auto_refresh_elapsed = 0.0
+	_clear_players_online()
+	if _is_lobby_auto_reconnecting():
+		return
 	if _should_retry_host_lobby_connect():
 		_queue_host_lobby_retry("Dedicated lobby disconnected before room setup completed.")
 		return
 	_refresh_account_identity_label()
 	_clear_current_seek_state()
-	status_label.text = "Lobby connection lost. Refresh seeks to reconnect."
+	var message := "Lobby connection lost. Refresh seeks to reconnect."
+	if _lobby_auto_reconnect_was_active:
+		message = "Could not re-establish the lobby connection. Refresh seeks to reconnect."
+		_lobby_auto_reconnect_was_active = false
+	status_label.text = message
+	if restore_auth_prompt:
+		_show_auth_recovery_prompt(message)
+	_maybe_check_for_update_after_lobby_failure(message)
 	if _should_ignore_lobby_failure_for_smoke():
 		return
 	_fail_smoke_if_enabled("DISCONNECTED_FROM_LOBBY")
+
+func _is_lobby_auto_reconnecting() -> bool:
+	return lobby_client != null \
+		and lobby_client.has_method("is_auto_reconnecting") \
+		and lobby_client.is_auto_reconnecting()
+
+func _on_lobby_auto_reconnect_started(attempt: int, max_attempts: int) -> void:
+	_update_quarantined_bots_button()
+	_write_smoke_trace("lobby_auto_reconnect_started %d/%d" % [attempt, max_attempts])
+	_refresh_ranked_ladder()
+	_request_bot_ladder()
+	_lobby_auto_reconnect_was_active = true
+	if status_label != null:
+		status_label.text = "Connection lost. Reconnecting to the lobby... (attempt %d of %d)" % [attempt, max_attempts]
+
+## Runs right before disconnected_from_lobby once auto-reconnect is exhausted.
+## Keep this non-destructive: the follow-up disconnect handler owns the cleanup.
+func _on_lobby_auto_reconnect_failed() -> void:
+	_write_smoke_trace("lobby_auto_reconnect_failed")
+
+func _maybe_check_for_update_after_lobby_failure(message: String) -> void:
+	if not _release_updates_enabled():
+		return
+	if _lobby_failure_update_check_requested or not _smoke_config.is_empty():
+		return
+	if _is_auto_updating or (_update_prompt_overlay != null and is_instance_valid(_update_prompt_overlay)):
+		return
+	if not AppReleaseInfoScript.is_release_version(AppReleaseInfoScript.get_current_version()):
+		return
+	_lobby_failure_update_check_requested = true
+	if status_label != null:
+		status_label.text = "%s Checking for a required update..." % message
+	_start_update_check(
+		"%s No newer public release was found." % message,
+		"%s Public releases could not be checked." % message
+	)
 
 func _on_back_to_menu_pressed() -> void:
 	_return_to_menu()
@@ -3737,7 +11024,60 @@ func _on_game_forfeit_requested() -> void:
 func _on_game_leave_match_requested() -> void:
 	_return_to_menu()
 
+## The match connection is gone for good (join retries or the reconnect window
+## ran out). Route the player back through the lobby so the existing rejoin
+## flow can put them back in the match while the server still holds their seat,
+## instead of stranding them on a dead game screen.
+func _on_game_match_connection_lost(reason: String) -> void:
+	_write_smoke_trace("game_match_connection_lost %s" % reason)
+	if _match_launch_queued and _get_active_embedded_game() == null:
+		return
+	_restore_lobby_after_match_connection_lost(reason)
+
+func _restore_lobby_after_match_connection_lost(reason: String) -> void:
+	var active_game := _get_active_embedded_game()
+	var was_observing := active_game != null and bool(active_game.get("_is_observer_mode"))
+	_match_punch_watch = {}
+	_pending_rematch_room_id = ""
+	_pending_rematch_ready_submitted = false
+	multiplayer_container.visible = true
+	show_menu()
+	_match_launch_queued = false
+	# Unlike _return_to_menu, deliberately do NOT set _pending_leave_room_id or
+	# suppress active-match auto-resume: the server still holds the player's
+	# match seat, and the lobby reconnect flow should offer to rejoin it.
+	for node_name in _get_embedded_game_node_names():
+		var game = get_node_or_null("GameContainer/" + node_name)
+		if game and game.has_method("cleanup"):
+			game.cleanup()
+	var db := game_container.get_node_or_null("DeckBuilder")
+	if db:
+		db.queue_free()
+	_refresh_server_version_overlay_visibility()
+	multiplayer_container.visible = true
+	var clean_reason := reason.strip_edges()
+	if clean_reason.is_empty():
+		clean_reason = "The match connection was lost."
+	status_label.text = clean_reason
+	if was_observing:
+		_show_lobby_notice(clean_reason)
+	if lobby_client != null and lobby_client.is_authenticated():
+		if was_observing:
+			_queue_room_list_refresh(false)
+			return
+		# Reuse the existing rejoin flow with the live lobby's latest state.
+		_on_lobby_reconnect_succeeded(
+			lobby_client.current_session_id,
+			lobby_client.current_reconnect_token,
+			lobby_client.current_player_name,
+			lobby_client.current_room_snapshot.duplicate(true),
+			lobby_client.current_active_match_info.duplicate(true)
+		)
+	elif not _is_lobby_auto_reconnecting():
+		_maybe_connect_authenticated_lobby("Restoring lobby session after the match connection was lost...")
+
 func _on_game_rematch_requested() -> void:
+	_pending_leave_room_id = ""
 	var active_game = _get_active_embedded_game()
 	var match_info: Dictionary = {}
 	if active_game != null:
@@ -3755,19 +11095,18 @@ func _on_game_rematch_requested() -> void:
 func _on_game_return_to_menu_requested() -> void:
 	var active_game = _get_active_embedded_game()
 	if active_game != null:
-		var reconnect_waiting := bool(active_game.get("_match_reconnect_waiting"))
-		var awaiting_initial_state := bool(active_game.get("_awaiting_initial_full_state"))
 		var game_finished := bool(active_game.get("_game_finished"))
 		var networked_client := bool(active_game.get("_is_networked_client"))
-		if networked_client and not game_finished and (reconnect_waiting or awaiting_initial_state):
+		if networked_client and not game_finished:
 			return
 	_return_to_menu()
 
 func _return_to_lobby_for_rematch() -> void:
+	_pending_leave_room_id = ""
 	_suppress_active_match_auto_resume_from_embedded_games()
+	multiplayer_container.visible = true
 	show_menu()
 	_match_launch_queued = false
-	_cleanup_lobby(false)
 	for node_name in _get_embedded_game_node_names():
 		var game = get_node_or_null("GameContainer/" + node_name)
 		if game and game.has_method("cleanup"):
@@ -3775,26 +11114,48 @@ func _return_to_lobby_for_rematch() -> void:
 	_clear_saved_match_resume()
 	_refresh_server_version_overlay_visibility()
 	multiplayer_container.visible = true
-	status_label.text = "Reconnecting to lobby for rematch..."
-	_maybe_connect_authenticated_lobby("Reconnecting to lobby for rematch...")
+	if lobby_client != null and lobby_client.is_authenticated():
+		status_label.text = "Waiting for the finished match to close so the rematch can start..."
+		_apply_room_snapshot(lobby_client.current_room_snapshot)
+	elif not _is_lobby_auto_reconnecting():
+		_maybe_connect_authenticated_lobby("Restoring lobby session for rematch...")
 
 func _return_to_menu() -> void:
+	var active_game := _get_active_embedded_game()
+	var return_to_multiplayer: bool = (
+		game_container.visible and active_game != null and active_game.name == &"MockGame"
+	)
+	var room_to_leave := _get_active_match_room_id()
 	_pending_rematch_room_id = ""
 	_pending_rematch_ready_submitted = false
 	_suppress_active_match_auto_resume_from_embedded_games()
+	_release_player_host_port_mapping()
+	_release_local_bot_spectate_mapping()
+	multiplayer_container.visible = return_to_multiplayer
 	show_menu()
 	_match_launch_queued = false
-	_cleanup_lobby(true)
+	_pending_leave_room_id = room_to_leave
+	_clear_pending_new_seek_actions()
 	for node_name in _get_embedded_game_node_names():
 		var game = get_node_or_null("GameContainer/" + node_name)
 		if game and game.has_method("cleanup"):
 			game.cleanup()
+		if game != null and node_name == "Story":
+			game_container.remove_child(game)
+			game.queue_free()
+	_clear_saved_match_resume()
 	var db := game_container.get_node_or_null("DeckBuilder")
 	if db:
 		db.queue_free()
 	_refresh_server_version_overlay_visibility()
-	multiplayer_container.visible = false
-	_maybe_connect_authenticated_lobby("Reconnecting to lobby...")
+	# Reuse the lobby when available, or restore it after offline practice.
+	if lobby_client != null and lobby_client.is_authenticated():
+		if not _pending_leave_room_id.is_empty():
+			_maybe_leave_pending_room(lobby_client.current_room_snapshot, lobby_client.current_active_match_info)
+	elif lobby_client == null or (not lobby_client.is_transport_connected() and not lobby_client.is_auto_reconnecting()):
+		if lobby_client != null:
+			_cleanup_lobby(false)
+		_maybe_connect_authenticated_lobby("Restoring lobby session...")
 
 func _suppress_active_match_auto_resume_from_embedded_games() -> void:
 	for node_name in _get_embedded_game_node_names():
@@ -3836,7 +11197,67 @@ func _should_suppress_active_match_auto_resume(active_match_info: Dictionary) ->
 	return false
 
 func _has_pending_new_seek_action() -> bool:
-	return _pending_host_room_creation or not _pending_join_room_id.is_empty() or not _pending_observe_room_id.is_empty()
+	return _pending_host_room_creation \
+		or not _pending_join_room_id.is_empty() \
+		or not _pending_rejoin_room_id.is_empty() \
+		or not _pending_observe_room_id.is_empty() \
+		or not _pending_seek_switch_join_room_id.is_empty()
+
+func _clear_pending_new_seek_actions(preserve_manual_rejoin: bool = false) -> void:
+	_pending_host_room_creation = false
+	_pending_room_is_ranked = true
+	_pending_room_best_of = 1
+	_pending_join_room_id = ""
+	_pending_rejoin_room_id = ""
+	if not preserve_manual_rejoin:
+		_manual_rejoin_room_id = ""
+	_pending_observe_room_id = ""
+	_observe_room_in_flight = ""
+	_pending_seek_switch_join_room_id = ""
+	_pending_local_lobby_launch_on_connect_failure = false
+
+func _is_manual_rejoin_assignment(match_info: Dictionary) -> bool:
+	var assigned_room_id := str(match_info.get("room_id", "")).strip_edges().to_upper()
+	return (
+		not _manual_rejoin_room_id.is_empty()
+		and assigned_room_id == _manual_rejoin_room_id
+	)
+
+func _should_wait_for_rematch_close(active_match_info: Dictionary) -> bool:
+	if _pending_rematch_room_id.is_empty() or active_match_info.is_empty():
+		return false
+	return str(active_match_info.get("room_id", "")).strip_edges() == _pending_rematch_room_id
+
+func _maybe_leave_pending_room(room: Dictionary, active_match_info: Dictionary) -> bool:
+	if _pending_leave_room_id.is_empty():
+		return false
+	var restored_room_id := str(room.get("room_id", "")).strip_edges()
+	if restored_room_id.is_empty():
+		restored_room_id = str(active_match_info.get("room_id", "")).strip_edges()
+	if restored_room_id != _pending_leave_room_id:
+		_pending_leave_room_id = ""
+		return false
+	_pending_leave_room_id = ""
+	_clear_pending_new_seek_actions()
+	_clear_current_seek_state()
+	_clear_saved_match_resume()
+	if lobby_client != null:
+		lobby_client.current_room_snapshot.clear()
+		lobby_client.current_active_match_info.clear()
+		lobby_client.leave_room()
+	status_label.text = "Leaving the finished match room..."
+	return true
+
+func _get_active_match_room_id() -> String:
+	var active_game = _get_active_embedded_game()
+	if active_game == null:
+		return str(_current_room_snapshot.get("room_id", "")).strip_edges()
+	var match_info = active_game.get("_current_match_info")
+	if match_info is Dictionary:
+		if bool(match_info.get("observer_mode", false)):
+			return ""
+		return str((match_info as Dictionary).get("room_id", "")).strip_edges()
+	return str(_current_room_snapshot.get("room_id", "")).strip_edges()
 
 func _abandon_current_lobby_match() -> void:
 	if lobby_client == null:
@@ -3847,17 +11268,21 @@ func _abandon_current_lobby_match() -> void:
 	lobby_client.current_active_match_info.clear()
 
 func _cleanup_lobby(clear_session: bool) -> void:
+	_dismiss_active_match_rejoin_offer(clear_session)
 	_cleanup_lobby_client()
 	_cleanup_lobby_server()
 	_set_connected_server_version("")
 	_clear_current_seek_state()
+	_pending_seek_switch_join_room_id = ""
 	_open_seek_rooms.clear()
+	_bot_match_live.clear()
 	_seek_list_request_pending = false
 	_seek_auto_refresh_elapsed = 0.0
 	_refresh_seek_list()
 	if clear_session:
 		_match_launch_queued = false
 		_pending_host_room_creation = false
+		_pending_leave_room_id = ""
 		_pending_local_lobby_launch_on_connect_failure = false
 		_dedicated_lobby_connect_attempts_remaining = 0
 		_last_submitted_lobby_room_id = ""
@@ -3867,14 +11292,16 @@ func _cleanup_lobby(clear_session: bool) -> void:
 		_lobby_reconnect_token = ""
 		_pending_join_room_code = ""
 		_pending_join_room_id = ""
+		_pending_rejoin_room_id = ""
+		_manual_rejoin_room_id = ""
 		_pending_observe_room_id = ""
+		_pending_seek_switch_join_room_id = ""
 		_current_lobby_ip = ""
 		_is_local_lobby_host = false
 		room_code_line_edit.text = ""
 		_clear_saved_lobby_resume()
 		_clear_saved_match_resume()
 		_current_profile_summary.clear()
-		_account_decks_cache.clear()
 		_friends_state.clear()
 		_refresh_friends_button()
 		_refresh_friends_overlay()
@@ -3885,6 +11312,14 @@ func _cleanup_lobby(clear_session: bool) -> void:
 	_refresh_multiplayer_action_state()
 
 func _cleanup_lobby_client() -> void:
+	_observe_room_in_flight = ""
+	_close_rank_badge_picker()
+	_pending_background_lobby_auth_completion = Callable()
+	_cancel_lobby_sign_in_watchdog()
+	if is_instance_valid(_request_next_notices):
+		_request_next_notices.hide()
+		_request_next_notices.queue_free()
+		_request_next_notices = null
 	if lobby_client == null:
 		return
 	var existing_client: LobbyClient = lobby_client
@@ -3973,8 +11408,8 @@ func _get_lobby_ip() -> String:
 
 func _get_player_name(default_name: String) -> String:
 	var player_name := ""
-	if _get_selected_auth_mode() in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
-		player_name = _get_selected_account_username()
+	if _get_selected_auth_mode() in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
+		player_name = _get_effective_identity_name(default_name)
 	elif player_name_line_edit != null:
 		player_name = player_name_line_edit.text.strip_edges()
 	if player_name.is_empty():
@@ -4024,22 +11459,77 @@ func _get_preferred_guest_display_name(default_name: String = "Guest") -> String
 	var resolved_default := default_name.strip_edges()
 	if resolved_default.is_empty():
 		resolved_default = "Guest"
-	return resolved_default
-
-func _apply_guest_display_name(default_name: String = "Player") -> String:
-	var guest_display_name := _get_preferred_guest_display_name(default_name)
 	if _local_profile_store != null:
+		var guest_profile_id: String = _local_profile_store.get_guest_profile_id()
+		if not guest_profile_id.is_empty():
+			var guest_name := str(_local_profile_store.get_profile_display_name(guest_profile_id, "")).strip_edges()
+			if _is_generated_guest_username(guest_name):
+				return guest_name
+	if _is_generated_guest_username(resolved_default):
+		return resolved_default
+	return _generate_guest_username()
+
+func _is_generated_guest_username(display_name: String) -> bool:
+	var normalized := display_name.strip_edges().to_lower()
+	if not normalized.begins_with(GUEST_USERNAME_PREFIX):
+		return false
+	var digits := normalized.substr(GUEST_USERNAME_PREFIX.length())
+	return digits.length() == 5 and digits.is_valid_int()
+
+func _generate_guest_username() -> String:
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+	var digits := str(rng.randi_range(0, 99999))
+	while digits.length() < 5:
+		digits = "0" + digits
+	return "%s%s" % [GUEST_USERNAME_PREFIX, digits]
+
+func _activate_guest_profile_session(default_name: String = "Guest") -> String:
+	_ensure_local_profile_store()
+	var guest_display_name := _get_preferred_guest_display_name(default_name)
+	_cancel_pending_authenticated_lobby_connects()
+	_account_switch_pending = false
+	_account_switch_retry_attempts = 0
+	_logged_in_account_username = ""
+	_account_decks_cache.clear()
+	_friends_state.clear()
+	_current_profile_summary.clear()
+	_set_selected_account_username("", false)
+	_set_selected_account_public_username("", false)
+	_set_selected_account_password("", false)
+	_selected_account_accepts_game_updates = false
+	_set_auth_mode(AUTH_MODE_GUEST)
+	if _local_profile_store != null:
+		_local_profile_store.set_account_auto_login_enabled(false)
+		_local_profile_store.clear_account_password()
 		var profile: Dictionary = _local_profile_store.activate_guest_session(guest_display_name)
 		_local_profile_id = str(profile.get("profile_id", _local_profile_id)).strip_edges()
 		guest_display_name = str(profile.get("display_name", guest_display_name)).strip_edges()
-		_selected_multiplayer_deck_id = ""
-		_refresh_open_deck_builder_saved_decks()
-		_refresh_profile_summary_from_local_history(_local_profile_id)
-		_update_resume_controls()
-		_refresh_account_identity_label()
+	_selected_multiplayer_deck_id = ""
 	if player_name_line_edit != null:
 		player_name_line_edit.text = guest_display_name
+	_refresh_open_deck_builder_saved_decks()
+	_refresh_profile_summary_label()
+	_refresh_profile_summary_from_local_history(_local_profile_id)
+	_update_resume_controls()
+	_refresh_friends_button()
+	_refresh_friends_overlay()
+	_refresh_account_identity_label()
+	_refresh_auth_controls()
 	return guest_display_name
+
+func _apply_guest_display_name(default_name: String = "Player") -> String:
+	return _activate_guest_profile_session(default_name)
+
+func _is_guest_session_active() -> bool:
+	if _get_selected_auth_mode() == AUTH_MODE_GUEST:
+		return true
+	if _local_profile_store == null:
+		return false
+	if _local_profile_store.get_preferred_auth_mode() != AUTH_MODE_GUEST:
+		return false
+	var guest_profile_id: String = _local_profile_store.get_guest_profile_id()
+	return not guest_profile_id.is_empty() and _local_profile_id == guest_profile_id
 
 func _capture_logged_in_profile(player_name: String) -> void:
 	_ensure_local_profile_store()
@@ -4050,33 +11540,49 @@ func _capture_logged_in_profile(player_name: String) -> void:
 	var previous_profile_id := _local_profile_id.strip_edges()
 	var resolved_profile_id := previous_profile_id
 	var resolved_auth_mode := _get_selected_auth_mode()
+	var resolved_account_email := ""
 	var resolved_account_username := ""
 	if lobby_client != null:
 		resolved_profile_id = str(lobby_client.current_profile_id).strip_edges()
 		var lobby_auth_mode := _normalize_auth_mode(str(lobby_client.current_auth_mode), resolved_auth_mode)
-		if lobby_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+		if lobby_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
 			resolved_auth_mode = lobby_auth_mode
+		resolved_account_email = str(lobby_client.current_email).strip_edges().to_lower()
 		resolved_account_username = _get_connected_account_username()
-		if resolved_account_username.is_empty() and resolved_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+		if resolved_account_username.is_empty() and resolved_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
 			resolved_account_username = str(lobby_client.current_username).strip_edges()
-		if resolved_account_username.is_empty() and resolved_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+		if resolved_account_username.is_empty() and resolved_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
 			resolved_account_username = player_name.strip_edges()
 	if resolved_profile_id.is_empty():
 		resolved_profile_id = previous_profile_id
-	if resolved_account_username.is_empty() and resolved_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
-		resolved_account_username = _get_preferred_account_username()
-	if not resolved_account_username.is_empty():
-		_account_decks_cache.clear()
+	if resolved_account_email.is_empty() and resolved_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
+		resolved_account_email = _get_preferred_account_username()
+	if resolved_account_username.is_empty() and not resolved_account_email.is_empty():
+		resolved_account_username = _display_name_from_account_email(resolved_account_email)
+	if not resolved_account_email.is_empty():
+		var was_legacy_claim := resolved_auth_mode == AUTH_MODE_CLAIM_LEGACY
+		var profile_activation_auth_mode := AUTH_MODE_CLAIM_LEGACY if was_legacy_claim else resolved_auth_mode
+		if resolved_auth_mode in [AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
+			resolved_auth_mode = AUTH_MODE_LOGIN
+		if resolved_account_username != _logged_in_account_username:
+			_account_decks_cache.clear()
 		_logged_in_account_username = resolved_account_username
-		_set_selected_account_username(resolved_account_username)
+		_set_selected_account_username(resolved_account_email)
+		_set_selected_account_public_username(resolved_account_username, false)
+		_selected_account_accepts_game_updates = lobby_client != null and bool(lobby_client.current_accepts_game_updates)
+		if was_legacy_claim and _local_profile_store != null \
+				and _local_profile_store.has_method("clear_pending_legacy_account_claim"):
+			_local_profile_store.clear_pending_legacy_account_claim()
 		var prefer_connected_profile_id := not resolved_profile_id.is_empty() \
-			and resolved_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]
+			and not was_legacy_claim \
+			and resolved_auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]
 		resolved_profile_id = _activate_account_profile(
-			resolved_account_username,
+			resolved_account_email,
 			resolved_profile_id,
-			resolved_auth_mode,
-			not _get_auth_password().is_empty(),
-			prefer_connected_profile_id
+			profile_activation_auth_mode,
+			_is_saved_account_password_save_enabled(),
+			prefer_connected_profile_id,
+			resolved_account_username
 		)
 		_local_profile_id = resolved_profile_id
 	else:
@@ -4092,21 +11598,19 @@ func _capture_logged_in_profile(player_name: String) -> void:
 	_update_resume_controls()
 	_refresh_account_identity_label()
 
-func _retry_account_switch_if_identity_mismatch(player_name: String) -> bool:
+func _retry_account_switch_if_identity_mismatch(_player_name: String) -> bool:
 	if not _account_switch_pending or lobby_client == null:
 		return false
-	var desired_username := _selected_account_username.strip_edges().to_lower()
-	if desired_username.is_empty():
+	var desired_email := _selected_account_username.strip_edges().to_lower()
+	if desired_email.is_empty():
 		return false
-	var actual_username := str(lobby_client.current_username).strip_edges().to_lower()
-	if actual_username.is_empty():
-		actual_username = player_name.strip_edges().to_lower()
-	if actual_username.is_empty() or actual_username == desired_username:
+	var actual_email := str(lobby_client.current_email).strip_edges().to_lower()
+	if actual_email.is_empty() or actual_email == desired_email:
 		return false
 	if _account_switch_retry_attempts >= 1:
 		return false
 	_account_switch_retry_attempts += 1
-	_write_smoke_trace("account_switch_retry desired=%s actual=%s" % [desired_username, actual_username])
+	_write_smoke_trace("account_switch_retry desired_email=%s actual_email=%s" % [desired_email, actual_email])
 	_lobby_session_id = ""
 	_lobby_reconnect_token = ""
 	_cleanup_lobby_client()
@@ -4129,6 +11633,66 @@ func _maybe_request_profile_summary() -> void:
 		return
 	lobby_client.request_profile_summary()
 
+func _maybe_save_smoke_account_deck(visible_decks: Array) -> void:
+	if _smoke_config.is_empty() or lobby_client == null:
+		return
+	var selected_deck: Dictionary = _get_selected_multiplayer_deck()
+	if selected_deck.is_empty():
+		if _hunting_tactics_smoke_active:
+			var ht_factory := PracticeAutofillDeckFactoryScript.new()
+			var purpose_deck := ht_factory.build_purpose_deck("Hunting Tactics Raven Smoke", "Thor", {
+				"Thor": 1,
+				"Huginn": 24,
+				"Muninn": 24,
+				"Banishment": 12,
+				"Mead of Poetry": 12,
+			})
+			if purpose_deck.is_empty():
+				return
+			var purpose_special := (purpose_deck.get("special_setup", {}) as Dictionary).duplicate(true)
+			purpose_special["is_purpose_deck"] = true
+			selected_deck = {
+				"deck_id": "hunting_tactics_smoke",
+				"name": str(purpose_deck.get("name", "Hunting Tactics Smoke")),
+				"cards": purpose_deck.get("cards", {}),
+				"special_setup": purpose_special,
+			}
+		else:
+			selected_deck = {
+				"deck_id": "smoke_default",
+				"name": "Smoke Default Deck",
+				"cards": {
+					"Baldr": 1,
+					"Blessed Knights": 3,
+					"Brown Bear": 3,
+					"Berserker": 3,
+					"Again-Walker": 3,
+					"Byggvir": 3,
+					"Bit Meseri": 3,
+					"Absence": 3,
+					"Warding Stone": 3,
+					"Void Shield": 3,
+					"Bearded Axe": 3,
+					"Blot Sacrifice": 3,
+					"Fall of the Mighty": 2,
+					"Circle of Rebirth": 3,
+					"Alu": 2,
+				},
+			}
+	var deck_id := str(selected_deck.get("deck_id", "")).strip_edges()
+	if deck_id.is_empty():
+		return
+	for entry in visible_decks:
+		if str(entry.get("deck_id", "")).strip_edges() == deck_id:
+			return # Already saved on the server.
+	lobby_client.save_account_deck(
+		str(selected_deck.get("name", "Default Deck")),
+		selected_deck.get("cards", {}),
+		deck_id,
+		selected_deck.get("special_setup", {}),
+		selected_deck.get("reinforcements", {})
+	)
+
 func _on_account_deck_list_received(decks, preferred_deck_id: String = "") -> void:
 	var remote_decks: Array[Dictionary] = []
 	if decks is Array:
@@ -4137,31 +11701,40 @@ func _on_account_deck_list_received(decks, preferred_deck_id: String = "") -> vo
 				remote_decks.append((entry as Dictionary).duplicate(true))
 	var deleted_lookup := _get_deleted_account_deck_lookup()
 	var remote_deck_ids: Array[String] = []
+	var mirrored_decks: Array[Dictionary] = []
 	for remote_deck in remote_decks:
 		var remote_deck_id := str(remote_deck.get("deck_id", "")).strip_edges()
 		if _should_ignore_account_deck_sync_update(remote_deck_id, deleted_lookup):
 			continue
 		remote_deck_ids.append(remote_deck_id)
-		_mirror_remote_account_deck_locally(remote_deck)
-	_mark_active_profile_account_decks_synced(remote_deck_ids)
+		mirrored_decks.append(remote_deck)
+	# One batched store write for the whole list; mirroring per deck rewrote the
+	# full profile store ~24 times per response (~12s with a large profile).
+	# The deck upsert and sync-state marking share one flush().
+	var store_dirty := false
+	if not mirrored_decks.is_empty():
+		if _local_profile_store.upsert_saved_decks(_local_profile_id, mirrored_decks, true) > 0:
+			store_dirty = true
+	if _mark_active_profile_account_decks_synced(remote_deck_ids, true):
+		store_dirty = true
+	if store_dirty:
+		_local_profile_store.flush()
 	var merged_decks := _merge_account_deck_catalogs(
 		remote_decks,
 		_get_local_saved_decks_for_active_profile(),
 		_get_synced_account_deck_lookup(),
-		deleted_lookup
+		deleted_lookup,
+		_local_profile_store.get_pending_account_deck_saves(_local_profile_id)
 	)
 	var visible_decks: Array[Dictionary] = merged_decks.get("visible_decks", [])
-	var local_migration_decks: Array[Dictionary] = merged_decks.get("local_migration_decks", [])
+	# Smoke-mode accounts are freshly registered, so their saved-deck list is empty.
+	# The lobby server rejects select_deck for account sessions that reference an
+	# unsaved deck_id, so proactively persist the smoke deck here; the room snapshot
+	# retry loop will then select it successfully once the save lands.
+	_maybe_save_smoke_account_deck(visible_decks)
 	_replace_account_decks_cache(visible_decks)
-	for local_deck in local_migration_decks:
-		if lobby_client == null:
-			break
-		lobby_client.save_account_deck(
-			str(local_deck.get("name", "Deck")),
-			local_deck.get("cards", {}),
-			str(local_deck.get("deck_id", "")),
-			local_deck.get("special_setup", {})
-		)
+	for local_deck in merged_decks.get("decks_to_upload", []):
+		_upload_local_account_deck(local_deck)
 	var resolved_preferred_deck_id := preferred_deck_id.strip_edges()
 	if resolved_preferred_deck_id.is_empty():
 		resolved_preferred_deck_id = _get_server_preferred_account_deck_id()
@@ -4194,10 +11767,34 @@ func _on_account_deck_saved(deck) -> void:
 		_remove_account_deck_from_cache(saved_deck_id)
 		_refresh_open_deck_builder_saved_decks()
 		return
-	_upsert_account_deck_cache(saved_deck)
-	_mirror_remote_account_deck_locally(saved_deck)
-	_mark_active_profile_account_decks_synced([saved_deck_id])
+	# A response matching an older save can arrive while a newer one is in flight.
+	var can_confirm := lobby_client != null and not lobby_client.has_unconfirmed_account_deck_saves(saved_deck_id)
+	var store_dirty: bool = _local_profile_store.upsert_saved_decks(
+		_local_profile_id, [saved_deck], true, can_confirm
+	) > 0
+	if _mark_active_profile_account_decks_synced([saved_deck_id], true) or store_dirty:
+		_local_profile_store.flush()
+	_upsert_account_deck_cache(_local_profile_store.get_deck(_local_profile_id, saved_deck_id))
 	_refresh_open_deck_builder_saved_decks()
+
+func _on_local_account_deck_saved(profile_id: String, deck: Dictionary) -> void:
+	if profile_id != _local_profile_id:
+		return
+	if _uses_server_account_storage():
+		_upsert_account_deck_cache(deck)
+		_upload_local_account_deck(deck)
+	_refresh_open_deck_builder_saved_decks()
+
+func _upload_local_account_deck(deck: Dictionary) -> void:
+	if not _uses_server_account_storage() or not lobby_client.is_authenticated() or _account_switch_pending:
+		return
+	lobby_client.save_account_deck(
+		str(deck.get("name", "Deck")),
+		deck.get("cards", {}),
+		str(deck.get("deck_id", "")),
+		deck.get("special_setup", {}),
+		deck.get("reinforcements", {})
+	)
 
 func _on_account_deck_deleted(deck_id: String) -> void:
 	var resolved_deck_id := deck_id.strip_edges()
@@ -4227,12 +11824,47 @@ func _on_profile_summary_received(summary) -> void:
 		return
 	_current_profile_summary = (summary as Dictionary).duplicate(true)
 	_refresh_profile_summary_label()
+	_request_recent_match_activity()
+
+func _on_account_settings_updated(account: Dictionary) -> void:
+	var account_email := str(account.get("email", "")).strip_edges().to_lower()
+	var account_username := str(account.get("username", "")).strip_edges()
+	if not account_email.is_empty():
+		_set_selected_account_username(account_email)
+	if not account_username.is_empty():
+		_set_selected_account_public_username(account_username, false)
+		_logged_in_account_username = account_username
+	_selected_account_accepts_game_updates = bool(account.get("accepts_game_updates", _selected_account_accepts_game_updates))
+	var changed_password := _settings_new_password_edit.text if _settings_new_password_edit != null else ""
+	if not changed_password.is_empty():
+		_set_selected_account_password(changed_password, false)
+	if not account_email.is_empty() and not account_username.is_empty():
+		_activate_account_profile(
+			account_email,
+			_local_profile_id,
+			AUTH_MODE_LOGIN,
+			_is_saved_account_password_save_enabled(),
+			true,
+			account_username
+		)
+	if _settings_current_password_edit != null:
+		_settings_current_password_edit.text = ""
+	if _settings_new_email_edit != null:
+		_settings_new_email_edit.text = ""
+	if _settings_new_password_edit != null:
+		_settings_new_password_edit.text = ""
+	_set_settings_account_status("Account settings saved.", false)
+	_refresh_settings_account_section()
+	_refresh_account_identity_label()
+	_refresh_open_deck_builder_saved_decks()
 
 func _refresh_open_deck_builder_saved_decks() -> void:
 	_refresh_multiplayer_deck_options()
 	var deck_builder = game_container.get_node_or_null("DeckBuilder")
 	if deck_builder == null:
 		return
+	# Configuration methods apply changed data themselves and skip identical
+	# responses. Reloading again here needlessly rebuilds the deck gallery.
 	if deck_builder.has_method("configure_profile_store"):
 		deck_builder.configure_profile_store(_local_profile_store, _local_profile_id, _get_active_profile_display_name("Player"))
 	if deck_builder.has_method("configure_online_sync"):
@@ -4245,9 +11877,6 @@ func _refresh_open_deck_builder_saved_decks() -> void:
 		)
 	if deck_builder.has_method("configure_friends"):
 		deck_builder.configure_friends(_get_friend_usernames())
-	if not deck_builder.has_method("reload_saved_decks_from_store"):
-		return
-	deck_builder.reload_saved_decks_from_store()
 
 func _build_profile_summary_controls() -> void:
 	if multiplayer_container == null or _profile_summary_label != null:
@@ -4256,8 +11885,6 @@ func _build_profile_summary_controls() -> void:
 	panel.name = "ProfileSummaryPanel"
 	panel.visible = false
 	panel.mouse_filter = Control.MOUSE_FILTER_STOP
-	panel.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	panel.gui_input.connect(_on_profile_summary_panel_gui_input)
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.08, 0.10, 0.14, 0.92)
 	style.border_color = Color(0.30, 0.40, 0.55, 0.8)
@@ -4269,6 +11896,8 @@ func _build_profile_summary_controls() -> void:
 	style.corner_radius_bottom_right = 4
 	panel.add_theme_stylebox_override("panel", style)
 	_profile_summary_panel = panel
+	var row := HBoxContainer.new()
+	panel.add_child(row)
 	_profile_summary_label = Label.new()
 	_profile_summary_label.name = "ProfileSummaryLabel"
 	_profile_summary_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -4276,16 +11905,488 @@ func _build_profile_summary_controls() -> void:
 	_profile_summary_label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	_profile_summary_label.add_theme_font_size_override("font_size", 13)
 	_profile_summary_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.add_child(_profile_summary_label)
+	_profile_summary_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(_profile_summary_label)
+	var badge_buttons := VBoxContainer.new()
+	badge_buttons.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(badge_buttons)
+	for best_of in [1, 3]:
+		var button := Button.new()
+		button.text = "Bo%d Badge" % best_of
+		button.tooltip_text = "Choose and crop your rank badge portrait"
+		button.pressed.connect(_open_rank_badge_picker.bind(best_of))
+		button.hide()
+		badge_buttons.add_child(button)
+		_rank_badge_buttons[best_of] = button
 	multiplayer_container.add_child(panel)
+	multiplayer_container.visibility_changed.connect(_on_rank_badge_lobby_visibility_changed)
 	if seek_list != null:
 		multiplayer_container.move_child(panel, seek_list.get_index())
 
+func _open_rank_badge_picker(best_of: int) -> void:
+	if not _has_active_lobby_connection() or is_instance_valid(_rank_badge_picker):
+		return
+	var key := "ranked_bo3_progress" if best_of == 3 else "ranked_progress"
+	var progress: Dictionary = _current_profile_summary.get(key, {})
+	var rank := str(progress.get("rank_name", ""))
+	var league := RankBadgeCatalog.league_for_rank(rank)
+	if league < 0:
+		return
+	_hide_multiplayer_deck_popup()
+	_rank_badge_picker = RankBadgePickerScript.new(best_of, rank, progress.get("portrait", {}))
+	_rank_badge_picker.close_requested.connect(_close_rank_badge_picker)
+	_rank_badge_picker.save_requested.connect(_save_rank_badge.bind(league))
+	add_child(_rank_badge_picker)
+
+func _save_rank_badge(best_of: int, portrait: Dictionary, league: int) -> void:
+	if not _has_active_lobby_connection():
+		_rank_badge_picker.show_save_error("Reconnect to the lobby to save your badge.")
+		return
+	lobby_client.set_rank_badge(best_of, league, portrait)
+
+func _on_rank_badge_result(success: bool, message: String) -> void:
+	if not is_instance_valid(_rank_badge_picker):
+		return
+	if success:
+		_close_rank_badge_picker()
+	else:
+		_rank_badge_picker.show_save_error(message)
+		_maybe_request_profile_summary()
+
+func _close_rank_badge_picker() -> void:
+	if is_instance_valid(_rank_badge_picker):
+		_rank_badge_picker.hide()
+		_rank_badge_picker.queue_free()
+		_rank_badge_picker = null
+
+func _on_rank_badge_lobby_visibility_changed() -> void:
+	if not multiplayer_container.is_visible_in_tree():
+		_close_rank_badge_picker()
+
+func _open_ranked_ladder() -> void:
+	if not OS.is_debug_build() or not multiplayer_container.is_visible_in_tree() or is_instance_valid(_ranked_ladder_view):
+		return
+	_hide_multiplayer_deck_popup()
+	_ranked_ladder_view = RankedLadderViewScript.new()
+	_ranked_ladder_view.close_requested.connect(_close_ranked_ladder)
+	add_child(_ranked_ladder_view)
+	_refresh_ranked_ladder()
+	if _has_active_lobby_connection() and _uses_server_account_storage():
+		_maybe_request_profile_summary()
+
+func _refresh_ranked_ladder() -> void:
+	if not is_instance_valid(_ranked_ladder_view):
+		return
+	var summary: Dictionary = {}
+	var empty_message: String
+	if not _has_active_lobby_connection():
+		empty_message = "Connect to the lobby to see your rank."
+	elif not _uses_server_account_storage():
+		empty_message = "Sign in to see your rank."
+	elif _current_profile_summary.get("profile_id", "") != lobby_client.current_profile_id:
+		empty_message = "Loading your rank…"
+	else:
+		summary = _current_profile_summary
+		empty_message = "Rank unavailable from this lobby."
+	_ranked_ladder_view.update_progress(
+		summary.get("ranked_progress", {}), summary.get("ranked_bo3_progress", {}), empty_message
+	)
+
+func _close_ranked_ladder() -> void:
+	if not is_instance_valid(_ranked_ladder_view):
+		return
+	_ranked_ladder_view.hide()
+	_ranked_ladder_view.queue_free()
+	_ranked_ladder_view = null
+	if is_instance_valid(_ranked_ladder_button) and _ranked_ladder_button.is_visible_in_tree():
+		_ranked_ladder_button.grab_focus()
+
+func _on_ladder_lobby_visibility_changed() -> void:
+	if not multiplayer_container.is_visible_in_tree():
+		if is_instance_valid(_recent_activity_timer):
+			_recent_activity_timer.stop()
+		_layout_recent_activity_panel()
+		_close_bot_ladder()
+	else:
+		_layout_recent_activity_panel()
+		_request_recent_match_activity()
+		if is_instance_valid(_recent_activity_timer):
+			_recent_activity_timer.start()
+
+func _can_view_quarantined_bots() -> bool:
+	return _has_active_lobby_connection() and lobby_client.can_view_quarantined_bots
+
+func _update_quarantined_bots_button() -> void:
+	if is_instance_valid(_quarantined_bots_button):
+		_quarantined_bots_button.visible = _can_view_quarantined_bots()
+
+func _open_bot_ladder(quarantined_only: bool = false) -> void:
+	if not multiplayer_container.is_visible_in_tree() or is_instance_valid(_bot_ladder_view):
+		return
+	if quarantined_only and not _can_view_quarantined_bots():
+		return
+	_hide_multiplayer_deck_popup()
+	_bot_ladder_view = BotLadderViewScript.new()
+	_bot_ladder_view.quarantined_only = quarantined_only
+	_bot_ladder_view.close_requested.connect(_close_bot_ladder)
+	_bot_ladder_view.refresh_requested.connect(_request_bot_ladder)
+	if not lobby_client.bot_deleted.is_connected(_on_bot_deleted):
+		lobby_client.bot_deleted.connect(_on_bot_deleted)
+	if not lobby_client.bot_quarantined.is_connected(_on_bot_quarantined):
+		lobby_client.bot_quarantined.connect(_on_bot_quarantined)
+	_bot_ladder_view.page_requested.connect(_request_bot_ladder)
+	_bot_ladder_view.search_requested.connect(_on_bot_ladder_search_requested)
+	_bot_ladder_view.deck_requested.connect(_request_bot_deck)
+	_bot_ladder_view.delete_requested.connect(_on_bot_ladder_delete_requested)
+	_bot_ladder_view.quarantine_requested.connect(_on_bot_ladder_quarantine_requested)
+	_bot_ladder_view.add_deck_requested.connect(_on_bot_ladder_add_deck_requested)
+	add_child(_bot_ladder_view)
+	_refresh_ladder_profile_summary()
+	_request_bot_ladder()
+
+func _request_bot_ladder(page: int = -1) -> void:
+	if not is_instance_valid(_bot_ladder_view):
+		return
+	_bot_ladder_request_serial += 1
+	if not _has_active_lobby_connection() or not _uses_server_account_storage():
+		_bot_ladder_view.set_paging_supported(false)
+		_bot_ladder_view.set_status("Sign in to the lobby to see the ladder.", false, true)
+		return
+	var quarantined_only := _bot_ladder_view.quarantined_only
+	if quarantined_only and not _can_view_quarantined_bots():
+		_close_bot_ladder()
+		return
+	if not lobby_client.supports_bot_ladder:
+		_bot_ladder_view.set_paging_supported(false)
+		_bot_ladder_view.set_status("Update the lobby server to view ranked standings.", false, true)
+		return
+	_bot_ladder_view.set_paging_supported(lobby_client.supports_ladder_pages)
+	_bot_ladder_view.set_filter_supported(lobby_client.supports_ladder_filter)
+	var request_serial := _bot_ladder_request_serial
+	_bot_ladder_view.set_status("Loading quarantined bots…" if quarantined_only else "Loading ladder…", false)
+	var requested_page := _bot_ladder_view.get_current_page() if page < 0 else page
+	lobby_client.request_ladder(
+		_bot_ladder_view.get_best_of(), requested_page, request_serial,
+		_bot_ladder_view.get_search_query(), _bot_ladder_view.get_player_filter(), quarantined_only
+	)
+	await get_tree().create_timer(10.0).timeout
+	if is_instance_valid(_bot_ladder_view) and request_serial == _bot_ladder_request_serial:
+		_bot_ladder_view.set_status("The lobby did not respond. Try refreshing.", true)
+
+func _on_bot_ladder_search_requested(_query: String) -> void:
+	if not is_instance_valid(_bot_ladder_view):
+		return
+	_request_bot_ladder(0)
+
+func _on_bot_ladder_received(summary: Dictionary) -> void:
+	if not is_instance_valid(_bot_ladder_view) or not _has_active_lobby_connection():
+		return
+	if int(summary.get("request_id", _bot_ladder_request_serial)) != _bot_ladder_request_serial:
+		return
+	_bot_ladder_request_serial += 1
+	_bot_ladder_view.show_summary(summary)
+
+func _request_bot_deck(list_id: String) -> void:
+	if is_instance_valid(_bot_ladder_view) and _has_active_lobby_connection():
+		lobby_client.request_bot_deck(list_id, _bot_ladder_view.quarantined_only)
+
+func _on_bot_deck_received(list_id: String, deck: Dictionary) -> void:
+	if is_instance_valid(_bot_ladder_view) and _has_active_lobby_connection():
+		_bot_ladder_view.show_deck(list_id, deck)
+
+func _close_bot_ladder() -> void:
+	if not is_instance_valid(_bot_ladder_view):
+		return
+	_bot_ladder_request_serial += 1
+	var return_button := _quarantined_bots_button if _bot_ladder_view.quarantined_only else _ladder_button
+	_bot_ladder_view.hide()
+	_bot_ladder_view.queue_free()
+	_bot_ladder_view = null
+	if is_instance_valid(return_button) and return_button.is_visible_in_tree():
+		return_button.grab_focus()
+
 func _build_account_identity_controls() -> void:
+	if menu_container == null:
+		return
 	if _account_identity_label != null and is_instance_valid(_account_identity_label):
-		_account_identity_label.queue_free()
-	_account_identity_label = null
+		_refresh_account_identity_label()
+		return
+	_account_identity_label = Label.new()
+	_account_identity_label.name = "AccountIdentityLabel"
+	_account_identity_label.visible = false
+	_account_identity_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_account_identity_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_account_identity_label.modulate = Color(0.78, 0.84, 0.96)
+	_account_identity_label.add_theme_font_size_override("font_size", MENU_ACCOUNT_IDENTITY_FONT_SIZE)
+	menu_container.add_child(_account_identity_label)
+	var anchor_node: Node = multiplayer_button
+	if _switch_account_button != null:
+		anchor_node = _switch_account_button
+	var insert_index := menu_container.get_children().find(anchor_node) + 1
+	if insert_index <= 0:
+		insert_index = menu_container.get_child_count()
+	menu_container.move_child(_account_identity_label, insert_index)
 	_refresh_account_identity_label()
+
+func _build_settings_controls() -> void:
+	if menu_container == null or _settings_button != null:
+		return
+	_settings_button = Button.new()
+	_settings_button.name = "SettingsButton"
+	_settings_button.text = "Settings"
+	_settings_button.pressed.connect(_open_settings_overlay)
+	menu_container.add_child(_settings_button)
+	var insert_index := menu_container.get_children().find(tutorial_button) + 1
+	if insert_index <= 0:
+		insert_index = menu_container.get_children().find(multiplayer_button)
+	if insert_index <= 0:
+		insert_index = menu_container.get_child_count()
+	menu_container.move_child(_settings_button, insert_index)
+
+func _open_settings_overlay() -> void:
+	if _settings_overlay != null and is_instance_valid(_settings_overlay):
+		return
+	_settings_overlay = Control.new()
+	_settings_overlay.name = "SettingsOverlay"
+	_settings_overlay.z_index = 2250
+	_settings_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_settings_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(_settings_overlay)
+
+	var shade := ColorRect.new()
+	shade.color = Color(0.02, 0.03, 0.06, 0.86)
+	shade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	shade.mouse_filter = Control.MOUSE_FILTER_STOP
+	_settings_overlay.add_child(shade)
+
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_settings_overlay.add_child(center)
+
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = Vector2(560, 0)
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	var panel_style := StyleBoxFlat.new()
+	panel_style.bg_color = Color(0.09, 0.10, 0.16, 0.98)
+	panel_style.border_color = Color(0.38, 0.66, 1.0, 0.95)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		panel_style.set_border_width(side as Side, 2)
+	panel_style.corner_radius_top_left = 10
+	panel_style.corner_radius_top_right = 10
+	panel_style.corner_radius_bottom_left = 10
+	panel_style.corner_radius_bottom_right = 10
+	panel.add_theme_stylebox_override("panel", panel_style)
+	center.add_child(panel)
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 18)
+	margin.add_theme_constant_override("margin_right", 18)
+	margin.add_theme_constant_override("margin_top", 18)
+	margin.add_theme_constant_override("margin_bottom", 18)
+	panel.add_child(margin)
+
+	var content := VBoxContainer.new()
+	content.add_theme_constant_override("separation", 10)
+	margin.add_child(content)
+
+	var title := Label.new()
+	title.text = "Settings"
+	title.add_theme_font_size_override("font_size", 22)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	content.add_child(title)
+
+	var settings_tabs := TabContainer.new()
+	settings_tabs.custom_minimum_size = Vector2(0, 470)
+	settings_tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	content.add_child(settings_tabs)
+
+	var created_settings_toggles := {}
+	settings_tabs.add_child(GameSettingsTabsScript.build_general_tab(
+		Callable(self, "_get_settings_menu_value"),
+		Callable(self, "_set_settings_menu_value"),
+		created_settings_toggles,
+		Callable(self, "_get_settings_menu_text_value"),
+		Callable(self, "_set_settings_menu_text_value"),
+		Callable(self, "_get_settings_menu_number_value"),
+		Callable(self, "_set_settings_menu_number_value")
+	))
+	_settings_music_mute_toggle = created_settings_toggles.get("%s/%s" % [AUDIO_SETTINGS_SECTION, MUSIC_MUTED_KEY]) as CheckButton
+	settings_tabs.add_child(GameSettingsTabsScript.build_god_tab(
+		Callable(self, "_get_settings_menu_value"),
+		Callable(self, "_set_settings_menu_value"),
+		created_settings_toggles
+	))
+
+	var account_tab := VBoxContainer.new()
+	account_tab.name = ACCOUNT_SETTINGS_SECTION_TITLE
+	account_tab.add_theme_constant_override("separation", 10)
+	settings_tabs.add_child(account_tab)
+
+	_settings_account_status_label = Label.new()
+	_settings_account_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_settings_account_status_label.modulate = Color(0.78, 0.84, 0.96)
+	account_tab.add_child(_settings_account_status_label)
+
+	_settings_auto_login_toggle = CheckButton.new()
+	_settings_auto_login_toggle.text = "Auto login on this device"
+	_settings_auto_login_toggle.tooltip_text = "Automatically restores this account on startup when a saved lobby session is available."
+	_settings_auto_login_toggle.toggled.connect(_on_settings_auto_login_toggled)
+	account_tab.add_child(_settings_auto_login_toggle)
+
+	_settings_save_password_toggle = CheckButton.new()
+	_settings_save_password_toggle.text = "Save login details on this device"
+	_settings_save_password_toggle.tooltip_text = "Stores your account password locally on this device. Use only on devices you trust."
+	_settings_save_password_toggle.toggled.connect(_on_settings_save_password_toggled)
+	account_tab.add_child(_settings_save_password_toggle)
+
+	_settings_account_updates_toggle = CheckButton.new()
+	_settings_account_updates_toggle.text = "Send me game updates by email"
+	account_tab.add_child(_settings_account_updates_toggle)
+
+	_settings_current_password_edit = LineEdit.new()
+	_settings_current_password_edit.secret = true
+	_settings_current_password_edit.placeholder_text = "Current password for email/password changes"
+	account_tab.add_child(_settings_current_password_edit)
+
+	_settings_new_email_edit = LineEdit.new()
+	_settings_new_email_edit.placeholder_text = "New email address"
+	account_tab.add_child(_settings_new_email_edit)
+
+	_settings_new_password_edit = LineEdit.new()
+	_settings_new_password_edit.secret = true
+	_settings_new_password_edit.placeholder_text = "New password"
+	account_tab.add_child(_settings_new_password_edit)
+
+	var save_btn := Button.new()
+	save_btn.text = "Save Account Changes"
+	save_btn.custom_minimum_size = Vector2(0, 38)
+	save_btn.pressed.connect(_on_account_settings_save_pressed)
+	account_tab.add_child(save_btn)
+
+	var close_btn := Button.new()
+	close_btn.text = "Close"
+	close_btn.custom_minimum_size = Vector2(0, 38)
+	close_btn.pressed.connect(_close_settings_overlay)
+	content.add_child(close_btn)
+
+	_refresh_settings_account_section()
+
+func _close_settings_overlay() -> void:
+	if _settings_overlay != null and is_instance_valid(_settings_overlay):
+		_settings_overlay.queue_free()
+	_settings_overlay = null
+	_settings_music_mute_toggle = null
+	_settings_account_status_label = null
+	_settings_auto_login_toggle = null
+	_settings_save_password_toggle = null
+	_settings_account_updates_toggle = null
+	_settings_current_password_edit = null
+	_settings_new_email_edit = null
+	_settings_new_password_edit = null
+
+func _refresh_settings_account_section() -> void:
+	if _settings_account_status_label == null:
+		return
+	var signed_in := _uses_server_account_storage() and lobby_client != null and lobby_client.is_authenticated()
+	if not signed_in:
+		_settings_account_status_label.text = "Log into an account to manage account settings."
+	else:
+		_settings_account_status_label.text = "Signed in as %s (%s)." % [
+			str(lobby_client.current_username).strip_edges(),
+			str(lobby_client.current_email).strip_edges(),
+		]
+	var has_account_identity := _has_saved_or_pending_account_identity() or signed_in
+	if _settings_auto_login_toggle != null:
+		_settings_auto_login_toggle.disabled = not has_account_identity
+		_settings_auto_login_toggle.set_pressed_no_signal(_is_saved_account_auto_login_enabled())
+	if _settings_save_password_toggle != null:
+		_settings_save_password_toggle.disabled = not signed_in and not _is_saved_account_password_save_enabled()
+		_settings_save_password_toggle.set_pressed_no_signal(_is_saved_account_password_save_enabled())
+	if _settings_account_updates_toggle != null:
+		_settings_account_updates_toggle.disabled = not signed_in
+		_settings_account_updates_toggle.set_pressed_no_signal(
+			bool(lobby_client.current_accepts_game_updates) if signed_in else false
+		)
+	for edit in [_settings_current_password_edit, _settings_new_email_edit, _settings_new_password_edit]:
+		if edit == null:
+			continue
+		edit.editable = signed_in
+		edit.visible = signed_in
+
+func _on_account_settings_save_pressed() -> void:
+	if not _uses_server_account_storage() or lobby_client == null or not lobby_client.is_authenticated():
+		_set_settings_account_status("Log into an account before changing account settings.", true)
+		return
+	var current_password := _settings_current_password_edit.text if _settings_current_password_edit != null else ""
+	var new_email := _settings_new_email_edit.text.strip_edges().to_lower() if _settings_new_email_edit != null else ""
+	var new_password := _settings_new_password_edit.text if _settings_new_password_edit != null else ""
+	var accepts_updates := _settings_account_updates_toggle != null and _settings_account_updates_toggle.button_pressed
+	if not new_email.is_empty() and not _is_valid_account_email(new_email):
+		_set_settings_account_status("Enter a valid new email address.", true)
+		return
+	if not new_password.is_empty() and new_password.strip_edges().length() < _get_account_min_password_length():
+		_set_settings_account_status("New passwords must be at least %d characters." % _get_account_min_password_length(), true)
+		return
+	if (not new_email.is_empty() or not new_password.is_empty()) and current_password.is_empty():
+		_set_settings_account_status("Enter your current password to change email or password.", true)
+		return
+	lobby_client.update_account_settings(current_password, new_email, new_password, accepts_updates)
+	_set_settings_account_status("Saving account settings...", false)
+
+func _on_settings_auto_login_toggled(enabled: bool) -> void:
+	if _local_profile_store == null:
+		if _settings_auto_login_toggle != null:
+			_settings_auto_login_toggle.set_pressed_no_signal(false)
+		return
+	if enabled and not (_has_saved_or_pending_account_identity() or _uses_server_account_storage()):
+		_settings_auto_login_toggle.set_pressed_no_signal(false)
+		_set_settings_account_status("Sign into an account before enabling auto login.", true)
+		return
+	_local_profile_store.set_account_auto_login_enabled(enabled)
+	if not enabled:
+		_startup_autologin_pending = false
+		_startup_autologin_in_progress = false
+	_set_settings_account_status(
+		"Auto login enabled on this device." if enabled else "Auto login disabled on this device.",
+		false
+	)
+
+func _on_settings_save_password_toggled(enabled: bool) -> void:
+	if _local_profile_store == null:
+		if _settings_save_password_toggle != null:
+			_settings_save_password_toggle.set_pressed_no_signal(false)
+		return
+	if not enabled:
+		_local_profile_store.set_account_password_save_enabled(false)
+		_set_selected_account_password("")
+		_set_settings_account_status("Saved login details cleared on this device.", false)
+		return
+	var password := ""
+	if _settings_current_password_edit != null:
+		password = _settings_current_password_edit.text
+	if password.is_empty() and not _selected_account_password.is_empty():
+		password = _selected_account_password
+	if password.is_empty() and not _get_saved_account_password().is_empty():
+		password = _get_saved_account_password()
+	if password.is_empty():
+		if _settings_save_password_toggle != null:
+			_settings_save_password_toggle.set_pressed_no_signal(false)
+		_local_profile_store.set_account_password_save_enabled(false)
+		_set_settings_account_status("Enter your current password below before saving login details.", true)
+		if _settings_current_password_edit != null:
+			_settings_current_password_edit.grab_focus()
+		return
+	_set_selected_account_password(password, false)
+	_local_profile_store.remember_account_password(password)
+	_set_settings_account_status("Login details saved on this device.", false)
+
+func _set_settings_account_status(message: String, is_error: bool = false) -> void:
+	if _settings_account_status_label == null:
+		return
+	_settings_account_status_label.text = message
+	_settings_account_status_label.modulate = Color(1.0, 0.72, 0.72) if is_error else Color(0.78, 0.84, 0.96)
 
 func _build_friends_controls() -> void:
 	if menu_container == null or _friends_button != null:
@@ -4409,6 +12510,17 @@ func _open_friends_overlay() -> void:
 	account_hint.modulate = Color(0.72, 0.78, 0.90)
 	content.add_child(account_hint)
 
+	_friend_observer_card_visibility_toggle = CheckButton.new()
+	_friend_observer_card_visibility_toggle.text = "Allow friends observing my matches to see my cards"
+	_friend_observer_card_visibility_toggle.tooltip_text = "On by default. This only reveals cards to observers whose accounts are on your friends list."
+	_friend_observer_card_visibility_toggle.button_pressed = (
+		lobby_client.current_allow_friend_observers_to_see_cards
+		if lobby_client != null
+		else true
+	)
+	_friend_observer_card_visibility_toggle.toggled.connect(_on_friend_observer_card_visibility_toggled)
+	content.add_child(_friend_observer_card_visibility_toggle)
+
 	_friends_status_label = Label.new()
 	_friends_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_friends_status_label.modulate = Color(0.80, 0.86, 0.96)
@@ -4439,6 +12551,7 @@ func _close_friends_overlay() -> void:
 	_friends_status_label = null
 	_friends_username_edit = null
 	_friends_content_list = null
+	_friend_observer_card_visibility_toggle = null
 	if _friends_button != null:
 		_friends_button.grab_focus()
 
@@ -4475,6 +12588,19 @@ func _on_friends_state_received(state) -> void:
 	_refresh_friends_button()
 	_refresh_friends_overlay()
 	_refresh_open_deck_builder_saved_decks()
+
+func _on_friend_observer_card_visibility_toggled(allowed: bool) -> void:
+	# The authoritative value lives on the lobby server per account; the local
+	# profile-store copy this used to write had no reader.
+	if lobby_client != null and _uses_server_account_storage():
+		lobby_client.set_allow_friend_observers_to_see_cards(allowed)
+
+func _sync_friend_observer_card_visibility() -> void:
+	if lobby_client == null:
+		return
+	var allowed := lobby_client.current_allow_friend_observers_to_see_cards
+	if _friend_observer_card_visibility_toggle != null:
+		_friend_observer_card_visibility_toggle.set_pressed_no_signal(allowed)
 
 func _refresh_friends_overlay() -> void:
 	if _friends_content_list == null or not is_instance_valid(_friends_content_list):
@@ -4700,7 +12826,8 @@ func _send_deck_to_friend(friend_username: String, deck: Dictionary) -> void:
 		friend_username,
 		str(deck.get("name", "Deck")),
 		deck.get("cards", {}),
-		deck.get("special_setup", {})
+		deck.get("special_setup", {}),
+		deck.get("reinforcements", {})
 	)
 	_set_friends_status("Sending deck to %s..." % friend_username)
 	status_label.text = "Sending deck to %s..." % friend_username
@@ -4712,11 +12839,22 @@ func _refresh_account_identity_label() -> void:
 	if title_label != null:
 		title_label.text = _get_effective_identity_name("Guest")
 	_refresh_friends_button()
+	_refresh_settings_account_section()
 	if _account_identity_label == null:
 		return
 	if not active_account_username.is_empty():
 		_account_identity_label.text = "Signed in: %s" % active_account_username
-		_account_identity_label.visible = true
+		if not _is_multiplayer_screen_active():
+			_account_identity_label.visible = OS.is_debug_build()
+		_refresh_auth_controls()
+		return
+	if _is_guest_session_active():
+		var guest_display_name := _get_active_profile_display_name("Guest")
+		if not _is_generated_guest_username(guest_display_name):
+			guest_display_name = _get_preferred_guest_display_name("Guest")
+		_account_identity_label.text = "Guest: %s" % guest_display_name
+		if not _is_multiplayer_screen_active():
+			_account_identity_label.visible = OS.is_debug_build()
 		_refresh_auth_controls()
 		return
 	var selected_account_username := _get_selected_account_username()
@@ -4725,11 +12863,13 @@ func _refresh_account_identity_label() -> void:
 		_account_identity_label.text = ""
 		_refresh_auth_controls()
 		return
-	_account_identity_label.text = "Account: %s" % selected_account_username
-	_account_identity_label.visible = true
+	_account_identity_label.text = ""
+	_account_identity_label.visible = false
 	_refresh_auth_controls()
 
 func _refresh_profile_summary_label() -> void:
+	_refresh_ranked_ladder()
+	_refresh_ladder_profile_summary()
 	if _profile_summary_label == null:
 		return
 	var panel := _profile_summary_panel if _profile_summary_panel != null else _profile_summary_label.get_parent()
@@ -4742,126 +12882,53 @@ func _refresh_profile_summary_label() -> void:
 	var total_losses: int = int(_current_profile_summary.get("total_losses", 0))
 	var summary_line := "Match Record: %d-%d" % [total_wins, total_losses]
 	var lines: Array[String] = [summary_line]
-
-	var god_records = _current_profile_summary.get("god_records", [])
-	var deck_records = _current_profile_summary.get("deck_records", [])
-	var recent_matches = _current_profile_summary.get("recent_matches", [])
-	var has_details := (
-		(god_records is Array and not (god_records as Array).is_empty())
-		or (deck_records is Array and not (deck_records as Array).is_empty())
-		or (recent_matches is Array and not (recent_matches as Array).is_empty())
-	)
-
-	if _profile_summary_expanded and has_details:
-		if god_records is Array and not (god_records as Array).is_empty():
-			lines.append("")
-			lines.append("By God:")
-			var displayed_god_records: int = 0
-			for raw_record in god_records:
-				if not (raw_record is Dictionary):
-					continue
-				var god_record: Dictionary = raw_record as Dictionary
-				lines.append("%s %d-%d" % [
-					str(god_record.get("god_name", "Unknown God")),
-					int(god_record.get("wins", 0)),
-					int(god_record.get("losses", 0)),
-				])
-				displayed_god_records += 1
-				if displayed_god_records >= 4:
-					break
-
-		if deck_records is Array and not (deck_records as Array).is_empty():
-			lines.append("")
-			lines.append("By Deck:")
-			var displayed_deck_records: int = 0
-			for raw_record in deck_records:
-				if not (raw_record is Dictionary):
-					continue
-				var deck_record: Dictionary = raw_record as Dictionary
-				lines.append("%s %d-%d" % [
-					_get_profile_summary_deck_name(str(deck_record.get("deck_name", ""))),
-					int(deck_record.get("wins", 0)),
-					int(deck_record.get("losses", 0)),
-				])
-				displayed_deck_records += 1
-				if displayed_deck_records >= 3:
-					break
-
-		if recent_matches is Array and not (recent_matches as Array).is_empty():
-			lines.append("")
-			lines.append("Recent:")
-			var displayed_recent_matches: int = 0
-			for raw_match in recent_matches:
-				if not (raw_match is Dictionary):
-					continue
-				var recent_match: Dictionary = raw_match as Dictionary
-				var result_text: String = "W" if str(recent_match.get("result", "")).to_lower() == "win" else "L"
-				lines.append("%s as %s vs %s" % [
-					result_text,
-					_get_profile_summary_loadout(
-						str(recent_match.get("god_name", "Unknown God")),
-						str(recent_match.get("deck_name", ""))
-					),
-					_get_profile_summary_loadout(
-						str(recent_match.get("opponent_god_name", "Unknown God")),
-						str(recent_match.get("opponent_deck_name", ""))
-					),
-				])
-				displayed_recent_matches += 1
-				if displayed_recent_matches >= 3:
-					break
-
-		lines.append("")
-		lines.append("Tap to collapse")
-	elif has_details:
-		lines.append("Tap for details")
+	var ranked_by_format: Dictionary = {
+		1: _current_profile_summary.get("ranked_progress", {}),
+		3: _current_profile_summary.get("ranked_bo3_progress", {}),
+	}
+	var can_edit_badge: bool = bool(_current_profile_summary.get("supports_rank_badges", false)) \
+		and _has_active_lobby_connection() and _current_profile_summary.get("profile_id", "") == lobby_client.current_profile_id
+	for best_of in _rank_badge_buttons:
+		_rank_badge_buttons[best_of].visible = can_edit_badge and not ranked_by_format[best_of].is_empty()
+	var has_separate_ladders := _current_profile_summary.has("ranked_bo3_progress")
+	var has_ranked_progress := false
+	if panel != null:
+		panel.tooltip_text = ""
+	for best_of in ranked_by_format:
+		var ranked_progress: Dictionary = ranked_by_format[best_of]
+		if ranked_progress.is_empty():
+			continue
+		has_ranked_progress = true
+		var rank_name := str(ranked_progress["rank_name"])
+		var stars := int(ranked_progress["stars"])
+		var stars_required := int(ranked_progress["stars_required"])
+		var rank_line := "%s  •  %d stars" % [rank_name, stars]
+		if stars_required > 0:
+			rank_line = "%s  %s%s  %d/%d" % [rank_name, "★".repeat(stars), "☆".repeat(stars_required - stars), stars, stars_required]
+		if has_separate_ladders:
+			rank_line = "Bo%d  •  %s" % [best_of, rank_line]
+		lines.insert(lines.size() - 1, rank_line)
+	if has_ranked_progress:
+		if panel != null:
+			panel.tooltip_text = "Both players must sign in for a rated match to count. Each division takes three stars. A win earns one star. From your third consecutive win through Gold, wins earn two stars. Losses cost one star starting in Silver, with floors at Divisions V and III. Ranks reset monthly based on your season peak."
+	elif _current_profile_summary.has("ranked_progress"):
+		lines.insert(0, "Sign in to earn ranked stars")
 
 	_profile_summary_label.text = "\n".join(lines)
 	if panel != null:
 		panel.visible = true
 
-func _on_profile_summary_panel_gui_input(event: InputEvent) -> void:
-	if _current_profile_summary.is_empty():
+func _refresh_ladder_profile_summary() -> void:
+	if not is_instance_valid(_bot_ladder_view):
 		return
-	var wants_toggle := false
-	if event is InputEventMouseButton:
-		var mouse_event := event as InputEventMouseButton
-		wants_toggle = mouse_event.button_index == MOUSE_BUTTON_LEFT and mouse_event.pressed
-	elif event is InputEventScreenTouch:
-		var touch_event := event as InputEventScreenTouch
-		wants_toggle = touch_event.pressed
-	if not wants_toggle:
-		return
-	var god_records = _current_profile_summary.get("god_records", [])
-	var deck_records = _current_profile_summary.get("deck_records", [])
-	var recent_matches = _current_profile_summary.get("recent_matches", [])
-	var has_details := (
-		(god_records is Array and not (god_records as Array).is_empty())
-		or (deck_records is Array and not (deck_records as Array).is_empty())
-		or (recent_matches is Array and not (recent_matches as Array).is_empty())
-	)
-	if not has_details:
-		return
-	_profile_summary_expanded = not _profile_summary_expanded
-	_refresh_profile_summary_label()
-
-func _get_profile_summary_deck_name(deck_name: String) -> String:
-	var resolved_deck_name := deck_name.strip_edges()
-	if resolved_deck_name.is_empty():
-		return "Unknown Deck"
-	return resolved_deck_name
-
-func _get_profile_summary_loadout(god_name: String, deck_name: String) -> String:
-	var resolved_god_name := god_name.strip_edges()
-	if resolved_god_name.is_empty():
-		resolved_god_name = "Unknown God"
-	var resolved_deck_name := deck_name.strip_edges()
-	if resolved_deck_name.is_empty():
-		return resolved_god_name
-	return "%s (%s)" % [resolved_god_name, resolved_deck_name]
+	if _has_active_lobby_connection() and _uses_server_account_storage() \
+			and _current_profile_summary.get("profile_id", "") == lobby_client.current_profile_id:
+		_bot_ladder_view.set_own_profile_summary(lobby_client.current_username, _current_profile_summary)
+	else:
+		_bot_ladder_view.set_own_profile_summary("", {})
 
 func _refresh_profile_summary_from_local_history(profile_id: String) -> void:
-	if _is_account_logged_in() or _get_selected_auth_mode() in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
+	if _is_account_logged_in() or _get_selected_auth_mode() in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
 		return
 	var resolved_profile_id := profile_id.strip_edges()
 	if resolved_profile_id.is_empty():
@@ -4875,7 +12942,14 @@ func _should_refresh_profile_summary_from_local_history(saved_match: Dictionary)
 		return false
 	if _is_local_lobby_host:
 		return true
-	return str(saved_match.get("server_mode", "")).strip_edges() == MatchSessionScript.SERVER_MODE_IN_PROCESS_HOST
+	var server_mode := str(saved_match.get("server_mode", "")).strip_edges()
+	# The host of a player-hosted match runs authority locally, so it (like the
+	# in-process host) is the source of match history for its own games.
+	if server_mode == MatchSessionScript.SERVER_MODE_IN_PROCESS_HOST:
+		return true
+	if server_mode == MatchSessionScript.SERVER_MODE_PLAYER_HOST and bool(saved_match.get("is_match_host", false)):
+		return true
+	return false
 
 func _build_resume_controls() -> void:
 	if multiplayer_container == null or _resume_match_button != null:
@@ -4890,15 +12964,48 @@ func _build_resume_controls() -> void:
 	if insert_index >= 0:
 		multiplayer_container.move_child(_resume_match_button, insert_index)
 
-func _build_unranked_seek_controls() -> void:
+func _build_active_match_rejoin_dialog() -> void:
+	if _active_match_rejoin_dialog != null and is_instance_valid(_active_match_rejoin_dialog):
+		return
+	var dialog := ConfirmationDialog.new()
+	dialog.name = "ActiveMatchRejoinDialog"
+	dialog.title = "Rejoin Active Match?"
+	dialog.initial_position = Window.WINDOW_INITIAL_POSITION_CENTER_PRIMARY_SCREEN
+	dialog.exclusive = true
+	dialog.min_size = Vector2i(460, 170)
+	dialog.get_ok_button().text = "Rejoin Match"
+	dialog.get_cancel_button().text = "Stay in Lobby"
+	dialog.add_button("Leave Match", false, "leave_match")
+	dialog.confirmed.connect(_on_active_match_rejoin_confirmed)
+	dialog.canceled.connect(_on_active_match_rejoin_canceled)
+	dialog.custom_action.connect(_on_active_match_rejoin_custom_action)
+	add_child(dialog)
+	_active_match_rejoin_dialog = dialog
+
+func _build_seek_format_controls() -> void:
 	if multiplayer_container == null or create_seek_button == null or _create_unranked_seek_button != null:
 		return
+	create_seek_button.text = "Create Bo1 Rated Seek"
 	_create_unranked_seek_button = Button.new()
 	_create_unranked_seek_button.name = "CreateUnrankedSeekButton"
-	_create_unranked_seek_button.text = "Create Unranked Seek"
+	_create_unranked_seek_button.text = "Create Bo1 Unrated Seek"
 	_create_unranked_seek_button.pressed.connect(_on_create_unranked_seek_pressed)
 	multiplayer_container.add_child(_create_unranked_seek_button)
 	multiplayer_container.move_child(_create_unranked_seek_button, create_seek_button.get_index() + 1)
+
+	_create_bo3_ranked_seek_button = Button.new()
+	_create_bo3_ranked_seek_button.name = "CreateBo3RatedSeekButton"
+	_create_bo3_ranked_seek_button.text = "Create Bo3 Rated Seek"
+	_create_bo3_ranked_seek_button.pressed.connect(_on_create_bo3_ranked_seek_pressed)
+	multiplayer_container.add_child(_create_bo3_ranked_seek_button)
+	multiplayer_container.move_child(_create_bo3_ranked_seek_button, _create_unranked_seek_button.get_index() + 1)
+
+	_create_bo3_unranked_seek_button = Button.new()
+	_create_bo3_unranked_seek_button.name = "CreateBo3UnratedSeekButton"
+	_create_bo3_unranked_seek_button.text = "Create Bo3 Unrated Seek"
+	_create_bo3_unranked_seek_button.pressed.connect(_on_create_bo3_unranked_seek_pressed)
+	multiplayer_container.add_child(_create_bo3_unranked_seek_button)
+	multiplayer_container.move_child(_create_bo3_unranked_seek_button, _create_bo3_ranked_seek_button.get_index() + 1)
 
 func _restore_saved_resume_state() -> void:
 	_update_resume_controls()
@@ -4908,6 +13015,142 @@ func _update_resume_controls() -> void:
 	if _resume_match_button == null:
 		return
 	_resume_match_button.visible = false
+
+func _offer_active_match_rejoin(match_info: Dictionary, status_text: String = "") -> bool:
+	if not _should_offer_active_match_rejoin(match_info):
+		return false
+	_build_active_match_rejoin_dialog()
+	if _active_match_rejoin_dialog == null or not is_instance_valid(_active_match_rejoin_dialog):
+		return false
+	_pending_active_match_rejoin_info = match_info.duplicate(true)
+	_clear_declined_active_match_rejoin()
+	_save_active_match_resume(match_info)
+	var detail_text := _format_active_match_rejoin_details(match_info)
+	_active_match_rejoin_dialog.dialog_text = "You have a match in progress%s.\n\nRejoin it now?" % detail_text
+	if not status_text.strip_edges().is_empty():
+		status_label.text = status_text
+	_active_match_rejoin_dialog.popup_centered(Vector2i(460, 170))
+	if str(_smoke_config.get("role", "")).strip_edges().to_lower() == "resume":
+		call_deferred("_on_active_match_rejoin_confirmed")
+	return true
+
+func _should_offer_active_match_rejoin(match_info: Dictionary) -> bool:
+	if match_info.is_empty():
+		return false
+	if bool(match_info.get("observer_mode", false)):
+		return false
+	if _has_declined_active_match_rejoin(match_info):
+		return false
+	var status := str(match_info.get("status", MatchSessionScript.STATUS_ACTIVE)).strip_edges().to_lower()
+	return status.is_empty() or status == MatchSessionScript.STATUS_ACTIVE
+
+func _format_active_match_rejoin_details(match_info: Dictionary) -> String:
+	var details: Array[String] = []
+	var room_id := str(match_info.get("room_id", "")).strip_edges()
+	if not room_id.is_empty():
+		details.append("room %s" % room_id)
+	var opponent_name := _get_active_match_opponent_name(match_info)
+	if not opponent_name.is_empty():
+		details.append("vs %s" % opponent_name)
+	if details.is_empty():
+		return ""
+	return " (%s)" % ", ".join(details)
+
+func _get_active_match_opponent_name(match_info: Dictionary) -> String:
+	var player_names = match_info.get("player_names", [])
+	if not (player_names is Array):
+		return ""
+	var names: Array = player_names as Array
+	var local_player_index := int(match_info.get("player_index", -1))
+	for index in range(names.size()):
+		if index == local_player_index:
+			continue
+		var player_name := str(names[index]).strip_edges()
+		if not player_name.is_empty():
+			return player_name
+	return ""
+
+func _on_active_match_rejoin_confirmed() -> void:
+	var match_info := _pending_active_match_rejoin_info.duplicate(true)
+	_pending_active_match_rejoin_info.clear()
+	_clear_declined_active_match_rejoin()
+	if match_info.is_empty():
+		status_label.text = "That active match is no longer available."
+		return
+	_save_active_match_resume(match_info)
+	status_label.text = "Rejoining your active match..."
+	call_deferred("_resume_active_match_from_lobby", match_info)
+
+func _on_active_match_rejoin_canceled() -> void:
+	var match_info := _pending_active_match_rejoin_info.duplicate(true)
+	_pending_active_match_rejoin_info.clear()
+	if match_info.is_empty():
+		return
+	_remember_declined_active_match_rejoin(match_info)
+	_save_active_match_resume(match_info)
+	status_label.text = "Your live match is available to rejoin from the seek list."
+	_queue_room_list_refresh(false)
+
+func _on_active_match_rejoin_custom_action(action: StringName) -> void:
+	if action != &"leave_match":
+		return
+	var match_info := _pending_active_match_rejoin_info.duplicate(true)
+	_pending_active_match_rejoin_info.clear()
+	if match_info.is_empty():
+		return
+	_clear_declined_active_match_rejoin()
+	_clear_saved_match_resume()
+	if _active_match_rejoin_dialog != null and is_instance_valid(_active_match_rejoin_dialog):
+		_active_match_rejoin_dialog.hide()
+	status_label.text = "Leaving and forfeiting your active match..."
+	_abandon_current_lobby_match()
+	_queue_room_list_refresh(false)
+
+func _is_active_match_rejoin_offer_pending(match_info: Dictionary = {}) -> bool:
+	if _pending_active_match_rejoin_info.is_empty():
+		return false
+	if _active_match_rejoin_dialog == null or not is_instance_valid(_active_match_rejoin_dialog):
+		return false
+	if not _active_match_rejoin_dialog.visible:
+		return false
+	if match_info.is_empty():
+		return true
+	return _active_match_infos_match(_pending_active_match_rejoin_info, match_info)
+
+func _remember_declined_active_match_rejoin(match_info: Dictionary) -> void:
+	_declined_active_match_rejoin_id = str(match_info.get("match_id", "")).strip_edges()
+	_declined_active_match_rejoin_room_id = str(match_info.get("room_id", "")).strip_edges()
+
+func _clear_declined_active_match_rejoin() -> void:
+	_declined_active_match_rejoin_id = ""
+	_declined_active_match_rejoin_room_id = ""
+
+func _has_declined_active_match_rejoin(match_info: Dictionary) -> bool:
+	if _declined_active_match_rejoin_id.is_empty() and _declined_active_match_rejoin_room_id.is_empty():
+		return false
+	var match_id := str(match_info.get("match_id", "")).strip_edges()
+	var room_id := str(match_info.get("room_id", "")).strip_edges()
+	if not _declined_active_match_rejoin_id.is_empty():
+		return match_id == _declined_active_match_rejoin_id
+	if not _declined_active_match_rejoin_room_id.is_empty() and room_id == _declined_active_match_rejoin_room_id:
+		return true
+	return false
+
+func _dismiss_active_match_rejoin_offer(clear_declined_choice: bool = false) -> void:
+	_pending_active_match_rejoin_info.clear()
+	if clear_declined_choice:
+		_clear_declined_active_match_rejoin()
+	if _active_match_rejoin_dialog != null and is_instance_valid(_active_match_rejoin_dialog):
+		_active_match_rejoin_dialog.hide()
+
+func _active_match_infos_match(left: Dictionary, right: Dictionary) -> bool:
+	var left_match_id := str(left.get("match_id", "")).strip_edges()
+	var right_match_id := str(right.get("match_id", "")).strip_edges()
+	if not left_match_id.is_empty() and not right_match_id.is_empty():
+		return left_match_id == right_match_id
+	var left_room_id := str(left.get("room_id", "")).strip_edges()
+	var right_room_id := str(right.get("room_id", "")).strip_edges()
+	return not left_room_id.is_empty() and left_room_id == right_room_id
 
 func _get_saved_lobby_resume() -> Dictionary:
 	if _local_profile_store == null:
@@ -4943,9 +13186,11 @@ func _save_lobby_resume() -> void:
 	if _local_profile_store == null or _local_profile_id.is_empty() or _lobby_session_id.is_empty() or _lobby_reconnect_token.is_empty():
 		return
 	var username := ""
+	var email := _get_preferred_account_username()
 	var auth_mode := _get_selected_auth_mode()
 	if lobby_client != null:
 		username = str(lobby_client.current_username).strip_edges()
+		email = str(lobby_client.current_email).strip_edges().to_lower()
 		auth_mode = _normalize_auth_mode(str(lobby_client.current_auth_mode), auth_mode)
 	_local_profile_store.remember_lobby_resume(
 		_local_profile_id,
@@ -4955,7 +13200,8 @@ func _save_lobby_resume() -> void:
 		_current_lobby_ip,
 		_get_configured_lobby_port(),
 		username,
-		auth_mode
+		auth_mode,
+		email
 	)
 	_update_resume_controls()
 
@@ -5009,7 +13255,7 @@ func _on_resume_match_pressed() -> void:
 	_bind_lobby_client_signals()
 	var connect_err: Error = lobby_client.connect_to_server(
 		_current_lobby_ip,
-		str(saved_lobby_resume.get("username", saved_lobby_resume.get("player_name", "Player"))),
+		str(saved_lobby_resume.get("email", _get_saved_account_username())),
 		str(saved_lobby_resume.get("session_id", "")),
 		str(saved_lobby_resume.get("reconnect_token", "")),
 		int(saved_lobby_resume.get("lobby_port", _get_configured_lobby_port())),
@@ -5019,12 +13265,17 @@ func _on_resume_match_pressed() -> void:
 	)
 	if connect_err != OK:
 		status_label.text = "Could not restore the saved lobby session."
+		_cleanup_lobby_client()
+		_set_connected_server_version("")
+	else:
+		_begin_lobby_sign_in_watchdog()
 
 func _resume_active_match_from_lobby(match_info: Dictionary) -> void:
-	if match_info.is_empty() or _match_launch_queued:
+	var is_manual_rejoin_assignment := _is_manual_rejoin_assignment(match_info)
+	if match_info.is_empty() or (_match_launch_queued and not is_manual_rejoin_assignment):
 		return
+	_manual_rejoin_room_id = ""
 	_match_launch_queued = true
-	_cleanup_lobby(false)
 	call_deferred(
 		"_launch_assigned_match",
 		false,
@@ -5034,6 +13285,7 @@ func _resume_active_match_from_lobby(match_info: Dictionary) -> void:
 	)
 
 func _on_match_session_cleared() -> void:
+	_finish_match_loading()
 	var saved_match := _get_saved_active_match()
 	var resume_profile_id := _get_resume_profile_id()
 	_clear_saved_match_resume()
@@ -5055,27 +13307,56 @@ func _maybe_submit_current_profile_deck(room_id: String, snapshot: Dictionary) -
 
 	var selected_deck_id: String = _selected_multiplayer_deck_id.strip_edges()
 	var selected_deck: Dictionary = _get_selected_multiplayer_deck()
+	var smoke_deck_kind := str(_smoke_config.get("deck_kind", "")).strip_edges().to_lower()
+	var force_hunting_tactics_deck := _hunting_tactics_smoke_active or smoke_deck_kind == "hunting_tactics"
 	if selected_deck.is_empty() and not _smoke_config.is_empty():
-		selected_deck = {
-			"deck_id": "smoke_default",
-			"name": "Smoke Default Deck",
-			"cards": {
-				"Baldr": 1,
-				"Blessed Knights": 3,
-				"Brown Bear": 3,
-				"Berserker": 3,
-				"Again-Walker": 3,
-				"Byggvir": 3,
-				"Bit Meseri": 3,
-				"Absence": 3,
-				"Warding Stone": 3,
-				"Void Shield": 3,
-				"Bearded Axe": 3,
-				"Blot Sacrifice": 3,
-				"Fall of the Mighty": 2,
-			},
-		}
-		selected_deck_id = "smoke_default"
+		if force_hunting_tactics_deck:
+			# Purpose deck (validation-free): Raven-heavy, with enough Hex/Charm
+			# targets that opening draws do not starve Huginn/Muninn prime choices.
+			# Banishment avoids attack-triggered voiding so Raven perish hooks still fire.
+			var ht_factory := PracticeAutofillDeckFactoryScript.new()
+			var purpose_deck := ht_factory.build_purpose_deck("Hunting Tactics Raven Smoke", "Thor", {
+				"Thor": 1,
+				"Huginn": 24,
+				"Muninn": 24,
+				"Banishment": 12,
+				"Mead of Poetry": 12,
+			})
+			if purpose_deck.is_empty():
+				_fail_smoke_if_enabled("hunting_tactics_deck_build_failed")
+				return
+			var purpose_special := (purpose_deck.get("special_setup", {}) as Dictionary).duplicate(true)
+			purpose_special["is_purpose_deck"] = true
+			selected_deck = {
+				"deck_id": "hunting_tactics_smoke",
+				"name": str(purpose_deck.get("name", "Hunting Tactics Smoke")),
+				"cards": purpose_deck.get("cards", {}),
+				"special_setup": purpose_special,
+			}
+			selected_deck_id = "hunting_tactics_smoke"
+		else:
+			selected_deck = {
+				"deck_id": "smoke_default",
+				"name": "Smoke Default Deck",
+				"cards": {
+					"Baldr": 1,
+					"Blessed Knights": 3,
+					"Brown Bear": 3,
+					"Berserker": 3,
+					"Again-Walker": 3,
+					"Byggvir": 3,
+					"Bit Meseri": 3,
+					"Absence": 3,
+					"Warding Stone": 3,
+					"Void Shield": 3,
+					"Bearded Axe": 3,
+					"Blot Sacrifice": 3,
+					"Fall of the Mighty": 2,
+					"Circle of Rebirth": 3,
+					"Alu": 2,
+				},
+			}
+			selected_deck_id = "smoke_default"
 	if selected_deck.is_empty():
 		status_label.text = "Choose a saved legal deck before joining or creating a seek."
 		_last_submitted_lobby_room_id = ""
@@ -5086,7 +13367,8 @@ func _maybe_submit_current_profile_deck(room_id: String, snapshot: Dictionary) -
 	var selected_deck_hash := LobbyRoomScript.compute_deck_hash(
 		str(selected_deck.get("name", "Default Deck")),
 		selected_deck.get("cards", {}) as Dictionary,
-		selected_deck.get("special_setup", {})
+		selected_deck.get("special_setup", {}),
+		selected_deck.get("reinforcements", {})
 	)
 	var submitted_deck_id := str(local_member.get("selected_deck_id", "")).strip_edges()
 	var submitted_deck_hash := str(local_member.get("selected_deck_hash", "")).strip_edges()
@@ -5101,14 +13383,28 @@ func _maybe_submit_current_profile_deck(room_id: String, snapshot: Dictionary) -
 			and _last_submitted_lobby_deck_id == selected_deck_id \
 			and _last_submitted_lobby_deck_hash == selected_deck_hash:
 		return
-	if _uses_server_account_storage():
+	if _uses_server_account_storage() and _smoke_config.is_empty():
 		lobby_client.submit_deck("", {}, selected_deck_id)
 	else:
+		# In smoke mode against a freshly-registered test account there are no saved
+		# decks yet. The lobby server rejects select_deck for account sessions that
+		# reference an unsaved deck_id, so persist the deck first then select it.
+		var submit_is_purpose_deck := bool(selected_deck.get("special_setup", {}).get("is_purpose_deck", false))
+		if _uses_server_account_storage() and not selected_deck_id.is_empty():
+			lobby_client.save_account_deck(
+				str(selected_deck.get("name", "Default Deck")),
+				selected_deck.get("cards", {}),
+				selected_deck_id,
+				selected_deck.get("special_setup", {}),
+				selected_deck.get("reinforcements", {})
+			)
 		lobby_client.submit_deck(
 			str(selected_deck.get("name", "Default Deck")),
 			selected_deck.get("cards", {}),
 			selected_deck_id,
-			selected_deck.get("special_setup", {})
+			selected_deck.get("special_setup", {}),
+			selected_deck.get("reinforcements", {}),
+			submit_is_purpose_deck
 		)
 	_last_submitted_lobby_room_id = room_id
 	_last_submitted_lobby_deck_id = selected_deck_id
@@ -5126,17 +13422,54 @@ func _get_configured_match_port() -> int:
 
 func _start_smoke_mode() -> void:
 	var role := str(_smoke_config.get("role", "")).to_lower()
+	print("[SMOKE-DIAG] _start_smoke_mode role=%s config_keys=%d" % [role, _smoke_config.size()])
 	if role.is_empty():
 		return
 	_smoke_finished = false
 
 	ip_line_edit.text = str(_smoke_config.get("ip", "127.0.0.1"))
-	_set_selected_account_username(str(_smoke_config.get("player_name", "Smoke%s" % role.capitalize())))
-	var smoke_auth_mode: String = str(_smoke_config.get("auth_mode", AUTH_MODE_LOGIN)).strip_edges().to_lower()
+	# Register mode needs globally-unique emails on the persistent account store.
+	# Append a short random suffix so repeated smoke runs never collide on an
+	# account left behind by a previous run.
+	var smoke_base_name := str(_smoke_config.get("player_name", "Smoke%s" % role.capitalize())).strip_edges()
+	if smoke_base_name.is_empty():
+		smoke_base_name = "Smoke%s" % role.capitalize()
+	var smoke_suffix := str(_smoke_config.get("name_suffix", "")).strip_edges()
+	if smoke_suffix.is_empty():
+		var rng := RandomNumberGenerator.new()
+		rng.randomize()
+		smoke_suffix = "%04d" % (rng.randi() % 10000)
+	var smoke_email := str(_smoke_config.get("email", "")).strip_edges()
+	if smoke_email.is_empty():
+		smoke_email = "%s%s@smoke.othergods.test" % [smoke_base_name.to_lower(), smoke_suffix]
+	_set_selected_account_username(smoke_email)
+	var smoke_username := str(_smoke_config.get("username", "")).strip_edges()
+	if smoke_username.is_empty():
+		var smoke_username_base := ""
+		for char_index in range(smoke_base_name.length()):
+			var codepoint := smoke_base_name.unicode_at(char_index)
+			var is_letter_or_number := (codepoint >= 48 and codepoint <= 57) \
+				or (codepoint >= 65 and codepoint <= 90) \
+				or (codepoint >= 97 and codepoint <= 122)
+			smoke_username_base += smoke_base_name[char_index] if is_letter_or_number else "_"
+		var max_base_length := int(AccountStoreScript.MAX_USERNAME_LENGTH) - smoke_suffix.length() - 1
+		if smoke_username_base.length() > max_base_length:
+			smoke_username_base = smoke_username_base.substr(0, max_base_length)
+		if smoke_username_base.length() < int(AccountStoreScript.MIN_USERNAME_LENGTH):
+			smoke_username_base = "Smoke"
+		smoke_username = "%s_%s" % [smoke_username_base, smoke_suffix]
+	_set_selected_account_public_username(smoke_username, false)
+	var smoke_auth_mode: String = str(_smoke_config.get("auth_mode", AUTH_MODE_REGISTER)).strip_edges().to_lower()
 	if smoke_auth_mode not in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
-		smoke_auth_mode = AUTH_MODE_LOGIN
+		smoke_auth_mode = AUTH_MODE_REGISTER
 	_set_auth_mode(smoke_auth_mode)
-	_set_selected_account_password(str(_smoke_config.get("password", "")))
+	# Smoke runs against a local dedicated lobby and needs throwaway credentials.
+	# Default to register mode + a fixed password so the harness never blocks on
+	# missing auth input (run_lobby_smoke otherwise dies on the password check).
+	var smoke_password := str(_smoke_config.get("password", "")).strip_edges()
+	if smoke_password.is_empty():
+		smoke_password = "smoke-test-password"
+	_set_selected_account_password(smoke_password)
 
 	var timeout_seconds := float(_smoke_config.get("timeout", 25.0))
 	var timeout_timer := get_tree().create_timer(timeout_seconds)
@@ -5155,8 +13488,28 @@ func _start_smoke_mode() -> void:
 		_join_smoke_room(room_code)
 		return
 
+	if role == "hunting_tactics_host":
+		# Reuse the host lobby handshake, then drive gameplay after launch.
+		_hunting_tactics_smoke_active = true
+		_on_host_game_pressed()
+		return
+
+	if role == "hunting_tactics_client":
+		_hunting_tactics_smoke_active = true
+		_on_join_game_pressed()
+		var ht_room_code := _read_smoke_room_code()
+		if ht_room_code.is_empty():
+			_wait_for_smoke_room_code()
+			return
+		_join_smoke_room(ht_room_code)
+		return
+
 	if role == "practice_thor":
 		call_deferred("_run_practice_thor_smoke")
+		return
+
+	if role in ["habrok_network_host", "habrok_network_client", "hringhorni_network_host", "hringhorni_network_client"]:
+		call_deferred("_run_card_network_smoke", role)
 		return
 
 	if role == "practice_thor_summon":
@@ -5191,6 +13544,14 @@ func _start_smoke_mode() -> void:
 		call_deferred("_run_card_test_occult_singularity_smoke")
 		return
 
+	if role == "card_test_gala_tura":
+		call_deferred("_run_card_test_gala_tura_smoke")
+		return
+
+	if role == "card_test_saving_grace_baldr":
+		call_deferred("_run_card_test_saving_grace_baldr_smoke")
+		return
+
 	if role == "resume":
 		var resume_timer := get_tree().create_timer(0.5)
 		resume_timer.timeout.connect(Callable(self, "_on_resume_match_pressed"))
@@ -5216,6 +13577,203 @@ func _join_smoke_room(room_code: String) -> void:
 	_pending_join_room_code = room_code
 	_on_connect_pressed()
 
+func _run_card_network_smoke(role: String) -> void:
+	var is_host := role.ends_with("_host")
+	var test_hringhorni := role.begins_with("hringhorni_")
+	var port := int(_smoke_config.get("match_port", 12345))
+	var confirm := not bool(_smoke_config.get("habrok_decline", false))
+	var match_id := "habrok-network-smoke"
+	var human_session := "habrok-smoke-player"
+	var human_token := "habrok-smoke-token"
+	if is_host:
+		var bot_session := "habrok-smoke-bot"
+		var server := HeadlessMatchServer.new()
+		get_tree().root.add_child(server)
+		if server.start_from_config({
+			"match_id": match_id,
+			"match_port": port,
+			"server_mode": MatchSessionScript.SERVER_MODE_DEDICATED_HEADLESS,
+			"is_ranked": false,
+			"player_session_ids": [bot_session, human_session],
+			"player_identity_by_session": {bot_session: {"is_bot": true}},
+			"player_match_tokens": {human_session: human_token},
+			"player_decks_by_session": {
+				bot_session: {"cards": {"Thor": 1, "Brown Bear": 12}, "is_purpose_deck": true},
+				human_session: {"cards": {"Thor": 1, "Brown Bear": 12}, "is_purpose_deck": true},
+			},
+		}) != OK:
+			_fail_smoke_if_enabled("habrok_network_server_start_failed")
+			return
+		var rules := server.game_manager
+		var bot_player := rules.players[0]
+		var human_player := rules.players[1]
+		rules.current_player = bot_player
+		rules.other_player = human_player
+		bot_player.is_turn_player = true
+		human_player.is_turn_player = false
+		var bear := BrownBear.new()
+		bear.card_owner = bot_player
+		var bear_zone: Zone = bot_player.frontline_zones[0]
+		bear_zone.add_card(bear)
+		if test_hringhorni:
+			await _run_hringhorni_network_host(server, human_player, bear)
+			return
+		var habrok := HabrokParagonOfHawks.new()
+		habrok.card_owner = human_player
+		var habrok_zone: Zone = human_player.reserve_zones[0]
+		habrok_zone.add_card(habrok)
+		_write_smoke_trace("habrok_network:server_ready")
+		if not await _wait_for_practice_thor_smoke_condition_seconds(func() -> bool:
+			return rules.current_player == human_player and rules.turn_number >= 2 \
+				and habrok.current_zone == (human_player.hand_zone if confirm else habrok_zone) \
+				and bear.current_zone == (bot_player.graveyard_zone if confirm else bear_zone)
+		, 45.0):
+			_fail_smoke_if_enabled("habrok_network_server_did_not_resolve turn=%d feedback=%s" % [
+				rules.turn_number, server.match_manager.last_move_failed_reason,
+			])
+			return
+		_write_smoke_trace("habrok_network:server_resolved_breakout_and_advanced")
+		await get_tree().create_timer(1.0).timeout
+		_finish_smoke_if_enabled("PASS:habrok_network_host")
+		return
+
+	var client = _show_embedded_game("MockGame")
+	show_game()
+	await client.start_game(false, true, "127.0.0.1", port, {
+		"match_id": match_id, "session_id": human_session, "match_token": human_token,
+		"server_mode": MatchSessionScript.SERVER_MODE_DEDICATED_HEADLESS,
+	})
+	if test_hringhorni:
+		await _run_hringhorni_network_client(client)
+		return
+	if not await _wait_for_practice_thor_smoke_condition_seconds(func() -> bool:
+		return client.game_input is NetworkedGameInput \
+			and client.get("_pending_habrok_breakout") is HabrokParagonOfHawks \
+			and is_instance_valid(client.get("_habrok_breakout_prompt_panel"))
+	, 20.0):
+		_fail_smoke_if_enabled("habrok_network_client_prompt_missing")
+		return
+	_write_smoke_trace("habrok_network:client_received_breakout_prompt")
+	client._resolve_habrok_breakout_prompt(confirm)
+	if not await _wait_for_practice_thor_smoke_condition_seconds(func() -> bool:
+		var rules: GameManager = client.game_manager
+		var human_player := rules.players[1]
+		if rules.current_player != human_player or rules.turn_number < 2:
+			return false
+		if confirm:
+			return _find_smoke_hand_card_by_name(human_player, "Habrok, Paragon of Hawks") != null \
+				and not rules.players[0].graveyard_zone.cards.is_empty()
+		return not human_player.reserve_zones[0].cards.is_empty() \
+			and human_player.reserve_zones[0].cards[0] is HabrokParagonOfHawks \
+			and rules.players[0].graveyard_zone.cards.is_empty()
+	, 10.0):
+		_fail_smoke_if_enabled("habrok_network_client_did_not_receive_resolved_state")
+		return
+	_finish_smoke_if_enabled("PASS:habrok_network_client")
+
+func _run_hringhorni_network_host(server: HeadlessMatchServer, player: Player, attacker: Card) -> void:
+	var rules := server.game_manager
+	rules.turn_number = 1
+	attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
+	var warrior := HariiWarrior.new()
+	warrior.card_owner = player
+	warrior.creature_mode = Card.CreatureMode.DEFENSIVE
+	player.frontline_zones[0].add_card(warrior)
+	var charm := Hringhorni.new()
+	charm.card_owner = player
+	charm.is_prepared = true
+	charm.is_face_down = true
+	player.reserve_zones[0].add_card(charm)
+	rules.prepared_charms[charm] = rules.turn_number
+	var sap := Sap.new()
+	sap.card_owner = player
+	sap.is_prepared = true
+	sap.is_face_down = true
+	player.reserve_zones[1].add_card(sap)
+	rules.prepared_hexes[sap] = rules.turn_number
+	player.gain_mana(sap.mana_cost, false)
+	var recruit := Berserker.new()
+	recruit.card_owner = player
+	player.deck_zone.add_card(recruit)
+	_write_smoke_trace("hringhorni_network:server_ready")
+	if not await _wait_for_practice_thor_smoke_condition_seconds(func() -> bool:
+		return warrior.current_zone == player.graveyard_zone \
+			and charm.current_zone == player.graveyard_zone \
+			and recruit.current_zone != null and recruit.current_zone.is_board_zone() \
+			and rules.action_stack.is_empty()
+	, 55.0):
+		_fail_smoke_if_enabled("hringhorni_network_server_unresolved turn=%d warrior=%s charm=%s feedback=%s" % [
+			rules.turn_number, warrior.current_zone.zone_type, charm.current_zone.zone_type,
+			server.match_manager.last_move_failed_reason,
+		])
+		return
+	_write_smoke_trace("hringhorni_network:server_recruited_berserker")
+	await get_tree().create_timer(1.0).timeout
+	_finish_smoke_if_enabled("PASS:hringhorni_network_host")
+
+func _run_hringhorni_network_client(client) -> void:
+	client._set_priority_auto_mode("play", true, true)
+	if not await _wait_for_practice_thor_smoke_condition_seconds(func() -> bool:
+		var rules: GameManager = client.game_manager
+		var action := rules.get_top_live_stack_action()
+		var cards: Array[Card] = rules.players[1].reserve_zones[0].cards
+		if not client._is_priority_prompt_visible() or action == null:
+			return false
+		if action.event_name == "frontline_entry":
+			client._on_priority_pass_pressed()
+			return false
+		return action.event_name == "destroyed" and action.card is HariiWarrior \
+			and not cards.is_empty() and cards[0] is Hringhorni \
+			and client._is_card_usable_for_priority(cards[0])
+	, 25.0):
+		_fail_smoke_if_enabled("hringhorni_network_client_priority_missing")
+		return
+	var player: Player = client.game_manager.players[1]
+	_write_smoke_trace("hringhorni_network:client_received_destruction_priority")
+	client._on_board_card_pressed(player.reserve_zones[0].cards[0])
+	var select_card: Callable = client.get("_overlay_card_selected")
+	var recruit: Card = null
+	for card in player.deck_zone.cards:
+		if card is Berserker:
+			recruit = card
+			break
+	if not select_card.is_valid() or recruit == null:
+		_fail_smoke_if_enabled("hringhorni_network_client_picker_missing")
+		return
+	_write_smoke_trace("hringhorni_network:client_opened_deck_picker")
+	select_card.call(recruit)
+	if not await _wait_for_practice_thor_smoke_condition_seconds(func() -> bool:
+		var rules: GameManager = client.game_manager
+		var action := rules.get_top_live_stack_action()
+		var cards: Array[Card] = rules.players[1].reserve_zones[1].cards
+		if not client._is_priority_prompt_visible() or action == null:
+			return false
+		if action.event_name == "summon":
+			client._on_priority_pass_pressed()
+			return false
+		return action.event_name == "frontline_entry" and action.card != null and action.card.uid == recruit.uid \
+			and not cards.is_empty() and cards[0] is Sap and client._is_card_usable_for_priority(cards[0])
+	, 12.0):
+		_fail_smoke_if_enabled("hringhorni_network_client_sap_priority_missing")
+		return
+	client._set_priority_auto_mode("play", true, true)
+	await get_tree().process_frame
+	if not client._is_priority_prompt_visible() or client.get("_priority_prompt_idle_deadline_msec") != 0:
+		_fail_smoke_if_enabled("hringhorni_network_client_play_passed_sap_priority")
+		return
+	_write_smoke_trace("hringhorni_network:play_kept_sap_priority")
+	client._set_priority_auto_mode("fast_forward", true, true)
+	if not await _wait_for_practice_thor_smoke_condition_seconds(func() -> bool:
+		var rules: GameManager = client.game_manager
+		var resolved := rules.get_card_by_uid(recruit.uid)
+		return resolved != null and resolved.current_zone != null and resolved.current_zone.is_board_zone() \
+			and rules.action_stack.is_empty()
+	, 12.0):
+		_fail_smoke_if_enabled("hringhorni_network_client_fast_forward_did_not_pass")
+		return
+	_write_smoke_trace("hringhorni_network:fast_forward_passed_sap_priority")
+	_finish_smoke_if_enabled("PASS:hringhorni_network_client")
+
 func _run_practice_thor_smoke() -> void:
 	var practice_game = _show_embedded_game("PracticeThor")
 	if practice_game == null:
@@ -5223,7 +13781,9 @@ func _run_practice_thor_smoke() -> void:
 		return
 	show_game()
 	practice_game.set_player_practice_deck({})
-	await practice_game.start_game()
+	await practice_game.start_game(false, false, "127.0.0.1", 12345, {
+		"player_names": ["Practice Player", "Thor"],
+	})
 	await get_tree().process_frame
 	await get_tree().process_frame
 
@@ -5231,10 +13791,23 @@ func _run_practice_thor_smoke() -> void:
 	if not setup_error.is_empty():
 		_complete_practice_thor_smoke(false, setup_error)
 		return
-
-	if not practice_game.game_input.submit_action({type = "upkeep_choice", choice = "draw"}):
-		_complete_practice_thor_smoke(false, "practice_thor_upkeep_choice_failed")
+	if practice_game.player1.player_name != "Practice Player" \
+			or practice_game._get_player_display_name_for_index(0) != "Practice Player" \
+			or practice_game._get_player_display_name_for_index(1) != "Thor":
+		_complete_practice_thor_smoke(false, "practice_thor_player_names_not_preserved")
 		return
+
+	var player_one_mana_before_draw: int = practice_game.player1.mana
+	var inspect_click := InputEventMouseButton.new()
+	inspect_click.button_index = MOUSE_BUTTON_RIGHT
+	inspect_click.pressed = true
+	practice_game.draw_button.gui_input.emit(inspect_click)
+	if practice_game._deck_overlay_zone != practice_game.player1.deck_zone \
+			or practice_game.game_manager.has_resolved_turn_upkeep():
+		_complete_practice_thor_smoke(false, "practice_thor_upkeep_deck_inspection_failed")
+		return
+	practice_game._dismiss_zone_overlay()
+	practice_game.draw_button.pressed.emit()
 	if not await _wait_for_practice_thor_smoke_condition(
 		func() -> bool:
 			return practice_game.game_manager.current_player == practice_game.player1 \
@@ -5245,6 +13818,10 @@ func _run_practice_thor_smoke() -> void:
 		_complete_practice_thor_smoke(false, "practice_thor_player_one_upkeep_timeout")
 		return
 
+	if practice_game.player1.mana != player_one_mana_before_draw:
+		_complete_practice_thor_smoke(false, "practice_thor_draw_choice_must_not_add_mana")
+		return
+	var player_one_mana_before_next_upkeep: int = practice_game.player1.mana
 	if not practice_game.game_input.submit_action({type = "end_turn", discard_uids = []}):
 		_complete_practice_thor_smoke(false, "practice_thor_end_turn_failed")
 		return
@@ -5263,6 +13840,18 @@ func _run_practice_thor_smoke() -> void:
 		_complete_practice_thor_smoke(false, "practice_thor_no_bot_progress")
 		return
 
+	if practice_game.game_manager.has_resolved_turn_upkeep() \
+			or practice_game.player1.mana != player_one_mana_before_next_upkeep + 1:
+		_complete_practice_thor_smoke(false, "practice_thor_automatic_mana_not_granted_before_choice")
+		return
+	var player_one_mana_before_choice: int = practice_game.player1.mana
+	if not practice_game.game_input.submit_action({type = "upkeep_choice", choice = "mana"}):
+		_complete_practice_thor_smoke(false, "practice_thor_turn3_mana_choice_failed")
+		return
+	if practice_game.player1.mana != player_one_mana_before_choice + 4:
+		_complete_practice_thor_smoke(false, "practice_thor_mana_choice_must_add_only_four")
+		return
+
 	_complete_practice_thor_smoke(true, "practice_thor")
 
 func _get_practice_thor_smoke_setup_error(practice_game) -> String:
@@ -5272,11 +13861,11 @@ func _get_practice_thor_smoke_setup_error(practice_game) -> String:
 		return "practice_thor_players_missing"
 	if practice_game.player2.player_name != "Thor":
 		return "practice_thor_wrong_name"
-	if practice_game.match_manager == null or not practice_game.match_manager.authoritative_match_flow_enabled:
-		return "practice_thor_not_authoritative"
+	if practice_game.match_manager == null:
+		return "practice_thor_match_manager_missing"
 	if practice_game.network_manager == null or not bool(practice_game.network_manager.get("is_server")):
 		return "practice_thor_not_server"
-	if practice_game.get("_thor_bot") == null:
+	if not _practice_thor_has_bot(practice_game):
 		return "practice_thor_bot_missing"
 	if practice_game.player2.god_zone.cards.size() != 1 or not (practice_game.player2.god_zone.cards[0] is Thor):
 		return "practice_thor_wrong_god"
@@ -5307,6 +13896,20 @@ func _get_practice_thor_smoke_setup_error(practice_game) -> String:
 		return "practice_thor_wrong_askelladen_count"
 	return ""
 
+func _get_practice_thor_bot(practice_game) -> Variant:
+	if practice_game == null:
+		return null
+	if practice_game.has_method("get_thor_bot"):
+		return practice_game.call("get_thor_bot")
+	return practice_game.get("_thor_bot")
+
+func _practice_thor_has_bot(practice_game) -> bool:
+	if practice_game == null:
+		return false
+	if practice_game.has_method("has_thor_bot"):
+		return bool(practice_game.call("has_thor_bot"))
+	return practice_game.get("_thor_bot") != null
+
 func _count_cards_in_zones(zones: Array) -> int:
 	var count := 0
 	for zone in zones:
@@ -5333,6 +13936,26 @@ func _wait_for_practice_thor_smoke_condition(predicate: Callable, max_frames: in
 		await get_tree().process_frame
 	return false
 
+func _wait_for_practice_thor_smoke_condition_seconds(predicate: Callable, timeout_seconds: float) -> bool:
+	var deadline_msec := Time.get_ticks_msec() + int(timeout_seconds * 1000.0)
+	while Time.get_ticks_msec() < deadline_msec:
+		if predicate.call():
+			return true
+		await get_tree().process_frame
+	return bool(predicate.call())
+
+func _resolve_practice_thor_smoke_player_prompts(practice_game) -> void:
+	if practice_game == null:
+		return
+	var pending_card = practice_game.get("_pending_resurrection_card")
+	if pending_card != null:
+		practice_game._submit_resurrection_choice(pending_card, false)
+		return
+	if practice_game.get("_pending_blessed_knights") != null:
+		practice_game._resolve_blessed_knights_impact("creature_abilities")
+		return
+	practice_game._submit_visible_intercept_choice("")
+
 func _complete_practice_thor_smoke(success: bool, message: String) -> void:
 	if success:
 		_finish_smoke_if_enabled("PASS:%s" % message)
@@ -5357,6 +13980,13 @@ func _run_practice_thor_summon_smoke() -> void:
 		_fail_smoke_if_enabled("practice_thor_summon_setup_%s" % setup_error)
 		return
 	_write_smoke_trace("practice_thor_summon:setup_ok")
+	practice_game._set_priority_auto_mode("play", false, true, false)
+	if bool(practice_game.get("_priority_auto_mode_visual_active")):
+		_fail_smoke_if_enabled("practice_thor_summon_auto_pass_started_on")
+		return
+	_write_smoke_trace("practice_thor_summon:auto_pass_initially_off")
+	practice_game._set_priority_auto_mode("play", false, true, true)
+	_write_smoke_trace("practice_thor_summon:auto_pass_enabled")
 
 	if not practice_game.game_input.submit_action({type = "upkeep_choice", choice = "draw"}):
 		_fail_smoke_if_enabled("practice_thor_summon_upkeep_choice_failed")
@@ -5375,14 +14005,36 @@ func _run_practice_thor_summon_smoke() -> void:
 	if not practice_game.game_input.submit_action({type = "end_turn", discard_uids = []}):
 		_fail_smoke_if_enabled("practice_thor_summon_end_turn_failed")
 		return
-	if not await _wait_for_practice_thor_smoke_condition(
+	if not await _wait_for_practice_thor_smoke_condition_seconds(
 		func() -> bool:
+			_resolve_practice_thor_smoke_player_prompts(practice_game)
 			return practice_game.game_manager.current_player == practice_game.player1 \
 				and practice_game.game_manager.turn_number >= 3 \
 				and practice_game.game_manager.action_stack.is_empty(),
-		400
+		10.0
 	):
-		_fail_smoke_if_enabled("practice_thor_summon_turn_timeout")
+		var top_action: CardAction = practice_game.game_manager.action_stack.back() if not practice_game.game_manager.action_stack.is_empty() else null
+		var pending_prompt_types: Array[String] = []
+		var pending_interactions = practice_game.match_manager.get("_pending_ui_interactions")
+		if pending_interactions is Array:
+			for entry in pending_interactions:
+				if entry is Dictionary:
+					pending_prompt_types.append(str((entry as Dictionary).get("type", "")))
+		var thor_bot: Variant = _get_practice_thor_bot(practice_game)
+		_fail_smoke_if_enabled("practice_thor_summon_turn_timeout turn=%d current=%d priority=%d stack=%d top=%s resolving=%d pending_resolution=%s pending_ui=%s targeting=%s bot_step=%s bot_retry=%s label=%s" % [
+			practice_game.game_manager.turn_number,
+			practice_game.game_manager.players.find(practice_game.game_manager.current_player),
+			practice_game.game_manager.players.find(practice_game.game_manager.priority_player),
+			practice_game.game_manager.action_stack.size(),
+			("%s:%s" % [str(top_action.type), str(top_action.event_name)]) if top_action != null else "none",
+			practice_game.game_manager.resolving_stack_actions.size(),
+			str(practice_game.match_manager.is_authoritative_stack_resolution_pending()),
+			",".join(pending_prompt_types),
+			str(practice_game.match_manager.is_targeting_active()),
+			str(thor_bot.get("_step_queued") if thor_bot != null else false),
+			str(thor_bot.get("_retry_poll_queued") if thor_bot != null else false),
+			str(practice_game.action_label.text).replace("\n", " "),
+		])
 		return
 	_write_smoke_trace("practice_thor_summon:turn3_entry_ok")
 
@@ -5404,14 +14056,13 @@ func _run_practice_thor_summon_smoke() -> void:
 		_describe_smoke_hand(practice_game.player1),
 	])
 
-	var summon_zone := _find_first_open_smoke_summon_zone(practice_game.player1)
-	var summon_card := _find_first_playable_smoke_creature(practice_game.game_manager, practice_game.player1, summon_zone)
+	var summon_zone: Zone = _find_first_open_smoke_summon_zone(practice_game.player1)
+	var summon_card := _find_smoke_hand_card_by_name(practice_game.player1, "Blessed Knights") as BlessedKnights
 	if summon_zone != null and summon_card == null:
-		var seeded_card := BrownBear.new()
-		seeded_card.card_owner = practice_game.player1
-		practice_game.player1.hand_zone.add_card(seeded_card)
-		summon_card = _find_first_playable_smoke_creature(practice_game.game_manager, practice_game.player1, summon_zone)
-	if summon_zone == null or summon_card == null:
+		summon_card = BlessedKnights.new()
+		summon_card.card_owner = practice_game.player1
+		practice_game.player1.hand_zone.add_card(summon_card)
+	if summon_zone == null or not practice_game.game_manager.can_play_card(practice_game.player1, summon_card, summon_zone):
 		_fail_smoke_if_enabled("practice_thor_summon_no_playable_creature hand=%s mana=%d" % [
 			_describe_smoke_hand(practice_game.player1),
 			practice_game.player1.mana,
@@ -5445,14 +14096,15 @@ func _run_practice_thor_summon_smoke() -> void:
 		summon_zone.zone_index,
 	])
 
-	if not await _wait_for_practice_thor_smoke_condition(
+	if not await _wait_for_practice_thor_smoke_condition_seconds(
 		func() -> bool:
+			_resolve_practice_thor_smoke_player_prompts(practice_game)
 			return summon_card.current_zone == summon_zone \
 				and practice_game.game_manager.current_player == practice_game.player1 \
 				and practice_game.game_manager.action_stack.is_empty() \
 				and not practice_game._stack_resolution_paused \
 				and not practice_game._executing_stack_action,
-		300
+		10.0
 	):
 		var top_action: CardAction = practice_game.game_manager.action_stack.back() if not practice_game.game_manager.action_stack.is_empty() else null
 		var top_label := "none"
@@ -5465,6 +14117,48 @@ func _run_practice_thor_summon_smoke() -> void:
 			top_label,
 			str(practice_game._stack_resolution_paused),
 			str(practice_game._executing_stack_action),
+			str(practice_game.action_label.text).replace("\n", " "),
+		])
+		return
+
+	var ward := summon_card.get_status_effect(BlessedKnights.BLESSED_WARD_STATUS)
+	if ward.get("ward_kind") != "creature_abilities":
+		_fail_smoke_if_enabled("practice_thor_summon_blessed_ward_missing")
+		return
+	_write_smoke_trace("practice_thor_summon:blessed_ward_applied")
+
+	if not practice_game.game_input.submit_action({type = "end_turn", discard_uids = []}):
+		_fail_smoke_if_enabled("practice_thor_summon_auto_pass_end_turn_failed")
+		return
+	_write_smoke_trace("practice_thor_summon:auto_pass_end_turn_submitted")
+	if not await _wait_for_practice_thor_smoke_condition_seconds(
+		func() -> bool:
+			_resolve_practice_thor_smoke_player_prompts(practice_game)
+			return practice_game.game_manager.current_player == practice_game.player1 \
+				and practice_game.game_manager.turn_number >= 5 \
+				and practice_game.game_manager.action_stack.is_empty(),
+		15.0
+	):
+		var top_action: CardAction = practice_game.game_manager.action_stack.back() if not practice_game.game_manager.action_stack.is_empty() else null
+		var pending_prompt_types: Array[String] = []
+		var pending_interactions = practice_game.match_manager.get("_pending_ui_interactions")
+		if pending_interactions is Array:
+			for entry in pending_interactions:
+				if entry is Dictionary:
+					pending_prompt_types.append(str((entry as Dictionary).get("type", "")))
+		var thor_bot: Variant = _get_practice_thor_bot(practice_game)
+		_fail_smoke_if_enabled("practice_thor_summon_auto_pass_turn_timeout turn=%d current=%d priority=%d stack=%d top=%s resolving=%d pending_resolution=%s pending_ui=%s targeting=%s bot_step=%s bot_retry=%s label=%s" % [
+			practice_game.game_manager.turn_number,
+			practice_game.game_manager.players.find(practice_game.game_manager.current_player),
+			practice_game.game_manager.players.find(practice_game.game_manager.priority_player),
+			practice_game.game_manager.action_stack.size(),
+			("%s:%s" % [str(top_action.type), str(top_action.event_name)]) if top_action != null else "none",
+			practice_game.game_manager.resolving_stack_actions.size(),
+			str(practice_game.match_manager.is_authoritative_stack_resolution_pending()),
+			",".join(pending_prompt_types),
+			str(practice_game.match_manager.is_targeting_active()),
+			str(thor_bot.get("_step_queued") if thor_bot != null else false),
+			str(thor_bot.get("_retry_poll_queued") if thor_bot != null else false),
 			str(practice_game.action_label.text).replace("\n", " "),
 		])
 		return
@@ -5508,8 +14202,8 @@ func _run_practice_thor_intercept_smoke() -> void:
 	practice_game.game_manager._upkeep_started_turn = 2
 	practice_game.game_manager._upkeep_resolved_turn = 2
 
-	var attacker_zone := _find_first_open_smoke_frontline_zone(practice_game.player2)
-	var interceptor_zone := _find_first_open_smoke_frontline_zone(practice_game.player1)
+	var attacker_zone: Zone = _find_first_open_smoke_frontline_zone(practice_game.player2)
+	var interceptor_zone: Zone = _find_first_open_smoke_frontline_zone(practice_game.player1)
 	if attacker_zone == null or interceptor_zone == null:
 		_fail_smoke_if_enabled("practice_thor_intercept_missing_frontline_zone")
 		return
@@ -5551,6 +14245,26 @@ func _run_practice_thor_intercept_smoke() -> void:
 		])
 		return
 	_write_smoke_trace("practice_thor_intercept:prompt_visible")
+	practice_game._sync_turn_activity_timers()
+	if practice_game._move_timer_player_index != practice_game.game_manager.players.find(practice_game.player1) \
+			or not practice_game._move_timer_running:
+		_fail_smoke_if_enabled("practice_thor_intercept_defender_clock_not_running")
+		return
+	var attacker_index: int = practice_game.game_manager.players.find(practice_game.player2)
+	var attacker_budget: Dictionary = practice_game._move_timer_player_budgets.get(attacker_index, {})
+	if attacker_budget.is_empty():
+		_fail_smoke_if_enabled("practice_thor_intercept_attacker_clock_not_saved")
+		return
+	var attacker_remaining := int(attacker_budget.get("remaining_msec", -1))
+	var defender_remaining: int = practice_game._get_move_timer_remaining_msec()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	practice_game._sync_turn_activity_timers()
+	if practice_game._get_move_timer_remaining_msec() >= defender_remaining \
+			or int(practice_game._move_timer_player_budgets[attacker_index]["remaining_msec"]) != attacker_remaining:
+		_fail_smoke_if_enabled("practice_thor_intercept_clock_charged_wrong_player")
+		return
+	_write_smoke_trace("practice_thor_intercept:defender_clock_running attacker_clock_preserved")
 	var pending_intercept_prompt: Dictionary = {}
 	for idx in range(practice_game.match_manager._pending_ui_interactions.size() - 1, -1, -1):
 		var entry: Dictionary = practice_game.match_manager._pending_ui_interactions[idx]
@@ -5666,6 +14380,11 @@ func _run_practice_thor_intercept_smoke() -> void:
 		str(attacker.creature_major_action_used),
 		interceptor.current_zone.zone_index,
 	])
+	practice_game._sync_turn_activity_timers()
+	if practice_game._move_timer_player_index != attacker_index or not practice_game._move_timer_running \
+			or practice_game._get_move_timer_remaining_msec() > attacker_remaining:
+		_fail_smoke_if_enabled("practice_thor_intercept_attacker_clock_not_resumed")
+		return
 
 	_finish_smoke_if_enabled("PASS:practice_thor_intercept")
 
@@ -5687,18 +14406,18 @@ func _run_practice_thor_divine_lightning_smoke() -> void:
 		_fail_smoke_if_enabled("practice_thor_divine_lightning_setup_%s" % setup_error)
 		return
 
-	var thor_bot: ThorPracticeBot = practice_game.get("_thor_bot") as ThorPracticeBot
-	if thor_bot == null:
+	if not practice_game.has_method("find_thor_hand_divine_lightning") \
+			or not practice_game.has_method("submit_thor_priority_response"):
 		_fail_smoke_if_enabled("practice_thor_divine_lightning_bot_missing")
 		return
 
-	var divine_lightning := thor_bot._find_hand_divine_lightning()
+	var divine_lightning: Card = practice_game.call("find_thor_hand_divine_lightning") as Card
 	if divine_lightning == null:
 		divine_lightning = DivineLightning.new()
 		divine_lightning.card_owner = practice_game.player2
 		practice_game.player2.hand_zone.add_card(divine_lightning)
 
-	var target_zone := _find_first_open_smoke_summon_zone(practice_game.player1)
+	var target_zone: Zone = _find_first_open_smoke_summon_zone(practice_game.player1)
 	if target_zone == null:
 		_fail_smoke_if_enabled("practice_thor_divine_lightning_target_zone_missing")
 		return
@@ -5721,9 +14440,15 @@ func _run_practice_thor_divine_lightning_smoke() -> void:
 	if smoke_targets.is_empty():
 		_fail_smoke_if_enabled("practice_thor_divine_lightning_no_targets")
 		return
+	if practice_game.game_manager.can_card_respond_to_priority(divine_lightning, practice_game.player2):
+		_fail_smoke_if_enabled("practice_thor_divine_lightning_illegal_hand_response_offered")
+		return
 
-	var submitted := thor_bot._submit_priority_response(divine_lightning)
+	var submitted: bool = bool(practice_game.call("submit_thor_priority_response", divine_lightning))
 	_write_smoke_trace("practice_thor_divine_lightning:submit_result=%s target=%s" % [str(submitted), target.uid])
+	if submitted:
+		_fail_smoke_if_enabled("practice_thor_divine_lightning_illegal_hand_response_accepted")
+		return
 
 	_finish_smoke_if_enabled("PASS:practice_thor_divine_lightning")
 
@@ -5761,6 +14486,8 @@ func _run_practice_thor_byggvir_smoke() -> void:
 	]
 
 	practice_game._show_byggvir_reveal_prompt(byggvir, raw_options)
+	# State/prompt refreshes can replace the panel before deferred deletion runs.
+	practice_game._show_byggvir_reveal_prompt(byggvir, raw_options)
 	await get_tree().process_frame
 
 	var panel: Control = practice_game.get_node_or_null("ByggvirPromptPanel") as Control
@@ -5773,6 +14500,37 @@ func _run_practice_thor_byggvir_smoke() -> void:
 		return
 	_write_smoke_trace("practice_thor_byggvir:prompt_visible options=%d" % (pending_options as Array).size())
 
+	# Resolve a real Brewing choice through the command boundary, then verify
+	# that no renamed replacement panel or pending choice survives completion.
+	practice_game._hide_byggvir_reveal_prompt()
+	practice_game.player1.hand_zone.add_card(byggvir)
+	var mead := BerserkerMead.new()
+	mead.card_owner = practice_game.player1
+	practice_game.player1.graveyard_zone.add_card(mead)
+	var return_option := byggvir.serialize_brewing_option({"kind": "return", "card": mead})
+	practice_game.match_manager.emit_ui_interaction_for_player(practice_game.player1, "byggvir_reveal", {
+		"source_uid": byggvir.uid,
+		"options": [return_option],
+	})
+	practice_game._show_byggvir_reveal_prompt(byggvir, [return_option])
+	practice_game._resolve_byggvir_reveal_option(return_option)
+	if mead.current_zone != practice_game.player1.hand_zone:
+		_fail_smoke_if_enabled("practice_thor_byggvir_choice_not_resolved")
+		return
+	await get_tree().process_frame
+	for child in practice_game.get_children():
+		if child is PanelContainer:
+			for label in child.find_children("*", "Label", true, false):
+				if label.text == "Choose a Brewing effect to resolve on reveal.":
+					_fail_smoke_if_enabled("practice_thor_byggvir_panel_survived_resolution")
+					return
+	if practice_game.get("_pending_byggvir") != null \
+			or not (practice_game.get("_pending_byggvir_options") as Array).is_empty() \
+			or _count_pending_smoke_prompts_of_type(practice_game.match_manager, "byggvir_reveal") != 0:
+		_fail_smoke_if_enabled("practice_thor_byggvir_choice_survived_resolution")
+		return
+	_write_smoke_trace("practice_thor_byggvir:choice_resolved prompt_cleared")
+
 	_finish_smoke_if_enabled("PASS:practice_thor_byggvir")
 
 func _run_practice_thor_fuzz_smoke() -> void:
@@ -5784,19 +14542,20 @@ func _run_practice_thor_fuzz_smoke() -> void:
 	show_game()
 	var deck_factory := PracticeAutofillDeckFactoryScript.new()
 	var total_games := maxi(1, int(_smoke_config.get("games", 20)))
+	var ranked_decks := bool(_smoke_config.get("ranked_bot_decks", false))
 	var base_seed := int(_smoke_config.get("seed", 1337))
 	var stall_frames := maxi(60, int(_smoke_config.get("stall_frames", 360)))
-	var match_frames := maxi(stall_frames + 60, int(_smoke_config.get("match_frames", 2400)))
+	var match_frames := maxi(stall_frames + 60, int(_smoke_config.get("match_frames", 12000)))
 	var player_wins := 0
 	var thor_wins := 0
 	for game_index in range(total_games):
 		var player_seed := base_seed + game_index * 2
 		var thor_seed := base_seed + game_index * 2 + 1
-		var player_deck := deck_factory.build_random_deck(player_seed)
+		var player_deck := deck_factory.build_random_deck(player_seed, "", ranked_decks)
 		if player_deck.is_empty():
 			_fail_smoke_if_enabled("practice_thor_fuzz_player_deck_failed index=%d seed=%d" % [game_index, player_seed])
 			return
-		var thor_deck := deck_factory.build_random_deck(thor_seed, "Thor")
+		var thor_deck := deck_factory.build_random_deck(thor_seed, "Thor", ranked_decks)
 		if thor_deck.is_empty():
 			_fail_smoke_if_enabled("practice_thor_fuzz_thor_deck_failed index=%d seed=%d" % [game_index, thor_seed])
 			return
@@ -6031,11 +14790,11 @@ func _get_practice_thor_fuzz_setup_error(practice_game) -> String:
 		return "missing"
 	if practice_game.player1 == null or practice_game.player2 == null:
 		return "players_missing"
-	if practice_game.match_manager == null or not practice_game.match_manager.authoritative_match_flow_enabled:
-		return "not_authoritative"
+	if practice_game.match_manager == null:
+		return "match_manager_missing"
 	if practice_game.network_manager == null or not bool(practice_game.network_manager.get("is_server")):
 		return "not_server"
-	if practice_game.get("_thor_bot") == null:
+	if not _practice_thor_has_bot(practice_game):
 		return "thor_bot_missing"
 	if practice_game.player2.player_name != "Thor":
 		return "wrong_enemy_name"
@@ -6071,6 +14830,8 @@ func _build_practice_thor_fuzz_snapshot(practice_game) -> String:
 		"stack": game_manager.action_stack.size(),
 		"resolving": game_manager.resolving_stack_actions.size(),
 		"pending_prompts": _count_pending_smoke_prompts(match_manager),
+		"pending_prompt_types": _list_pending_smoke_prompt_types(match_manager),
+		"authoritative_pending": bool(match_manager.get("_authoritative_stack_resolution_pending")) if match_manager != null else false,
 		"p1_followers": player1.followers if player1 != null else -1,
 		"p2_followers": player2.followers if player2 != null else -1,
 		"p1_mana": player1.mana if player1 != null else -1,
@@ -6081,6 +14842,10 @@ func _build_practice_thor_fuzz_snapshot(practice_game) -> String:
 		"p2_deck": player2.deck_zone.cards.size() if player2 != null and player2.deck_zone != null else -1,
 		"p1_board": _count_board_cards_for_player(player1),
 		"p2_board": _count_board_cards_for_player(player2),
+		"targeting": match_manager.is_targeting_active() if match_manager != null else false,
+		"targeting_name": str(match_manager.get_targeting_name()) if match_manager != null and match_manager.is_targeting_active() else "",
+		"click_selection_mandatory": bool(match_manager.pending_click_selection_confirm.is_valid() and not match_manager.pending_click_selection_allows_cancel) if match_manager != null else false,
+		"stack_top": _describe_smoke_stack_top(game_manager),
 	}
 	return JSON.stringify(snapshot)
 
@@ -6089,6 +14854,37 @@ func _count_pending_smoke_prompts(match_manager: MatchManager) -> int:
 		return 0
 	var pending_prompts = match_manager.get("_pending_ui_interactions")
 	return (pending_prompts as Array).size() if pending_prompts is Array else 0
+
+func _describe_smoke_stack_top(game_manager: GameManager) -> String:
+	if game_manager == null or game_manager.action_stack.is_empty():
+		return ""
+	var top_action: CardAction = game_manager.action_stack.back()
+	if top_action == null:
+		return ""
+	var parts: Array[String] = [
+		str(top_action.type),
+		str(top_action.event_name),
+	]
+	var source := top_action.card
+	if source != null:
+		parts.append("source=" + source.card_name)
+	var completion := str(top_action.event_data.get("deferred_authoritative_completion_command", "")).strip_edges()
+	if not completion.is_empty():
+		parts.append("deferred=" + completion)
+	var prompt_uids = top_action.event_data.get("pending_authoritative_prompt_uids", [])
+	if prompt_uids is Array and not (prompt_uids as Array).is_empty():
+		parts.append("prompt_uids=%s" % str((prompt_uids as Array).size()))
+	return "_".join(parts)
+
+func _list_pending_smoke_prompt_types(match_manager: MatchManager) -> Array:
+	var types: Array = []
+	var pending_prompts = match_manager.get("_pending_ui_interactions") if match_manager != null else null
+	if not (pending_prompts is Array):
+		return types
+	for entry in pending_prompts:
+		if entry is Dictionary and not str((entry as Dictionary).get("type", "")).is_empty():
+			types.append(str((entry as Dictionary).get("type", "")))
+	return types
 
 func _count_board_cards_for_player(player: Player) -> int:
 	if player == null:
@@ -6116,16 +14912,6 @@ func _find_first_open_smoke_summon_zone(player: Player) -> Zone:
 	for zone in player.reserve_zones:
 		if zone != null and zone.cards.is_empty():
 			return zone
-	return null
-
-func _find_first_playable_smoke_creature(game_manager: GameManager, player: Player, zone: Zone) -> Card:
-	if game_manager == null or player == null or zone == null:
-		return null
-	for card in player.hand_zone.cards:
-		if card != null \
-				and card.card_type == Card.CardType.CREATURE \
-				and game_manager.can_play_card(player, card, zone):
-			return card
 	return null
 
 func _find_smoke_hand_card_by_name(player: Player, expected_name: String) -> Card:
@@ -6185,6 +14971,8 @@ func _run_card_test_turn2_smoke() -> void:
 		return
 	show_game()
 	await card_test.start_game()
+	# Keep the turn-flow fixture independent of the featured manual sandbox.
+	card_test.load_card_selection_test_scenario()
 	await get_tree().process_frame
 	await get_tree().process_frame
 
@@ -6194,21 +14982,65 @@ func _run_card_test_turn2_smoke() -> void:
 	if not await _wait_for_card_test_turn2_smoke_condition(
 		func() -> bool:
 			return card_test.game_manager.current_player == card_test.player1 \
-				and card_test.game_manager.has_resolved_turn_upkeep() \
-				and card_test.game_manager.action_stack.is_empty(),
+				and card_test.game_manager.has_resolved_turn_upkeep(),
 		180
 	):
-		_fail_smoke_if_enabled("card_test_turn1_upkeep_timeout")
+		_fail_smoke_if_enabled(
+			"card_test_turn1_upkeep_timeout current=%s upkeep=%s stack=%d priority=%s pending_ui=%d choice=%s label=%s" % [
+				card_test.game_manager.current_player.player_name if card_test.game_manager.current_player != null else "none",
+				str(card_test.game_manager.has_resolved_turn_upkeep()),
+				card_test.game_manager.action_stack.size(),
+				card_test.game_manager.priority_player.player_name if card_test.game_manager.priority_player != null else "none",
+				card_test.match_manager.get_pending_ui_interaction_count() if card_test.match_manager != null else -1,
+				str(card_test.choice_container.visible),
+				str(card_test.action_label.text).replace("\n", " "),
+			]
+		)
+		return
+	if not await _settle_card_test_turn2_smoke_priority(card_test, 240):
+		_fail_smoke_if_enabled(
+			"card_test_turn1_priority_timeout stack=%d paused=%s executing=%s priority=%s pending_ui=%d label=%s" % [
+				card_test.game_manager.action_stack.size(),
+				str(card_test._stack_resolution_paused),
+				str(card_test._executing_stack_action),
+				card_test.game_manager.priority_player.player_name if card_test.game_manager.priority_player != null else "none",
+				card_test.match_manager.get_pending_ui_interaction_count() if card_test.match_manager != null else -1,
+				str(card_test.action_label.text).replace("\n", " "),
+			]
+		)
 		return
 
 	card_test._do_end_turn()
+	if not await _settle_card_test_turn2_smoke_priority(card_test, 240):
+		_fail_smoke_if_enabled(
+			"card_test_turn1_end_priority_timeout stack=%d paused=%s executing=%s priority=%s pending_ui=%d label=%s" % [
+				card_test.game_manager.action_stack.size(),
+				str(card_test._stack_resolution_paused),
+				str(card_test._executing_stack_action),
+				card_test.game_manager.priority_player.player_name if card_test.game_manager.priority_player != null else "none",
+				card_test.match_manager.get_pending_ui_interaction_count() if card_test.match_manager != null else -1,
+				str(card_test.action_label.text).replace("\n", " "),
+			]
+		)
+		return
 	if not await _wait_for_card_test_turn2_smoke_condition(
 		func() -> bool:
 			return card_test.game_manager.current_player == card_test.player2 \
 				and card_test.choice_container.visible,
 		240
 	):
-		_fail_smoke_if_enabled("card_test_turn2_entry_timeout")
+		_fail_smoke_if_enabled(
+			"card_test_turn2_entry_timeout current=%s upkeep=%s stack=%d priority=%s pending_ui=%d choice=%s end_visible=%s label=%s" % [
+				card_test.game_manager.current_player.player_name if card_test.game_manager.current_player != null else "none",
+				str(card_test.game_manager.has_resolved_turn_upkeep()),
+				card_test.game_manager.action_stack.size(),
+				card_test.game_manager.priority_player.player_name if card_test.game_manager.priority_player != null else "none",
+				card_test.match_manager.get_pending_ui_interaction_count() if card_test.match_manager != null else -1,
+				str(card_test.choice_container.visible),
+				str(card_test.end_turn_button.visible),
+				str(card_test.action_label.text).replace("\n", " "),
+			]
+		)
 		return
 
 	if not card_test.game_input.submit_action({type = "upkeep_choice", choice = "mana"}):
@@ -6217,10 +15049,7 @@ func _run_card_test_turn2_smoke() -> void:
 	if not await _wait_for_card_test_turn2_smoke_condition(
 		func() -> bool:
 			return card_test.game_manager.current_player == card_test.player2 \
-				and card_test.game_manager.has_resolved_turn_upkeep() \
-				and card_test.game_manager.action_stack.is_empty() \
-				and not card_test._stack_resolution_paused \
-				and not card_test._executing_stack_action,
+				and card_test.game_manager.has_resolved_turn_upkeep(),
 		240
 	):
 		_fail_smoke_if_enabled(
@@ -6228,6 +15057,18 @@ func _run_card_test_turn2_smoke() -> void:
 				card_test.game_manager.action_stack.size(),
 				str(card_test._stack_resolution_paused),
 				str(card_test._executing_stack_action),
+				str(card_test.action_label.text).replace("\n", " "),
+			]
+		)
+		return
+	if not await _settle_card_test_turn2_smoke_priority(card_test, 240):
+		_fail_smoke_if_enabled(
+			"card_test_turn2_priority_timeout stack=%d paused=%s executing=%s priority=%s pending_ui=%d label=%s" % [
+				card_test.game_manager.action_stack.size(),
+				str(card_test._stack_resolution_paused),
+				str(card_test._executing_stack_action),
+				card_test.game_manager.priority_player.player_name if card_test.game_manager.priority_player != null else "none",
+				card_test.match_manager.get_pending_ui_interaction_count() if card_test.match_manager != null else -1,
 				str(card_test.action_label.text).replace("\n", " "),
 			]
 		)
@@ -6242,7 +15083,8 @@ func _run_card_test_occult_singularity_smoke() -> void:
 		return
 	show_game()
 	await card_test.start_game()
-	card_test.load_n_o_card_scenario()
+	# This fixture supplies magical targets on both sides and the spell in hand.
+	card_test.load_card_selection_test_scenario()
 	await get_tree().process_frame
 	await get_tree().process_frame
 
@@ -6252,11 +15094,22 @@ func _run_card_test_occult_singularity_smoke() -> void:
 	if not await _wait_for_card_test_turn2_smoke_condition(
 		func() -> bool:
 			return card_test.game_manager.current_player == card_test.player1 \
-				and card_test.game_manager.has_resolved_turn_upkeep() \
-				and card_test.game_manager.action_stack.is_empty(),
+				and card_test.game_manager.has_resolved_turn_upkeep(),
 		180
 	):
 		_fail_smoke_if_enabled("card_test_occult_singularity_upkeep_timeout")
+		return
+	if not await _settle_card_test_turn2_smoke_priority(card_test, 240):
+		_fail_smoke_if_enabled(
+			"card_test_occult_singularity_priority_timeout stack=%d paused=%s executing=%s priority=%s pending_ui=%d label=%s" % [
+				card_test.game_manager.action_stack.size(),
+				str(card_test._stack_resolution_paused),
+				str(card_test._executing_stack_action),
+				card_test.game_manager.priority_player.player_name if card_test.game_manager.priority_player != null else "none",
+				card_test.match_manager.get_pending_ui_interaction_count() if card_test.match_manager != null else -1,
+				str(card_test.action_label.text).replace("\n", " "),
+			]
+		)
 		return
 
 	var occult := _find_smoke_hand_card_by_name(card_test.player1, "Occult Singularity")
@@ -6267,9 +15120,11 @@ func _run_card_test_occult_singularity_smoke() -> void:
 	if magical_before < 2:
 		_fail_smoke_if_enabled("card_test_occult_singularity_missing_targets count=%d" % magical_before)
 		return
-	card_test.match_manager.authoritative_match_flow_enabled = true
 	if not card_test.game_input.submit_action({type = "cast_spell", spell_uid = occult.uid}):
 		_fail_smoke_if_enabled("card_test_occult_singularity_cast_failed")
+		return
+	if not await _settle_card_test_turn2_smoke_priority(card_test, 240):
+		_fail_smoke_if_enabled("card_test_occult_singularity_response_priority_timeout")
 		return
 	if not await _wait_for_card_test_turn2_smoke_condition(
 		func() -> bool:
@@ -6299,10 +15154,151 @@ func _run_card_test_occult_singularity_smoke() -> void:
 
 	_finish_smoke_if_enabled("PASS:card_test_occult_singularity before=%d after=%d" % [magical_before, magical_after])
 
+func _run_card_test_gala_tura_smoke() -> void:
+	var card_test = _show_embedded_game("CardTest")
+	if card_test == null:
+		_fail_smoke_if_enabled("card_test_missing")
+		return
+	show_game()
+	await card_test.start_game()
+	card_test.load_gala_tura_test_scenario()
+	await get_tree().process_frame
+	await get_tree().process_frame
+
+	if not card_test.game_input.submit_action({type = "upkeep_choice", choice = "mana"}):
+		_fail_smoke_if_enabled("card_test_gala_tura_upkeep_choice_failed")
+		return
+	if not await _wait_for_card_test_turn2_smoke_condition(
+		func() -> bool:
+			return card_test.game_manager.current_player == card_test.player1 \
+				and card_test.game_manager.has_resolved_turn_upkeep(),
+		180
+	):
+		_fail_smoke_if_enabled("card_test_gala_tura_upkeep_timeout")
+		return
+	if not await _settle_card_test_turn2_smoke_priority(card_test, 240):
+		_fail_smoke_if_enabled("card_test_gala_tura_priority_timeout")
+		return
+
+	# Find Gala-Tura on P1's board and destroy it to trigger Water of Life.
+	var gala_tura: Card = null
+	for zone in card_test.player1.frontline_zones:
+		if zone == null:
+			continue
+		for card in zone.cards:
+			if card is GalaTura:
+				gala_tura = card
+				break
+		if gala_tura != null:
+			break
+	if gala_tura == null:
+		_fail_smoke_if_enabled("card_test_gala_tura_missing_on_board")
+		return
+
+	if not card_test.game_manager.request_send_to_graveyard(gala_tura, Callable(), false, true):
+		_fail_smoke_if_enabled("card_test_gala_tura_destroy_failed")
+		return
+
+	# Wait for the Water of Life destroyed trigger prompt to appear.
+	if not await _wait_for_card_test_turn2_smoke_condition(
+		func() -> bool:
+			return card_test._pending_gala_tura != null,
+		240
+	):
+		_fail_smoke_if_enabled("card_test_gala_tura_prompt_timeout")
+		return
+
+	# Select up to 2 valid graveyard creature targets and submit.
+	var targets: Array[Card] = []
+	for card in card_test.player1.graveyard_zone.cards:
+		if card == null:
+			continue
+		if card == gala_tura or card.is_god:
+			continue
+		if card.card_type == Card.CardType.CREATURE:
+			targets.append(card)
+		if targets.size() >= 2:
+			break
+	if targets.is_empty():
+		_fail_smoke_if_enabled("card_test_gala_tura_no_targets")
+		return
+
+	var chosen_uids: Array[String] = []
+	for target in targets:
+		chosen_uids.append(target.uid)
+
+	if not card_test.game_input.submit_action({
+		type = "gala_tura_destroyed_choice",
+		source_uid = gala_tura.uid,
+		chosen_uids = chosen_uids,
+	}):
+		_fail_smoke_if_enabled("card_test_gala_tura_submit_failed")
+		return
+	card_test._dismiss_zone_overlay()
+	card_test._hide_gala_tura_prompt()
+
+	if not await _settle_card_test_turn2_smoke_priority(card_test, 240):
+		_fail_smoke_if_enabled("card_test_gala_tura_resolution_timeout")
+		return
+
+	# Verify the chosen creatures left the graveyard (returned to deck bottom).
+	var still_in_grave := 0
+	for chosen_uid in chosen_uids:
+		for card in card_test.player1.graveyard_zone.cards:
+			if card != null and card.uid == chosen_uid:
+				still_in_grave += 1
+				break
+	if still_in_grave > 0:
+		_fail_smoke_if_enabled("card_test_gala_tura_not_returned count=%d" % still_in_grave)
+		return
+
+	_finish_smoke_if_enabled("PASS:card_test_gala_tura targets=%d" % chosen_uids.size())
+
+func _run_card_test_saving_grace_baldr_smoke() -> void:
+	var card_test = _show_embedded_game("CardTest")
+	if card_test == null:
+		_fail_smoke_if_enabled("card_test_missing")
+		return
+	show_game()
+	await card_test.start_game()
+	card_test.load_saving_grace_vs_baldr_active_test_scenario()
+	await get_tree().process_frame
+	await get_tree().process_frame
+
+	if not card_test.game_input.submit_action({type = "upkeep_choice", choice = "mana"}):
+		_fail_smoke_if_enabled("card_test_saving_grace_baldr_upkeep_choice_failed")
+		return
+	if not await _wait_for_card_test_turn2_smoke_condition(
+		func() -> bool:
+			return card_test.game_manager.current_player == card_test.player1 \
+				and card_test.game_manager.has_resolved_turn_upkeep(),
+		180
+	):
+		_fail_smoke_if_enabled("card_test_saving_grace_baldr_upkeep_timeout")
+		return
+	if not await _settle_card_test_turn2_smoke_priority(card_test, 240):
+		_fail_smoke_if_enabled("card_test_saving_grace_baldr_priority_timeout")
+		return
+
+	_finish_smoke_if_enabled("PASS:card_test_saving_grace_baldr")
+
 func _wait_for_card_test_turn2_smoke_condition(predicate: Callable, max_frames: int) -> bool:
 	for _frame in range(max_frames):
 		if predicate.call():
 			return true
+		await get_tree().process_frame
+	return false
+
+func _settle_card_test_turn2_smoke_priority(card_test, max_frames: int) -> bool:
+	for _frame in range(max_frames):
+		if card_test.game_manager.action_stack.is_empty() \
+				and not card_test._stack_resolution_paused \
+				and not card_test._executing_stack_action:
+			return true
+		if card_test.match_manager != null \
+				and card_test.match_manager.get_pending_ui_interaction_count() > 0 \
+				and card_test.game_manager.priority_player != null:
+			card_test.game_input.submit_action({type = "priority_pass"})
 		await get_tree().process_frame
 	return false
 
@@ -6348,9 +15344,13 @@ func _parse_smoke_config(args: Array) -> Dictionary:
 
 	return {
 		"role": str(config.get("smoke_role", "")),
+		"habrok_decline": str(config.get("smoke_habrok_decline", "")) == "true",
 		"ip": str(config.get("smoke_ip", "127.0.0.1")),
 		"player_name": str(config.get("smoke_name", "")),
-		"auth_mode": str(config.get("smoke_auth_mode", AUTH_MODE_LOGIN)),
+		"email": str(config.get("smoke_email", "")),
+		"username": str(config.get("smoke_username", "")),
+		"name_suffix": str(config.get("smoke_name_suffix", "")),
+		"auth_mode": str(config.get("smoke_auth_mode", AUTH_MODE_REGISTER)),
 		"password": str(config.get("smoke_password", "")),
 		"room_file": str(config.get("smoke_room_file", "")),
 		"result_file": str(config.get("smoke_result_file", "")),
@@ -6363,9 +15363,11 @@ func _parse_smoke_config(args: Array) -> Dictionary:
 		"lobby_port": int(str(config.get("smoke_lobby_port", str(LobbyProtocolScript.PORT))).to_int()),
 		"match_port": int(str(config.get("smoke_match_port", str(LobbyProtocolScript.MATCH_PORT))).to_int()),
 		"games": int(str(config.get("smoke_games", "20")).to_int()),
+		"ranked_bot_decks": str(config.get("smoke_ranked_bot_decks", "0")) == "1",
 		"seed": int(str(config.get("smoke_seed", "1337")).to_int()),
 		"stall_frames": int(str(config.get("smoke_stall_frames", "360")).to_int()),
-		"match_frames": int(str(config.get("smoke_match_frames", "2400")).to_int()),
+		"match_frames": int(str(config.get("smoke_match_frames", "12000")).to_int()),
+		"hunting_tactics_log_file": str(config.get("smoke_hunting_tactics_log_file", "")),
 	}
 
 func _write_smoke_room_code(room_code: String) -> void:
@@ -6451,7 +15453,71 @@ func _complete_smoke_if_enabled(message: String) -> void:
 		return
 	_smoke_finished = true
 	_write_smoke_result(message)
-	call_deferred("_close_program")
+	call_deferred("_complete_smoke_shutdown")
+
+func _complete_smoke_shutdown() -> void:
+	_cleanup_embedded_games_for_smoke_shutdown()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_close_program()
+
+func _cleanup_embedded_games_for_smoke_shutdown() -> void:
+	for node_name in _get_embedded_game_node_names():
+		var game: Node = get_node_or_null("GameContainer/" + node_name)
+		if game == null:
+			continue
+		if game.has_method("cleanup"):
+			game.cleanup()
+		game.queue_free()
+	var deck_builder: Node = null
+	if game_container != null:
+		deck_builder = game_container.get_node_or_null("DeckBuilder")
+	if deck_builder != null:
+		deck_builder.queue_free()
+	GameState.clear_deserialization_cache()
+
+func _start_in_process_lobby_server() -> bool:
+	# Spin up a LobbyServer node inside this host process so local_match_assigned
+	# fires here (instead of in a subprocess), letting the host launch the match
+	# authoritatively in-process. Used only by the hunting_tactics smoke.
+	if lobby_server != null and is_instance_valid(lobby_server):
+		return true
+	var server := LobbyServerScript.new()
+	server.name = "LobbyPeer"
+	# In-process matches: the host runs the authoritative match server itself.
+	server.use_dedicated_match_processes = false
+	server.allow_in_process_match_fallback = true
+	server.use_default_multiplayer = true
+	server.trace_network = true
+	server.trace_file_path = str(_smoke_config.get("lobby_server_trace_file", "")).strip_edges()
+	var mount := get_node_or_null("Main3D")
+	if mount == null:
+		mount = self
+	mount.add_child(server)
+	lobby_server = server
+	_bind_lobby_server_signals()
+	var lobby_port := _get_configured_lobby_port()
+	var match_port := int(_smoke_config.get("match_port", LobbyProtocolScript.MATCH_PORT))
+	var err: Error = server.start_server(_current_lobby_ip, lobby_port, match_port)
+	if err != OK:
+		push_error("[hunting_tactics smoke] failed to start in-process lobby server (%s)" % error_string(err))
+		_cleanup_lobby_server_node()
+		return false
+	var ready_file := str(_smoke_config.get("lobby_ready_file", "")).strip_edges()
+	if not ready_file.is_empty():
+		var file := FileAccess.open(ready_file, FileAccess.WRITE)
+		if file != null:
+			file.store_string("READY")
+			file.flush()
+			file.close()
+	return true
+
+func _cleanup_lobby_server_node() -> void:
+	if lobby_server == null or not is_instance_valid(lobby_server):
+		lobby_server = null
+		return
+	lobby_server.queue_free()
+	lobby_server = null
 
 func _launch_dedicated_lobby_server() -> int:
 	var project_path := ProjectSettings.globalize_path("res://")
@@ -6589,7 +15655,7 @@ func _build_auth_controls() -> void:
 	if _switch_account_button == null:
 		_switch_account_button = Button.new()
 		_switch_account_button.name = "SwitchAccountButton"
-		_switch_account_button.text = "Switch Account"
+		_switch_account_button.text = "Login"
 		_switch_account_button.visible = false
 		_switch_account_button.pressed.connect(_on_switch_account_pressed)
 		menu_container.add_child(_switch_account_button)
@@ -6604,16 +15670,39 @@ func _restore_auth_preferences() -> void:
 	if _local_profile_store == null:
 		return
 	var auth_mode: String = _normalize_auth_mode(_local_profile_store.get_preferred_auth_mode(), AUTH_MODE_LOGIN)
+	if auth_mode == AUTH_MODE_GUEST and _has_saved_or_pending_account_identity():
+		auth_mode = AUTH_MODE_LOGIN
+	if auth_mode == AUTH_MODE_CLAIM_LEGACY and not _has_pending_legacy_account_claim():
+		auth_mode = AUTH_MODE_LOGIN
+	if auth_mode == AUTH_MODE_GUEST:
+		_activate_guest_profile_session("Guest")
+		_startup_autologin_pending = false
+		return
+	if auth_mode == AUTH_MODE_CLAIM_LEGACY:
+		_set_selected_account_username("")
+		var pending_legacy_username := _get_pending_legacy_claim_username()
+		_set_selected_account_public_username(pending_legacy_username, false)
+		_set_selected_account_password(_get_pending_legacy_claim_password())
+		_set_auth_mode(auth_mode)
+		_select_saved_account_profile_if_available("", pending_legacy_username)
+		_refresh_auth_controls()
+		_refresh_account_identity_label()
+		_startup_autologin_pending = false
+		return
 	var saved_username := _get_saved_account_username()
+	_startup_trace("auth restore: username fetched")
 	_set_selected_account_username(saved_username)
-	_set_selected_account_password(_local_profile_store.get_last_account_password())
+	_set_selected_account_password(_get_saved_account_password())
+	_startup_trace("auth restore: credentials fetched")
 	_set_auth_mode(auth_mode)
-	if not saved_username.is_empty():
-		_activate_account_profile(saved_username, "", auth_mode, false)
+	_startup_trace("auth restore: auth mode set")
+	_select_saved_account_profile_if_available(saved_username, "")
+	_startup_trace("auth restore: profile selected")
 	_refresh_auth_controls()
 	_refresh_account_identity_label()
-	if auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
-		_queue_authenticated_lobby_connect("Restoring lobby session...")
+	_startup_trace("auth restore: auth controls refreshed")
+	_startup_autologin_pending = _prepare_saved_account_autologin()
+	_startup_trace("auth restore: autologin prepared (pending=%s)" % str(_startup_autologin_pending))
 
 func _on_auth_mode_selected(_index: int) -> void:
 	if _auth_mode_option != null and _auth_mode_option.item_count > 0:
@@ -6626,11 +15715,8 @@ func _on_auth_mode_selected(_index: int) -> void:
 	var preferred_account_username := _get_preferred_account_username()
 	if not preferred_account_username.is_empty():
 		_set_selected_account_username(preferred_account_username)
-		_activate_account_profile(preferred_account_username, "", auth_mode, false)
-	elif _local_profile_store != null:
+	if _local_profile_store != null:
 		_local_profile_store.set_preferred_auth_mode(auth_mode)
-	if _get_auth_password().is_empty():
-		_set_selected_account_password(_local_profile_store.get_last_account_password())
 	_refresh_open_deck_builder_saved_decks()
 	_refresh_profile_summary_from_local_history(_local_profile_id)
 	_update_resume_controls()
@@ -6651,10 +15737,23 @@ func _set_auth_mode(auth_mode: String) -> void:
 func _get_selected_auth_mode() -> String:
 	return _selected_auth_mode
 
+func _refresh_switch_account_button() -> void:
+	if _switch_account_button == null:
+		return
+	if not _is_multiplayer_screen_active():
+		_switch_account_button.visible = true
+	_switch_account_button.text = "Login"
+	if _is_guest_session_active():
+		_switch_account_button.tooltip_text = GUEST_ACCOUNT_PROMPT
+	elif _is_account_logged_in():
+		_switch_account_button.tooltip_text = "Use a different account on this device."
+	else:
+		_switch_account_button.tooltip_text = "Sign in or create an account."
+
 func _refresh_auth_controls() -> void:
 	var signed_in_account := _is_account_logged_in()
 	if player_name_line_edit != null:
-		player_name_line_edit.placeholder_text = "Account username"
+		player_name_line_edit.placeholder_text = "Email or username"
 		player_name_line_edit.editable = not signed_in_account
 		player_name_line_edit.visible = false
 	if _password_line_edit != null:
@@ -6662,19 +15761,24 @@ func _refresh_auth_controls() -> void:
 	if _auth_mode_option != null:
 		_auth_mode_option.visible = false
 	if _switch_account_button != null:
-		_switch_account_button.visible = signed_in_account
+		_refresh_switch_account_button()
 
 func _validate_auth_inputs() -> String:
 	var auth_mode: String = _get_selected_auth_mode()
 	if _is_account_logged_in():
 		return ""
-	var username: String = _get_preferred_account_username()
-	if username.is_empty():
-		return "Enter an account username first."
+	if _is_guest_session_active():
+		return "Make an account to play online and save decks across instances."
+	var email: String = _get_preferred_account_username()
+	if email.is_empty():
+		return "Enter your account email or username first." if auth_mode == AUTH_MODE_LOGIN else "Enter your account email first."
+	var public_username := _get_selected_account_public_username()
+	if auth_mode in [AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY] and not _is_valid_account_public_username(public_username):
+		return "Enter a username using 3-24 letters, numbers, or underscores."
 	var password := _get_auth_password()
 	if password.is_empty():
 		return "Enter your account password first."
-	var credential_error := _validate_account_auth_details(auth_mode, username, password)
+	var credential_error := _validate_account_auth_details(auth_mode, email, password, public_username)
 	if not credential_error.is_empty():
 		return credential_error
 	return ""
@@ -6682,22 +15786,22 @@ func _validate_auth_inputs() -> String:
 func _get_auth_password() -> String:
 	if not _selected_account_password.is_empty():
 		return _selected_account_password
+	var saved_password := _get_saved_account_password()
+	if not saved_password.is_empty():
+		var saved_email := _get_saved_account_username().strip_edges().to_lower()
+		var selected_email := _selected_account_username.strip_edges().to_lower()
+		if selected_email.is_empty() or saved_email.is_empty() or selected_email == saved_email:
+			return saved_password
 	if _password_line_edit == null:
 		return ""
 	return _password_line_edit.text
 
 func _get_lobby_login_name(default_name: String) -> String:
 	var auth_mode := _get_selected_auth_mode()
-	if auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER]:
-		var preferred_account_username := _get_preferred_account_username()
-		if not preferred_account_username.is_empty():
-			_set_selected_account_username(preferred_account_username)
-			_activate_account_profile(
-				preferred_account_username,
-				_local_profile_id,
-				auth_mode,
-				not _get_auth_password().is_empty()
-			)
-			return preferred_account_username
+	if auth_mode in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
+		var preferred_account_email := _get_preferred_account_username()
+		if not preferred_account_email.is_empty():
+			_set_selected_account_username(preferred_account_email)
+			return preferred_account_email
 	var player_name := _get_player_name(default_name)
 	return player_name

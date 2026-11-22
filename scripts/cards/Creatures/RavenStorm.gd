@@ -6,14 +6,14 @@ const ART_PATH := "res://images/card_art/creatures/RavenStormEdit.png"
 func _init() -> void:
 	super._init()
 	card_name = "Raven Storm"
-	card_types = ["Animal", "Avian", "Raven", "Aerial", "Norse Creature"]
+	card_types = ["Animal", "Avian", "Raven", "Aerial"]
 	level = 2
 	mana_cost = 0
 	sacrifice_cost = 0
 	speed = 3
 	resilience = 7
 	strength = 5
-	ability_text = "[b]Sighting[/b] ([b]Spd[/b] 3): When a friendly Norse Human Warrior or Lupine attacks, you may summon this creature from your hand."
+	ability_text = "[b]Sighting[/b] ([b]Spd[/b] 3): When a friendly Norse Human Warrior or Lupine attacks, you may summon Raven Storm from your hand."
 	culture = "Norse"
 	artist = "Ricardo Zoppello"
 	art_path = ART_PATH
@@ -41,7 +41,15 @@ func can_respond_to_priority_action(action: CardAction, game_manager: GameManage
 		return false
 	if card_owner != game_manager.priority_player:
 		return false
+	# Sighting still has to pay summon-cost modifiers such as Skoll's Sun Hunt
+	# tax. Do not offer the response when the summon can no longer be paid for;
+	# otherwise the failed ability leaves the same priority window open forever.
+	if not game_manager.can_pay_creature_summon_cost(card_owner, self, self, false):
+		return false
 	return not get_priority_field_targets(game_manager, action).is_empty()
+
+func requires_priority_target_selection() -> bool:
+	return false
 
 func activate(game_manager: GameManager, activation_data = null) -> void:
 	if game_manager == null or card_owner == null:
@@ -79,6 +87,9 @@ func activate(game_manager: GameManager, activation_data = null) -> void:
 		return
 
 	var open_zones := _get_open_summon_zones()
+	if not game_manager.can_pay_creature_summon_cost(card_owner, self, self, false):
+		game_manager.note_player_feedback("%s cannot pay the Sighting summon cost." % card_name)
+		return
 	if summon_zone != null and summon_zone not in open_zones:
 		game_manager.note_player_feedback("%s can no longer enter that position." % card_name)
 		return
@@ -142,7 +153,7 @@ func _is_valid_sighting_attacker(card: Card) -> bool:
 		return true
 	return card.has_type("Human") \
 		and card.has_type("Warrior") \
-		and (card.has_type("Norse Creature") or card.culture == "Norse")
+		and card.culture == "Norse"
 
 func _get_open_summon_zones() -> Array[Zone]:
 	var open_zones: Array[Zone] = []

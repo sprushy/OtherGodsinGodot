@@ -18,7 +18,7 @@ func _init() -> void:
 	speed = 1
 	resilience = 26
 	strength = 24
-	ability_text = "[b]Shift[/b] ([b]Activate[/b], [b]Minor Action[/b], once per turn): Switch this card between Giant, Mage, Shapeshifter and Animal, Mage, Avian, Aerial.\n[b]Animal Form[/b] ([b]Passive[/b]): While in Animal form, this card's stats become SPD 3 / RES 15 / STR 27."
+	ability_text = "[b]Shift[/b] ([b]Activate[/b], [b]Minor Action[/b], once per turn): Switch Thiazi between Giant, Mage, Shapeshifter and Animal, Mage, Avian, Aerial.\n[b]Animal Form[/b] ([b]Passive[/b]): While in Animal form, Thiazi's stats become SPD 3 / RES 15 / STR 27."
 	flavor_text = ""
 	culture = "Norse"
 	artist = "Lorinda Tomko"
@@ -81,29 +81,30 @@ func apply_serialized_state(state: Dictionary) -> void:
 		in_animal_form = bool(state.get("in_animal_form", false))
 	card_types = _get_animal_form_types() if in_animal_form else _get_giant_form_types()
 
-func get_effective_speed() -> int:
-	var total := super.get_effective_speed()
+func get_effective_speed(speed_delta: int = 0) -> int:
+	var total := super.get_effective_speed(speed_delta)
 	if in_animal_form:
 		total += ANIMAL_FORM_SPEED_BONUS
 	return clampi(total, 1, 7)
 
-func get_effective_resilience() -> int:
-	var total := super.get_effective_resilience()
+func get_effective_resilience(resilience_delta: int = 0) -> int:
+	var total := super.get_effective_resilience(resilience_delta)
 	if in_animal_form:
 		total += ANIMAL_FORM_RESILIENCE_DELTA
 	return max(0, total)
 
-func get_effective_strength() -> int:
-	var total := super.get_effective_strength()
+func get_effective_strength(strength_delta: int = 0) -> int:
+	var total := super.get_effective_strength(strength_delta)
 	if in_animal_form:
 		total += ANIMAL_FORM_STRENGTH_BONUS
 	return max(0, total)
 
 func get_hover_detail_lines(_viewer: Player = null) -> Array[String]:
+	var active_form := _get_animal_form_types() if in_animal_form else _get_giant_form_types()
+	var inactive_form := _get_giant_form_types() if in_animal_form else _get_animal_form_types()
 	return [
-		"[b]Current Form[/b]: %s" % _get_current_form_label(),
-		"[b]Giant Form[/b]: Giant, Mage, Shapeshifter; SPD 1 / RES 26 / STR 24.",
-		"[b]Animal Form[/b]: Animal, Mage, Avian, Aerial; SPD 3 / RES 15 / STR 27.",
+		BaseCard.format_shapeshifter_form_summary(active_form, inactive_form),
+		"[b]Animal Form[/b]: SPD 3 / RES 15 / STR 27.",
 	]
 
 func _get_current_form_label() -> String:
@@ -114,7 +115,6 @@ func _get_giant_form_types() -> Array[String]:
 		"Giant",
 		"Mage",
 		"Shapeshifter",
-		"Norse Creature",
 	]
 
 func _get_animal_form_types() -> Array[String]:
@@ -124,5 +124,4 @@ func _get_animal_form_types() -> Array[String]:
 		"Avian",
 		"Aerial",
 		"Shapeshifter",
-		"Norse Creature",
 	]

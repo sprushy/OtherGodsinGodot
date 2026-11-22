@@ -1,0 +1,2 @@
+﻿Forerunner ([b]Passive[/b]): Your Divine Manifestations cost 6 less to summon.
+Revelation ([b]Activate[/b]): Use this card's major action to summon a Divine Manifestation from your hand. It costs 2 more mana.

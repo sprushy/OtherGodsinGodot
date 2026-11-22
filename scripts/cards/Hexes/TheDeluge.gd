@@ -22,12 +22,13 @@ func can_respond_to_action(action: CardAction) -> bool:
 	return action != null \
 		and action.type == CardAction.Type.EVENT \
 		and action.event_name == "summon" \
-		and _is_valid_summon_trigger(action.card)
+		and _is_valid_summon_trigger(_get_triggering_card(action))
 
 func get_priority_targets(_game_manager: GameManager, action: CardAction) -> Array[Card]:
-	if not can_respond_to_action(action):
+	var triggering_card := _get_triggering_card(action)
+	if not _is_valid_summon_trigger(triggering_card):
 		return []
-	return [action.card]
+	return [triggering_card]
 
 func on_activate_action(game_manager: GameManager, action: CardAction) -> void:
 	if game_manager == null:
@@ -80,8 +81,10 @@ func _get_triggering_card(action: CardAction) -> Card:
 		return null
 	if action.target is Card:
 		return action.target as Card
+	if action.type == CardAction.Type.EVENT and action.event_name == "summon":
+		return action.card
 	if action.response_to != null:
-		return action.response_to.card
+		return _get_triggering_card(action.response_to)
 	return null
 
 func _get_doomed_cards(game_manager: GameManager) -> Array[Card]:

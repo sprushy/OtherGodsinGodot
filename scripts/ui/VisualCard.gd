@@ -6,9 +6,15 @@ const LockedPowerCursorScript = preload("res://scripts/ui/LockedPowerCursor.gd")
 const DefenseShieldOverlayScript = preload("res://scripts/ui/DefenseShieldOverlay.gd")
 const BoardZoneUIScript = preload("res://scripts/ui/BoardZoneUI.gd")
 const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
+const DebuffBadgeScript = preload("res://scripts/ui/DebuffBadge.gd")
+const UITextureCacheScript = preload("res://scripts/ui/UITextureCache.gd")
+const UIFontScript = preload("res://scripts/ui/UIFont.gd")
 const MINOR_ACTION_SYMBOL_TEXTURE := preload("res://images/ui/MinorActionSymbol.png")
 const MAJOR_ACTION_SYMBOL_TEXTURE := preload("res://images/ui/MajorActionSymbol.png")
 const MANA_ORB_TEXTURE := preload("res://images/ui/ManaOrb.png")
+const PUBLICLY_IDENTIFIED_BADGE_TEXTURE := preload("res://images/ability_badges/MopsusBadge.png")
+const DEBUFF_BADGE_SIZE := DebuffBadgeScript.SIZE
+const PRIORITY_RESPONSE_GLOW_COLOR := Color(0.28, 0.92, 0.50, 0.95)
 
 signal card_clicked(card: Card)
 signal card_right_clicked(card: Card)
@@ -31,20 +37,28 @@ var _drag_rot_tween: Tween = null
 var _drag_ghost_pivot: Vector2 = Vector2.ZERO
 var _drag_target_rotation: float = 0.0
 var _drag_stealth: bool = false
+var _hand_drag_targeting_enabled: bool = false
+var _hand_drag_drop_position_resolver: Callable
+var _drag_hand_placeholder: bool = false
+var _drag_hand_modulate: Color = Color.WHITE
 const _DRAG_PREPARE_OVERLAY_NAME := "DragPrepareOverlay"
 const _SUMMON_ACTION_ICON_ROW_NAME := "SummonActionCostIcons"
 const _LEVEL_TAG_NAME := "LevelTag"
 const _LEVEL_SYMBOL_ROW_NAME := "LevelSymbolRow"
 const _DRAG_LEVEL_OVERLAY_NAME := "DragLevelOverlay"
 const _STATS_LABEL_NAME := "StatsLabel"
+const _PUBLICLY_IDENTIFIED_BADGE_OVERLAY_NAME := "PubliclyIdentifiedBadgeOverlay"
 const _FLOATING_GHOST_Z_INDEX := 1300
 const _DRAG_ROT_SPEED: float = 600.0  # degrees per second (90° in 0.15 s)
 var _base_z_index: int = 0
 const _HOVER_PANEL_Z_INDEX := 2000
 const _HOVER_PANEL_WIDTH := 320.0
 const _HOVER_PANEL_MAX_HEIGHT := 420.0
+const _HOVER_SCALE := Vector2(1.08, 1.08)
 var _hover_panel: Control = null
 var _hover_viewer: Player = null
+var _hover_use_board_popup: bool = false
+var _hover_game_manager = null
 var _waiting_on_priority: bool = false
 var _priority_response_available: bool = false
 var _blot_summonable: bool = false
@@ -53,10 +67,15 @@ var _hover_preview_when_disabled: bool = false
 var _display_mana_cost: int = -1
 var _display_cost_adjustment_lines: Array[String] = []
 var _ghostly_hand_proxy: bool = false
+var _selection_glow: bool = false
 var _click_only: bool = false
+var _tap_to_play: bool = false
 var _dim_when_disabled: bool = true
 var _hand_mode: bool = false
+var _show_rules_text: bool = true
 var _hand_hover_hit_rect: Rect2 = Rect2()
+var _mouse_hovered: bool = false
+var _locked_power_cursor_active: bool = false
 
 func set_base_z_index(idx: int) -> void:
 	_base_z_index = idx
@@ -78,7 +97,7 @@ var _stats_label: Label = null
 const _DEFAULT_POWER_LOCK_TEXTURE := preload("res://images/Default Power Lock.png")
 const _ANCIENT_POWER_LOCK_TEXTURE := preload("res://images/Ancient Power Lock.png")
 const _NORSE_POWER_LOCK_TEXTURE := preload("res://images/Norse Power Lock.png")
-const _MANA_ORB_ICON_SIZE := 18.0
+const _COST_ICON_SIZE := 18.0
 const _LEVEL_SYMBOL_SIZE := 19.0
 
 func setup(
@@ -99,6 +118,7 @@ func setup(
 	custom_minimum_size = Vector2(_card_width, natural_h)
 	size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	set_process(false)
 	_refresh_mouse_cursor_shape()
 	_build_content()
 	_bind_visual_state()
@@ -111,12 +131,12 @@ func _get_display_mana_cost() -> int:
 func _compute_natural_height() -> float:
 	var h := 26.0  # name + mana row
 	if card_data.art_path != "":
-		var tex: Texture2D = load(card_data.art_path)
+		var tex: Texture2D = UITextureCacheScript.get_texture(card_data.art_path)
 		if tex:
 			h += _card_width * float(tex.get_height()) / float(tex.get_width())
 	if not card_data.is_god:
 		h += 22.0  # stats / speed / resilience row
-	if card_data.ability_text != "":
+	if _show_rules_text and card_data.ability_text != "":
 		var raw := card_data.ability_text.replace("[b]", "").replace("[/b]", "")
 		var content_width := maxf(96.0, float(_card_width) - 10.0)
 		var chars_per_line = max(12, int(floor(content_width / 7.2)))
@@ -130,7 +150,7 @@ func _compute_natural_height() -> float:
 func _compute_compact_height() -> float:
 	var h := 26.0  # name + mana row
 	if card_data.art_path != "":
-		var tex: Texture2D = load(card_data.art_path)
+		var tex: Texture2D = UITextureCacheScript.get_texture(card_data.art_path)
 		if tex:
 			h += _card_width * float(tex.get_height()) / float(tex.get_width())
 	if not card_data.is_god:
@@ -161,7 +181,7 @@ func _make_power_lock_overlay() -> TextureRect:
 
 func _get_power_lock_texture() -> Texture2D:
 	if card_data != null and card_data.card_type == Card.CardType.POWER:
-		if str(card_data.culture).strip_edges() == "Ancient" or card_data.has_type("Ancient Power"):
+		if card_data.culture.strip_edges() == "Ancient":
 			return _ANCIENT_POWER_LOCK_TEXTURE
 		if str(card_data.culture).strip_edges() == "Norse":
 			return _NORSE_POWER_LOCK_TEXTURE
@@ -170,7 +190,7 @@ func _get_power_lock_texture() -> Texture2D:
 func _build_art_node() -> TextureRect:
 	if card_data.art_path == "":
 		return null
-	var tex: Texture2D = load(card_data.art_path)
+	var tex: Texture2D = UITextureCacheScript.get_texture(card_data.art_path)
 	if tex == null:
 		return null
 	var art := TextureRect.new()
@@ -186,7 +206,7 @@ func _build_art_node() -> TextureRect:
 func _on_art_updated(new_path: String) -> void:
 	if _art_rect == null or not is_instance_valid(_art_rect):
 		return
-	var tex: Texture2D = load(new_path)
+	var tex: Texture2D = UITextureCacheScript.get_texture(new_path)
 	if tex:
 		_art_rect.texture = tex
 		_sync_minimum_height()
@@ -202,6 +222,7 @@ func _make_name_label() -> Label:
 	name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_lbl.custom_minimum_size = Vector2(maxf(36.0, float(_card_width) - 132.0), 0.0)
 	name_lbl.text = card_data.get_display_name_for_control(name_lbl)
+	UIFontScript.apply_norse_card_name_font(name_lbl, card_data)
 	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return name_lbl
 
@@ -220,7 +241,7 @@ func _refresh_level_tag_tooltip() -> void:
 	if level_breakdown != "":
 		tooltip_lines.append("LVL:\n" + level_breakdown)
 	_level_tag.tooltip_text = "\n".join(tooltip_lines)
-	_level_tag.mouse_filter = Control.MOUSE_FILTER_STOP
+	_level_tag.mouse_filter = Control.MOUSE_FILTER_PASS
 
 func _apply_level_badge_state(level_tag: PanelContainer) -> void:
 	if level_tag == null or card_data == null:
@@ -269,7 +290,7 @@ func _make_level_label(track_instance: bool = true) -> Control:
 	var effective_level := card_data.get_effective_level()
 	var tag := PanelContainer.new()
 	tag.name = _LEVEL_TAG_NAME
-	tag.mouse_filter = Control.MOUSE_FILTER_STOP
+	tag.mouse_filter = Control.MOUSE_FILTER_PASS
 	tag.custom_minimum_size = Vector2(_LEVEL_SYMBOL_SIZE * float(effective_level) + 10.0, _LEVEL_SYMBOL_SIZE + 8.0)
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.06, 0.08, 0.14, 0.94)
@@ -303,9 +324,9 @@ func _make_cost_number_label(text: String, display_mana_cost: int = -1) -> Label
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return label
 
-func _make_mana_orb_icon(icon_size: float = _MANA_ORB_ICON_SIZE) -> TextureRect:
+func _make_cost_icon(texture: Texture2D, icon_size: float) -> TextureRect:
 	var icon := TextureRect.new()
-	icon.texture = MANA_ORB_TEXTURE
+	icon.texture = texture
 	icon.custom_minimum_size = Vector2(icon_size, icon_size)
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
@@ -328,9 +349,13 @@ func _make_cost_node(cost_text: String, display_mana_cost: int) -> Control:
 
 	if display_mana_cost > 0:
 		cost_row.add_child(_make_cost_number_label(str(display_mana_cost), display_mana_cost))
-		cost_row.add_child(_make_mana_orb_icon(_MANA_ORB_ICON_SIZE))
+		cost_row.add_child(_make_cost_icon(MANA_ORB_TEXTURE, _COST_ICON_SIZE))
 	for part in card_data.get_cost_shorthand_parts(0):
-		cost_row.add_child(_make_cost_number_label(part))
+		if part.ends_with("S"):
+			cost_row.add_child(_make_cost_number_label(part.trim_suffix("S")))
+			cost_row.add_child(_make_cost_icon(BaseCard.SACRIFICE_COST_ICON_TEXTURE, _COST_ICON_SIZE))
+		else:
+			cost_row.add_child(_make_cost_number_label(part))
 	if cost_row.get_child_count() == 0:
 		cost_row.add_child(_make_cost_number_label(cost_text, display_mana_cost))
 	return cost_row
@@ -441,17 +466,17 @@ func _apply_stats_label_state(target_label: Label, preview_rotated: bool, previe
 				if breakdown != "":
 					creature_tooltips.append(stat_info[0] + ":\n" + breakdown)
 			target_label.tooltip_text = "\n\n".join(creature_tooltips)
-			target_label.mouse_filter = Control.MOUSE_FILTER_STOP if not creature_tooltips.is_empty() else Control.MOUSE_FILTER_IGNORE
+			target_label.mouse_filter = Control.MOUSE_FILTER_PASS if not creature_tooltips.is_empty() else Control.MOUSE_FILTER_IGNORE
 		Card.CardType.STRUCTURE:
 			target_label.text = "RES:%d" % card_data.get_effective_resilience()
 			var structure_breakdown := card_data.get_full_stat_breakdown("res")
 			target_label.tooltip_text = "RES:\n" + structure_breakdown if structure_breakdown != "" else ""
-			target_label.mouse_filter = Control.MOUSE_FILTER_STOP if structure_breakdown != "" else Control.MOUSE_FILTER_IGNORE
+			target_label.mouse_filter = Control.MOUSE_FILTER_PASS if structure_breakdown != "" else Control.MOUSE_FILTER_IGNORE
 		Card.CardType.SPELL, Card.CardType.HEX, Card.CardType.CHARM:
 			target_label.text = "SPD:%d" % card_data.get_effective_speed()
 			var speed_breakdown := card_data.get_full_stat_breakdown("spd")
 			target_label.tooltip_text = "SPD:\n" + speed_breakdown if speed_breakdown != "" else ""
-			target_label.mouse_filter = Control.MOUSE_FILTER_STOP if speed_breakdown != "" else Control.MOUSE_FILTER_IGNORE
+			target_label.mouse_filter = Control.MOUSE_FILTER_PASS if speed_breakdown != "" else Control.MOUSE_FILTER_IGNORE
 		_:
 			target_label.tooltip_text = ""
 			target_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -519,6 +544,7 @@ func _refresh_drag_board_summon_preview() -> void:
 
 func _on_card_visual_state_changed() -> void:
 	_refresh_dynamic_labels()
+	_refresh_publicly_identified_badge()
 	_apply_card_style()
 	if _hover_panel != null and is_instance_valid(_hover_panel):
 		_hide_hover_panel()
@@ -562,13 +588,14 @@ func _populate_vbox(vbox: VBoxContainer) -> void:
 
 	var display_mana_cost := _get_display_mana_cost()
 	var cost_text := card_data.get_cost_shorthand(display_mana_cost)
-	if cost_text != "" or card_data.card_type == Card.CardType.CREATURE:
+	var show_top_cost := not _should_show_power_lock_overlay()
+	if show_top_cost and (cost_text != "" or card_data.card_type == Card.CardType.CREATURE):
 		top_row.add_child(_make_cost_node(cost_text, display_mana_cost))
 
 	var art := _build_art_node()
 	if art:
 		vbox.add_child(_build_art_container(art))
-	elif card_data != null and not card_data.name_at_bottom:
+	elif card_data != null and not card_data.name_at_bottom and not _hand_mode:
 		if level_lbl == null:
 			level_lbl = _make_level_label()
 		if level_lbl != null:
@@ -580,23 +607,26 @@ func _populate_vbox(vbox: VBoxContainer) -> void:
 		Card.CardType.CREATURE:
 			var stats_lbl := Label.new()
 			stats_lbl.name = _STATS_LABEL_NAME
+			stats_lbl.add_to_group("stealth_fog_top_ui")
 			stats_lbl.add_theme_font_size_override("font_size", 19)
 			_stats_label = stats_lbl
 			vbox.add_child(stats_lbl)
 		Card.CardType.STRUCTURE:
 			var res_lbl := Label.new()
 			res_lbl.name = _STATS_LABEL_NAME
+			res_lbl.add_to_group("stealth_fog_top_ui")
 			res_lbl.add_theme_font_size_override("font_size", 16)
 			_stats_label = res_lbl
 			vbox.add_child(res_lbl)
 		Card.CardType.SPELL, Card.CardType.HEX, Card.CardType.CHARM:
 			var spd_lbl := Label.new()
 			spd_lbl.name = _STATS_LABEL_NAME
+			spd_lbl.add_to_group("stealth_fog_top_ui")
 			spd_lbl.add_theme_font_size_override("font_size", 16)
 			_stats_label = spd_lbl
 			vbox.add_child(spd_lbl)
 
-	if card_data.ability_text != "":
+	if _show_rules_text and card_data.ability_text != "":
 		var ability_lbl := RichTextLabel.new()
 		ability_lbl.bbcode_enabled = true
 		ability_lbl.text = BaseCard.apply_keyword_hints(BaseCard.apply_action_cost_symbols(card_data.ability_text, card_data))
@@ -620,9 +650,17 @@ func _populate_vbox(vbox: VBoxContainer) -> void:
 		vbox.add_child(_make_name_label())
 
 func _build_content() -> void:
+	for child in get_children():
+		remove_child(child)
+		child.free()
 	_level_tag = null
 	_level_label = null
 	_stats_label = null
+	_inner = null
+	_art_rect = null
+	_disabled_overlay = null
+	_power_lock_overlay = null
+	_defense_shield_overlay = null
 	# Outer (self) is a transparent layout-only shell — the HBoxContainer
 	# manages it, but rotation never touches it, preventing re-sort cascades.
 	var empty_style := StyleBoxEmpty.new()
@@ -651,12 +689,48 @@ func _build_content() -> void:
 	_disabled_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_inner.add_child(_disabled_overlay)
 
+	_refresh_publicly_identified_badge()
 	_refresh_power_lock_overlay()
 	_refresh_defense_shield_overlay()
 	_refresh_disabled_visual_state()
 	_refresh_dynamic_labels()
 	call_deferred("_sync_minimum_height")
 	call_deferred("_layout_power_lock_overlay")
+
+func _refresh_publicly_identified_badge() -> void:
+	if _inner == null:
+		return
+	var existing_overlay := _inner.get_node_or_null(_PUBLICLY_IDENTIFIED_BADGE_OVERLAY_NAME)
+	if existing_overlay != null:
+		existing_overlay.queue_free()
+	if card_data == null or not card_data.is_publicly_identified():
+		return
+	var overlay := Control.new()
+	overlay.name = _PUBLICLY_IDENTIFIED_BADGE_OVERLAY_NAME
+	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_inner.add_child(overlay)
+
+	var preview := TextureRect.new()
+	preview.texture = PUBLICLY_IDENTIFIED_BADGE_TEXTURE
+	preview.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	preview.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	preview.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	preview.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	preview.offset_left = 2.0
+	preview.offset_top = 2.0
+	preview.offset_right = -2.0
+	preview.offset_bottom = -2.0
+
+	var badge := DebuffBadgeScript.create(preview)
+	badge.tooltip_text = CardDetailContentBuilderScript.PUBLICLY_IDENTIFIED_HOVER_TEXT
+	badge.mouse_filter = Control.MOUSE_FILTER_PASS
+	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	badge.offset_left = -6.0 - DEBUFF_BADGE_SIZE
+	badge.offset_top = 32.0
+	badge.offset_right = -6.0
+	badge.offset_bottom = 32.0 + DEBUFF_BADGE_SIZE
+	overlay.add_child(badge)
 
 func _make_card_style() -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
@@ -695,10 +769,10 @@ func _make_card_style() -> StyleBoxFlat:
 		style.shadow_color = Color(1.0, 0.82, 0.2, 0.7)
 		style.shadow_size = 12
 	if _priority_response_available:
-		style.shadow_color = Color(0.34, 0.95, 0.42, 0.58)
-		style.shadow_size = max(style.shadow_size, 7)
+		style.shadow_color = PRIORITY_RESPONSE_GLOW_COLOR
+		style.shadow_size = max(style.shadow_size, 16)
 		if not _waiting_on_priority:
-			style.border_color = Color(0.55, 1.0, 0.62, 0.96)
+			style.border_color = PRIORITY_RESPONSE_GLOW_COLOR
 	if _blot_summonable:
 		style.border_color = Color(0.45, 1.0, 0.52, 0.98)
 		style.shadow_color = Color(0.25, 0.95, 0.4, 0.72)
@@ -712,6 +786,10 @@ func _make_card_style() -> StyleBoxFlat:
 		style.border_color = Color(0.82, 0.96, 1.0, 0.92)
 		style.shadow_color = Color(0.62, 0.88, 1.0, 0.32)
 		style.shadow_size = max(style.shadow_size, 12)
+	if _selection_glow:
+		style.border_color = Color(1.0, 0.84, 0.42, 0.85)
+		style.shadow_color = Color(1.0, 0.76, 0.25, 0.32)
+		style.shadow_size = 10
 	return style
 
 func _apply_card_style() -> void:
@@ -754,7 +832,8 @@ func _refresh_defense_shield_overlay() -> void:
 		_defense_shield_overlay = null
 		return
 	if is_rotated:
-		_defense_shield_overlay = DefenseShieldOverlayScript.ensure_on(_inner, DefenseShieldOverlayScript.LAYOUT_CENTER)
+		var use_stealth_shield := _drag_stealth or (card_data != null and card_data.is_stealth)
+		_defense_shield_overlay = DefenseShieldOverlayScript.ensure_on(_inner, DefenseShieldOverlayScript.LAYOUT_CENTER, 1.0, use_stealth_shield)
 	else:
 		DefenseShieldOverlayScript.remove_from(_inner)
 		_defense_shield_overlay = null
@@ -778,8 +857,23 @@ func set_hand_proxy_visual(enabled: bool, click_only: bool = true) -> void:
 	_click_only = click_only
 	_apply_card_style()
 
+func set_tap_to_play(enabled: bool) -> void:
+	_tap_to_play = enabled
+
 func set_hover_viewer(viewer: Player) -> void:
 	_hover_viewer = viewer
+
+func set_hover_use_board_popup(value: bool, game_manager = null) -> void:
+	_hover_use_board_popup = value
+	_hover_game_manager = game_manager
+
+func set_show_rules_text(enabled: bool) -> void:
+	if _show_rules_text == enabled:
+		return
+	_show_rules_text = enabled
+	if card_data != null:
+		_sync_minimum_height()
+		_build_content()
 
 func set_hand_mode(enabled: bool) -> void:
 	if _hand_mode == enabled:
@@ -796,13 +890,23 @@ func set_hand_hover_hit_rect(rect: Rect2) -> void:
 	_hand_hover_hit_rect = rect
 
 func _refresh_mouse_filter() -> void:
-	mouse_filter = Control.MOUSE_FILTER_STOP if (not _disabled or _hover_preview_when_disabled) else Control.MOUSE_FILTER_IGNORE
+	mouse_filter = Control.MOUSE_FILTER_STOP if not _drag_hand_placeholder and (not _disabled or _hover_preview_when_disabled) else Control.MOUSE_FILTER_IGNORE
+
+func _set_locked_power_cursor_active(active: bool) -> void:
+	if _locked_power_cursor_active == active:
+		return
+	_locked_power_cursor_active = active
+	LockedPowerCursorScript.set_viewport_owner_active(get_viewport(), self, active)
 
 func _refresh_mouse_cursor_shape() -> void:
+	_set_locked_power_cursor_active(_mouse_hovered and _is_mouse_actually_over_control() and _should_show_power_lock_overlay())
 	if _should_show_power_lock_overlay():
 		mouse_default_cursor_shape = LockedPowerCursorScript.get_control_cursor_shape(Control.CURSOR_POINTING_HAND as Control.CursorShape)
 		return
 	mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+
+func _is_mouse_actually_over_control() -> bool:
+	return is_inside_tree() and is_visible_in_tree() and _has_point(get_local_mouse_position())
 
 func _has_point(point: Vector2) -> bool:
 	var hit_rect := Rect2(Vector2.ZERO, size)
@@ -831,6 +935,32 @@ func proxy_mouse_button_press(button_index: MouseButton, global_mouse_pos: Vecto
 func is_hand_interacting() -> bool:
 	return _picked_up or _dragging
 
+func set_hand_drag_targeting_enabled(enabled: bool, drop_position_resolver: Callable = Callable()) -> void:
+	_hand_drag_targeting_enabled = enabled
+	_hand_drag_drop_position_resolver = drop_position_resolver
+
+func is_drag_targeting() -> bool:
+	return _dragging and _hand_drag_targeting_enabled and not _drag_stealth
+
+func get_drag_preview_global_rect() -> Rect2:
+	if not _dragging or not is_instance_valid(_drag_ghost):
+		return Rect2()
+	# Retain the card footprint even while only its targeting cursor is visible.
+	_update_ghost_position()
+	return _get_drag_ghost_bounds(_drag_ghost.global_position, _drag_ghost.size)
+
+func set_drag_target_cursor_active(active: bool) -> void:
+	if _dragging and is_instance_valid(_drag_ghost):
+		_drag_ghost.visible = not active
+
+func _restore_drag_hand_placeholder() -> bool:
+	if not _drag_hand_placeholder:
+		return false
+	_drag_hand_placeholder = false
+	modulate = _drag_hand_modulate
+	_refresh_mouse_filter()
+	return get_parent() != null and not get_parent().is_queued_for_deletion()
+
 func set_highlighted(value: bool) -> void:
 	modulate = Color(1.2, 1.2, 0.65) if value else Color.WHITE
 	_picked_up = false
@@ -845,6 +975,10 @@ func set_priority_response_available(value: bool) -> void:
 	_priority_response_available = value
 	_apply_card_style()
 
+func set_selection_glow(value: bool) -> void:
+	_selection_glow = value
+	_apply_card_style()
+
 func set_blot_summon_state(is_summonable: bool, is_selected: bool = false) -> void:
 	_blot_summonable = is_summonable
 	_blot_selected = is_selected
@@ -853,23 +987,31 @@ func set_blot_summon_state(is_summonable: bool, is_selected: bool = false) -> vo
 func _cancel_drag() -> void:
 	if _dragging:
 		_dragging = false
-		if _drag_parent and is_instance_valid(_drag_parent):
-			get_parent().remove_child(self)
+		set_process(false)
+		var restored := _restore_drag_hand_placeholder()
+		if _drag_parent and is_instance_valid(_drag_parent) and not _drag_parent.is_queued_for_deletion():
+			var current_parent := get_parent()
+			if current_parent != null:
+				current_parent.remove_child(self)
 			_drag_parent.add_child(self)
-			_drag_parent.move_child(self, _drag_index)
+			_drag_parent.move_child(self, clampi(_drag_index, 0, _drag_parent.get_child_count() - 1))
+			restored = true
 		_drag_parent = null
 		_drag_index = -1
-		visible = true
+		visible = restored
 		# Sync _inner rotation to match is_rotated — drag rotation only modifies
 		# the drag ghost, so _inner can lag behind when the card returns to hand.
 		if _inner:
 			_inner.rotation_degrees = 0.0
 			_inner.pivot_offset = size / 2.0
+		if not restored:
+			queue_free()
 	if _drag_ghost and is_instance_valid(_drag_ghost):
 		_drag_ghost.queue_free()
 		_drag_ghost = null
 	_drag_rot_tween = null
 	_drag_stealth = false
+	set_process(false)
 
 func _cancel_rot_ghost() -> void:
 	if _rot_tween and _rot_tween.is_valid():
@@ -953,6 +1095,8 @@ func _toggle_rotation() -> void:
 func apply_creature_drag_defensive_preview() -> bool:
 	if card_data == null or card_data.card_type != Card.CardType.CREATURE or not _dragging:
 		return false
+	if is_rotated and not _drag_stealth:
+		return true
 	_drag_stealth = false
 	if not is_rotated:
 		_toggle_rotation()
@@ -962,6 +1106,8 @@ func apply_creature_drag_defensive_preview() -> bool:
 func apply_creature_drag_stealth_preview() -> bool:
 	if card_data == null or card_data.card_type != Card.CardType.CREATURE or not _dragging:
 		return false
+	if is_rotated and _drag_stealth:
+		return true
 	_drag_stealth = true
 	if not is_rotated:
 		_toggle_rotation()
@@ -1014,10 +1160,14 @@ func _input(event: InputEvent) -> void:
 	if not _picked_up:
 		return
 	if event is InputEventMouseMotion:
-		if _click_only:
+		if _click_only or (_hand_mode and _tap_to_play):
 			return
 		if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 			if not _dragging:
+				# Small finger movements should still count as a hand-card tap on iOS.
+				if _hand_mode and OS.has_feature("ios") \
+						and (get_global_mouse_position() - global_position - _drag_offset).length() < 12.0:
+					return
 				_start_drag()
 			_update_ghost_position()
 	elif event is InputEventMouseButton:
@@ -1131,10 +1281,13 @@ func _process(delta: float) -> void:
 	# they are never one frame out of step (which caused the wobble when a tween
 	# owned rotation_degrees while _process owned position).
 	var cur := _drag_ghost.rotation_degrees
+	var rotation_changed := false
 	if cur != _drag_target_rotation:
 		var step := _DRAG_ROT_SPEED * delta
 		_drag_ghost.rotation_degrees = move_toward(cur, _drag_target_rotation, step)
-	_update_ghost_position()
+		rotation_changed = true
+	if rotation_changed:
+		_update_ghost_position()
 
 func _sync_creature_drag_preview_from_input_state() -> void:
 	if card_data == null or card_data.card_type != Card.CardType.CREATURE:
@@ -1158,14 +1311,25 @@ func _start_drag() -> void:
 		return
 	_dragging = true
 	_drag_ghost = _build_drag_ghost()
+	if _drag_ghost == null or not is_instance_valid(_drag_ghost):
+		_dragging = false
+		set_process(false)
+		return
+	set_process(true)
 	_drag_target_rotation = _drag_ghost.rotation_degrees  # already at correct angle
-	# Reparent to scene root so the hand HBox collapses the gap,
-	# but the node stays in the tree so _input() keeps firing.
-	_drag_parent = get_parent()
-	_drag_index = get_index()
-	_drag_parent.remove_child(self)
-	floating_parent.add_child(self)
-	visible = false
+	if _hand_drag_targeting_enabled:
+		# Keep the source in the fan as a faded, non-interactive placeholder.
+		_drag_hand_placeholder = true
+		_drag_hand_modulate = modulate
+		modulate.a *= 0.35
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+	else:
+		# Keep receiving _input() after leaving the hand container.
+		_drag_parent = get_parent()
+		_drag_index = get_index()
+		_drag_parent.remove_child(self)
+		floating_parent.add_child(self)
+		visible = false
 	if _drag_ghost != null and is_instance_valid(_drag_ghost):
 		floating_parent.add_child(_drag_ghost)
 		_drag_ghost.move_to_front()
@@ -1198,7 +1362,9 @@ func _build_drag_ghost() -> Control:
 			sz = ghost.size
 	_drag_ghost_pivot = sz / 2.0
 	_drag_ghost = ghost
-	_set_drag_prepare_preview(_drag_stealth and _can_toggle_drag_prepare())
+	# Hexes always prepare on drop; spells and charms opt in while dragging.
+	var prepare_preview := card_data != null and (card_data.card_type == Card.CardType.HEX or (_drag_stealth and _can_toggle_drag_prepare()))
+	_set_drag_prepare_preview(prepare_preview)
 	_refresh_drag_summon_preview()
 	_refresh_drag_ghost_level_preview()
 	_drag_ghost = null
@@ -1265,10 +1431,22 @@ func _remove_drag_ghost_rules_text(node: Node) -> void:
 		_remove_drag_ghost_rules_text(child)
 
 func _finish_drag() -> void:
+	var drop_pos := get_global_mouse_position()
+	if is_drag_targeting() and _hand_drag_drop_position_resolver.is_valid():
+		drop_pos = _hand_drag_drop_position_resolver.call(self)
 	_dragging = false
+	set_process(false)
+	var restored := _restore_drag_hand_placeholder()
+	if _drag_parent and is_instance_valid(_drag_parent) and not _drag_parent.is_queued_for_deletion():
+		var current_parent := get_parent()
+		if current_parent != null:
+			current_parent.remove_child(self)
+		_drag_parent.add_child(self)
+		_drag_parent.move_child(self, clampi(_drag_index, 0, _drag_parent.get_child_count() - 1))
+		restored = true
+	visible = restored
 	_drag_parent = null
 	_drag_index = -1
-	var drop_pos := get_global_mouse_position()
 	if _drag_ghost and is_instance_valid(_drag_ghost):
 		_drag_ghost.queue_free()
 		_drag_ghost = null
@@ -1280,6 +1458,8 @@ func _finish_drag() -> void:
 	var was_stealth := _drag_stealth
 	_drag_stealth = false
 	card_drag_released.emit(card_data, drop_pos, is_rotated, was_stealth)
+	if not restored:
+		queue_free()
 
 func _show_hover_panel() -> void:
 	var floating_parent := _get_floating_parent()
@@ -1287,9 +1467,21 @@ func _show_hover_panel() -> void:
 		return
 
 	var panel := PanelContainer.new()
+	panel.name = "CardHoverPanel"
+	panel.add_to_group("stealth_fog_clear_ui")
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.top_level = true
-	panel.z_index = _HOVER_PANEL_Z_INDEX
+	# Floating panels leave the card's hierarchy, so retain its overlay's depth.
+	var card_z_index := 0
+	var ancestor: CanvasItem = self
+	while ancestor != null:
+		card_z_index += ancestor.z_index
+		if not ancestor.z_as_relative or ancestor.top_level:
+			break
+		ancestor = ancestor.get_parent() as CanvasItem
+	panel.z_as_relative = false
+	panel.z_index = mini(RenderingServer.CANVAS_ITEM_Z_MAX, maxi(_HOVER_PANEL_Z_INDEX, card_z_index + 1))
+	panel.visible = false
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.05, 0.05, 0.12, 0.97)
 	style.border_color = Color(0.5, 0.7, 1.0)
@@ -1304,35 +1496,52 @@ func _show_hover_panel() -> void:
 	style.content_margin_top = 8
 	style.content_margin_bottom = 8
 	panel.add_theme_stylebox_override("panel", style)
-	var hover_body := CardDetailContentBuilderScript.build_visual_hover_body(
-		card_data,
-		_hover_viewer,
-		{
-			"content_width": _HOVER_PANEL_WIDTH - 20.0,
-			"display_mana_cost": _get_display_mana_cost(),
-			"display_cost_adjustment_lines": _display_cost_adjustment_lines
-		}
-	)
+	var hover_body: Control = null
+	var vp_size := get_viewport().get_visible_rect().size
+	if _hover_use_board_popup:
+		hover_body = CardDetailContentBuilderScript.build_board_popup_body_from_game_state(
+			card_data,
+			_hover_viewer,
+			_hover_game_manager,
+			{"show_listed_costs": true}
+		)
+		hover_body = CardDetailContentBuilderScript.wrap_hover_body(
+			hover_body, minf(_HOVER_PANEL_MAX_HEIGHT, maxf(80.0, vp_size.y - 24.0))
+		)
+	else:
+		hover_body = CardDetailContentBuilderScript.build_visual_hover_body(
+			card_data,
+			_hover_viewer,
+			{
+				"content_width": _HOVER_PANEL_WIDTH - 20.0,
+				"display_mana_cost": _get_display_mana_cost(),
+				"display_cost_adjustment_lines": _display_cost_adjustment_lines
+			}
+		)
 	panel.add_child(hover_body)
+	if _hover_use_board_popup:
+		CardDetailContentBuilderScript.set_hover_mouse_passthrough(panel)
 
 	floating_parent.add_child(panel)
-	if hover_body is ScrollContainer:
+	if hover_body is ScrollContainer and not _hover_use_board_popup:
 		var hover_scroll := hover_body as ScrollContainer
 		CardDetailContentBuilderScript.apply_deckbuilder_scrollbar_style(hover_scroll, true)
 		hover_scroll.ready.connect(Callable(self, "_apply_hover_scrollbar_style").bind(hover_scroll), CONNECT_ONE_SHOT)
 	panel.move_to_front()
-	var vp_size := get_viewport().get_visible_rect().size
-	panel.size = Vector2(_HOVER_PANEL_WIDTH, minf(_HOVER_PANEL_MAX_HEIGHT, vp_size.y - 8.0))
-
-	# Position: prefer right of card, flip left if off-screen
-	var panel_size := panel.size
-	var card_right := global_position.x + size.x + 8
-	var px := card_right if card_right + panel_size.x < vp_size.x else global_position.x - panel_size.x - 8
-	px = clampf(px, 4.0, max(4.0, vp_size.x - panel_size.x - 4.0))
-	var py := clampf(global_position.y, 4.0, max(4.0, vp_size.y - panel_size.y - 4.0))
-	panel.global_position = Vector2(px, py)
-
 	_hover_panel = panel
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if not is_instance_valid(panel) or panel.is_queued_for_deletion():
+		return
+	if _hover_use_board_popup:
+		panel.size = panel.get_combined_minimum_size()
+	else:
+		panel.size = Vector2(_HOVER_PANEL_WIDTH, minf(_HOVER_PANEL_MAX_HEIGHT, vp_size.y - 8.0))
+
+	# Reserve the full hover size while the card is still scaling up.
+	var hover_size := size * (_HOVER_SCALE / scale).max(Vector2.ONE)
+	var card_rect := get_global_transform() * Rect2((size - hover_size) * 0.5, hover_size)
+	CardDetailContentBuilderScript.place_hover_panel(panel, card_rect, card_rect, true)
 
 func _apply_hover_scrollbar_style(scroll: ScrollContainer) -> void:
 	if scroll == null or not is_instance_valid(scroll):
@@ -1341,6 +1550,7 @@ func _apply_hover_scrollbar_style(scroll: ScrollContainer) -> void:
 
 func _hide_hover_panel() -> void:
 	if _hover_panel and is_instance_valid(_hover_panel):
+		_hover_panel.hide()
 		_hover_panel.queue_free()
 	_hover_panel = null
 
@@ -1349,7 +1559,16 @@ func _notification(what: int) -> void:
 		NOTIFICATION_ENTER_TREE:
 			_bind_visual_state()
 		NOTIFICATION_EXIT_TREE:
+			_set_locked_power_cursor_active(false)
 			_unbind_visual_state()
+			if _drag_hand_placeholder:
+				_restore_drag_hand_placeholder()
+				if is_instance_valid(_drag_ghost):
+					_drag_ghost.queue_free()
+				_drag_ghost = null
+				_dragging = false
+				_picked_up = false
+				set_process(false)
 		NOTIFICATION_RESIZED:
 			# Safe: setting _inner.pivot_offset only notifies self (outer),
 			# not the HBoxContainer, so no re-sort cascade.
@@ -1357,6 +1576,8 @@ func _notification(what: int) -> void:
 				_inner.pivot_offset = size / 2.0
 			_layout_power_lock_overlay()
 		NOTIFICATION_MOUSE_ENTER:
+			_mouse_hovered = true
+			_set_locked_power_cursor_active(_is_mouse_actually_over_control() and _should_show_power_lock_overlay())
 			if _hand_mode:
 				if not _picked_up:
 					hand_hovered.emit(self)
@@ -1365,9 +1586,11 @@ func _notification(what: int) -> void:
 				pivot_offset = size / 2.0
 				z_index = _base_z_index + 50
 				var tw := create_tween()
-				tw.tween_property(self, "scale", Vector2(1.08, 1.08), 0.08)
+				tw.tween_property(self, "scale", _HOVER_SCALE, 0.08)
 				_show_hover_panel()
 		NOTIFICATION_MOUSE_EXIT:
+			_mouse_hovered = false
+			_set_locked_power_cursor_active(false)
 			if _hand_mode:
 				if not _picked_up:
 					hand_unhovered.emit(self)

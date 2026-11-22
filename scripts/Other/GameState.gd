@@ -5,7 +5,13 @@ class_name GameState
 const HIDDEN_MODE_NONE := 0
 const HIDDEN_MODE_HAND := 1
 const HIDDEN_MODE_BOARD := 2
+const HIDDEN_MODE_DECK := 3
 const SPECTATOR_VIEWER_INDEX := -2
+
+static var _card_script_cache: Dictionary = {}
+
+static func clear_deserialization_cache() -> void:
+	_card_script_cache.clear()
 
 # Serializes and deserializes full game state for network transmission.
 # Used by GameEventBroadcaster (server side) and CombatMockGame (client side).
@@ -25,11 +31,12 @@ static func serialize(gm: GameManager, viewer_player_index: int = -1, visible_pl
 	for raw_index in visible_player_indices:
 		visible_lookup[int(raw_index)] = true
 	if viewer_player_index == SPECTATOR_VIEWER_INDEX:
-		viewer = Player.new()
+		viewer = Player.create_spectator_viewer()
 	elif viewer_player_index >= 0 and viewer_player_index < gm.players.size():
 		viewer = gm.players[viewer_player_index]
 	var data := {
 		turn_number = gm.turn_number,
+		has_resolved_attack_this_turn = gm.has_resolved_attack_this_turn,
 		current_player_index = gm.players.find(gm.current_player),
 		phase = gm.current_phase,
 		is_game_over = gm.is_game_over,
@@ -40,6 +47,7 @@ static func serialize(gm: GameManager, viewer_player_index: int = -1, visible_pl
 		attack_restrictions = _serialize_attack_restrictions(gm),
 		turn_follower_loss_preventions = _serialize_turn_follower_loss_preventions(gm),
 		combat_destroy_events_this_turn = _serialize_combat_destroy_events(gm),
+		temporary_summon_cost_modifiers = _serialize_temporary_summon_cost_modifiers(gm),
 		prepared_hexes = _serialize_prepared_cards(gm.prepared_hexes),
 		prepared_charms = _serialize_prepared_cards(gm.prepared_charms),
 		action_stack = _serialize_action_stack(gm.action_stack, gm, viewer),
@@ -47,22 +55,38 @@ static func serialize(gm: GameManager, viewer_player_index: int = -1, visible_pl
 	}
 	if gm.winning_player != null:
 		data["winner_index"] = gm.players.find(gm.winning_player)
+	if gm.losing_player != null:
+		data["loser_index"] = gm.players.find(gm.losing_player)
+	if gm.is_game_over:
+		data["game_end_reason"] = gm.game_end_reason
+		data["result_message"] = gm.get_game_result_message()
+		data["match_result_stats"] = gm.match_result_stats.duplicate(true)
+	var priority_response_uids: Array[String] = []
+	if viewer != null and gm.priority_player == viewer:
+		for response_card in gm.get_priority_responses(viewer):
+			if response_card != null and "uid" in response_card and str(response_card.uid) != "":
+				priority_response_uids.append(str(response_card.uid))
+	data["priority_response_uids"] = priority_response_uids
 
 	for i in gm.players.size():
 		var player := gm.players[i]
 		var reveal_private_cards := i == viewer_player_index or bool(visible_lookup.get(i, false))
 		var hide_hand := viewer != null and not reveal_private_cards
 		var hide_deck := viewer != null and not reveal_private_cards
-		var deck_cards := _serialize_zone_cards(player.deck_zone, viewer, false, reveal_private_cards)
-		if hide_deck:
-			deck_cards = _serialize_visible_opponent_deck_cards_for_viewer(gm, player, viewer)
+		var spectator := viewer_player_index == SPECTATOR_VIEWER_INDEX
+		var private_peek_count := HildskjalfThroneOfOdin.LOOK_COUNT \
+			if hide_deck and not spectator and _viewer_can_read_opponent_deck_with_hildskjalf(gm, viewer) else 0
+		var deck_cards := _serialize_deck(player.deck_zone, hide_deck or spectator, private_peek_count)
 		var pdata := {
 			player_name = player.player_name,
 			mana = player.mana,
 			followers = player.followers,
+			guard = player.guard,
 			deck_count = player.deck_zone.cards.size(),
 			deck         = deck_cards,
 			has_summoned_this_turn = player.has_summoned_this_turn,
+			has_summoned_structure_this_turn = player.has_summoned_structure_this_turn,
+			has_had_god_in_play = player.has_had_god_in_play,
 			hand         = _serialize_zone_cards(player.hand_zone, viewer, hide_hand, reveal_private_cards),
 			god_zone     = _serialize_zone_cards(player.god_zone, viewer, false, reveal_private_cards),
 			power_zones  = [] as Array,
@@ -71,6 +95,9 @@ static func serialize(gm: GameManager, viewer_player_index: int = -1, visible_pl
 			graveyard    = _serialize_zone_cards(player.graveyard_zone, viewer, false),
 			abyss        = _serialize_zone_cards(player.abyss_zone, viewer, false),
 		}
+		if viewer == null or i == viewer_player_index:
+			pdata["starting_creature_typings"] = player.starting_creature_typings.duplicate(true)
+			pdata["starting_deck_has_heroic_stand"] = player.starting_deck_has_heroic_stand
 		for z in player.power_zones:
 			pdata.power_zones.append(_serialize_zone_cards(z, viewer, false, reveal_private_cards))
 		for z in player.frontline_zones:
@@ -81,18 +108,36 @@ static func serialize(gm: GameManager, viewer_player_index: int = -1, visible_pl
 
 	return data
 
-static func _serialize_visible_opponent_deck_cards_for_viewer(gm: GameManager, deck_owner: Player, viewer: Player) -> Array:
-	var visible_cards := []
-	if gm == null or deck_owner == null or viewer == null or deck_owner == viewer:
-		return visible_cards
-	if not _viewer_can_read_opponent_deck_with_hildskjalf(gm, viewer):
-		return visible_cards
-	var reveal_count := mini(HildskjalfThroneOfOdin.LOOK_COUNT, deck_owner.deck_zone.cards.size())
-	for i in range(reveal_count):
-		var card := deck_owner.deck_zone.cards[i] as Card
-		if card != null:
-			visible_cards.append(_serialize_card(card, HIDDEN_MODE_NONE))
-	return visible_cards
+static func _serialize_deck(deck: Zone, hide_unknown: bool, private_peek_count: int) -> Array:
+	var result := []
+	for index in deck.cards.size():
+		var card := deck.cards[index]
+		var placement := deck.get_deck_placement(card)
+		var private_peek := hide_unknown and index < private_peek_count
+		if hide_unknown and placement == Zone.DeckPlacement.UNKNOWN and not private_peek:
+			continue
+		if hide_unknown and not private_peek and not deck.is_deck_card_publicly_known(card):
+			# Primed/shelved positions are public (both players watched the card
+			# enter the deck), but the identity stays hidden unless the opponent
+			# legitimately learned it (revealed, or taken from a face-up board
+			# card or the graveyard/abyss).
+			result.append({
+				uid = card.get("uid") if "uid" in card else "",
+				hidden = true,
+				hidden_mode = HIDDEN_MODE_DECK,
+				deck_index = index,
+				deck_placement = placement,
+			})
+			continue
+		var card_data := _serialize_card(card)
+		if hide_unknown:
+			card_data["deck_index"] = index
+		if placement != Zone.DeckPlacement.UNKNOWN:
+			card_data["deck_placement"] = placement
+			if deck.is_deck_identity_public(card):
+				card_data["deck_identity_public"] = true
+		result.append(card_data)
+	return result
 
 static func _viewer_can_read_opponent_deck_with_hildskjalf(gm: GameManager, viewer: Player) -> bool:
 	if gm == null or viewer == null:
@@ -117,7 +162,7 @@ static func _serialize_zone_cards(zone: Zone, viewer: Player = null, hide_hand: 
 	var result := []
 	for card in zone.cards:
 		var hidden_mode := HIDDEN_MODE_NONE
-		if hide_hand:
+		if hide_hand and not card.is_revealed_in_hand():
 			hidden_mode = HIDDEN_MODE_HAND
 		elif not reveal_private_cards and viewer != null and zone.zone_type in [Zone.ZoneType.FRONTLINE, Zone.ZoneType.RESERVE, Zone.ZoneType.POWER_SLOT, Zone.ZoneType.GOD_SLOT] and card.is_hidden_from_viewer(viewer):
 			hidden_mode = HIDDEN_MODE_BOARD
@@ -203,7 +248,7 @@ static func _serialize_card(card: Card, hidden_mode: int = HIDDEN_MODE_NONE) -> 
 		if attached_target != null and "uid" in attached_target:
 			attached_target_uid = attached_target.uid
 
-	return {
+	var card_data := {
 		uid                       = uid,
 		script_path               = script_path,
 		card_name                 = card.card_name,
@@ -219,8 +264,10 @@ static func _serialize_card(card: Card, hidden_mode: int = HIDDEN_MODE_NONE) -> 
 		is_sleeping               = card.is_sleeping,
 		is_prepared               = card.is_prepared,
 		summoned_this_turn        = card.summoned_this_turn,
+		summoned_after_first_attack_this_turn = card.summoned_after_first_attack_this_turn,
 		creature_major_action_used   = card.creature_major_action_used,
 		creature_minor_actions_used  = card.creature_minor_actions_used,
+		combats_this_game         = card.combats_this_game,
 		is_used                   = card.is_used,
 		is_muted                  = card.is_muted,
 		mute_turns_remaining      = card.mute_turns_remaining,
@@ -240,6 +287,9 @@ static func _serialize_card(card: Card, hidden_mode: int = HIDDEN_MODE_NONE) -> 
 		active_statuses           = _serialize_card_statuses(card),
 		serialized_state          = sanitize_network_value(card.get_serialized_state(), null),
 	}
+	if not card.field_subtypes.is_empty():
+		card_data["field_subtypes"] = card.field_subtypes.duplicate()
+	return card_data
 
 static func _serialize_card_buffs(card: Card) -> Array:
 	var result := []
@@ -330,9 +380,16 @@ static func _serialize_action_stack(action_stack: Array, gm: GameManager, viewer
 	for action in action_stack:
 		if action == null or not (action is CardAction):
 			continue
-		if gm != null and action in gm.resolving_stack_actions:
+		var is_resolving: bool = gm != null and action in gm.resolving_stack_actions
+		var has_visible_resolving_card: bool = is_resolving \
+			and action.display_zone != null \
+			and action.card != null \
+			and action.card.is_magical_card()
+		if is_resolving and not has_visible_resolving_card:
 			continue
 		var serialized := (action as CardAction).to_dict(gm)
+		if action.card != null and action.card.is_magical_card():
+			serialized["visible_card"] = _serialize_card(action.card, HIDDEN_MODE_NONE)
 		serialized["resolution_text"] = _serialize_action_resolution_text(action as CardAction, viewer)
 		result.append(serialized)
 	return result
@@ -385,6 +442,7 @@ static func _action_involves_hidden_card(action: CardAction, viewer: Player) -> 
 ## After calling this, clear any card references held by the UI.
 static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 	gm.turn_number = data.get("turn_number", 0)
+	gm.has_resolved_attack_this_turn = data.get("has_resolved_attack_this_turn", false)
 	var cp_idx: int = data.get("current_player_index", 0)
 	if cp_idx >= 0 and cp_idx < gm.players.size():
 		gm.current_player = gm.players[cp_idx]
@@ -392,12 +450,30 @@ static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 		gm.turn_player = gm.current_player
 	gm.current_phase = int(data.get("phase", GameManager.GamePhase.MULLIGAN)) as GameManager.GamePhase
 	gm.is_game_over = data.get("is_game_over", false)
+	gm.game_end_reason = str(data.get("game_end_reason", ""))
+	gm.match_result_stats = data.get("match_result_stats", {}).duplicate(true)
+	gm.winning_player = null
+	gm.losing_player = null
+	var winner_idx := int(data.get("winner_index", -1))
+	if winner_idx >= 0 and winner_idx < gm.players.size():
+		gm.winning_player = gm.players[winner_idx]
+	var loser_idx := int(data.get("loser_index", -1))
+	if loser_idx >= 0 and loser_idx < gm.players.size():
+		gm.losing_player = gm.players[loser_idx]
+	elif gm.winning_player != null and gm.players.size() == 2:
+		gm.losing_player = gm.get_opponent(gm.winning_player)
 	gm._upkeep_resolved_turn = data.get("upkeep_resolved_turn", -1)
 	gm._upkeep_started_turn = data.get("upkeep_started_turn", -1)
 	gm.consecutive_passes = data.get("consecutive_passes", 0)
 
 	var pp_idx: int = data.get("priority_player_index", -1)
 	gm.priority_player = gm.players[pp_idx] if pp_idx >= 0 and pp_idx < gm.players.size() else null
+	gm.has_authoritative_priority_response_snapshot = data.has("priority_response_uids")
+	gm.authoritative_priority_response_uids.clear()
+	for response_uid in data.get("priority_response_uids", []):
+		var normalized_response_uid := str(response_uid).strip_edges()
+		if normalized_response_uid != "":
+			gm.authoritative_priority_response_uids[normalized_response_uid] = true
 
 	gm.attack_restrictions.clear()
 	for entry in data.get("attack_restrictions", []):
@@ -406,6 +482,7 @@ static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 			gm.attack_restrictions[gm.players[p_idx]] = {
 				turns = entry.get("turns", 0),
 				source = null,
+				source_uid = str(entry.get("source_uid", "")),
 			}
 
 	gm.turn_follower_loss_preventions.clear()
@@ -420,6 +497,7 @@ static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 	gm.prepared_hexes.clear()
 	gm.prepared_charms.clear()
 	gm.combat_destroy_events_this_turn.clear()
+	gm._temporary_summon_cost_modifiers.clear()
 	gm.action_stack.clear()
 	gm.resolving_stack_actions.clear()
 
@@ -431,29 +509,16 @@ static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 		if not player_name.is_empty():
 			player.player_name = player_name
 		player.reserved_active_god = null
+		player.restore_starting_creature_typings(pdata.get("starting_creature_typings", {}))
+		player.starting_deck_has_heroic_stand = bool(pdata.get("starting_deck_has_heroic_stand", false))
 		player.mana = pdata.get("mana", 0)
 		player.followers = pdata.get("followers", 100)
+		player.guard = pdata.get("guard", 0)
 		player.has_summoned_this_turn = pdata.get("has_summoned_this_turn", false)
+		player.has_summoned_structure_this_turn = pdata.get("has_summoned_structure_this_turn", false)
+		player.has_had_god_in_play = pdata.get("has_had_god_in_play", false)
 
-		var dk_cards: Array = pdata.get("deck", [])
-		var dk_count: int = pdata.get("deck_count", -1)
-		player.deck_zone.cards.clear()
-		if not dk_cards.is_empty():
-			_apply_zone_cards(player.deck_zone, dk_cards)
-			if dk_count > player.deck_zone.cards.size():
-				for _k in range(dk_count - player.deck_zone.cards.size()):
-					var ph := BaseCard.new()
-					ph.is_face_down = true
-					ph.current_zone = player.deck_zone
-					ph.card_owner = player
-					player.deck_zone.cards.append(ph)
-		elif dk_count >= 0:
-			for _k in range(dk_count):
-				var ph := BaseCard.new()
-				ph.is_face_down = true
-				ph.current_zone = player.deck_zone
-				ph.card_owner = player
-				player.deck_zone.cards.append(ph)
+		_apply_deck(player.deck_zone, pdata.get("deck", []), int(pdata.get("deck_count", -1)))
 
 		_apply_zone_cards(player.hand_zone,     pdata.get("hand", []))
 		_apply_zone_cards(player.god_zone,      pdata.get("god_zone", []))
@@ -472,15 +537,46 @@ static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 		for j in mini(res_data.size(), player.reserve_zones.size()):
 			_apply_zone_cards(player.reserve_zones[j], res_data[j])
 
-	_restore_card_uid_references(gm)
-	_restore_prepared_cards(data.get("prepared_hexes", []), gm.prepared_hexes, gm)
-	_restore_prepared_cards(data.get("prepared_charms", []), gm.prepared_charms, gm)
-	_restore_combat_destroy_events(data.get("combat_destroy_events_this_turn", []), gm)
+	gm.restore_metamorphosis_auras()
+	var uid_map := _build_card_uid_map(gm)
+	_restore_card_uid_references(gm, uid_map)
+	_restore_attack_restriction_sources(gm, uid_map)
+	_restore_temporary_summon_cost_modifiers(data.get("temporary_summon_cost_modifiers", []), gm, uid_map)
+	_restore_prepared_cards(data.get("prepared_hexes", []), gm.prepared_hexes, gm, uid_map)
+	_restore_prepared_cards(data.get("prepared_charms", []), gm.prepared_charms, gm, uid_map)
+	_restore_combat_destroy_events(data.get("combat_destroy_events_this_turn", []), gm, uid_map)
 	for action_data in data.get("action_stack", []):
 		if not (action_data is Dictionary):
 			continue
 		gm.action_stack.append(CardAction.from_dict(action_data, gm))
 	gm.prune_stale_stack_actions()
+
+static func _apply_deck(deck: Zone, cards_data: Array, deck_count: int) -> void:
+	deck.cards.clear()
+	deck.clear_deck_knowledge()
+	deck.cards.resize(maxi(deck_count, cards_data.size()))
+	for entry in cards_data.size():
+		var card_data: Dictionary = cards_data[entry]
+		var index := int(card_data.get("deck_index", entry))
+		if index < 0 or index >= deck.cards.size():
+			continue
+		var card := _deserialize_card(card_data)
+		if card != null:
+			deck.cards[index] = card
+			var placement := int(card_data.get("deck_placement", Zone.DeckPlacement.UNKNOWN)) as Zone.DeckPlacement
+			deck.set_deck_placement(card, placement)
+			if bool(card_data.get("deck_identity_public", false)):
+				deck.set_deck_identity_public(card, true)
+	for index in deck.cards.size():
+		var card := deck.cards[index]
+		if card == null:
+			card = BaseCard.new()
+			card.uid = ""
+			card.is_face_down = true
+			deck.cards[index] = card
+		card.current_zone = deck
+		card.card_owner = deck.zone_owner
+	_link_equipment_in_zone(deck)
 
 static func _apply_zone_cards(zone: Zone, cards_data: Array) -> void:
 	zone.cards.clear()
@@ -488,8 +584,7 @@ static func _apply_zone_cards(zone: Zone, cards_data: Array) -> void:
 		var card := _deserialize_card(cdata)
 		if card != null:
 			card.card_owner = zone.zone_owner
-			card.current_zone = zone
-			zone.cards.append(card)
+			zone.add_card(card)
 	# Second pass: restore equipment → creature links using stored meta
 	_link_equipment_in_zone(zone)
 
@@ -508,8 +603,7 @@ static func _link_equipment_in_zone(zone: Zone) -> void:
 				if card not in creature.equipment:
 					creature.equipment.append(card)
 
-static func _restore_card_uid_references(gm: GameManager) -> void:
-	var uid_map := _build_card_uid_map(gm)
+static func _restore_card_uid_references(_gm: GameManager, uid_map: Dictionary) -> void:
 	for card_value in uid_map.values():
 		var card := card_value as Card
 		if card == null:
@@ -530,6 +624,72 @@ static func _restore_card_uid_references(gm: GameManager) -> void:
 				if creature != null and card not in creature.equipment:
 					creature.equipment.append(card)
 		card._sync_status_flags()
+
+static func _restore_attack_restriction_sources(gm: GameManager, uid_map: Dictionary) -> void:
+	for player in gm.attack_restrictions:
+		var restriction: Dictionary = gm.attack_restrictions[player]
+		var source_uid := str(restriction.get("source_uid", "")).strip_edges()
+		restriction.erase("source_uid")
+		if source_uid != "" and uid_map.has(source_uid):
+			restriction.source = uid_map[source_uid]
+
+static func _serialize_temporary_summon_cost_modifiers(gm: GameManager) -> Array:
+	var entries := []
+	if gm == null:
+		return entries
+	for modifier in gm._temporary_summon_cost_modifiers:
+		if not (modifier is Dictionary):
+			continue
+		var player := (modifier as Dictionary).get("player", null) as Player
+		var player_index := gm.players.find(player)
+		if player_index < 0:
+			continue
+		var source_card := (modifier as Dictionary).get("source", null) as Card
+		var excluded_uids := []
+		var excluded_cards: Array = (modifier as Dictionary).get("excluded_cards", [])
+		for excluded in excluded_cards:
+			var excluded_card := excluded as Card
+			if excluded_card != null and excluded_card.uid != "":
+				excluded_uids.append(excluded_card.uid)
+		entries.append({
+			"player_index": player_index,
+			"amount": int((modifier as Dictionary).get("amount", 0)),
+			"source_uid": source_card.uid if source_card != null else "",
+			"excluded_uids": excluded_uids,
+			"turn_number": int((modifier as Dictionary).get("turn_number", gm.turn_number)),
+		})
+	return entries
+
+static func _restore_temporary_summon_cost_modifiers(entries: Array, gm: GameManager, uid_map: Dictionary) -> void:
+	gm._temporary_summon_cost_modifiers.clear()
+	for raw_entry in entries:
+		if not (raw_entry is Dictionary):
+			continue
+		var entry := raw_entry as Dictionary
+		var player_index := int(entry.get("player_index", -1))
+		if player_index < 0 or player_index >= gm.players.size():
+			continue
+		var amount := int(entry.get("amount", 0))
+		if amount == 0:
+			continue
+		var excluded_cards: Array[Card] = []
+		for raw_uid in entry.get("excluded_uids", []):
+			var excluded_uid := str(raw_uid).strip_edges()
+			if excluded_uid != "" and uid_map.has(excluded_uid):
+				var excluded_card := uid_map[excluded_uid] as Card
+				if excluded_card != null:
+					excluded_cards.append(excluded_card)
+		var source: Card = null
+		var source_uid := str(entry.get("source_uid", "")).strip_edges()
+		if source_uid != "" and uid_map.has(source_uid):
+			source = uid_map[source_uid] as Card
+		gm._temporary_summon_cost_modifiers.append({
+			"player": gm.players[player_index],
+			"amount": amount,
+			"source": source,
+			"excluded_cards": excluded_cards,
+			"turn_number": int(entry.get("turn_number", gm.turn_number)),
+		})
 
 static func _restore_effect_uid_references(entries: Array, uid_map: Dictionary) -> void:
 	for entry in entries:
@@ -583,6 +743,19 @@ static func _get_player_card_zones(player: Player) -> Array:
 	zones.append_array(player.reserve_zones)
 	return zones
 
+static func _get_cached_card_script(script_path: String):
+	var normalized_path := script_path.strip_edges()
+	if normalized_path.is_empty():
+		return null
+	if _card_script_cache.has(normalized_path):
+		return _card_script_cache[normalized_path]
+	if not ResourceLoader.exists(normalized_path):
+		return null
+	var loaded_script = ResourceLoader.load(normalized_path, "GDScript", ResourceLoader.CACHE_MODE_REUSE)
+	if loaded_script != null:
+		_card_script_cache[normalized_path] = loaded_script
+	return loaded_script
+
 static func _deserialize_card(cdata: Dictionary) -> Card:
 	if cdata.get("hidden", false):
 		var placeholder := BaseCard.new()
@@ -600,12 +773,9 @@ static func _deserialize_card(cdata: Dictionary) -> Card:
 
 	var script_path: String = cdata.get("script_path", "")
 	var card: Card
-	if script_path != "" and ResourceLoader.exists(script_path):
-		var script = load(script_path)
-		if script != null:
-			card = script.new()
-		else:
-			card = BaseCard.new()
+	var script = _get_cached_card_script(script_path)
+	if script != null:
+		card = script.new()
 	else:
 		card = BaseCard.new()
 
@@ -626,8 +796,10 @@ static func _deserialize_card(cdata: Dictionary) -> Card:
 	card.is_sleeping               = cdata.get("is_sleeping", false)
 	card.is_prepared               = cdata.get("is_prepared", false)
 	card.summoned_this_turn        = cdata.get("summoned_this_turn", false)
+	card.summoned_after_first_attack_this_turn = cdata.get("summoned_after_first_attack_this_turn", false)
 	card.creature_major_action_used   = cdata.get("creature_major_action_used", false)
 	card.creature_minor_actions_used  = cdata.get("creature_minor_actions_used", 0)
+	card.combats_this_game         = cdata.get("combats_this_game", 0)
 	card.is_used                   = cdata.get("is_used", false)
 	card.is_muted                  = cdata.get("is_muted", false)
 	card.mute_turns_remaining      = cdata.get("mute_turns_remaining", 0)
@@ -640,12 +812,13 @@ static func _deserialize_card(cdata: Dictionary) -> Card:
 	card.is_token                  = cdata.get("is_token", false)
 	card.art_path                  = cdata.get("art_path", card.art_path)
 	card.ability_text              = cdata.get("ability_text", card.ability_text)
-	card.culture                   = cdata.get("culture", card.culture)
-	var ct = cdata.get("card_types", null)
-	if ct is Array:
-		card.card_types.clear()
-		for type_name in ct:
-			card.card_types.append(str(type_name))
+	var saved_types = cdata.get("card_types", null)
+	if saved_types is Array:
+		if not cdata.has("culture") and card.culture.is_empty():
+			card.culture = CardSubtypes.legacy_culture(saved_types, card.culture)
+		card.card_types = CardSubtypes.without_culture_labels(saved_types)
+	card.culture = cdata.get("culture", card.culture)
+	card.field_subtypes = CardSubtypes.without_culture_labels(cdata.get("field_subtypes", []))
 
 	# Store equipped_on_uid in meta for the second-pass linking step
 	var equipped_uid: String = cdata.get("equipped_on_uid", "")
@@ -662,7 +835,10 @@ static func _deserialize_card(cdata: Dictionary) -> Card:
 	# Restore status effects (Card/Player refs will be absent on client; name+metadata is enough)
 	card.active_statuses.clear()
 	for sdata in cdata.get("active_statuses", []):
-		card.active_statuses.append((sdata as Dictionary).duplicate())
+		var status := (sdata as Dictionary).duplicate()
+		if status.has("original_card_types"):
+			status["original_card_types"] = CardSubtypes.without_culture_labels(status["original_card_types"])
+		card.active_statuses.append(status)
 	card._sync_status_flags()
 	card.apply_serialized_state(cdata.get("serialized_state", {}))
 
@@ -673,27 +849,31 @@ static func deserialize_embedded_card(cdata: Dictionary) -> Card:
 		return null
 	return _deserialize_card(cdata)
 
-static func _restore_prepared_cards(entries: Array, target_map: Dictionary, gm: GameManager) -> void:
+static func _restore_prepared_cards(entries: Array, target_map: Dictionary, gm: GameManager, uid_map: Dictionary) -> void:
 	for entry in entries:
 		if not (entry is Dictionary):
 			continue
 		var uid := str((entry as Dictionary).get("uid", "")).strip_edges()
 		if uid.is_empty():
 			continue
-		var card := gm.get_card_by_uid(uid)
+		var card := uid_map.get(uid, null) as Card
 		if card == null:
 			continue
 		target_map[card] = int((entry as Dictionary).get("prepared_turn", gm.turn_number))
 
-static func _restore_combat_destroy_events(entries: Array, gm: GameManager) -> void:
+static func _restore_combat_destroy_events(entries: Array, gm: GameManager, uid_map: Dictionary) -> void:
 	for entry in entries:
 		if not (entry is Dictionary):
 			continue
 		var event_dict := entry as Dictionary
 		var killer_uid := str(event_dict.get("killer_uid", "")).strip_edges()
 		var victim_uid := str(event_dict.get("victim_uid", "")).strip_edges()
-		var killer := gm.get_card_by_uid(killer_uid) if not killer_uid.is_empty() else null
-		var victim := gm.get_card_by_uid(victim_uid) if not victim_uid.is_empty() else null
+		var killer: Card = null
+		if not killer_uid.is_empty():
+			killer = uid_map.get(killer_uid, null) as Card
+		var victim: Card = null
+		if not victim_uid.is_empty():
+			victim = uid_map.get(victim_uid, null) as Card
 		var killer_owner_index := int(event_dict.get("killer_owner_index", -1))
 		var victim_owner_index := int(event_dict.get("victim_owner_index", -1))
 		var killer_owner := gm.players[killer_owner_index] if killer_owner_index >= 0 and killer_owner_index < gm.players.size() else null

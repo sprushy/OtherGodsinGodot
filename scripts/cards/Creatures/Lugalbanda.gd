@@ -6,7 +6,7 @@ const ART_PATH := "res://images/card_art/creatures/LugalbandaEdit.png"
 func _init() -> void:
 	super._init()
 	card_name = "Lugalbanda"
-	card_types = ["Human", "Warrior", "Ancient Creature"]
+	card_types = ["Human", "Warrior"]
 	level = 2
 	mana_cost = 0
 	sacrifice_cost = 0
@@ -103,7 +103,7 @@ func resolve_equipment_action(game_manager: GameManager, equipment_card: Card, a
 			equipment_card.equip_to(self)
 			return true
 		"destroy":
-			game_manager._send_to_graveyard_with_hook(equipment_card, false, true)
+			game_manager._send_to_graveyard_with_hook(equipment_card, false, true, self)
 			return true
 	return false
 

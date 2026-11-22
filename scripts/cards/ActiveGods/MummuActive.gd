@@ -21,7 +21,7 @@ func _init() -> void:
 	culture = "Ancient"
 	# flavor_text = "Awakened entropy devours the field, then sinks back beneath creation."
 	flavor_text = ""
-	ability_text = "[b]Entropy[/b] ([b]Passive[/b]): Choose to [b]Prime[/b] or [b]Shelve[/b] any card destroyed by Mummu. When this card leaves the field, reactivate your god card."
+	ability_text = "[b]Entropy[/b] ([b]Passive[/b]): Choose to [b]Prime[/b] or [b]Shelve[/b] any card destroyed by Mummu. When Mummu leaves the field, reactivate your god card."
 	art_path = ART_PATH
 	name_at_bottom = true
 	artist = "Ricarrdo Zoppello"
@@ -64,13 +64,11 @@ func resolve_entropy_choice(game_manager: GameManager, destroyed_card: Card, pla
 
 	var resolved_placement := ENTROPY_SHELVE if placement == ENTROPY_SHELVE else ENTROPY_PRIME
 	var owner := destroyed_card.card_owner
-	owner.move_card(destroyed_card, owner.deck_zone)
-	owner.deck_zone.cards.erase(destroyed_card)
 	if resolved_placement == ENTROPY_SHELVE:
-		owner.deck_zone.cards.append(destroyed_card)
+		owner.move_card(destroyed_card, owner.deck_zone, Zone.DeckPlacement.SHELVED)
 		return "%s shelved %s." % [card_name, destroyed_card.get_target_log_display_name(game_manager.get_feedback_viewer())]
 
-	owner.deck_zone.cards.insert(0, destroyed_card)
+	owner.move_card(destroyed_card, owner.deck_zone, Zone.DeckPlacement.PRIMED)
 	return "%s primed %s." % [card_name, destroyed_card.get_target_log_display_name(game_manager.get_feedback_viewer())]
 
 func on_removed(game_manager: GameManager) -> void:
@@ -94,9 +92,7 @@ func _restore_normal_god_after_leaving_field(game_manager: GameManager) -> void:
 
 	var restored_god := restore_stored_normal_god()
 	if restored_god != null and game_manager != null:
-		game_manager.note_player_feedback("%s was reactivated." % [
-			restored_god.card_name
-		])
+		game_manager.note_player_feedback("Mummu has Returned to Godhood.")
 
 func _queue_pending_entropy_victim(victim: Card) -> void:
 	if victim == null:

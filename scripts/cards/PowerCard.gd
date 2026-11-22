@@ -9,7 +9,15 @@ class_name PowerCard
 
 const PowerUnlockSoundPlayerScript = preload("res://scripts/audio/PowerUnlockSoundPlayer.gd")
 
-var is_publicly_revealed: bool = false
+var _is_publicly_revealed: bool = false
+var is_publicly_revealed: bool = false:
+	set(value):
+		if _is_publicly_revealed == value:
+			return
+		_is_publicly_revealed = value
+		_emit_visual_state_changed()
+	get:
+		return _is_publicly_revealed
 var _pending_activation_discards: Array[Card] = []
 
 func _init() -> void:
@@ -46,7 +54,11 @@ func unlock(game_manager: GameManager) -> void:
 	is_muted = false
 	mute_turns_remaining = 0
 	_mute_applied_owner_turn_number = -1
-	PowerUnlockSoundPlayerScript.play_sequence()
+	if game_manager != null:
+		if game_manager.sfx_enabled:
+			PowerUnlockSoundPlayerScript.play_sequence()
+	else:
+		PowerUnlockSoundPlayerScript.play_sequence()
 	on_unlock(game_manager)
 
 # Called immediately when the power is flipped face-up.
@@ -86,10 +98,17 @@ func get_unlock_display_cost_shorthand(
 ) -> String:
 	return get_cost_shorthand(get_unlock_display_mana_cost(game_manager), force_show_mana)
 
+func should_include_unlock_cost_summary_line(game_manager: GameManager = null) -> bool:
+	var unlock_cost := get_unlock_display_mana_cost(game_manager)
+	if unlock_cost <= 0:
+		return true
+	return not _mentions_inline_unlock_mana_cost(get_display_ability_text(game_manager).to_lower(), unlock_cost)
+
 func get_unlock_display_cost_lines(game_manager: GameManager = null) -> Array[String]:
 	var lines: Array[String] = []
 	var unlock_cost := get_unlock_display_mana_cost(game_manager)
-	lines.append("Unlock Cost: %d" % unlock_cost)
+	if should_include_unlock_cost_summary_line(game_manager):
+		lines.append("Unlock Cost: %d" % unlock_cost)
 	if discard_cost > 0:
 		lines.append("Discard: %d" % discard_cost)
 	for breakdown_line in get_cost_adjustment_lines(mana_cost, Card.COST_KIND_POWER_UNLOCK, game_manager):
@@ -184,6 +203,15 @@ func get_unlock_cost_adjustment_lines(game_manager: GameManager = null) -> Array
 func get_activation_cost_hover_data(_game_manager: GameManager = null) -> Dictionary:
 	return {}
 
+func should_include_activation_cost_summary_line(game_manager: GameManager = null) -> bool:
+	var cost_data := _get_display_ability_cost_data(game_manager)
+	if cost_data.is_empty():
+		return true
+	var current_cost: int = int(cost_data.get("current_cost", 0))
+	if current_cost <= 0:
+		return false
+	return not _mentions_inline_activation_mana_cost(get_display_ability_text(game_manager).to_lower(), current_cost)
+
 func _get_display_ability_cost_data(game_manager: GameManager = null) -> Dictionary:
 	if ability_text == "" or game_manager == null:
 		return {}
@@ -198,7 +226,10 @@ func _get_display_ability_cost_data(game_manager: GameManager = null) -> Diction
 
 	var cost_kind: String = str(hover_data.get("cost_kind", Card.COST_KIND_POWER_ACTIVATION))
 	var metadata: Dictionary = hover_data.get("metadata", {})
-	var current_cost := get_adjusted_mana_cost(base_cost, cost_kind, game_manager, metadata)
+	var current_cost := int(hover_data.get(
+		"current_cost",
+		get_adjusted_mana_cost(base_cost, cost_kind, game_manager, metadata)
+	))
 	return {
 		"base_cost": base_cost,
 		"current_cost": current_cost,
@@ -207,49 +238,75 @@ func _get_display_ability_cost_data(game_manager: GameManager = null) -> Diction
 func _replace_display_ability_cost_text(
 	text: String,
 	base_cost: int,
-	capitalized_replacement: String,
-	lowercase_replacement: String
+	replacement_amount: String
 ) -> String:
 	var updated_text := text
-	updated_text = updated_text.replace("Pay %d mana" % base_cost, capitalized_replacement)
-	updated_text = updated_text.replace("pay %d mana" % base_cost, lowercase_replacement)
+	updated_text = updated_text.replace("Pay %d mana" % base_cost, "Pay " + replacement_amount)
+	updated_text = updated_text.replace("pay %d mana" % base_cost, "pay " + replacement_amount)
+	updated_text = updated_text.replace("(%d mana" % base_cost, "(" + replacement_amount)
+	updated_text = updated_text.replace(", %d mana" % base_cost, ", " + replacement_amount)
+	return updated_text
+
+func _replace_display_unlock_cost_text(text: String, replacement_amount: String) -> String:
+	var regex := RegEx.new()
+	if regex.compile("(\\[b\\]Unlock\\[/b\\]\\s*\\()\\d+(\\))") != OK:
+		return text
+	var updated_text := text
+	var matches := regex.search_all(text)
+	for match_index in range(matches.size() - 1, -1, -1):
+		var match_result: RegExMatch = matches[match_index]
+		var replacement := match_result.get_string(1) + replacement_amount + match_result.get_string(2)
+		updated_text = (
+			updated_text.substr(0, match_result.get_start())
+			+ replacement
+			+ updated_text.substr(match_result.get_end())
+		)
 	return updated_text
 
 func get_display_ability_text(game_manager: GameManager = null) -> String:
 	var cost_data: Dictionary = _get_display_ability_cost_data(game_manager)
-	if cost_data.is_empty():
-		return ability_text
-
-	var base_cost: int = int(cost_data.get("base_cost", 0))
-	var current_cost: int = int(cost_data.get("current_cost", base_cost))
-	return _replace_display_ability_cost_text(
-		ability_text,
-		base_cost,
-		"Pay %d mana" % current_cost,
-		"pay %d mana" % current_cost
-	)
+	var display_text := ability_text
+	if not cost_data.is_empty():
+		var base_cost: int = int(cost_data.get("base_cost", 0))
+		var current_cost: int = int(cost_data.get("current_cost", base_cost))
+		display_text = _replace_display_ability_cost_text(display_text, base_cost, "%d mana" % current_cost)
+	if game_manager != null:
+		display_text = _replace_display_unlock_cost_text(display_text, str(get_unlock_display_mana_cost(game_manager)))
+	return display_text
 
 func get_display_ability_bbcode_text(game_manager: GameManager = null) -> String:
 	var cost_data: Dictionary = _get_display_ability_cost_data(game_manager)
-	if cost_data.is_empty():
-		return ability_text
+	var display_text := ability_text
+	if not cost_data.is_empty():
+		var base_cost: int = int(cost_data.get("base_cost", 0))
+		var current_cost: int = int(cost_data.get("current_cost", base_cost))
+		var replacement_amount := "%d mana" % current_cost
+		if current_cost < base_cost:
+			replacement_amount = "[color=#66ff66]%s[/color]" % replacement_amount
+		elif current_cost > base_cost:
+			replacement_amount = "[color=#ff6666]%s[/color]" % replacement_amount
+		display_text = _replace_display_ability_cost_text(display_text, base_cost, replacement_amount)
+	if game_manager != null:
+		var unlock_cost := get_unlock_display_mana_cost(game_manager)
+		var unlock_replacement := str(unlock_cost)
+		if unlock_cost < mana_cost:
+			unlock_replacement = "[color=#66ff66]%s[/color]" % unlock_replacement
+		elif unlock_cost > mana_cost:
+			unlock_replacement = "[color=#ff6666]%s[/color]" % unlock_replacement
+		display_text = _replace_display_unlock_cost_text(display_text, unlock_replacement)
+	return display_text
 
-	var base_cost: int = int(cost_data.get("base_cost", 0))
-	var current_cost: int = int(cost_data.get("current_cost", base_cost))
-	var capitalized_replacement := "Pay %d mana" % current_cost
-	var lowercase_replacement := "pay %d mana" % current_cost
-	if current_cost < base_cost:
-		capitalized_replacement = "[color=#66ff66]%s[/color]" % capitalized_replacement
-		lowercase_replacement = "[color=#66ff66]%s[/color]" % lowercase_replacement
-	elif current_cost > base_cost:
-		capitalized_replacement = "[color=#ff6666]%s[/color]" % capitalized_replacement
-		lowercase_replacement = "[color=#ff6666]%s[/color]" % lowercase_replacement
-	return _replace_display_ability_cost_text(
-		ability_text,
-		base_cost,
-		capitalized_replacement,
-		lowercase_replacement
-	)
+func _mentions_inline_unlock_mana_cost(display_text: String, mana_amount: int) -> bool:
+	if display_text == "" or mana_amount <= 0:
+		return false
+	return display_text.contains("[b]unlock[/b] (%d" % mana_amount)
+
+func _mentions_inline_activation_mana_cost(display_text: String, mana_amount: int) -> bool:
+	if display_text == "" or mana_amount <= 0:
+		return false
+	return display_text.contains("pay %d mana" % mana_amount) \
+		or display_text.contains("(%d mana" % mana_amount) \
+		or display_text.contains(", %d mana" % mana_amount)
 
 func get_unlock_failure_reason(game_manager: GameManager) -> String:
 	if game_manager == null:

@@ -4,6 +4,7 @@ class_name MatchCommandRegistry
 # Central command policy table for network authority, prompt matching, and
 # action-window guards. Command execution still lives in MatchManager.
 const KNOWN_COMMAND_TYPES := [
+	"god_dialogue",
 	"select_attacker",
 	"request_attack",
 	"cancel_targeting",
@@ -18,24 +19,34 @@ const KNOWN_COMMAND_TYPES := [
 	"upkeep_choice",
 	"tiamat_upkeep_choice",
 	"forfeit",
+	"forfeit_match",
+	"offer_draw",
+	"respond_draw_offer",
+	"submit_reinforcements",
 	"cast_spell",
+	"blot_sacrifice_choice",
 	"activate_prepared_hex",
 	"god_ability",
 	"activate_power",
+	"tonal_extraction_choice",
 	"unlock_power",
 	"activate_divine_caprice",
 	"cast_charm",
+	"fifa_graveyard_buyback",
 	"play_hex_response",
 	"play_charm_response",
 	"play_priority_ability",
 	"priority_pass",
+	"set_priority_preferences",
 	"intercept_decision",
 	"combat_retreat_decision",
 	"resurrection_choice",
 	"skoll_upkeep_summon",
 	"hati_moon_hunt",
 	"wheel_of_fire_turn_start_choice",
+	"breidablik_turn_start_choice",
 	"activate_card_ability",
+	"mopsus_reveal_hand_card",
 	"en_hedu_anna_exaltation",
 	"aphrodite_enslave_choice",
 	"blessed_knights_choice",
@@ -47,6 +58,7 @@ const KNOWN_COMMAND_TYPES := [
 	"third_sage_enmedugga_choice",
 	"fourth_sage_enmegalamma_choice",
 	"sixth_sage_an_enlilda_choice",
+	"seventh_sage_utuabzu_choice",
 	"lailoken_reveal_choice",
 	"masmassu_priest_reveal_choice",
 	"rally_the_troops_choice",
@@ -61,6 +73,7 @@ const KNOWN_COMMAND_TYPES := [
 	"foolish_optimism_choice",
 	"gugalanna_celestial_charge_choice",
 	"freyja_active_open_sessrumnir_choice",
+	"tiamat_active_summon_choice",
 	"giant_master_architect_choice",
 	"pai_long_autumn_king_choice",
 	"nergal_lion_choice",
@@ -102,6 +115,8 @@ static func get_required_player(command: Dictionary, game_manager: GameManager, 
 			return _controller_from_uid(command, game_manager, "card_uid")
 		"cast_spell":
 			return _controller_from_uid(command, game_manager, "spell_uid")
+		"blot_sacrifice_choice":
+			return _controller_from_uid(command, game_manager, "source_uid")
 		"activate_prepared_hex":
 			return _controller_from_uid(command, game_manager, "hex_uid")
 		"god_ability":
@@ -110,15 +125,18 @@ static func get_required_player(command: Dictionary, game_manager: GameManager, 
 			return _controller_from_uid(command, game_manager, "source_uid")
 		"activate_power", "unlock_power", "activate_divine_caprice", "apply_advanced_building_techniques":
 			return _controller_from_uid(command, game_manager, "power_uid")
+		"tonal_extraction_choice":
+			return _controller_from_uid(command, game_manager, "source_uid")
 		"cast_charm", "play_charm_response":
 			return _controller_from_uid(command, game_manager, "charm_uid")
 		"play_hex_response":
 			return _controller_from_uid(command, game_manager, "hex_uid")
 		"hati_moon_hunt":
-			return _controller_from_uid(command, game_manager, "hati_uid")
+			var hati_uid := str(command.get("source_uid", command.get("hati_uid", "")))
+			return _card_controller(game_manager.get_card_by_uid(hati_uid))
 		"skoll_upkeep_summon":
 			return _controller_from_uid(command, game_manager, "skoll_uid")
-		"activate_card_ability", "en_hedu_anna_exaltation", "aphrodite_enslave_choice", "blessed_knights_choice", "wolf_adolescent_maturation_choice", "wheel_of_fire_turn_start_choice", "tezcatlipoca_active_titlacauan_choice", "nusku_active_core_flame_choice", "mummu_entropy_choice", "first_sage_adapa_choice", "third_sage_enmedugga_choice", "fourth_sage_enmegalamma_choice", "sixth_sage_an_enlilda_choice", "lailoken_reveal_choice", "masmassu_priest_reveal_choice", "rally_the_troops_choice", "terror_impact_choice", "huginn_perish_prime_choice", "muninn_perish_prime_choice", "fenrir_devour_choice", "harii_jarl_impact_choice", "durinn_secondborn_choice", "kur_jara_tree_of_life_choice", "hunting_tactics_choice", "foolish_optimism_choice", "gugalanna_celestial_charge_choice", "freyja_active_open_sessrumnir_choice", "giant_master_architect_choice", "pai_long_autumn_king_choice", "nergal_lion_choice", "gala_tura_destroyed_choice", "gawain_healing_hands_choice", "tatzelwurm_dragon_heart_choice", "byggvir_reveal_choice", "apollyons_demiurge_choice", "habrok_breakout_choice":
+		"activate_card_ability", "mopsus_reveal_hand_card", "en_hedu_anna_exaltation", "aphrodite_enslave_choice", "blessed_knights_choice", "wolf_adolescent_maturation_choice", "wheel_of_fire_turn_start_choice", "breidablik_turn_start_choice", "tezcatlipoca_active_titlacauan_choice", "nusku_active_core_flame_choice", "mummu_entropy_choice", "first_sage_adapa_choice", "third_sage_enmedugga_choice", "fourth_sage_enmegalamma_choice", "sixth_sage_an_enlilda_choice", "seventh_sage_utuabzu_choice", "lailoken_reveal_choice", "masmassu_priest_reveal_choice", "rally_the_troops_choice", "terror_impact_choice", "huginn_perish_prime_choice", "muninn_perish_prime_choice", "fenrir_devour_choice", "harii_jarl_impact_choice", "durinn_secondborn_choice", "kur_jara_tree_of_life_choice", "hunting_tactics_choice", "foolish_optimism_choice", "gugalanna_celestial_charge_choice", "freyja_active_open_sessrumnir_choice", "tiamat_active_summon_choice", "giant_master_architect_choice", "pai_long_autumn_king_choice", "nergal_lion_choice", "gala_tura_destroyed_choice", "gawain_healing_hands_choice", "tatzelwurm_dragon_heart_choice", "byggvir_reveal_choice", "apollyons_demiurge_choice", "habrok_breakout_choice":
 			return _controller_from_uid(command, game_manager, "source_uid")
 		"humbaba_augury_choice":
 			var humbaba := _card_from_uid(command, game_manager, "source_uid") as HumbabaTheTerrible
@@ -153,30 +171,54 @@ static func get_required_player(command: Dictionary, game_manager: GameManager, 
 			if not askelladen_uid.is_empty():
 				return _card_controller(game_manager.get_card_by_uid(askelladen_uid))
 			return _get_pending_retreat_prompt_player(match_context, game_manager)
-		"resurrection_choice":
-			var resurrect_card := _card_from_uid(command, game_manager, "card_uid")
-			return resurrect_card.card_owner if resurrect_card != null else null
+		"resurrection_choice", "fifa_graveyard_buyback":
+			var graveyard_card := _card_from_uid(command, game_manager, "card_uid")
+			return graveyard_card.card_owner if graveyard_card != null else null
 		"priority_pass":
 			return game_manager.priority_player if game_manager.priority_player != null else game_manager.current_player
-		"forfeit":
+		"set_priority_preferences", "god_dialogue":
+			var priority_player_index := int(command.get("player_index", -1))
+			if priority_player_index >= 0 and priority_player_index < game_manager.players.size():
+				return game_manager.players[priority_player_index]
+			return null
+		"forfeit", "forfeit_match":
 			var forfeiting_index := int(command.get("player_index", -1))
 			if forfeiting_index >= 0 and forfeiting_index < game_manager.players.size():
 				return game_manager.players[forfeiting_index]
+			return null
+		"offer_draw", "respond_draw_offer":
+			var draw_action_index := int(command.get("player_index", -1))
+			if draw_action_index >= 0 and draw_action_index < game_manager.players.size():
+				return game_manager.players[draw_action_index]
+			return null
+		"submit_reinforcements":
+			var reinforcement_player_index := int(command.get("player_index", -1))
+			if reinforcement_player_index >= 0 and reinforcement_player_index < game_manager.players.size():
+				return game_manager.players[reinforcement_player_index]
 			return null
 		"upkeep_choice", "tiamat_upkeep_choice", "end_turn":
 			return game_manager.current_player
 	return null
 
+static func is_priority_response(command_type: String) -> bool:
+	return command_type != "priority_pass" and get_ui_interaction_type(command_type) == "priority"
+
 static func get_ui_interaction_type(command_type: String) -> String:
 	match command_type:
+		"priority_pass", "play_hex_response", "play_charm_response", "play_priority_ability":
+			return "priority"
 		"intercept_decision":
 			return "intercept"
+		"combat_retreat_decision":
+			return "combat_retreat"
 		"aphrodite_enslave_choice":
 			return "aphrodite_enslave"
 		"blessed_knights_choice":
 			return "blessed_knights_ward"
 		"wheel_of_fire_turn_start_choice":
 			return "wheel_of_fire_turn_start"
+		"breidablik_turn_start_choice":
+			return "breidablik_turn_start"
 		"tezcatlipoca_active_titlacauan_choice":
 			return "tezcatlipoca_active_titlacauan"
 		"nusku_active_core_flame_choice":
@@ -191,6 +233,8 @@ static func get_ui_interaction_type(command_type: String) -> String:
 			return "fourth_sage_enmegalamma_impact"
 		"sixth_sage_an_enlilda_choice":
 			return "sixth_sage_an_enlilda_impact"
+		"seventh_sage_utuabzu_choice":
+			return "seventh_sage_utuabzu_impact"
 		"lailoken_reveal_choice":
 			return "lailoken_reveal"
 		"masmassu_priest_reveal_choice":
@@ -199,6 +243,10 @@ static func get_ui_interaction_type(command_type: String) -> String:
 			return "rally_the_troops"
 		"terror_impact_choice":
 			return "terror_impact"
+		"tonal_extraction_choice":
+			return "tonal_extraction"
+		"blot_sacrifice_choice":
+			return "blot_sacrifice"
 		"huginn_perish_prime_choice":
 			return "huginn_perish_prime"
 		"muninn_perish_prime_choice":
@@ -219,6 +267,8 @@ static func get_ui_interaction_type(command_type: String) -> String:
 			return "gugalanna_celestial_charge"
 		"freyja_active_open_sessrumnir_choice":
 			return "freyja_active_open_sessrumnir"
+		"tiamat_active_summon_choice":
+			return "tiamat_active_summon"
 		"giant_master_architect_choice":
 			return "giant_master_architect_impact"
 		"pai_long_autumn_king_choice":
@@ -239,8 +289,14 @@ static func get_ui_interaction_type(command_type: String) -> String:
 			return "ragnarok_discard"
 		"return_to_hand_choice":
 			return "return_to_hand_choice"
+		"doorway_choice":
+			return "doorway_choice"
 		"resurrection_choice":
 			return "resurrection"
+		"habrok_breakout_choice":
+			return "habrok_breakout"
+		"hati_moon_hunt":
+			return "hati_moon_hunt"
 		"nusku_well_of_fire_choice":
 			return "nusku_well_of_fire"
 		"apollyons_demiurge_choice":
@@ -256,15 +312,15 @@ static func requires_resolved_upkeep(command: Dictionary) -> bool:
 	if command_type == "activate_power" and str(command.get("mode", "")) == "return_priest":
 		return false
 	match command_type:
-		"upkeep_choice", "tiamat_upkeep_choice", "skoll_upkeep_summon", "priority_pass", "intercept_decision", "combat_retreat_decision", "play_hex_response", "play_charm_response", "play_priority_ability", "forfeit", "humbaba_augury_choice", "return_to_hand_choice", "doorway_choice":
+		"upkeep_choice", "tiamat_upkeep_choice", "skoll_upkeep_summon", "priority_pass", "set_priority_preferences", "intercept_decision", "combat_retreat_decision", "play_hex_response", "play_charm_response", "play_priority_ability", "forfeit", "forfeit_match", "offer_draw", "respond_draw_offer", "humbaba_augury_choice", "return_to_hand_choice", "doorway_choice":
 			return false
 	return true
 
 static func requires_clear_stack_window(command_type: String) -> bool:
 	match command_type:
-		"select_attacker", "request_attack", "play_card", "prepare_card", "play_creature", "creature_move", "equip_action", "change_mode", "end_turn":
+		"select_attacker", "request_attack", "play_card", "prepare_card", "play_creature", "creature_move", "equip_action", "change_mode", "end_turn", "fifa_graveyard_buyback":
 			return true
-		"cast_spell", "activate_prepared_hex", "god_ability", "activate_power", "unlock_power", "activate_divine_caprice", "cast_charm", "activate_card_ability", "en_hedu_anna_exaltation":
+		"cast_spell", "activate_prepared_hex", "god_ability", "activate_power", "unlock_power", "activate_divine_caprice", "cast_charm", "activate_card_ability", "mopsus_reveal_hand_card", "en_hedu_anna_exaltation":
 			return true
 	return false
 

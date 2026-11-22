@@ -6,14 +6,48 @@ const BaseCardScript = preload("res://scripts/cards/BaseCard.gd")
 const LockedPowerCursorScript = preload("res://scripts/ui/LockedPowerCursor.gd")
 const DefenseShieldOverlayScript = preload("res://scripts/ui/DefenseShieldOverlay.gd")
 const AggressiveSwordOverlay = preload("res://scripts/ui/AggressiveSwordOverlay.gd")
+const StealthFogOverlayScript = preload("res://scripts/ui/StealthFogOverlay.gd")
 const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
+const DebuffBadgeScript = preload("res://scripts/ui/DebuffBadge.gd")
+const UITextureCacheScript = preload("res://scripts/ui/UITextureCache.gd")
+const UIFontScript = preload("res://scripts/ui/UIFont.gd")
+const FollowerCountBadgeScript = preload("res://scripts/ui/FollowerCountBadge.gd")
+const GuardIndicatorScript = preload("res://scripts/ui/GuardIndicator.gd")
+const SnowV2CardMeltOverlayScript = preload("res://scripts/fx/SnowV2CardMeltOverlay.gd")
+const SNOW_V2_SNOWFLAKE_TEXTURE := preload("res://images/fx/snow_v2/snowflake.png")
+const SNOW_V2_PAINTBRUSH_TEXTURE := preload("res://images/fx/snow_v2/snow_paintbrush.png")
+const SNOW_V2_FLAKE_ATLAS_TEXTURE := preload("res://images/fx/snow_v2/flake_particle_atlas.png")
+const SNOW_V2_POWDER_TEXTURE := preload("res://images/fx/snow_v2/snow_powder_atlas.png")
+const SNOW_V2_EDGE_STRIPS_TEXTURE := preload("res://images/fx/snow_v2/snow_edge_strips_atlas.png")
+const SNOW_V2_CORNER_BORDER_TEXTURE := preload("res://images/fx/snow_v2/snow_corner_border_atlas.png")
 const CHAMPIONS_CALL_BADGE_TEXTURE := preload("res://images/Champion's Call Horn Badge.png")
 const SMOKING_MIRROR_BADGE_TEXTURE := preload("res://images/Smoking Mirror Icon.png")
 const TEZ_SACRIFICE_BADGE_TEXTURE := preload("res://images/TezSacBadge.png")
+const APHRODITE_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/AphroditeViolentDelightsBadge.png")
+const DELLINGR_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/DellingrRevealingLightBadge.png")
+const FREYJA_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/FreyjaReceiverOfTheSlainBadge.png")
+const BANE_OF_THE_SVARTALFAR_BADGE_TEXTURE := preload("res://images/card_art/spells/BaneofSvart.png")
+const GUAN_YU_TACTICAL_BREAK_BADGE_TEXTURE := preload("res://images/ability_badges/GuanYuTacticalBreakBadge.png")
+const HERMES_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/HermesBadge.png")
+const HERMES_CALL_OF_THE_CROSSING_BADGE_TEXTURE := preload("res://images/ability_badges/HermesCallOfTheCrossingBadge.png")
+const MANNAN_MAC_LIR_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/MannanBadge.png")
+const MUMMU_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/MummuBadge.png")
+const NUSKU_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/NuskuBadge.png")
 const BERSERKER_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/BerserkerRageBadge.png")
+const BEYLA_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/BeylaReviveBadge.png")
+const ROBOTIC_FOOTSOLDIER_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/RoboticFootsoldierUnitedFrontBadge.png")
+const SEVENTH_SAGE_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/SeventhSageImbueAllyBadge.png")
+const TEZCATLIPOCA_BLASPHEMER_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/TezcatlipocaBlasphemerBloodMagicBadge.png")
+const WHITE_SERPENT_MEDICINE_BADGE_TEXTURE := preload("res://images/ability_badges/WhiteSerpentMedicineBadge.png")
+const FENRIS_DEVOUR_BADGE_TEXTURE := preload("res://images/ability_badges/FenrirDevourBadge.png")
+const PAI_LONG_BADGE_TEXTURE := preload("res://images/ability_badges/PaiLongStormcloudBadge.png")
+const WINGED_LION_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/WingedLionFlankBadge.png")
 const ALU_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/AluStupefyBadge.png")
+const ANCIENT_PYRE_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/AncientPyreBadge.png")
+const ANOINTING_STATUE_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/AnointingStatueBadge.png")
 const CLAY_EATERS_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/ClayEatersGeophagiaBadge.png")
 const EN_HEDU_ANNA_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/EnHeduAnnaExaltationBadge.png")
+const GAMBANTEINN_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/GambanteinnBadge.png")
 const GAWAIN_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/GawainHealingHandsBadge.png")
 const GUDU_PRIEST_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/GuduPriestBadge.png")
 const HARII_SHAMAN_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/HariiShamanBadge.png")
@@ -25,16 +59,15 @@ const MOPSUS_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/Mopsu
 const NIMUE_ENTOMB_BADGE_TEXTURE := preload("res://images/ability_badges/NimueEntombBadge.png")
 const NIMUE_PRESENT_BADGE_TEXTURE := preload("res://images/ability_badges/NimuePresentBadge.png")
 const SHIFT_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/ShiftAbilityBadge.png")
+const THRONE_OF_ODIN_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/ThroneofOdinBadge.png")
 const GUAN_YU_MANOEUVRE_BADGE_TEXTURE := preload("res://images/ability_badges/GuanYuManeuverBadge.png")
 const ODIN_RUNIC_KNOWLEDGE_BADGE_TEXTURE := preload("res://images/ability_badges/OdinRunicKnowledgeBadge.png")
 const E2_ABZU_RETURN_BADGE_TEXTURE := preload("res://images/ability_badges/E2AbzuReturnBadge.png")
 const E2_ABZU_VOID_BADGE_TEXTURE := preload("res://images/ability_badges/E2AbzuVoidBadge.png")
 const TEZ_BLOODSTREAK_TEXTURE := preload("res://images/Bloodstreak.png")
-const AGGRESSIVE_ATTACK_TARGET_TEXTURE := preload("res://images/ui/attack_targets/AggressiveAttackTarget.png")
-const RES_ATTACK_TARGET_TEXTURE := preload("res://images/ui/attack_targets/ResAttackTarget.png")
-const DESTROY_ATTACK_TARGET_TEXTURE := preload("res://images/ui/attack_targets/BrokenSword.png")
+const INTERCEPT_PREVIEW_BADGE_TEXTURE := preload("res://images/ui/intercept/InterceptorBadge.png")
+const STEALTH_INTERCEPT_PREVIEW_QUESTION_TEXTURE := preload("res://images/ui/intercept/StealthInterceptorQuestionBadge.png")
 const STEAL_ATTACK_TARGET_TEXTURE := preload("res://images/ui/attack_targets/StealGlove.png")
-const FOLLOWERS_ATTACK_TARGET_TEXTURE := preload("res://images/ui/attack_targets/FollowerAttack.png")
 const MOVE_STRAIGHT_INDICATOR_TEXTURE := preload("res://images/ui/move_arrows/ArrowIndicator.png")
 const MOVE_DIAGONAL_INDICATOR_TEXTURE := preload("res://images/ui/move_arrows/AngleArrow.png")
 const MINOR_ACTION_SYMBOL_TEXTURE := preload("res://images/ui/MinorActionSymbol.png")
@@ -42,6 +75,8 @@ const MAJOR_ACTION_SYMBOL_TEXTURE := preload("res://images/ui/MajorActionSymbol.
 const MANA_ORB_TEXTURE := preload("res://images/ui/ManaOrb.png")
 const SWITCH_TO_AGGRESSIVE_SYMBOL_TEXTURE := preload("res://images/ui/SwitchToAggressiveSymbol.png")
 const SWITCH_TO_DEFENSIVE_SYMBOL_TEXTURE := preload("res://images/ui/SwitchToDefensiveSymbol.png")
+const PREPARED_MAGICAL_CARD_COVER_TEXTURE := preload("res://images/PreparedMagicalCardCoverDimRuntime.png")
+const PREPARED_MAGICAL_CARD_COVER_HOVER_TEXTURE := preload("res://images/PreparedMagicalCardCoverHoverRuntime.png")
 const BOARD_ZONE_SLAB_TEXTURE_PATHS := [
 	"res://images/board/stone_zone_slab.png",
 	"res://images/board/slot_tile_1.png",
@@ -54,25 +89,45 @@ const BOARD_ZONE_SLAB_TEXTURE_PATHS := [
 	"res://images/board/slot_tile_8.png",
 	"res://images/board/slot_tile_9.png",
 ]
+const SNOW_BOARD_ZONE_SLAB_TEXTURE_PATHS := [
+	"res://images/board/snow_stone_zone_slab.png",
+	"res://images/board/snow_slot_tile_1.png",
+	"res://images/board/snow_slot_tile_2.png",
+	"res://images/board/snow_slot_tile_3.png",
+	"res://images/board/snow_slot_tile_4.png",
+	"res://images/board/snow_slot_tile_5.png",
+	"res://images/board/snow_slot_tile_6.png",
+	"res://images/board/snow_slot_tile_7.png",
+	"res://images/board/snow_slot_tile_8.png",
+	"res://images/board/snow_slot_tile_9.png",
+]
 const BOARD_ZONE_ROW_TILE_COUNT := 5
-const TEZ_TONAL_MASTERY_TEXTURE_PATHS := [
-	"res://images/TezTonalMastery0.png",
-	"res://images/TezTonalMastery1.png",
-	"res://images/TezTonalMastery2.png",
-	"res://images/TezTonalMastery3.png",
+const TEZ_TONAL_MASTERY_TEXTURES := [
+	preload("res://images/TezTonalMastery0.png"),
+	preload("res://images/TezTonalMastery1.png"),
+	preload("res://images/TezTonalMastery2.png"),
+	preload("res://images/TezTonalMastery3.png"),
 ]
 const TEZ_NORMAL_GOD_NAME := "Tezcatlipoca, the Smoking Mirror"
 const TEZ_REQUIRED_SACRIFICES := 4
 const TEZ_TONAL_MASTERY_TOKEN_THRESHOLD := 3
+const FREYJA_RECEIVER_OF_THE_SLAIN_STATUS := "freyja_receiver_of_the_slain"
+const FREYJA_ACTIVE_OPEN_SESSRUMNIR_STATUS := "freyja_active_open_sessrumnir"
+const EN_HEDU_ANNA_EXALTATION_SOURCE := "En-hedu-anna Exaltation"
+const EN_HEDU_ANNA_EXALTATION_EFFECT_TYPE := "exaltation"
+const GIDIM_ENSI_CARD_NAME := "Gidim Ensi"
+const GIDIM_ENSI_SLEEP_SOURCE := "Gidim Ensi Guardian"
+const SILENCE_DEBUFF_TEXTURE := preload("res://images/SilenceCursorPGN.png")
 const LEVEL_BADGE_TOP := -12.0
 const LEVEL_BADGE_BOTTOM := 12.0
 const BADGE_ROW_GAP := 6.0
 const BADGE_ROW_TOP := LEVEL_BADGE_BOTTOM + BADGE_ROW_GAP + 31.0
-const GOD_ABILITY_BADGE_TOP_OFFSET := -10.0
-const TEZ_BADGE_LEFT := -62
+const GOD_ABILITY_BADGE_TOP_OFFSET := -22.0
+const TEZ_PRIMARY_BADGE_SIZE := 58.0 * 1.25
 const TEZ_BADGE_RIGHT := -4
+const TEZ_BADGE_LEFT := TEZ_BADGE_RIGHT - TEZ_PRIMARY_BADGE_SIZE
 const TEZ_PRIMARY_BADGE_TOP := BADGE_ROW_TOP
-const TEZ_PRIMARY_BADGE_BOTTOM := TEZ_PRIMARY_BADGE_TOP + 58.0
+const TEZ_PRIMARY_BADGE_BOTTOM := TEZ_PRIMARY_BADGE_TOP + TEZ_PRIMARY_BADGE_SIZE
 const TEZ_SECONDARY_BADGE_LEFT := -63
 const TEZ_SECONDARY_BADGE_RIGHT := -3
 const TEZ_SECONDARY_BADGE_TOP := TEZ_PRIMARY_BADGE_BOTTOM + BADGE_ROW_GAP
@@ -80,10 +135,14 @@ const TEZ_SECONDARY_BADGE_BOTTOM := TEZ_SECONDARY_BADGE_TOP + 60.0
 const BASE_BOARD_Z_INDEX := 0
 const RAISED_BOARD_Z_INDEX := 2
 const GOD_INDICATOR_Z_INDEX := 3
+const PRIORITY_RESPONSE_GLOW_COLOR := Color(0.28, 0.92, 0.50, 0.95)
+const AVAILABLE_ABILITY_BADGE_GLOW_COLOR := Color(0.28, 0.92, 0.50, 0.58)
+const LEGAL_ABILITY_ZONE_TINT := Color(0.31, 1.0, 0.70)
 # Keep hovered board cards above the hand fan overlay, but below the larger
 # transient previews and modal UI promoted by CombatMockGame.
 const HOVER_BOARD_Z_INDEX := 2260
 const POPUP_Z_INDEX := 2290
+const CARD_HOVER_POPUP_DELAY := 0.33
 
 func _get_badge_row_top() -> float:
 	return BADGE_ROW_TOP
@@ -143,7 +202,7 @@ class TiamatBroodSlotArt extends Control:
 			if slot_card == null or slot_card.art_path == "":
 				textures.append(null)
 				continue
-			var tex := load(slot_card.art_path) as Texture2D
+			var tex := UITextureCacheScript.get_texture(slot_card.art_path)
 			textures.append(tex)
 		queue_redraw()
 
@@ -384,13 +443,124 @@ class TargetAura extends Control:
 			var angle := lerpf(from_angle, to_angle, t)
 			points.append(center + Vector2(cos(angle), sin(angle)) * radius)
 
+class PriorityResponseAura extends Control:
+	const _ARC_STEPS := 8
+
+	func _ready() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		queue_redraw()
+
+	func _draw() -> void:
+		var outer_rect := Rect2(Vector2(4.0, 4.0), size - Vector2(8.0, 8.0))
+		if outer_rect.size.x <= 0.0 or outer_rect.size.y <= 0.0:
+			return
+
+		_draw_rounded_outline(outer_rect, 10.0, Color(0.28, 0.92, 0.50, 0.10), 16.0)
+		_draw_rounded_outline(outer_rect, 10.0, Color(0.28, 0.92, 0.50, 0.20), 10.0)
+		_draw_rounded_outline(outer_rect, 10.0, Color(0.28, 0.92, 0.50, 0.34), 5.0)
+		_draw_rounded_outline(outer_rect, 10.0, Color(0.28, 0.92, 0.50, 0.98), 2.6)
+
+		var inner_rect := outer_rect.grow(-6.0)
+		if inner_rect.size.x > 0.0 and inner_rect.size.y > 0.0:
+			_draw_rounded_outline(inner_rect, 7.0, Color(0.74, 1.0, 0.78, 0.66), 1.2)
+
+	func _draw_rounded_outline(rect: Rect2, radius: float, color: Color, width: float) -> void:
+		var points := _build_rounded_rect_points(rect, radius)
+		if points.size() >= 2:
+			draw_polyline(points, color, width, true)
+
+	func _build_rounded_rect_points(rect: Rect2, radius: float) -> PackedVector2Array:
+		var clamped_radius := minf(radius, minf(rect.size.x * 0.5, rect.size.y * 0.5))
+		var points := PackedVector2Array()
+		points.append(rect.position + Vector2(clamped_radius, 0.0))
+		_append_arc(
+			points,
+			rect.position + Vector2(rect.size.x - clamped_radius, clamped_radius),
+			-PI * 0.5,
+			0.0,
+			clamped_radius
+		)
+		_append_arc(
+			points,
+			rect.position + Vector2(rect.size.x - clamped_radius, rect.size.y - clamped_radius),
+			0.0,
+			PI * 0.5,
+			clamped_radius
+		)
+		_append_arc(
+			points,
+			rect.position + Vector2(clamped_radius, rect.size.y - clamped_radius),
+			PI * 0.5,
+			PI,
+			clamped_radius
+		)
+		_append_arc(
+			points,
+			rect.position + Vector2(clamped_radius, clamped_radius),
+			PI,
+			PI * 1.5,
+			clamped_radius
+		)
+		points.append(points[0])
+		return points
+
+	func _append_arc(
+		points: PackedVector2Array,
+		center: Vector2,
+		from_angle: float,
+		to_angle: float,
+		radius: float
+	) -> void:
+		for step in range(1, _ARC_STEPS + 1):
+			var t := float(step) / float(_ARC_STEPS)
+			var angle := lerpf(from_angle, to_angle, t)
+			points.append(center + Vector2(cos(angle), sin(angle)) * radius)
+
+class ActionPointSpendFlash extends Control:
+	var texture: Texture2D = null
+	var flash_color: Color = Color.WHITE
+	var major: bool = false
+	var source_size: float = 22.0
+	var progress: float = 0.0:
+		set(value):
+			progress = value
+			queue_redraw()
+
+	func _ready() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		top_level = true
+		z_as_relative = false
+		size = Vector2.ZERO
+
+	func _draw() -> void:
+		if texture == null:
+			return
+		var eased := 1.0 - pow(1.0 - progress, 3.0)
+		var alpha := 1.0 - progress
+		var icon_size := maxf(14.0, source_size) * (1.18 if major else 1.0)
+		var icon_extent := Vector2(icon_size, icon_size) * lerpf(1.0, 1.9, eased)
+		draw_set_transform(Vector2.ZERO, lerpf(0.0, 0.35 if major else -0.22, eased))
+		draw_texture_rect(texture, Rect2(-icon_extent * 0.5, icon_extent), false, Color(1.0, 1.0, 1.0, alpha))
+		draw_set_transform(Vector2.ZERO)
+
+		var ring_radius := lerpf(icon_size * 0.65, ACTION_POINT_BURST_RADIUS * (1.28 if major else 1.0), eased)
+		draw_arc(Vector2.ZERO, ring_radius, 0.0, TAU, 32, Color(flash_color, alpha * 0.9), 2.5 if major else 1.5, true)
+		var ray_count := 8 if major else 6
+		for index in range(ray_count):
+			var angle := TAU * float(index) / float(ray_count)
+			var direction := Vector2(cos(angle), sin(angle))
+			draw_line(direction * ring_radius * 0.64, direction * ring_radius, Color(flash_color, alpha * 0.72), 2.0 if major else 1.2, true)
+
 signal zone_clicked(zone: Zone)
 signal card_clicked(card: Card)
 signal equipment_target_action_clicked(card: Card, action: String)
 signal champions_call_clicked(card: GodCard)
+signal god_ability_badge_clicked(card: Card)
+signal god_ability_option_badge_clicked(card: Card, ability: String)
 signal tez_necoc_yaotl_badge_clicked(card: Card)
 signal creature_stance_switch_clicked(card: Card, target_mode: Card.CreatureMode)
 signal creature_ability_badge_clicked(card: Card)
+signal creature_ability_option_badge_clicked(card: Card, ability: String)
 signal e2_abzu_badge_clicked(card: Card, mode: String)
 signal nimue_badge_clicked(card: Card, mode: String)
 signal creature_drag_started(card: Card, from_zone: Zone)
@@ -398,26 +568,42 @@ signal creature_right_clicked(card: Card)
 signal god_right_clicked(card: Card)
 
 var zone: Zone
+var board_style_override: String = ""
+var show_god_deck_count: bool = true
 var game_manager: GameManager
 var owning_player: Player
+var follower_loss_flash_started_msec: int = -1
 var zone_index: int
 var _drop_callback: Callable
 var _is_enemy: bool = false
 var _popup: Control = null
 var _preview_card: Card = null
+var _preview_refresh_queued: bool = false
 var viewer_override: Player = null
 var _hovered: bool = false
+var _badge_hovered: bool = false
+var _locked_power_cursor_active: bool = false
 var _pinned: bool = false
 var _hide_pending: bool = false
+var _hover_exit_refresh_pending: bool = false
 var _move_indicator_active: bool = false
 var _move_indicator_direction: Vector2 = Vector2.ZERO
 var _move_indicator_source_center: Vector2 = Vector2.ZERO
 var _move_indicator_target_center: Vector2 = Vector2.ZERO
 var _defense_overlay: Control = null
 var _raised_overlay: Control = null  # non-null for DEF or stealth - floats above the zone row
+var _prepared_magical_cover_art: TextureRect = null
+var _prepared_magical_cover_overlay: Control = null
+var _prepared_magical_hover_tween: Tween = null
 var _visual_state_card: Card = null
+var _visual_state_refresh_queued: bool = false
+var _incorporeal_fade_tween: Tween = null
+var _incorporeal_fade_card_uid: String = ""
+var _incorporeal_fade_base_alpha: float = 1.0
 var _badge_hover_popup: Control = null
-var _tez_tonal_mastery_texture_cache: Dictionary = {}
+var _clickable_badges: Array[Control] = []
+var _stealth_fog_overlay: Control = null
+var _dromi_drain_visual_states: Dictionary = {}
 
 const BASE_ZONE_EXTENT := 165.0
 const DROMI_BINDING_NAME := "Dromi"
@@ -425,20 +611,29 @@ const DROMI_BINDING_HOVER_TEXT := "Cannot attack. Losing 7 followers on opponent
 const THIRD_SAGE_GOOD_FORTUNE_STATUS := "third_sage_good_fortune"
 const EQUIPMENT_AFFORDANCE_GAP := 4.0
 const EQUIPMENT_AFFORDANCE_TOP := 28.0
-const DEBUFF_AFFORDANCE_GAP := 4.0
-const DEBUFF_BADGE_SIZE := 22.0
-const ABILITY_BADGE_SIZE := 72.0
+const DEBUFF_AFFORDANCE_GAP := DebuffBadgeScript.GAP
+const DEBUFF_BADGE_SIZE := DebuffBadgeScript.SIZE
+const ABILITY_BADGE_SIZE := 76.8
 const CREATURE_ABILITY_BADGE_SIZE := ABILITY_BADGE_SIZE
-const CREATURE_ABILITY_BADGE_TOP_OFFSET := -41.0
+const CREATURE_ABILITY_BADGE_TOP_OFFSET := -23.0
+const E2_ABZU_BADGE_ICON_INSET := 10.0
 const ATTACK_TARGET_ICON_SIZE := 74.0
 const TARGET_ICON_PAD := 5.0
 const TARGET_ICON_GROUP_GAP := 8.0
+const INTERCEPT_PREVIEW_BADGE_SIZE := 58.0
+const INTERCEPT_PREVIEW_BADGE_TOP := -28.0
+const STEALTH_INTERCEPT_PREVIEW_ICON_ALPHA := 0.78
+const STEALTH_INTERCEPT_PREVIEW_FADE_SECONDS := 0.34
+const STEALTH_INTERCEPT_PREVIEW_HOLD_SECONDS := 0.56
 const STANCE_SWITCH_BADGE_SIZE := 64.0
 const STANCE_SWITCH_ICON_LEFT := 3.0
 const STANCE_SWITCH_ICON_TOP := -4.0
 const STANCE_SWITCH_ICON_SIZE := 58.0
 const STANCE_SWITCH_COST_ROW_WIDTH := 34.0
 const STANCE_SWITCH_COST_ROW_HEIGHT := 18.0
+const BREIDABLIK_PRIEST_BADGE_SIZE := 30.0
+const BREIDABLIK_PRIEST_BADGE_GAP := 4.0
+const BREIDABLIK_PRIEST_BADGE_MAX_SLOTS := 4
 const ACTION_COST_MARKER_HEIGHT := 18.0
 const ACTION_COST_MARKER_ACTION_WIDTH := 34.0
 const ACTION_COST_MARKER_MANA_WIDTH := 60.0
@@ -447,22 +642,28 @@ const FOLLOWERS_ATTACK_RESULT_SECONDS := 0.66
 const MOVE_INDICATOR_WIDTH := 104.0
 const HOVER_CARD_OPTIONS_ALPHA := 0.56
 const ACTION_POINT_BURST_Z_INDEX := 2400
-const ACTION_POINT_BURST_PARTICLE_COUNT := 22
-const ACTION_POINT_BURST_DURATION := 0.68
-const ACTION_POINT_BURST_RADIUS := 54.0
+const ACTION_POINT_BURST_DURATION := 0.46
+const ACTION_POINT_BURST_RADIUS := 42.0
 const POWER_LOCK_TEXTURE := preload("res://images/Default Power Lock.png")
 const ANCIENT_POWER_LOCK_TEXTURE := preload("res://images/Ancient Power Lock.png")
 const NORSE_POWER_LOCK_TEXTURE := preload("res://images/Norse Power Lock.png")
 const TIAMAT_GOD_SCRIPT := preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
 const KEYWORD_PANEL_GAP := 8.0
+const USER_SETTINGS_PATH := "user://settings.cfg"
+const COMBAT_SETTINGS_SECTION := "combat"
+const ALWAYS_SHOW_ABILITY_BADGES_KEY := "always_show_ability_badges"
 static var _zone_extent: float = BASE_ZONE_EXTENT
-static var _creature_action_symbol_state_by_card_uid: Dictionary = {}
+static var _always_show_ability_badges: bool = false
+static var _always_show_ability_badges_loaded: bool = false
+static var _active_affordance_hover_owner_id: int = 0
 
 var _row_label: String = ""
 var _followers_attack_result_text: String = ""
 var _followers_attack_result_sequence: int = 0
 static var _board_zone_slab_textures: Array[Texture2D] = []
+static var _snow_board_zone_slab_textures: Array[Texture2D] = []
 static var _board_zone_slot_texture_indices: Array[int] = []
+static var _last_loaded_board_style: String = ""
 
 static func get_base_zone_extent() -> float:
 	return BASE_ZONE_EXTENT
@@ -475,6 +676,30 @@ static func get_zone_size() -> Vector2:
 
 static func set_zone_extent(extent: float) -> void:
 	_zone_extent = max(BASE_ZONE_EXTENT, floor(extent))
+
+static func set_always_show_ability_badges(enabled: bool) -> void:
+	_always_show_ability_badges = enabled
+	_always_show_ability_badges_loaded = true
+
+static func get_always_show_ability_badges() -> bool:
+	if not _always_show_ability_badges_loaded:
+		_load_always_show_ability_badges_setting()
+	return _always_show_ability_badges
+
+static func _load_always_show_ability_badges_setting() -> void:
+	_always_show_ability_badges_loaded = true
+	var config := ConfigFile.new()
+	if config.load(USER_SETTINGS_PATH) != OK:
+		return
+	var value = config.get_value(COMBAT_SETTINGS_SECTION, ALWAYS_SHOW_ABILITY_BADGES_KEY, _always_show_ability_badges)
+	if value is bool:
+		_always_show_ability_badges = value
+	elif value is String:
+		var text := str(value).strip_edges().to_lower()
+		if text in ["true", "1", "yes", "on"]:
+			_always_show_ability_badges = true
+		elif text in ["false", "0", "no", "off"]:
+			_always_show_ability_badges = false
 
 static func get_action_point_card_uid(card: Card) -> String:
 	if card == null:
@@ -500,6 +725,11 @@ func _emit_creature_ability_badge_clicked_for_uid(card_uid: String) -> void:
 	if resolved_card != null:
 		creature_ability_badge_clicked.emit(resolved_card)
 
+func _emit_creature_ability_option_badge_clicked_for_uid(card_uid: String, ability: String) -> void:
+	var resolved_card := _find_zone_card_by_uid(card_uid)
+	if resolved_card != null:
+		creature_ability_option_badge_clicked.emit(resolved_card, ability)
+
 func _emit_e2_abzu_badge_clicked_for_uid(card_uid: String, mode: String) -> void:
 	var resolved_card := _find_zone_card_by_uid(card_uid)
 	if resolved_card != null:
@@ -519,6 +749,11 @@ func _emit_champions_call_clicked_for_uid(card_uid: String) -> void:
 	var resolved_card := _find_zone_card_by_uid(card_uid)
 	if resolved_card != null:
 		champions_call_clicked.emit(resolved_card)
+
+func _emit_god_ability_badge_clicked_for_uid(card_uid: String) -> void:
+	var resolved_card := _find_zone_card_by_uid(card_uid)
+	if resolved_card != null:
+		god_ability_badge_clicked.emit(resolved_card)
 
 func _emit_tez_necoc_yaotl_badge_clicked_for_uid(card_uid: String) -> void:
 	var resolved_card := _find_zone_card_by_uid(card_uid)
@@ -545,9 +780,18 @@ func _connect_badge_click_action(badge_control: Control, action_name: String, ca
 	elif badge_control.has_meta("badge_click_extra"):
 		badge_control.remove_meta("badge_click_extra")
 	badge_control.gui_input.connect(Callable(self, "_on_badge_gui_input"))
+	_clickable_badges.append(badge_control)
 
 func _on_badge_gui_input(event: InputEvent) -> void:
 	if not (event is InputEventMouseButton) or event.button_index != MOUSE_BUTTON_LEFT or not event.pressed:
+		return
+	var scene_root := _get_targeting_scene_root()
+	if scene_root != null and scene_root.has_method("_has_pending_target_selection") \
+			and bool(scene_root.call("_has_pending_target_selection")) \
+			and zone != null and not zone.cards.is_empty():
+		# While choosing a target, clicking its action badge selects the card too.
+		accept_event()
+		card_clicked.emit(zone.cards[0])
 		return
 	var hovered_control := get_viewport().gui_get_hovered_control()
 	var badge_control := hovered_control
@@ -555,12 +799,22 @@ func _on_badge_gui_input(event: InputEvent) -> void:
 		badge_control = badge_control.get_parent() as Control
 	if badge_control == null:
 		return
+	# Badge actions can synchronously rebuild the board and free this control.
+	# Consume the click before dispatch so it cannot become an off-board click
+	# for a targeting prompt opened by the action.
+	accept_event()
 	var action_name := str(badge_control.get_meta("badge_click_action", ""))
 	var card_uid := str(badge_control.get_meta("badge_click_card_uid", ""))
 	var extra_value = badge_control.get_meta("badge_click_extra") if badge_control.has_meta("badge_click_extra") else null
 	match action_name:
 		"champions_call":
 			_emit_champions_call_clicked_for_uid(card_uid)
+		"god_ability":
+			_emit_god_ability_badge_clicked_for_uid(card_uid)
+		"god_ability_option":
+			var god := _find_zone_card_by_uid(card_uid)
+			if god != null:
+				god_ability_option_badge_clicked.emit(god, str(extra_value))
 		"tez_necoc_yaotl":
 			_emit_tez_necoc_yaotl_badge_clicked_for_uid(card_uid)
 		"e2_abzu":
@@ -569,13 +823,14 @@ func _on_badge_gui_input(event: InputEvent) -> void:
 			_emit_nimue_badge_clicked_for_uid(card_uid, str(extra_value))
 		"creature_ability":
 			_emit_creature_ability_badge_clicked_for_uid(card_uid)
+		"creature_ability_option":
+			_emit_creature_ability_option_badge_clicked_for_uid(card_uid, str(extra_value))
 		"card_clicked":
 			_emit_card_clicked_for_uid(card_uid)
 		"equipment_target":
 			_emit_equipment_target_action_clicked_for_uid(card_uid, str(extra_value))
 		"creature_stance_switch":
 			_emit_creature_stance_switch_clicked_for_uid(card_uid, int(extra_value) as Card.CreatureMode)
-	accept_event()
 
 static func get_creature_action_symbol_entries(card: Card) -> Array[Dictionary]:
 	var symbols: Array[Dictionary] = []
@@ -741,100 +996,18 @@ static func spawn_action_point_spend_effect(parent: Node, global_center: Vector2
 	if texture == null:
 		return
 
-	var burst := Control.new()
-	burst.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	burst.top_level = true
-	burst.z_as_relative = false
+	var burst := ActionPointSpendFlash.new()
+	burst.texture = texture
+	burst.flash_color = _get_action_point_burst_color(action_cost_kind)
+	burst.major = action_cost_kind == Card.ACTION_COST_MAJOR
+	burst.source_size = source_size
 	burst.z_index = ACTION_POINT_BURST_Z_INDEX
-	burst.size = Vector2.ZERO
 	parent.add_child(burst)
 	burst.global_position = global_center
 
-	var color := _get_action_point_burst_color(action_cost_kind)
-	var major_burst := action_cost_kind == Card.ACTION_COST_MAJOR
-	var duration := ACTION_POINT_BURST_DURATION * (1.45 if major_burst else 1.0)
-	var radius := ACTION_POINT_BURST_RADIUS * (1.28 if major_burst else 1.0)
-	var particle_count := ACTION_POINT_BURST_PARTICLE_COUNT + (18 if major_burst else 0)
-	var icon_size := maxf(14.0, source_size) * (1.18 if major_burst else 1.0)
-	var core := TextureRect.new()
-	core.texture = texture
-	core.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	core.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	core.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	core.size = Vector2(icon_size, icon_size)
-	core.position = -core.size * 0.5
-	core.pivot_offset = core.size * 0.5
-	core.modulate = Color(1.0, 1.0, 1.0, 0.98)
-	burst.add_child(core)
-
-	var ring_size := maxf(icon_size + 8.0, 28.0)
-	var ring := Panel.new()
-	ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	ring.size = Vector2(ring_size, ring_size)
-	ring.position = -ring.size * 0.5
-	ring.pivot_offset = ring.size * 0.5
-	ring.modulate = Color(1.0, 1.0, 1.0, 0.9)
-	var ring_style := StyleBoxFlat.new()
-	ring_style.bg_color = Color(0, 0, 0, 0)
-	ring_style.border_color = color
-	ring_style.corner_radius_top_left = int(ceil(ring_size * 0.5))
-	ring_style.corner_radius_top_right = int(ceil(ring_size * 0.5))
-	ring_style.corner_radius_bottom_left = int(ceil(ring_size * 0.5))
-	ring_style.corner_radius_bottom_right = int(ceil(ring_size * 0.5))
-	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		ring_style.set_border_width(side, 2 if major_burst else 1)
-	ring.add_theme_stylebox_override("panel", ring_style)
-	burst.add_child(ring)
-
+	var duration := ACTION_POINT_BURST_DURATION * (1.3 if burst.major else 1.0)
 	var tween := burst.create_tween()
-	tween.set_parallel(true)
-	tween.tween_property(core, "scale", Vector2(1.9, 1.9), duration * 0.74).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	tween.tween_property(core, "rotation", 0.35 if major_burst else -0.22, duration).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-	tween.tween_property(core, "modulate:a", 0.0, duration).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
-	tween.tween_property(ring, "scale", Vector2(2.35, 2.35), duration).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-	tween.tween_property(ring, "modulate:a", 0.0, duration).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
-
-	for i in range(particle_count):
-		var dot_size := 3.0 + float(i % 4)
-		var dot := Panel.new()
-		dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		dot.size = Vector2(dot_size, dot_size)
-		dot.position = -dot.size * 0.5
-		dot.pivot_offset = dot.size * 0.5
-		dot.modulate = Color(1.0, 1.0, 1.0, 0.94)
-		var dot_style := StyleBoxFlat.new()
-		dot_style.bg_color = color
-		dot_style.corner_radius_top_left = int(ceil(dot_size))
-		dot_style.corner_radius_top_right = int(ceil(dot_size))
-		dot_style.corner_radius_bottom_left = int(ceil(dot_size))
-		dot_style.corner_radius_bottom_right = int(ceil(dot_size))
-		dot.add_theme_stylebox_override("panel", dot_style)
-		burst.add_child(dot)
-
-		var angle := TAU * (float(i) / float(particle_count)) + (0.18 if i % 2 == 0 else -0.12)
-		var distance := radius * (0.66 + 0.075 * float(i % 5))
-		var target_pos := Vector2(cos(angle), sin(angle)) * distance - dot.size * 0.5
-		tween.tween_property(dot, "position", target_pos, duration).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-		tween.tween_property(dot, "scale", Vector2(0.12, 0.12), duration).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
-		tween.tween_property(dot, "modulate:a", 0.0, duration).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
-
-		if i % 2 == 0:
-			var ray := ColorRect.new()
-			ray.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			ray.color = color
-			ray.size = Vector2(2.0, 10.0 + float(i % 3) * 3.0)
-			ray.position = -ray.size * 0.5
-			ray.pivot_offset = ray.size * 0.5
-			ray.rotation = angle
-			ray.modulate = Color(1.0, 1.0, 1.0, 0.88)
-			burst.add_child(ray)
-
-			var ray_distance := distance * 0.72
-			var ray_target := Vector2(cos(angle), sin(angle)) * ray_distance - ray.size * 0.5
-			tween.tween_property(ray, "position", ray_target, duration * 0.86).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-			tween.tween_property(ray, "scale", Vector2(0.18, 1.55), duration * 0.5).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-			tween.tween_property(ray, "modulate:a", 0.0, duration).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
-
+	tween.tween_property(burst, "progress", 1.0, duration).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 	tween.finished.connect(_free_control_if_valid.bind(burst))
 
 static func _free_control_if_valid(control: Control) -> void:
@@ -849,7 +1022,7 @@ func _get_viewer_player() -> Player:
 	return game_manager.get_feedback_viewer()
 
 func _is_public_power(card: Card) -> bool:
-	return card is PowerCard and ((card as PowerCard).is_publicly_revealed or card.is_temporarily_revealed() or not card.is_face_down)
+	return card is PowerCard and ((card as PowerCard).is_publicly_revealed or card.is_revealed_to_all() or not card.is_face_down)
 
 func _get_card_type_label(card: Card) -> String:
 	if card == null:
@@ -892,7 +1065,8 @@ func _get_power_hover_cost_lines(power: PowerCard) -> Array[String]:
 	var metadata: Dictionary = hover_data.get("metadata", {})
 	var label: String = str(hover_data.get("label", "Activation Cost"))
 	var current_cost := power.get_adjusted_mana_cost(base_cost, cost_kind, game_manager, metadata)
-	lines.append("%s: %d" % [label, current_cost])
+	if power.should_include_activation_cost_summary_line(game_manager):
+		lines.append("%s: %d" % [label, current_cost])
 	for breakdown_line in power.get_cost_adjustment_lines(base_cost, cost_kind, game_manager, metadata):
 		lines.append(breakdown_line)
 	for extra_line in hover_data.get("extra_lines", []):
@@ -1089,6 +1263,8 @@ func _add_prepared_magical_mana_badge(overlay: Control, card: Card) -> void:
 
 func _make_field_stat_badge(text: String, font_size: int = 15, font_color: Color = Color(0.92, 0.97, 1.0)) -> PanelContainer:
 	var badge := PanelContainer.new()
+	badge.name = "BoardStatBadge"
+	badge.add_to_group("stealth_fog_top_ui")
 	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	badge.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 
@@ -1134,7 +1310,7 @@ func _make_field_mana_badge(
 	if prefix != "":
 		row.add_child(_make_field_badge_label(prefix, font_size, font_color))
 	row.add_child(_make_field_badge_label(str(mana_cost), font_size, font_color))
-	row.add_child(_make_field_mana_icon(icon_size))
+	row.add_child(_make_field_cost_icon(MANA_ORB_TEXTURE, icon_size))
 	return badge
 
 func _make_empty_field_badge() -> PanelContainer:
@@ -1168,9 +1344,9 @@ func _make_field_badge_label(text: String, font_size: int, font_color: Color) ->
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return label
 
-func _make_field_mana_icon(icon_size: float) -> TextureRect:
+func _make_field_cost_icon(texture: Texture2D, icon_size: float) -> TextureRect:
 	var icon := TextureRect.new()
-	icon.texture = MANA_ORB_TEXTURE
+	icon.texture = texture
 	icon.custom_minimum_size = Vector2(icon_size, icon_size)
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
@@ -1190,7 +1366,10 @@ func _populate_cost_text_row(
 		var part := str(raw_part)
 		if part.ends_with("M") and part.length() > 1:
 			row.add_child(_make_field_badge_label(part.substr(0, part.length() - 1), font_size, font_color))
-			row.add_child(_make_field_mana_icon(icon_size))
+			row.add_child(_make_field_cost_icon(MANA_ORB_TEXTURE, icon_size))
+		elif part.ends_with("S") and part.trim_suffix("S").is_valid_int():
+			row.add_child(_make_field_badge_label(part.trim_suffix("S"), font_size, font_color))
+			row.add_child(_make_field_cost_icon(BaseCard.SACRIFICE_COST_ICON_TEXTURE, icon_size))
 		else:
 			row.add_child(_make_field_badge_label(part, font_size, font_color))
 
@@ -1279,7 +1458,7 @@ func _add_level_badge(
 		tooltip_lines.append("LVL:\n" + breakdown)
 	if badge != null:
 		badge.tooltip_text = "\n".join(tooltip_lines)
-		badge.mouse_filter = Control.MOUSE_FILTER_STOP
+		badge.mouse_filter = Control.MOUSE_FILTER_PASS
 	return badge
 
 func _add_token_badge(
@@ -1305,8 +1484,33 @@ func _add_token_badge(
 	)
 	if badge != null:
 		badge.tooltip_text = "Token Creature"
-		badge.mouse_filter = Control.MOUSE_FILTER_STOP
+		badge.mouse_filter = Control.MOUSE_FILTER_PASS
 	return badge
+
+func _add_turn_countdown_badge(overlay: Control, card: Card) -> void:
+	if overlay == null or card == null or not card.has_method("get_turn_countdown_badge_text"):
+		return
+	var badge_text := str(card.call("get_turn_countdown_badge_text", game_manager)).strip_edges()
+	if badge_text == "":
+		return
+	var badge := _add_overlay_stat_badge(
+		overlay,
+		badge_text,
+		Control.PRESET_TOP_RIGHT,
+		-48,
+		6,
+		-6,
+		28,
+		Color(1.0, 0.88, 0.48)
+	)
+	if badge == null:
+		return
+	var hover_text := ""
+	if card.has_method("get_turn_countdown_badge_hover_text"):
+		hover_text = str(card.call("get_turn_countdown_badge_hover_text", game_manager)).strip_edges()
+	if hover_text != "":
+		badge.mouse_filter = Control.MOUSE_FILTER_PASS
+		_connect_badge_hover(badge, hover_text)
 
 func _get_power_status_cost_text(card: Card) -> String:
 	if not (card is PowerCard):
@@ -1425,6 +1629,137 @@ func _add_power_lock_overlay(overlay: Control, card: Card) -> void:
 	_add_power_lock_texture_overlay(overlay, card, culture_is_known)
 	_add_power_cost_badge(overlay, card)
 
+func _make_breidablik_priest_badge(priest: Card) -> Control:
+	var badge := PanelContainer.new()
+	badge.name = "BreidablikPriestBadge"
+	badge.mouse_filter = Control.MOUSE_FILTER_STOP
+	badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	badge.custom_minimum_size = Vector2(BREIDABLIK_PRIEST_BADGE_SIZE, BREIDABLIK_PRIEST_BADGE_SIZE)
+	badge.size = badge.custom_minimum_size
+	badge.clip_contents = true
+
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.06, 0.12, 0.16, 0.95)
+	style.border_color = Color(0.75, 0.94, 0.58, 0.98)
+	style.corner_radius_top_left = 6
+	style.corner_radius_top_right = 6
+	style.corner_radius_bottom_left = 6
+	style.corner_radius_bottom_right = 6
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 1)
+	badge.add_theme_stylebox_override("panel", style)
+
+	var art_added := false
+	if priest != null and priest.art_path != "":
+		var tex := UITextureCacheScript.get_texture(priest.art_path)
+		if tex != null:
+			var art := TextureRect.new()
+			art.texture = tex
+			art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+			art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			art.offset_left = 2
+			art.offset_top = 2
+			art.offset_right = -2
+			art.offset_bottom = -2
+			badge.add_child(art)
+			art_added = true
+	if not art_added:
+		var label := Label.new()
+		label.text = "P"
+		if priest != null and priest.card_name.strip_edges() != "":
+			label.text = priest.card_name.substr(0, 1)
+		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		label.add_theme_font_size_override("font_size", 15)
+		label.add_theme_color_override("font_color", Color(0.94, 1.0, 0.84))
+		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		badge.add_child(label)
+
+	if priest != null:
+		var hover_text := "[b]%s[/b]\nHarbored in Breidablik" % priest.card_name
+		_connect_badge_hover(badge, hover_text, priest)
+	return badge
+
+func _make_breidablik_overflow_badge(hidden_count: int, hidden_priests: Array[Card]) -> Control:
+	var badge := _make_empty_field_badge()
+	badge.name = "BreidablikPriestOverflowBadge"
+	badge.mouse_filter = Control.MOUSE_FILTER_STOP
+	badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	badge.custom_minimum_size = Vector2(BREIDABLIK_PRIEST_BADGE_SIZE, BREIDABLIK_PRIEST_BADGE_SIZE)
+	badge.size = badge.custom_minimum_size
+	var label := Label.new()
+	label.text = "+%d" % hidden_count
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", 12)
+	label.add_theme_color_override("font_color", Color(1.0, 0.95, 0.68))
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	badge.add_child(label)
+
+	var names: Array[String] = []
+	for priest in hidden_priests:
+		if priest != null:
+			names.append(priest.card_name)
+	var hover_text := "%d more harbored Priest%s" % [
+		hidden_count,
+		"" if hidden_count == 1 else "s"
+	]
+	if not names.is_empty():
+		hover_text += "\n" + "\n".join(names)
+	_connect_badge_hover(badge, hover_text)
+	return badge
+
+func _add_breidablik_priest_badges(overlay: Control, card: Card) -> void:
+	if overlay == null or not is_instance_valid(overlay) or overlay.is_queued_for_deletion():
+		return
+	if not (card is Breidablik):
+		return
+	var priests := (card as Breidablik).get_stored_priests()
+	if priests.is_empty():
+		return
+
+	var has_overflow := priests.size() > BREIDABLIK_PRIEST_BADGE_MAX_SLOTS
+	var shown_count := mini(priests.size(), BREIDABLIK_PRIEST_BADGE_MAX_SLOTS)
+	if has_overflow:
+		shown_count = BREIDABLIK_PRIEST_BADGE_MAX_SLOTS - 1
+	var slot_count := shown_count + (1 if has_overflow else 0)
+	var row_width := BREIDABLIK_PRIEST_BADGE_SIZE * float(slot_count) \
+		+ BREIDABLIK_PRIEST_BADGE_GAP * float(maxi(0, slot_count - 1))
+
+	var row := Control.new()
+	row.name = "BreidablikPriestBadgeRow"
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.z_index = 34
+	row.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	row.offset_left = 6.0
+	row.offset_top = -66.0
+	row.offset_right = 6.0 + row_width
+	row.offset_bottom = -66.0 + BREIDABLIK_PRIEST_BADGE_SIZE
+	overlay.add_child(row)
+
+	for priest_index in range(shown_count):
+		var badge := _make_breidablik_priest_badge(priests[priest_index])
+		badge.position = Vector2(
+			float(priest_index) * (BREIDABLIK_PRIEST_BADGE_SIZE + BREIDABLIK_PRIEST_BADGE_GAP),
+			0.0
+		)
+		row.add_child(badge)
+
+	if has_overflow:
+		var hidden_priests: Array[Card] = []
+		for priest_index in range(shown_count, priests.size()):
+			hidden_priests.append(priests[priest_index])
+		var overflow_badge := _make_breidablik_overflow_badge(priests.size() - shown_count, hidden_priests)
+		overflow_badge.position = Vector2(
+			float(shown_count) * (BREIDABLIK_PRIEST_BADGE_SIZE + BREIDABLIK_PRIEST_BADGE_GAP),
+			0.0
+		)
+		row.add_child(overflow_badge)
+
 func _add_playing_aura(overlay: Control) -> void:
 	if overlay == null:
 		return
@@ -1457,58 +1792,88 @@ func _add_playing_aura(overlay: Control) -> void:
 	ring.add_theme_stylebox_override("panel", ring_style)
 	overlay.add_child(ring)
 
-func _add_aphrodite_activation_aura(overlay: Control) -> void:
-	if overlay == null:
-		return
-
-	var glow := ColorRect.new()
-	glow.color = Color(1.0, 0.56, 0.78, 0.12)
-	glow.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	overlay.add_child(glow)
-
-	var ring := PanelContainer.new()
-	ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	ring.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	ring.offset_left = 5
-	ring.offset_top = 5
-	ring.offset_right = -5
-	ring.offset_bottom = -5
-
-	var ring_style := StyleBoxFlat.new()
-	ring_style.bg_color = Color(0, 0, 0, 0)
-	ring_style.border_color = Color(1.0, 0.76, 0.90, 0.92)
-	ring_style.shadow_color = Color(1.0, 0.45, 0.74, 0.5)
-	ring_style.shadow_size = 9
-	ring_style.corner_radius_top_left = 8
-	ring_style.corner_radius_top_right = 8
-	ring_style.corner_radius_bottom_left = 8
-	ring_style.corner_radius_bottom_right = 8
-	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		ring_style.set_border_width(side, 2)
-	ring.add_theme_stylebox_override("panel", ring_style)
-	overlay.add_child(ring)
-
-func _apply_aphrodite_activation_style(style: StyleBoxFlat) -> void:
+func _apply_priority_response_style(style: StyleBoxFlat) -> void:
 	if style == null:
 		return
-	style.border_color = Color(1.0, 0.78, 0.90, 0.98)
-	style.shadow_color = Color(1.0, 0.45, 0.74, 0.72)
+	style.border_color = PRIORITY_RESPONSE_GLOW_COLOR
+	style.shadow_color = PRIORITY_RESPONSE_GLOW_COLOR
 	style.shadow_size = max(style.shadow_size, 16)
 
-func _apply_nusku_activation_style(style: StyleBoxFlat) -> void:
-	if style == null:
+# Centralized builder for ability-style badge controls. Every ability badge
+# (creature, board structure/equipment, god, Champion's Call, Tezcatlipoca
+# sacrifice/smoking mirror/tonal mastery, E2 Abzu modes, Nimue modes, White
+# Serpent medicine) is constructed through this helper so the Control/TextureRect
+# glow/click/hover wiring stays consistent. Callers keep their own positioning,
+# ready checks, click actions, modes and custom extras (e.g. Tez bloodstreaks).
+#
+# badge_left/top/right/bottom are the anchor offsets for PRESET_TOP_RIGHT.
+# mouse_filter_mode = -1 derives STOP-when-hover-text-present else IGNORE (the
+# creature/board/god convention); pass an explicit Control.MOUSE_FILTER_* to
+# override. extra_children_callback, if valid, is invoked as (badge) after the
+# icon is added so callers can attach bespoke children such as bloodstreaks.
+func _build_ability_badge(
+	overlay: Control,
+	card: Card,
+	badge_name: String,
+	texture: Texture2D,
+	badge_left: float,
+	badge_top: float,
+	badge_right: float,
+	badge_bottom: float,
+	badge_ready: bool,
+	clickable: bool,
+	hover_text: String,
+	click_action: String,
+	card_uid: String,
+	extra_value: Variant = null,
+	preview_card: Card = null,
+	icon_inset: float = 0.0,
+	dim_modulate: Color = Color(0.82, 0.82, 0.86, 0.9),
+	glow_color: Color = AVAILABLE_ABILITY_BADGE_GLOW_COLOR,
+	mouse_filter_mode: int = -1,
+	badge_z_index: int = 31,
+	extra_children_callback: Callable = Callable()
+) -> void:
+	if overlay == null or texture == null:
 		return
-	style.border_color = Color(1.0, 0.42, 0.36, 0.98)
-	style.shadow_color = Color(1.0, 0.18, 0.12, 0.78)
-	style.shadow_size = max(style.shadow_size, 16)
+	var badge := Control.new()
+	badge.name = badge_name
+	if mouse_filter_mode == -1:
+		badge.mouse_filter = Control.MOUSE_FILTER_PASS if hover_text.strip_edges() != "" else Control.MOUSE_FILTER_IGNORE
+	else:
+		badge.mouse_filter = mouse_filter_mode as Control.MouseFilter
+	badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if clickable else Control.CURSOR_ARROW
+	badge.z_index = badge_z_index
+	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	badge.offset_left = badge_left
+	badge.offset_top = badge_top
+	badge.offset_right = badge_right
+	badge.offset_bottom = badge_bottom
 
-func _apply_generic_god_activation_style(style: StyleBoxFlat, aura_color: Color) -> void:
-	if style == null or aura_color.a <= 0.0:
-		return
-	style.border_color = aura_color
-	style.shadow_color = aura_color
-	style.shadow_size = max(style.shadow_size, 16)
+	if _should_emphasize_available_ability_badge(card, badge_ready):
+		_add_badge_image_glow(badge, texture, glow_color, 6.0)
+
+	var icon := TextureRect.new()
+	icon.texture = texture
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	if icon_inset > 0.0:
+		icon.offset_left = icon_inset
+		icon.offset_top = icon_inset
+		icon.offset_right = -icon_inset
+		icon.offset_bottom = -icon_inset
+	icon.modulate = Color(1, 1, 1, 1) if badge_ready else dim_modulate
+	badge.add_child(icon)
+
+	if extra_children_callback.is_valid():
+		extra_children_callback.call(badge)
+
+	if clickable and click_action.strip_edges() != "" and card_uid != "":
+		_connect_badge_click_action(badge, click_action, card_uid, extra_value)
+	_connect_badge_hover(badge, hover_text, preview_card)
+	overlay.add_child(badge)
 
 func _add_champions_call_badge(overlay: Control, card: Card, is_ready: bool) -> void:
 	if overlay == null or card == null:
@@ -1519,53 +1884,31 @@ func _add_champions_call_badge(overlay: Control, card: Card, is_ready: bool) -> 
 
 	var clickable := not _is_enemy and god.get_controller() == _get_viewer_player()
 	var god_uid := BoardZoneUI.get_action_point_card_uid(god)
-	var badge := PanelContainer.new()
-	badge.name = "ChampionsCallBadge"
-	badge.tooltip_text = "Champion's Call"
-	badge.mouse_filter = Control.MOUSE_FILTER_STOP if clickable else Control.MOUSE_FILTER_IGNORE
-	badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	badge.z_index = 30
-	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	if not _should_show_ability_badge_control(god, is_ready, clickable):
+		return
 	var badge_top := _get_badge_row_top() + GOD_ABILITY_BADGE_TOP_OFFSET
-	badge.offset_left = -6.0 - ABILITY_BADGE_SIZE
-	badge.offset_top = badge_top
-	badge.offset_right = -6
-	badge.offset_bottom = badge_top + ABILITY_BADGE_SIZE
-
-	var badge_style := StyleBoxFlat.new()
-	badge_style.bg_color = Color(0.09, 0.045, 0.015, 0.82)
-	badge_style.border_color = Color(0.92, 0.62, 0.18, 0.82)
-	badge_style.shadow_color = Color(0.05, 0.025, 0.0, 0.58)
-	badge_style.shadow_size = 4
-	if is_ready:
-		badge_style.bg_color = Color(0.20, 0.09, 0.02, 0.94)
-		badge_style.border_color = Color(1.0, 0.78, 0.22, 1.0)
-		badge_style.shadow_color = Color(1.0, 0.62, 0.12, 0.78)
-		badge_style.shadow_size = 12
-	badge_style.corner_radius_top_left = 20
-	badge_style.corner_radius_top_right = 20
-	badge_style.corner_radius_bottom_left = 20
-	badge_style.corner_radius_bottom_right = 20
-	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		badge_style.set_border_width(side, 2 if is_ready else 1)
-	badge.add_theme_stylebox_override("panel", badge_style)
-
-	var icon := TextureRect.new()
-	icon.texture = CHAMPIONS_CALL_BADGE_TEXTURE
-	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	icon.offset_left = 3
-	icon.offset_top = 3
-	icon.offset_right = -3
-	icon.offset_bottom = -3
-	icon.modulate = Color(1, 1, 1, 1) if is_ready else Color(0.72, 0.72, 0.72, 0.72)
-	badge.add_child(icon)
-
-	if clickable:
-		_connect_badge_click_action(badge, "champions_call", god_uid)
-	overlay.add_child(badge)
+	_build_ability_badge(
+		overlay,
+		god,
+		"ChampionsCallBadge",
+		CHAMPIONS_CALL_BADGE_TEXTURE,
+		-6.0 - ABILITY_BADGE_SIZE,
+		badge_top,
+		-6,
+		badge_top + ABILITY_BADGE_SIZE,
+		is_ready,
+		clickable,
+		"Champion's Call",
+		"champions_call",
+		god_uid,
+		null,
+		_get_hover_summoned_active_god(god),
+		0.0,
+		Color(0.72, 0.72, 0.72, 0.72),
+		AVAILABLE_ABILITY_BADGE_GLOW_COLOR,
+		Control.MOUSE_FILTER_STOP if clickable else Control.MOUSE_FILTER_IGNORE,
+		30
+	)
 
 func _should_show_smoking_mirror_badge(card: Card) -> bool:
 	if not _is_tez_necoc_yaotl_card(card):
@@ -1593,19 +1936,8 @@ func _get_tez_tonal_mastery_token_count(card: Card) -> int:
 	return clampi(int(card.call("get_tonal_mastery_token_count")), 0, TEZ_TONAL_MASTERY_TOKEN_THRESHOLD)
 
 func _get_tez_tonal_mastery_texture(card: Card) -> Texture2D:
-	var token_count := clampi(_get_tez_tonal_mastery_token_count(card), 0, TEZ_TONAL_MASTERY_TEXTURE_PATHS.size() - 1)
-	var texture_path := str(TEZ_TONAL_MASTERY_TEXTURE_PATHS[token_count])
-	if _tez_tonal_mastery_texture_cache.has(texture_path):
-		return _tez_tonal_mastery_texture_cache[texture_path] as Texture2D
-	var absolute_path := ProjectSettings.globalize_path(texture_path)
-	if not FileAccess.file_exists(absolute_path):
-		return null
-	var image := Image.load_from_file(absolute_path)
-	if image == null or image.is_empty():
-		return null
-	var texture := ImageTexture.create_from_image(image)
-	_tez_tonal_mastery_texture_cache[texture_path] = texture
-	return texture
+	var token_count := clampi(_get_tez_tonal_mastery_token_count(card), 0, TEZ_TONAL_MASTERY_TEXTURES.size() - 1)
+	return TEZ_TONAL_MASTERY_TEXTURES[token_count] as Texture2D
 
 func _get_tez_necoc_yaotl_sacrifice_count(card: Card) -> int:
 	if not _is_tez_necoc_yaotl_card(card):
@@ -1638,33 +1970,30 @@ func _add_tez_tonal_mastery_badge(overlay: Control, card: Card) -> void:
 	if texture == null:
 		return
 
-	var badge := Control.new()
-	badge.name = "TezTonalMasteryBadge"
-	badge.mouse_filter = Control.MOUSE_FILTER_PASS
-	badge.mouse_default_cursor_shape = Control.CURSOR_ARROW
-	badge.z_index = 31
-	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	badge.offset_left = TEZ_SECONDARY_BADGE_LEFT
-	badge.offset_top = TEZ_SECONDARY_BADGE_TOP
-	badge.offset_right = TEZ_SECONDARY_BADGE_RIGHT
-	badge.offset_bottom = TEZ_SECONDARY_BADGE_BOTTOM
-
-	var icon := TextureRect.new()
-	icon.texture = texture
-	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	badge.add_child(icon)
-
-	_connect_badge_hover(
-		badge,
+	_build_ability_badge(
+		overlay,
+		card,
+		"TezTonalMasteryBadge",
+		texture,
+		TEZ_SECONDARY_BADGE_LEFT,
+		TEZ_SECONDARY_BADGE_TOP,
+		TEZ_SECONDARY_BADGE_RIGHT,
+		TEZ_SECONDARY_BADGE_BOTTOM,
+		false,
+		false,
 		"Tonal Mastery: %d/%d tokens\nAt 3 tokens, gain 3 mana and reset." % [
 			token_count,
 			TEZ_TONAL_MASTERY_TOKEN_THRESHOLD
-		]
+		],
+		"",
+		"",
+		null,
+		null,
+		0.0,
+		Color(1, 1, 1, 1),
+		AVAILABLE_ABILITY_BADGE_GLOW_COLOR,
+		Control.MOUSE_FILTER_PASS
 	)
-	overlay.add_child(badge)
 
 func _add_smoking_mirror_badge(overlay: Control, card: Card) -> void:
 	if overlay == null or card == null:
@@ -1677,38 +2006,34 @@ func _add_smoking_mirror_badge(overlay: Control, card: Card) -> void:
 	var badge_ready := game_manager != null \
 		and card.has_method("can_resolve_necoc_yaotl_summon") \
 		and bool(card.call("can_resolve_necoc_yaotl_summon", game_manager))
-	var badge := Control.new()
-	badge.name = "SmokingMirrorBadge"
+	if not _should_show_ability_badge_control(card, badge_ready, clickable):
+		return
 	var hover_text := "Summon Tezcatlipoca, Active God"
 	if not badge_ready and game_manager != null and card.has_method("get_necoc_yaotl_summon_failure_reason"):
 		var failure_reason := str(card.call("get_necoc_yaotl_summon_failure_reason", game_manager))
 		if failure_reason != "":
 			hover_text = failure_reason
-	badge.mouse_filter = Control.MOUSE_FILTER_STOP if clickable else Control.MOUSE_FILTER_IGNORE
-	badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if clickable else Control.CURSOR_ARROW
-	badge.z_index = 31
-	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	badge.offset_left = TEZ_BADGE_LEFT
-	badge.offset_top = TEZ_PRIMARY_BADGE_TOP
-	badge.offset_right = TEZ_BADGE_RIGHT
-	badge.offset_bottom = TEZ_PRIMARY_BADGE_BOTTOM
-
-	if badge_ready:
-		_add_badge_image_glow(badge, SMOKING_MIRROR_BADGE_TEXTURE, Color(0.75, 0.24, 1.0, 0.58))
-
-	var icon := TextureRect.new()
-	icon.texture = SMOKING_MIRROR_BADGE_TEXTURE
-	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	icon.modulate = Color(1, 1, 1, 1) if badge_ready else Color(0.78, 0.74, 0.82, 0.86)
-	badge.add_child(icon)
-
-	if clickable:
-		_connect_badge_click_action(badge, "tez_necoc_yaotl", card_uid)
-	_connect_badge_hover(badge, hover_text)
-	overlay.add_child(badge)
+	_build_ability_badge(
+		overlay,
+		card,
+		"SmokingMirrorBadge",
+		SMOKING_MIRROR_BADGE_TEXTURE,
+		TEZ_BADGE_LEFT,
+		TEZ_PRIMARY_BADGE_TOP,
+		TEZ_BADGE_RIGHT,
+		TEZ_PRIMARY_BADGE_BOTTOM,
+		badge_ready,
+		clickable,
+		hover_text,
+		"tez_necoc_yaotl",
+		card_uid,
+		null,
+		_get_hover_summoned_active_god(card),
+		0.0,
+		Color(0.78, 0.74, 0.82, 0.86),
+		AVAILABLE_ABILITY_BADGE_GLOW_COLOR,
+		Control.MOUSE_FILTER_STOP if clickable else Control.MOUSE_FILTER_IGNORE
+	)
 
 func _add_tez_sacrifice_badge(overlay: Control, card: Card) -> void:
 	if overlay == null or card == null:
@@ -1727,41 +2052,36 @@ func _add_tez_sacrifice_badge(overlay: Control, card: Card) -> void:
 		and bool(card.call("can_activate", game_manager)) \
 		and not _get_tez_valid_sacrifices(card).is_empty()
 	var clickable := not _is_enemy and card.get_controller() == _get_viewer_player()
-
-	var badge := Control.new()
-	badge.name = "TezSacrificeBadge"
+	if not _should_show_ability_badge_control(card, badge_ready, clickable):
+		return
 	var hover_text := "%d/%d sacrifices" % [
 		sacrifice_count,
 		TEZ_REQUIRED_SACRIFICES
 	]
 	hover_text += "\nSacrificed levels: %d" % _get_tez_necoc_yaotl_total_level(card)
-	badge.mouse_filter = Control.MOUSE_FILTER_STOP if clickable else Control.MOUSE_FILTER_IGNORE
-	badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if clickable else Control.CURSOR_ARROW
-	badge.z_index = 31
-	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	badge.offset_left = TEZ_BADGE_LEFT
-	badge.offset_top = TEZ_PRIMARY_BADGE_TOP
-	badge.offset_right = TEZ_BADGE_RIGHT
-	badge.offset_bottom = TEZ_PRIMARY_BADGE_BOTTOM
-
-	if badge_ready:
-		_add_badge_image_glow(badge, TEZ_SACRIFICE_BADGE_TEXTURE, Color(1.0, 0.0, 0.0, 0.92), 8.0)
-
-	var icon := TextureRect.new()
-	icon.texture = TEZ_SACRIFICE_BADGE_TEXTURE
-	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	icon.modulate = Color(1, 1, 1, 1) if badge_ready else Color(0.86, 0.82, 0.76, 0.92)
-	badge.add_child(icon)
-
-	_add_tez_bloodstreaks(badge, sacrifice_count)
-
-	if clickable:
-		_connect_badge_click_action(badge, "tez_necoc_yaotl", card_uid)
-	_connect_badge_hover(badge, hover_text)
-	overlay.add_child(badge)
+	_build_ability_badge(
+		overlay,
+		card,
+		"TezSacrificeBadge",
+		TEZ_SACRIFICE_BADGE_TEXTURE,
+		TEZ_BADGE_LEFT,
+		TEZ_PRIMARY_BADGE_TOP,
+		TEZ_BADGE_RIGHT,
+		TEZ_PRIMARY_BADGE_BOTTOM,
+		badge_ready,
+		clickable,
+		hover_text,
+		"tez_necoc_yaotl",
+		card_uid,
+		null,
+		_get_hover_summoned_active_god(card),
+		0.0,
+		Color(0.86, 0.82, 0.76, 0.92),
+		AVAILABLE_ABILITY_BADGE_GLOW_COLOR,
+		Control.MOUSE_FILTER_STOP if clickable else Control.MOUSE_FILTER_IGNORE,
+		31,
+		Callable(self, "_add_tez_bloodstreaks").bind(sacrifice_count)
+	)
 
 func _get_creature_ability_badge_texture(card: Card) -> Texture2D:
 	if card == null:
@@ -1770,6 +2090,16 @@ func _get_creature_ability_badge_texture(card: Card) -> Texture2D:
 		return SHIFT_ABILITY_BADGE_TEXTURE
 	if card.card_name == "Berserker":
 		return BERSERKER_ABILITY_BADGE_TEXTURE
+	if card.card_name == "Beyla":
+		return BEYLA_ABILITY_BADGE_TEXTURE
+	if card.card_name == "Robotic Footsoldier":
+		return ROBOTIC_FOOTSOLDIER_ABILITY_BADGE_TEXTURE
+	if card.card_name == "Seventh Sage Utuabzu":
+		return SEVENTH_SAGE_ABILITY_BADGE_TEXTURE
+	if card.card_name == "Tezcatlipoca Blasphemer":
+		return TEZCATLIPOCA_BLASPHEMER_ABILITY_BADGE_TEXTURE
+	if card.card_name == "Winged Lion":
+		return WINGED_LION_ABILITY_BADGE_TEXTURE
 	if card.card_name == "Alu":
 		return ALU_ABILITY_BADGE_TEXTURE
 	if card.card_name == "Clay-Eaters":
@@ -1797,11 +2127,62 @@ func _get_creature_ability_badge_texture(card: Card) -> Texture2D:
 func _get_god_custom_ability_badge_texture(card: Card) -> Texture2D:
 	if card == null:
 		return null
+	if card.card_name == "Aphrodite Areia":
+		var cropped_texture := AtlasTexture.new()
+		cropped_texture.atlas = APHRODITE_ABILITY_BADGE_TEXTURE
+		cropped_texture.region = Rect2(87, 20, 850, 850)
+		return cropped_texture
+	if card.card_name == "Dellingr, the Dayspring":
+		return DELLINGR_ABILITY_BADGE_TEXTURE
+	if card.card_name == "Freyja":
+		return FREYJA_ABILITY_BADGE_TEXTURE
+	if card.card_name == "Guan Yu":
+		return GUAN_YU_TACTICAL_BREAK_BADGE_TEXTURE
 	if card.card_name == "Guan Yu, Active God":
 		return GUAN_YU_MANOEUVRE_BADGE_TEXTURE
+	if card.card_name == "Fenrir":
+		return FENRIS_DEVOUR_BADGE_TEXTURE
+	if card.card_name == "Pai Long":
+		return PAI_LONG_BADGE_TEXTURE
+	if card.card_name == "Hermes":
+		return HERMES_ABILITY_BADGE_TEXTURE
 	if card.card_name == "Odin, the Allfather":
 		return ODIN_RUNIC_KNOWLEDGE_BADGE_TEXTURE
+	if card.card_name == "Mummu, The One Who Has Awoken" or card.card_name == "Mummu, Active God":
+		return MUMMU_ABILITY_BADGE_TEXTURE
+	if card.card_name == "Nusku, Firebearer" or card.card_name == "Nusku, Active God":
+		return NUSKU_ABILITY_BADGE_TEXTURE
+	if CardCatalog.to_lookup_key(card.card_name) in ["manannnmaclir", "manannanmaclir"]:
+		return MANNAN_MAC_LIR_ABILITY_BADGE_TEXTURE
 	return null
+
+func _get_board_card_custom_ability_badge_texture(card: Card) -> Texture2D:
+	if card == null:
+		return null
+	if card.card_name == "Ancient Pyre":
+		return ANCIENT_PYRE_ABILITY_BADGE_TEXTURE
+	if card.card_name == "Anointing Statue":
+		return ANOINTING_STATUE_ABILITY_BADGE_TEXTURE
+	if card.card_name == "Hildskjalf: Throne of Odin":
+		return THRONE_OF_ODIN_ABILITY_BADGE_TEXTURE
+	if card.card_name == "Gambanteinn":
+		return GAMBANTEINN_ABILITY_BADGE_TEXTURE
+	return null
+
+func _can_show_board_card_custom_ability_badge_as_ready(card: Card) -> bool:
+	if card == null or game_manager == null:
+		return false
+	if card is AnointingStatue:
+		var statue := card as AnointingStatue
+		for player in game_manager.players:
+			if player == null:
+				continue
+			for target_zone in player.frontline_zones + player.reserve_zones:
+				for target in target_zone.cards:
+					if statue.can_activate(game_manager, target):
+						return true
+		return false
+	return card.has_method("can_activate") and card.has_method("activate") and card.can_activate(game_manager)
 
 func _get_creature_ability_badge_mana_cost(card: Card) -> int:
 	if card == null:
@@ -1871,34 +2252,30 @@ func _add_e2_abzu_mode_badge(
 ) -> void:
 	if overlay == null or texture == null or hover_text.strip_edges() == "":
 		return
+	if not _should_show_ability_badge_control(card, badge_ready, clickable):
+		return
 	var badge_right := _get_creature_ability_badge_right(card)
-	var badge := Control.new()
-	badge.name = "E2AbzuBadge_%s" % mode
-	badge.mouse_filter = Control.MOUSE_FILTER_STOP
-	badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if clickable else Control.CURSOR_ARROW
-	badge.z_index = 31
-	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	badge.offset_left = badge_right - CREATURE_ABILITY_BADGE_SIZE
-	badge.offset_top = top
-	badge.offset_right = badge_right
-	badge.offset_bottom = top + CREATURE_ABILITY_BADGE_SIZE
-
-	if badge_ready:
-		_add_badge_image_glow(badge, texture, Color(0.30, 0.72, 1.0, 0.42), 6.0)
-
-	var icon := TextureRect.new()
-	icon.texture = texture
-	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	icon.modulate = Color(1, 1, 1, 1) if badge_ready else Color(0.78, 0.82, 0.88, 0.88)
-	badge.add_child(icon)
-
-	if clickable and card_uid != "":
-		_connect_badge_click_action(badge, "e2_abzu", card_uid, mode)
-	_connect_badge_hover(badge, hover_text)
-	overlay.add_child(badge)
+	_build_ability_badge(
+		overlay,
+		card,
+		"E2AbzuBadge_%s" % mode,
+		texture,
+		badge_right - CREATURE_ABILITY_BADGE_SIZE,
+		top,
+		badge_right,
+		top + CREATURE_ABILITY_BADGE_SIZE,
+		badge_ready,
+		clickable,
+		hover_text,
+		"e2_abzu",
+		card_uid,
+		mode,
+		null,
+		E2_ABZU_BADGE_ICON_INSET,
+		Color(0.78, 0.82, 0.88, 0.88),
+		AVAILABLE_ABILITY_BADGE_GLOW_COLOR,
+		Control.MOUSE_FILTER_STOP
+	)
 
 func _add_e2_abzu_badges(overlay: Control, card: Card) -> void:
 	if overlay == null or not (card is E2Abzu):
@@ -1968,34 +2345,30 @@ func _add_nimue_mode_badge(
 ) -> void:
 	if overlay == null or texture == null or hover_text.strip_edges() == "":
 		return
+	if not _should_show_ability_badge_control(card, badge_ready, clickable):
+		return
 	var badge_right := _get_creature_ability_badge_right(card)
-	var badge := Control.new()
-	badge.name = "NimueBadge_%s" % mode
-	badge.mouse_filter = Control.MOUSE_FILTER_STOP
-	badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if clickable else Control.CURSOR_ARROW
-	badge.z_index = 31
-	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	badge.offset_left = badge_right - CREATURE_ABILITY_BADGE_SIZE
-	badge.offset_top = top
-	badge.offset_right = badge_right
-	badge.offset_bottom = top + CREATURE_ABILITY_BADGE_SIZE
-
-	if badge_ready:
-		_add_badge_image_glow(badge, texture, Color(0.30, 0.72, 1.0, 0.42), 6.0)
-
-	var icon := TextureRect.new()
-	icon.texture = texture
-	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	icon.modulate = Color(1, 1, 1, 1) if badge_ready else Color(0.78, 0.82, 0.88, 0.88)
-	badge.add_child(icon)
-
-	if clickable and card_uid != "":
-		_connect_badge_click_action(badge, "nimue", card_uid, mode)
-	_connect_badge_hover(badge, hover_text)
-	overlay.add_child(badge)
+	_build_ability_badge(
+		overlay,
+		card,
+		"NimueBadge_%s" % mode,
+		texture,
+		badge_right - CREATURE_ABILITY_BADGE_SIZE,
+		top,
+		badge_right,
+		top + CREATURE_ABILITY_BADGE_SIZE,
+		badge_ready,
+		clickable,
+		hover_text,
+		"nimue",
+		card_uid,
+		mode,
+		null,
+		0.0,
+		Color(0.78, 0.82, 0.88, 0.88),
+		AVAILABLE_ABILITY_BADGE_GLOW_COLOR,
+		Control.MOUSE_FILTER_STOP
+	)
 
 func _add_nimue_badges(overlay: Control, card: Card) -> void:
 	if overlay == null or not (card is Nimue):
@@ -2005,7 +2378,7 @@ func _add_nimue_badges(overlay: Control, card: Card) -> void:
 	var clickable := not _is_enemy and card.get_controller() == _get_viewer_player()
 	var can_entomb := false
 	var can_present := false
-	if game_manager != null:
+	if game_manager != null and game_manager.get_creature_ability_activation_block_reason(card).is_empty():
 		can_entomb = nimue.can_activate_entomb(game_manager)
 		can_present = nimue.can_activate_present(game_manager)
 	var top_badge_top := _get_badge_row_top() + CREATURE_ABILITY_BADGE_TOP_OFFSET
@@ -2033,6 +2406,52 @@ func _add_nimue_badges(overlay: Control, card: Card) -> void:
 		clickable
 	)
 
+func _add_white_serpent_medicine_badge(overlay: Control, card: Card) -> void:
+	if overlay == null or not (card is TheWhiteSerpent):
+		return
+	var serpent := card as TheWhiteSerpent
+	var viewer := _get_viewer_player()
+	var can_view_stealth := not card.is_stealth or card.get_controller() == viewer or card.is_temporarily_revealed()
+	if card.is_face_down or card.is_prepared or not can_view_stealth:
+		return
+
+	var clickable := not _is_enemy and card.get_controller() == viewer
+	var badge_ready := clickable and (
+		_is_card_usable_for_priority(card) if _is_priority_badge_filter_active() else (
+			game_manager != null
+			and game_manager.get_creature_ability_activation_block_reason(card).is_empty()
+			and serpent.can_activate_medicine(game_manager)
+		)
+	)
+	if not _should_show_ability_badge_control(card, badge_ready, clickable):
+		return
+	var badge_right := _get_creature_ability_badge_right(card)
+	var badge_top := _get_badge_row_top() + CREATURE_ABILITY_BADGE_TOP_OFFSET + CREATURE_ABILITY_BADGE_SIZE + 4.0
+	_build_ability_badge(
+		overlay,
+		card,
+		"WhiteSerpentMedicineBadge",
+		WHITE_SERPENT_MEDICINE_BADGE_TEXTURE,
+		badge_right - CREATURE_ABILITY_BADGE_SIZE,
+		badge_top,
+		badge_right,
+		badge_top + CREATURE_ABILITY_BADGE_SIZE,
+		badge_ready,
+		clickable,
+		BaseCardScript.apply_keyword_hints(BaseCardScript.apply_action_cost_symbols(
+			"Medicine ([b]Activate[/b], [b]Spd[/b] 2): Negate enemy effects targeting your cards until end of turn.",
+			card
+		)),
+		"creature_ability_option",
+		BoardZoneUI.get_action_point_card_uid(card),
+		"medicine",
+		null,
+		0.0,
+		Color(0.82, 0.82, 0.86, 0.9),
+		AVAILABLE_ABILITY_BADGE_GLOW_COLOR,
+		Control.MOUSE_FILTER_STOP
+	)
+
 func _add_creature_ability_badge(overlay: Control, card: Card) -> void:
 	if overlay == null or card == null or card.card_type != Card.CardType.CREATURE or card.is_god:
 		return
@@ -2046,108 +2465,167 @@ func _add_creature_ability_badge(overlay: Control, card: Card) -> void:
 
 	var clickable := not _is_enemy and card.get_controller() == viewer
 	var card_uid := BoardZoneUI.get_action_point_card_uid(card)
-	var badge_ready = clickable \
-		and game_manager != null \
-		and card.has_method("can_activate") \
-		and card.has_method("activate") \
-		and card.can_activate(game_manager)
+	var badge_ready = clickable and (
+		_is_card_usable_for_priority(card) if _is_priority_badge_filter_active() else (
+			game_manager != null
+			and game_manager.get_creature_ability_activation_block_reason(card).is_empty()
+			and card.has_method("can_activate")
+			and card.has_method("activate")
+			and card.can_activate(game_manager)
+		)
+	)
+	if not _should_show_ability_badge_control(card, badge_ready, clickable):
+		return
 	var hover_text := _get_creature_ability_badge_hover_text(card)
 	var badge_right := _get_creature_ability_badge_right(card)
 	var badge_top := _get_badge_row_top() + CREATURE_ABILITY_BADGE_TOP_OFFSET
+	_build_ability_badge(
+		overlay,
+		card,
+		"CreatureAbilityBadge",
+		texture,
+		badge_right - CREATURE_ABILITY_BADGE_SIZE,
+		badge_top,
+		badge_right,
+		badge_top + CREATURE_ABILITY_BADGE_SIZE,
+		badge_ready,
+		clickable,
+		hover_text,
+		"creature_ability",
+		card_uid
+	)
 
-	var badge := Control.new()
-	badge.name = "CreatureAbilityBadge"
-	badge.mouse_filter = Control.MOUSE_FILTER_STOP if hover_text.strip_edges() != "" else Control.MOUSE_FILTER_IGNORE
-	badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if clickable else Control.CURSOR_ARROW
-	badge.z_index = 31
-	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	badge.offset_left = badge_right - CREATURE_ABILITY_BADGE_SIZE
-	badge.offset_top = badge_top
-	badge.offset_right = badge_right
-	badge.offset_bottom = badge_top + CREATURE_ABILITY_BADGE_SIZE
+func _add_board_card_custom_ability_badge(overlay: Control, card: Card) -> void:
+	if overlay == null or card == null:
+		return
+	if card.card_type != Card.CardType.STRUCTURE and card.card_type != Card.CardType.EQUIPMENT:
+		return
+	var texture := _get_board_card_custom_ability_badge_texture(card)
+	if texture == null:
+		return
+	var viewer := _get_viewer_player()
+	var can_view_stealth := not card.is_stealth or card.get_controller() == viewer or card.is_temporarily_revealed()
+	if card.is_face_down or card.is_prepared or not can_view_stealth:
+		return
 
-	if badge_ready:
-		_add_badge_image_glow(badge, texture, Color(1.0, 0.78, 0.22, 0.46), 6.0)
+	var clickable := not _is_enemy and card.get_controller() == viewer
+	var card_uid := BoardZoneUI.get_action_point_card_uid(card)
+	var badge_ready = clickable and (
+		_is_card_usable_for_priority(card) if _is_priority_badge_filter_active() else _can_show_board_card_custom_ability_badge_as_ready(card)
+	)
+	if not _should_show_ability_badge_control(card, badge_ready, clickable):
+		return
+	var hover_text := _get_creature_ability_badge_hover_text(card)
+	var badge_right := _get_creature_ability_badge_right(card)
+	var badge_top := _get_badge_row_top() + CREATURE_ABILITY_BADGE_TOP_OFFSET
+	_build_ability_badge(
+		overlay,
+		card,
+		"BoardCardCustomAbilityBadge",
+		texture,
+		badge_right - CREATURE_ABILITY_BADGE_SIZE,
+		badge_top,
+		badge_right,
+		badge_top + CREATURE_ABILITY_BADGE_SIZE,
+		badge_ready,
+		clickable,
+		hover_text,
+		"creature_ability",
+		card_uid
+	)
 
-	var icon := TextureRect.new()
-	icon.texture = texture
-	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	icon.modulate = Color(1, 1, 1, 1) if badge_ready else Color(0.82, 0.82, 0.86, 0.9)
-	badge.add_child(icon)
-
-	var mana_cost := _get_creature_ability_badge_mana_cost(card)
-	if mana_cost > 0:
-		var cost_badge := _make_field_mana_badge("", mana_cost, 12, Color(1.0, 0.96, 0.78), 12.0)
-		var cost_size := cost_badge.get_combined_minimum_size()
-		var cost_gap := 4.0
-		var cost_top := badge_top + (CREATURE_ABILITY_BADGE_SIZE - cost_size.y) * 0.5
-		cost_badge.name = "CreatureAbilityManaCostBadge"
-		cost_badge.mouse_filter = Control.MOUSE_FILTER_STOP if hover_text.strip_edges() != "" else Control.MOUSE_FILTER_IGNORE
-		cost_badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if clickable else Control.CURSOR_ARROW
-		cost_badge.modulate = Color(1, 1, 1, 1) if badge_ready else Color(0.82, 0.82, 0.86, 0.9)
-		cost_badge.z_index = 31
-		cost_badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-		cost_badge.offset_left = badge.offset_left - cost_gap - cost_size.x
-		cost_badge.offset_top = cost_top
-		cost_badge.offset_right = badge.offset_left - cost_gap
-		cost_badge.offset_bottom = cost_top + cost_size.y
-		if clickable and card_uid != "":
-			_connect_badge_click_action(cost_badge, "creature_ability", card_uid)
-		_connect_badge_hover(cost_badge, hover_text)
-		overlay.add_child(cost_badge)
-
-	if clickable and card_uid != "":
-		_connect_badge_click_action(badge, "creature_ability", card_uid)
-	_connect_badge_hover(badge, hover_text)
-	overlay.add_child(badge)
+func _has_pending_aphrodite_badge_offer(card: Card) -> bool:
+	if card == null or not (card is AphroditeAreia):
+		return false
+	var scene_root := _get_targeting_scene_root()
+	if scene_root == null:
+		return false
+	var offer_uid := str(scene_root.get("_pending_aphrodite_prompt_source_uid"))
+	if offer_uid.is_empty():
+		return false
+	return BoardZoneUI.get_action_point_card_uid(card) == offer_uid
 
 func _add_god_custom_ability_badge(overlay: Control, card: Card) -> void:
 	if overlay == null or card == null or not card.is_god:
+		return
+	if card is HermesPsychopompus:
+		_add_psychopompus_ability_badges(overlay, card)
 		return
 	var texture := _get_god_custom_ability_badge_texture(card)
 	if texture == null:
 		return
 	var viewer := _get_viewer_player()
 	var clickable := not _is_enemy and card.get_controller() == viewer
-	var badge_ready = clickable \
-		and game_manager != null \
-		and card.has_method("can_activate") \
-		and card.has_method("activate") \
-		and card.can_activate(game_manager)
+	var badge_ready = clickable and (
+		_is_card_usable_for_priority(card) if _is_priority_badge_filter_active() else (
+			game_manager != null
+			and card.has_method("can_activate")
+			and card.has_method("activate")
+			and card.can_activate(game_manager)
+		)
+	)
+	if card.card_name == "Guan Yu" and not _is_priority_badge_filter_active():
+		badge_ready = clickable \
+			and game_manager != null \
+			and card.has_method("_can_use_tactical_break") \
+			and bool(card.call("_can_use_tactical_break", game_manager))
+	if _has_pending_aphrodite_badge_offer(card):
+		badge_ready = true
+	elif not _should_show_ability_badge_control(card, badge_ready, clickable):
+		return
 	var hover_text := _get_creature_ability_badge_hover_text(card)
-
-	var badge := Control.new()
-	badge.name = "GodCustomAbilityBadge"
-	badge.mouse_filter = Control.MOUSE_FILTER_STOP if hover_text.strip_edges() != "" else Control.MOUSE_FILTER_IGNORE
-	badge.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if clickable else Control.CURSOR_ARROW
-	badge.z_index = 31
-	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	var badge_top := _get_badge_row_top() + 26.0 + GOD_ABILITY_BADGE_TOP_OFFSET
-	badge.offset_left = -6.0 - ABILITY_BADGE_SIZE
-	badge.offset_top = badge_top
-	badge.offset_right = -6
-	badge.offset_bottom = badge_top + ABILITY_BADGE_SIZE
-
-	if badge_ready:
-		_add_badge_image_glow(badge, texture, Color(1.0, 0.72, 0.24, 0.46), 6.0)
-
-	var icon := TextureRect.new()
-	icon.texture = texture
-	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	icon.modulate = Color(1, 1, 1, 1) if badge_ready else Color(0.82, 0.82, 0.86, 0.9)
-	badge.add_child(icon)
-
+	if card.card_name == "Guan Yu":
+		badge_top = _get_badge_row_top() + GOD_ABILITY_BADGE_TOP_OFFSET + ABILITY_BADGE_SIZE + 4.0
 	var card_uid := BoardZoneUI.get_action_point_card_uid(card)
-	if clickable:
-		_connect_badge_click_action(badge, "card_clicked", card_uid)
-	_connect_badge_hover(badge, hover_text)
-	overlay.add_child(badge)
+	_build_ability_badge(
+		overlay,
+		card,
+		"GodCustomAbilityBadge",
+		texture,
+		-6.0 - ABILITY_BADGE_SIZE,
+		badge_top,
+		-6,
+		badge_top + ABILITY_BADGE_SIZE,
+		badge_ready,
+		clickable,
+		hover_text,
+		"god_ability",
+		card_uid,
+		null,
+		null,
+		0.0,
+		Color(0.82, 0.82, 0.86, 0.9),
+		_get_god_ability_badge_glow_color(card)
+	)
+
+func _add_psychopompus_ability_badges(overlay: Control, god: HermesPsychopompus) -> void:
+	var clickable := not _is_enemy and god.get_controller() == _get_viewer_player()
+	var badge_top := _get_badge_row_top() + GOD_ABILITY_BADGE_TOP_OFFSET
+	var badge_size := minf(ABILITY_BADGE_SIZE, (get_zone_extent() - badge_top - BADGE_ROW_GAP - 18.0) * 0.5)
+	_add_psychopompus_ability_badge(
+		overlay, god, HermesPsychopompus.CALL_OF_THE_CROSSING, HERMES_CALL_OF_THE_CROSSING_BADGE_TEXTURE,
+		badge_top, badge_size, god.ability_text.get_slice("\n", 0),
+		clickable, clickable and god.can_summon_ghost(game_manager)
+	)
+	_add_psychopompus_ability_badge(
+		overlay, god, HermesPsychopompus.WINGS_OF_THE_DEPARTED, HERMES_ABILITY_BADGE_TEXTURE,
+		badge_top + badge_size + BADGE_ROW_GAP, badge_size, god.ability_text.get_slice("\n", 1),
+		clickable, clickable and god.can_boost_speed(game_manager)
+	)
+
+func _add_psychopompus_ability_badge(
+	overlay: Control, god: HermesPsychopompus, ability: String, texture: Texture2D,
+	badge_top: float, badge_size: float, ability_text: String, clickable: bool, badge_ready: bool
+) -> void:
+	if not _should_show_ability_badge_control(god, badge_ready, clickable):
+		return
+	var hover_text := BaseCardScript.apply_keyword_hints(BaseCardScript.apply_action_cost_symbols(ability_text, god))
+	_build_ability_badge(
+		overlay, god, ability, texture, -6.0 - badge_size, badge_top, -6.0,
+		badge_top + badge_size, badge_ready, clickable, hover_text, "god_ability_option",
+		BoardZoneUI.get_action_point_card_uid(god), ability
+	)
 
 func _get_tez_valid_sacrifices(card: Card) -> Array:
 	if game_manager == null or not _is_tez_necoc_yaotl_card(card) or not card.has_method("get_valid_targets"):
@@ -2173,42 +2651,117 @@ func _add_badge_image_glow(badge: Control, texture: Texture2D, color: Color, spr
 	glow.modulate = color
 	badge.add_child(glow)
 
-func _connect_badge_hover(badge_control: Control, text: String) -> void:
+func _connect_badge_hover(badge_control: Control, text: String, preview_card: Card = null) -> void:
 	if badge_control == null:
 		return
 	badge_control.set_meta("hover_badge_text", text)
+	if preview_card != null:
+		badge_control.set_meta("hover_badge_preview_card", preview_card)
 	badge_control.mouse_entered.connect(Callable(self, "_on_badge_mouse_entered"))
 	badge_control.mouse_exited.connect(Callable(self, "_on_badge_mouse_exited"))
 
+func _get_hover_summoned_active_god(card: Card) -> Card:
+	if card == null:
+		return null
+	var active_gods := card.get_hover_summoned_active_gods(_get_viewer_player())
+	return active_gods[0] if not active_gods.is_empty() else null
+
+func _get_locked_take_the_field_preview(card: Card) -> Card:
+	if not _hovered or not (card is TakeTheField) or not card.is_face_down:
+		return null
+	var viewer := _get_viewer_player()
+	if viewer == null or card.card_owner == null or card.get_controller() != viewer:
+		return null
+	return _get_hover_summoned_active_god(card)
+
+func _add_take_the_field_preview_badges(overlay: Control, active_god: Card) -> void:
+	_add_level_badge(overlay, active_god, Control.PRESET_TOP_LEFT, 6, LEVEL_BADGE_TOP, 54, LEVEL_BADGE_BOTTOM)
+	var name_badge := _add_overlay_stat_badge(
+		overlay, active_god.get_display_name_for_control(),
+		Control.PRESET_TOP_WIDE, 6, 16, -6, 38, Color(1.0, 0.95, 0.6)
+	)
+	if name_badge != null:
+		var name_label := name_badge.get_child(0) as Label
+		name_label.clip_text = true
+		name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		UIFontScript.apply_norse_card_name_font(name_label, active_god)
+	_add_overlay_stat_badge(
+		overlay, "STR:%d RES:%d SPD:%d" % [
+			active_god.get_effective_strength(),
+			active_god.get_effective_resilience(),
+			active_god.get_effective_speed()
+		],
+		Control.PRESET_BOTTOM_WIDE, 6, -32, -6, -6
+	)
+
 func _on_badge_mouse_entered() -> void:
+	_badge_hovered = true
+	_hovered = true
+	_active_affordance_hover_owner_id = get_instance_id()
+	_hide_ability_popup()
 	var hovered_control := get_viewport().gui_get_hovered_control()
 	var badge_control := hovered_control
 	while badge_control != null and not badge_control.has_meta("hover_badge_text"):
 		badge_control = badge_control.get_parent() as Control
 	if badge_control == null:
 		return
-	_show_badge_hover_popup(badge_control, str(badge_control.get_meta("hover_badge_text", "")))
+	var preview_card: Card = null
+	if badge_control.has_meta("hover_badge_preview_card"):
+		preview_card = badge_control.get_meta("hover_badge_preview_card") as Card
+	_show_badge_hover_popup(badge_control, str(badge_control.get_meta("hover_badge_text", "")), preview_card)
 
 func _on_badge_mouse_exited() -> void:
+	_badge_hovered = false
 	_hide_badge_hover_popup()
+	_schedule_hover_exit_refresh()
 
-func _on_popup_mouse_exited() -> void:
-	if not _pinned:
-		_schedule_hide()
+func _is_mouse_over_owned_badge() -> bool:
+	if get_viewport() == null:
+		return false
+	var hovered_control := get_viewport().gui_get_hovered_control()
+	var control := hovered_control
+	while control != null:
+		if control == self:
+			return hovered_control != null and _has_badge_hover_ancestor(hovered_control)
+		control = control.get_parent() as Control
+	return false
 
-func _show_badge_hover_popup(anchor: Control, text: String) -> void:
+func _has_badge_hover_ancestor(control: Control) -> bool:
+	var current := control
+	while current != null:
+		if current.has_meta("hover_badge_text"):
+			return true
+		if current == self:
+			return false
+		current = current.get_parent() as Control
+	return false
+
+func _is_mouse_in_affordance_hover_area() -> bool:
+	if get_viewport() == null:
+		return false
+	if _active_affordance_hover_owner_id != get_instance_id():
+		return false
+	var hover_rect := get_global_rect().grow(ABILITY_BADGE_SIZE + 18.0)
+	return hover_rect.has_point(get_global_mouse_position())
+
+func _show_badge_hover_popup(anchor: Control, text: String, preview_card: Card = null) -> void:
 	_hide_badge_hover_popup()
-	if anchor == null or text.strip_edges() == "" or not is_inside_tree() or is_queued_for_deletion():
+	if anchor == null or (text.strip_edges() == "" and preview_card == null) or not is_inside_tree() or is_queued_for_deletion():
 		return
 	var floating_parent := _get_floating_popup_parent()
 	if floating_parent == null:
 		return
 
 	var popup_root := Control.new()
+	popup_root.name = "CardHoverPanel"
+	popup_root.add_to_group("stealth_fog_clear_ui")
 	popup_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	popup_root.top_level = true
 	popup_root.z_as_relative = false
 	popup_root.z_index = POPUP_Z_INDEX + 1
+	# Hidden containers skip child layout. Keep the popup offscreen until its
+	# text and optional preview have been measured, avoiding the thin border.
+	popup_root.position = Vector2(-10000.0, -10000.0)
 
 	var popup := PanelContainer.new()
 	popup.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -2224,45 +2777,61 @@ func _show_badge_hover_popup(anchor: Control, text: String) -> void:
 	popup.add_theme_stylebox_override("panel", style)
 	popup_root.add_child(popup)
 
-	var label := RichTextLabel.new()
-	label.bbcode_enabled = true
-	label.text = text
-	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	label.scroll_active = false
-	label.fit_content = true
-	label.add_theme_font_size_override("normal_font_size", 14)
-	label.add_theme_font_size_override("bold_font_size", 14)
-	label.add_theme_color_override("default_color", Color(1.0, 0.95, 0.75))
-	label.mouse_filter = Control.MOUSE_FILTER_STOP if text.contains("[hint=") else Control.MOUSE_FILTER_IGNORE
-	if text.length() >= 80 or text.contains("\n"):
-		label.custom_minimum_size = Vector2(240.0, 0.0)
-	popup.add_child(label)
+	var content := VBoxContainer.new()
+	content.add_theme_constant_override("separation", 6)
+	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	popup.add_child(content)
 
+	if text.strip_edges() != "":
+		var label := RichTextLabel.new()
+		label.bbcode_enabled = true
+		label.size.x = 240.0
+		label.custom_minimum_size = Vector2(240.0, 0.0)
+		label.custom_maximum_size = Vector2(240.0, -1.0)
+		label.text = text
+		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		label.scroll_active = false
+		label.fit_content = true
+		label.add_theme_font_size_override("normal_font_size", 14)
+		label.add_theme_font_size_override("bold_font_size", 14)
+		label.add_theme_color_override("default_color", Color(1.0, 0.95, 0.75))
+		label.mouse_filter = Control.MOUSE_FILTER_STOP if text.contains("[hint=") else Control.MOUSE_FILTER_IGNORE
+		content.add_child(label)
+
+	if preview_card != null:
+		content.add_child(CardDetailContentBuilderScript.make_full_card_preview(
+			preview_card,
+			_get_viewer_player(),
+			240.0,
+			game_manager
+		))
+
+	CardDetailContentBuilderScript.set_hover_mouse_passthrough(popup_root)
 	_badge_hover_popup = popup_root
 	floating_parent.add_child(popup_root)
 	popup_root.move_to_front()
 
 	await get_tree().process_frame
+	# The nested containers and optional card preview need a second layout pass.
+	await get_tree().process_frame
 	if not is_instance_valid(popup_root) or not is_instance_valid(popup) or not is_instance_valid(anchor):
+		return
+	if popup_root.is_queued_for_deletion() or anchor.is_queued_for_deletion() or _badge_hover_popup != popup_root:
 		return
 	var popup_size := popup.get_combined_minimum_size()
 	popup.size = popup_size
 	popup_root.size = popup_size
-	var anchor_rect := anchor.get_global_rect()
-	var viewport_size := get_viewport_rect().size
-	var popup_pos := Vector2(
-		anchor_rect.position.x + (anchor_rect.size.x - popup_size.x) * 0.5,
-		anchor_rect.position.y - popup_size.y - 6.0
+	var anchor_rect := anchor.get_global_transform() * Rect2(Vector2.ZERO, anchor.size)
+	CardDetailContentBuilderScript.place_hover_panel(
+		popup_root, anchor_rect, _get_card_hover_avoid_rect().merge(anchor_rect)
 	)
-	if popup_pos.y < 4.0:
-		popup_pos.y = anchor_rect.end.y + 6.0
-	popup_pos.x = clamp(popup_pos.x, 4.0, viewport_size.x - popup_size.x - 4.0)
-	popup_root.global_position = popup_pos
 
 func _hide_badge_hover_popup() -> void:
 	if _badge_hover_popup != null and is_instance_valid(_badge_hover_popup):
+		_badge_hover_popup.hide()
 		_badge_hover_popup.queue_free()
 	_badge_hover_popup = null
+	_update_hover_polling()
 
 func _add_tez_bloodstreaks(badge: Control, sacrifice_count: int) -> void:
 	if badge == null:
@@ -2292,28 +2861,12 @@ func _add_priority_response_aura(overlay: Control) -> void:
 	if overlay == null:
 		return
 
-	var ring := PanelContainer.new()
-	ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	ring.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	ring.offset_left = 9
-	ring.offset_top = 9
-	ring.offset_right = -9
-	ring.offset_bottom = -9
-
-	var ring_style := StyleBoxFlat.new()
-	ring_style.bg_color = Color(0, 0, 0, 0)
-	ring_style.border_color = Color(0.5, 1.0, 0.58, 0.92)
-	ring_style.shadow_color = Color(0.28, 0.95, 0.38, 0.55)
-	ring_style.shadow_size = 8
-	ring_style.corner_radius_top_left = 8
-	ring_style.corner_radius_top_right = 8
-	ring_style.corner_radius_bottom_left = 8
-	ring_style.corner_radius_bottom_right = 8
-	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		ring_style.set_border_width(side, 2)
-	ring.add_theme_stylebox_override("panel", ring_style)
-	_fade_card_option_visual(ring)
-	overlay.add_child(ring)
+	var aura := PriorityResponseAura.new()
+	aura.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	aura.z_index = 20
+	aura.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_fade_card_option_visual(aura)
+	overlay.add_child(aura)
 
 func _add_attack_aura(overlay: Control) -> void:
 	if overlay == null:
@@ -2326,19 +2879,21 @@ func _add_attack_aura(overlay: Control) -> void:
 	_fade_card_option_visual(aura)
 	overlay.add_child(aura)
 
-func _add_followers_attack_target_tint(overlay: Control) -> void:
+func _add_attack_target_aura(overlay: Control) -> void:
 	if overlay == null:
 		return
 
 	var glow := ColorRect.new()
 	glow.color = Color(0.92, 0.10, 0.08, 0.22)
 	glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	glow.z_index = 4
 	glow.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_fade_card_option_visual(glow)
 	overlay.add_child(glow)
 
 	var ring := PanelContainer.new()
 	ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ring.z_index = 5
 	ring.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	ring.offset_left = 4
 	ring.offset_top = 4
@@ -2359,6 +2914,235 @@ func _add_followers_attack_target_tint(overlay: Control) -> void:
 	ring.add_theme_stylebox_override("panel", ring_style)
 	_fade_card_option_visual(ring)
 	overlay.add_child(ring)
+
+func _add_followers_attack_target_tint(overlay: Control) -> void:
+	_add_attack_target_aura(overlay)
+
+func _add_intercept_preview_badge(overlay: Control, card: Card) -> void:
+	if overlay == null or card == null:
+		return
+	if card.card_type != Card.CardType.CREATURE or card.is_god:
+		return
+	if _is_stealth_hidden_from_viewer(card):
+		if _is_attack_preview_ambiguous_stealth_interceptor(card):
+			_add_ambiguous_stealth_intercept_preview_badge(overlay, card)
+		return
+	if not _is_attack_preview_interceptor(card):
+		return
+	_add_exact_intercept_preview_badge(overlay)
+
+func _make_intercept_preview_badge_container(badge_name: String) -> Control:
+	var badge := Control.new()
+	badge.name = badge_name
+	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	badge.z_index = 42
+	badge.clip_contents = false
+	badge.anchor_left = 0.5
+	badge.anchor_right = 0.5
+	badge.anchor_top = 0.0
+	badge.anchor_bottom = 0.0
+	badge.offset_left = -INTERCEPT_PREVIEW_BADGE_SIZE * 0.5
+	badge.offset_top = INTERCEPT_PREVIEW_BADGE_TOP
+	badge.offset_right = INTERCEPT_PREVIEW_BADGE_SIZE * 0.5
+	badge.offset_bottom = INTERCEPT_PREVIEW_BADGE_TOP + INTERCEPT_PREVIEW_BADGE_SIZE
+	badge.custom_minimum_size = Vector2(INTERCEPT_PREVIEW_BADGE_SIZE, INTERCEPT_PREVIEW_BADGE_SIZE)
+	badge.size = badge.custom_minimum_size
+	return badge
+
+func _add_intercept_preview_badge_icon(
+	badge: Control,
+	texture: Texture2D,
+	icon_rotation_degrees: float,
+	modulate_color: Color = Color.WHITE
+) -> TextureRect:
+	if badge == null or texture == null:
+		return null
+	var icon := TextureRect.new()
+	icon.texture = texture
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	icon.pivot_offset = Vector2(INTERCEPT_PREVIEW_BADGE_SIZE, INTERCEPT_PREVIEW_BADGE_SIZE) * 0.5
+	icon.rotation_degrees = icon_rotation_degrees
+	icon.modulate = modulate_color
+	badge.add_child(icon)
+	return icon
+
+func _add_exact_intercept_preview_badge(overlay: Control) -> void:
+	var badge := _make_intercept_preview_badge_container("InterceptPreviewBadge")
+	_add_intercept_preview_badge_icon(badge, INTERCEPT_PREVIEW_BADGE_TEXTURE, 180.0)
+	overlay.add_child(badge)
+
+func _add_ambiguous_stealth_intercept_preview_badge(overlay: Control, card: Card) -> void:
+	var badge := _make_intercept_preview_badge_container("StealthInterceptPreviewBadge")
+	var intercept_icon := _add_intercept_preview_badge_icon(
+		badge,
+		INTERCEPT_PREVIEW_BADGE_TEXTURE,
+		180.0,
+		Color(1.0, 1.0, 1.0, STEALTH_INTERCEPT_PREVIEW_ICON_ALPHA)
+	)
+	var question_icon := _add_intercept_preview_badge_icon(
+		badge,
+		STEALTH_INTERCEPT_PREVIEW_QUESTION_TEXTURE,
+		0.0,
+		Color(1.0, 1.0, 1.0, 0.0)
+	)
+	_add_stealth_intercept_badge_haze(badge, card)
+	overlay.add_child(badge)
+	_start_stealth_intercept_badge_alternation(badge, intercept_icon, question_icon)
+
+func _add_stealth_intercept_badge_haze(badge: Control, card: Card) -> void:
+	if badge == null:
+		return
+	var haze := ColorRect.new()
+	haze.name = "StealthInterceptBadgeHaze"
+	haze.color = Color(0.04, 0.05, 0.13, 0.24)
+	haze.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	haze.z_index = 8
+	haze.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	badge.add_child(haze)
+
+	var fog_overlay := StealthFogOverlayScript.new() as Control
+	fog_overlay.name = "StealthInterceptBadgeFog"
+	fog_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	fog_overlay.z_index = 9
+	fog_overlay.clip_contents = false
+	fog_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	fog_overlay.set("fog_alpha", 0.34)
+	fog_overlay.set("variant_seed", _get_stealth_fog_overlay_seed(card) + 409)
+	badge.add_child(fog_overlay)
+
+func _start_stealth_intercept_badge_alternation(
+	badge: Control,
+	intercept_icon: TextureRect,
+	question_icon: TextureRect
+) -> void:
+	if badge == null or intercept_icon == null or question_icon == null:
+		return
+	var tween := badge.create_tween()
+	tween.set_loops()
+	tween.tween_interval(STEALTH_INTERCEPT_PREVIEW_HOLD_SECONDS)
+	tween.tween_property(intercept_icon, "modulate:a", 0.0, STEALTH_INTERCEPT_PREVIEW_FADE_SECONDS).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	tween.parallel().tween_property(question_icon, "modulate:a", STEALTH_INTERCEPT_PREVIEW_ICON_ALPHA, STEALTH_INTERCEPT_PREVIEW_FADE_SECONDS).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	tween.tween_interval(STEALTH_INTERCEPT_PREVIEW_HOLD_SECONDS)
+	tween.tween_property(question_icon, "modulate:a", 0.0, STEALTH_INTERCEPT_PREVIEW_FADE_SECONDS).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	tween.parallel().tween_property(intercept_icon, "modulate:a", STEALTH_INTERCEPT_PREVIEW_ICON_ALPHA, STEALTH_INTERCEPT_PREVIEW_FADE_SECONDS).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+
+func _take_stealth_fog_overlay_for_refresh(card: Card) -> Control:
+	if card == null or card.card_type != Card.CardType.CREATURE or not card.is_stealth:
+		return null
+	var fog_overlay := _stealth_fog_overlay
+	if fog_overlay == null or not is_instance_valid(fog_overlay) or fog_overlay.is_queued_for_deletion():
+		fog_overlay = _find_stealth_fog_overlay(self)
+	if fog_overlay == null or not is_instance_valid(fog_overlay) or fog_overlay.is_queued_for_deletion():
+		return null
+	if int(fog_overlay.get("variant_seed")) != _get_stealth_fog_overlay_seed(card):
+		return null
+	var parent := fog_overlay.get_parent()
+	if parent != null:
+		parent.remove_child(fog_overlay)
+	_stealth_fog_overlay = null
+	return fog_overlay
+
+func _find_stealth_fog_overlay(root: Node) -> Control:
+	if root == null:
+		return null
+	if root is Control and root.name == StealthFogOverlayScript.OVERLAY_NAME:
+		return root as Control
+	for child in root.get_children():
+		var found := _find_stealth_fog_overlay(child)
+		if found != null:
+			return found
+	return null
+
+func _add_stealth_fog_overlay(overlay: Control, card: Card, preserved_fog_overlay: Control = null) -> void:
+	if overlay == null or card == null:
+		return
+	if card.card_type != Card.CardType.CREATURE or not card.is_stealth:
+		return
+	var fog_variant_seed := _get_stealth_fog_overlay_seed(card)
+	var existing := overlay.get_node_or_null(StealthFogOverlayScript.OVERLAY_NAME) as Control
+	if existing != null:
+		existing.set("fog_alpha", 0.42)
+		existing.set("variant_seed", fog_variant_seed)
+		_stealth_fog_overlay = existing
+		return
+	if preserved_fog_overlay != null and is_instance_valid(preserved_fog_overlay):
+		preserved_fog_overlay.name = StealthFogOverlayScript.OVERLAY_NAME
+		preserved_fog_overlay.set("fog_alpha", 0.42)
+		preserved_fog_overlay.set("variant_seed", fog_variant_seed)
+		preserved_fog_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		preserved_fog_overlay.clip_contents = false
+		preserved_fog_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		overlay.add_child(preserved_fog_overlay)
+		_stealth_fog_overlay = preserved_fog_overlay
+		if preserved_fog_overlay.has_method("refresh_cursor_state"):
+			preserved_fog_overlay.call("refresh_cursor_state")
+		return
+	var fog_overlay := StealthFogOverlayScript.new() as Control
+	fog_overlay.name = StealthFogOverlayScript.OVERLAY_NAME
+	fog_overlay.set("fog_alpha", 0.42)
+	fog_overlay.set("variant_seed", fog_variant_seed)
+	fog_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	fog_overlay.clip_contents = false
+	fog_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.add_child(fog_overlay)
+	_stealth_fog_overlay = fog_overlay
+	if fog_overlay.has_method("refresh_cursor_state"):
+		fog_overlay.call("refresh_cursor_state")
+
+func _get_stealth_fog_overlay_seed(card: Card) -> int:
+	var seed_parts: Array[String] = []
+	if zone != null:
+		seed_parts.append(str(zone.zone_type))
+		seed_parts.append(str(zone.zone_index))
+	if card != null:
+		if "uid" in card and str(card.uid).strip_edges() != "":
+			seed_parts.append(str(card.uid))
+		else:
+			seed_parts.append(card.card_name)
+			seed_parts.append(card.art_path)
+	if seed_parts.is_empty():
+		seed_parts.append(str(get_instance_id()))
+	return posmod("|".join(seed_parts).hash(), 1000000)
+
+func _add_follower_count_badge(overlay: Control) -> void:
+	if owning_player == null or zone == null or zone.zone_type != Zone.ZoneType.GOD_SLOT:
+		return
+	var badge := FollowerCountBadgeScript.new()
+	badge.name = "FollowerCountBadge"
+	badge.set_followers(owning_player.followers)
+	badge.show_loss_flash(follower_loss_flash_started_msec)
+	owning_player.followers_changed.connect(badge.set_followers)
+	# Keep aligned with the mana globe, near the top of the God card.
+	badge.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	badge.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	badge.offset_left = -54.3
+	badge.offset_right = 21.7
+	badge.offset_top = 30
+	badge.offset_bottom = 62
+	badge.z_index = 21
+	overlay.add_child(badge)
+	_connect_badge_hover(badge, badge.tooltip_text)
+
+func _add_guard_indicator(overlay: Control) -> void:
+	if owning_player == null or zone == null or zone.zone_type != Zone.ZoneType.GOD_SLOT:
+		return
+	var badge := GuardIndicatorScript.new()
+	badge.name = "GuardIndicator"
+	badge.set_guard(owning_player.guard)
+	owning_player.guard_changed.connect(badge.set_guard)
+	# Stack directly under the follower count badge, above the mana globe.
+	badge.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	badge.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	badge.offset_left = -54.3
+	badge.offset_right = 21.7
+	badge.offset_top = 64
+	badge.offset_bottom = 94
+	badge.z_index = 21
+	overlay.add_child(badge)
+	_connect_badge_hover(badge, badge.tooltip_text)
 
 func _add_followers_attack_result_label(overlay: Control) -> void:
 	if overlay == null or _followers_attack_result_text == "":
@@ -2393,59 +3177,19 @@ func _add_stack_target_indicator(overlay: Control) -> void:
 	_fade_card_option_visual(marker)
 	overlay.add_child(marker)
 
-func _add_target_aura(overlay: Control) -> void:
+func _add_target_aura(overlay: Control, tint: Color = Color.WHITE) -> void:
 	if overlay == null:
 		return
 
 	var aura := TargetAura.new()
 	aura.z_index = 3
+	aura.modulate = tint
 	aura.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_fade_card_option_visual(aura)
 	overlay.add_child(aura)
 
-func _uses_res_attack_target_icon(card: Card) -> bool:
-	if card == null:
-		return false
-	if card.card_type == Card.CardType.STRUCTURE:
-		return true
-	if card.card_type == Card.CardType.EQUIPMENT:
-		return true
-	if card.card_type == Card.CardType.CREATURE:
-		return card.creature_mode == Card.CreatureMode.DEFENSIVE or card.is_petrified()
-	return false
-
-func _get_attack_target_texture(card: Card) -> Texture2D:
-	if card == null:
-		return null
-	if card.card_type == Card.CardType.EQUIPMENT:
-		return DESTROY_ATTACK_TARGET_TEXTURE
-	return RES_ATTACK_TARGET_TEXTURE if _uses_res_attack_target_icon(card) else AGGRESSIVE_ATTACK_TARGET_TEXTURE
-
-func _get_attack_target_hover_text(card: Card) -> String:
-	if card == null:
-		return ""
-	if card.card_type == Card.CardType.EQUIPMENT:
-		return "Destroy"
-	return "Attack"
-
 func _get_card_target_icon_entries(card: Card) -> Array[Dictionary]:
 	var entries: Array[Dictionary] = []
-	if _is_card_attack_candidate(card):
-		var texture := _get_attack_target_texture(card)
-		if texture != null:
-			var scene_root := _get_targeting_scene_root()
-			var actor := _get_selected_attacker(scene_root)
-			var action_name := "destroy equipment" if card.card_type == Card.CardType.EQUIPMENT else "attack"
-			var action_cost_entries := _get_attack_action_cost_entries(actor) if action_name == "attack" else _make_action_cost_entries(Card.ACTION_COST_MAJOR)
-			entries.append({
-				"actor": actor,
-				"texture": texture,
-				"border_color": Color(1.0, 0.32, 0.18, 0.92),
-				"hover_text": _get_attack_target_hover_text(card),
-				"action": "",
-				"action_cost_entries": action_cost_entries,
-				"action_mana_cost": _get_creature_action_mana_cost(actor, action_name),
-			})
 	var equipment_action_entry := _get_equipment_target_action_icon_entry(card)
 	if not equipment_action_entry.is_empty():
 		entries.append(equipment_action_entry)
@@ -2474,7 +3218,9 @@ func _get_equipment_target_action_icon_entry(card: Card) -> Dictionary:
 	if equipment_entry.is_empty():
 		return {}
 	var is_enemy := bool(equipment_entry.get("is_enemy", false))
-	var action_cost_kind := Card.ACTION_COST_MAJOR if is_enemy else _get_minor_action_cost_kind_for_card(actor)
+	var action_cost_kind := game_manager.get_equipment_pickup_action_cost_kind(actor, card, is_enemy)
+	if action_cost_kind == Card.ACTION_COST_MINOR:
+		action_cost_kind = _get_minor_action_cost_kind_for_card(actor)
 	var pick_up_label := str(equipment_entry.get("pick_up_label", "Pick Up"))
 	var action_name := "pick up equipment"
 	if not is_enemy and pick_up_label == "Mount":
@@ -2488,22 +3234,6 @@ func _get_equipment_target_action_icon_entry(card: Card) -> Dictionary:
 		"action_cost_entries": _make_action_cost_entries(action_cost_kind),
 		"action_mana_cost": _get_creature_action_mana_cost(actor, action_name),
 	}
-
-func _add_followers_attack_target_icon(overlay: Control) -> void:
-	if overlay == null or FOLLOWERS_ATTACK_TARGET_TEXTURE == null:
-		return
-	var scene_root := _get_targeting_scene_root()
-	var actor := _get_selected_attacker(scene_root)
-	var entries: Array[Dictionary] = [{
-		"actor": actor,
-		"texture": FOLLOWERS_ATTACK_TARGET_TEXTURE,
-		"border_color": Color(1.0, 0.32, 0.18, 0.92),
-		"hover_text": "Attack",
-		"action": "",
-		"action_cost_entries": _get_attack_action_cost_entries(actor),
-		"action_mana_cost": _get_creature_action_mana_cost(actor, "attack"),
-	}]
-	_add_centered_target_icon_group(overlay, entries, null)
 
 func _has_card_target_icon_candidate(card: Card) -> bool:
 	return not _get_card_target_icon_entries(card).is_empty()
@@ -2527,7 +3257,7 @@ func _get_reachable_equipment_entry(scene_root: Node, actor: Card, equipment: Ca
 			return {}
 		if scene_root.has_method("_can_pick_up_equipment_entry"):
 			var is_enemy := bool(dict.get("is_enemy", false))
-			if not bool(scene_root.call("_can_pick_up_equipment_entry", actor, is_enemy)):
+			if not bool(scene_root.call("_can_pick_up_equipment_entry", actor, is_enemy, equipment)):
 				return {}
 		return dict
 	return {}
@@ -2870,7 +3600,8 @@ func _add_equipment_affordances(overlay: Control, card: Card) -> void:
 		var affordance_size := affordance.custom_minimum_size
 		if affordance_size == Vector2.ZERO:
 			affordance_size = EquipmentCard.EQUIPPED_AFFORDANCE_SIZE
-		affordance.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		affordance.mouse_filter = Control.MOUSE_FILTER_PASS
+		_connect_badge_hover(affordance, "", equip)
 		affordance.set_anchors_preset(Control.PRESET_TOP_LEFT)
 		affordance.offset_left = badge_left
 		affordance.offset_top = badge_top
@@ -2924,25 +3655,38 @@ func _has_dromi_binding(card: Card) -> bool:
 	return _get_dromi_binding_source(card) != null
 
 func _add_binding_affordances(overlay: Control, card: Card) -> void:
-	if overlay == null or card == null or card.card_type != Card.CardType.CREATURE:
+	if overlay == null or not (card is PermanentHexCard):
 		return
-	var dromi_source := _get_dromi_binding_source(card)
-	if dromi_source == null:
+	var target := (card as PermanentHexCard).attached_target
+	if target == null or target.current_zone == null:
 		return
-	var badge_top := _get_secondary_left_affordance_row_top(card)
-	var art_preview: Control = null
-	if dromi_source != card:
-		art_preview = _make_card_art_preview(dromi_source)
-	if art_preview == null:
+	var viewer := _get_viewer_player()
+	var target_hidden := target.is_hidden_from_viewer(viewer)
+	var preview := _make_debuff_source_preview({
+		"source_card": target,
+		"preview_texture": UITextureCacheScript.get_texture("res://images/cardbackAI.png") if target_hidden else null,
+	})
+	if preview == null:
 		return
-	_add_equipment_indicator_badge(
-		overlay,
-		art_preview,
-		6.0,
-		badge_top,
-		Color(0.28, 0.05, 0.05, 0.94),
-		Color(1.0, 0.35, 0.28, 0.96)
-	)
+	var badge := DebuffBadgeScript.create(preview)
+	badge.name = "BindingTargetBadge"
+	var style := badge.get_theme_stylebox("panel").duplicate() as StyleBoxFlat
+	style.bg_color = Color(0.16, 0.04, 0.24, 0.95)
+	style.border_color = Color(0.76, 0.38, 1.0, 0.98)
+	style.shadow_color = Color(0.22, 0.04, 0.34, 0.52)
+	badge.add_theme_stylebox_override("panel", style)
+	badge.mouse_filter = Control.MOUSE_FILTER_PASS
+	_connect_badge_hover(badge, "Binding (%s)" % target.get_log_display_name(viewer))
+	var badge_top := 32.0 if _is_card_targeted_on_stack(card) else _get_badge_row_top()
+	var badge_right := -6.0
+	if _is_card_publicly_identified(card) and viewer != null and card.card_owner == viewer:
+		badge_right -= DEBUFF_BADGE_SIZE + DEBUFF_AFFORDANCE_GAP
+	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	badge.offset_left = badge_right - DEBUFF_BADGE_SIZE
+	badge.offset_top = badge_top
+	badge.offset_right = badge_right
+	badge.offset_bottom = badge_top + DEBUFF_BADGE_SIZE
+	overlay.add_child(badge)
 
 func _add_debuff_affordances(overlay: Control, card: Card) -> void:
 	if overlay == null or card == null or card.card_type != Card.CardType.CREATURE or card.is_god:
@@ -2957,50 +3701,79 @@ func _add_debuff_affordances(overlay: Control, card: Card) -> void:
 		var preview := _make_debuff_source_preview(entry)
 		if preview == null:
 			continue
-		var badge := PanelContainer.new()
-		badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var badge := DebuffBadgeScript.create(preview, int(entry.get("count", 1)))
+		var source_card := entry.get("source_card", null) as Card
+		var tooltip := str(entry.get("tooltip", ""))
+		if source_card != null or tooltip != "":
+			badge.mouse_filter = Control.MOUSE_FILTER_PASS
+			_connect_badge_hover(badge, tooltip, source_card)
 		badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 		badge.offset_left = badge_right - DEBUFF_BADGE_SIZE
 		badge.offset_top = badge_top
 		badge.offset_right = badge_right
 		badge.offset_bottom = badge_top + DEBUFF_BADGE_SIZE
-
-		var badge_style := StyleBoxFlat.new()
-		badge_style.bg_color = Color(0.18, 0.02, 0.02, 0.95)
-		badge_style.border_color = Color(1.0, 0.28, 0.24, 0.98)
-		badge_style.shadow_color = Color(0.28, 0.02, 0.02, 0.52)
-		badge_style.shadow_size = 4
-		badge_style.corner_radius_top_left = 11
-		badge_style.corner_radius_top_right = 11
-		badge_style.corner_radius_bottom_left = 11
-		badge_style.corner_radius_bottom_right = 11
-		for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-			badge_style.set_border_width(side, 1)
-		badge.add_theme_stylebox_override("panel", badge_style)
 		overlay.add_child(badge)
-
-		badge.add_child(preview)
-
-		var count := int(entry.get("count", 1))
-		if count > 1:
-			var count_label := Label.new()
-			count_label.text = str(count)
-			count_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			count_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-			count_label.add_theme_font_size_override("font_size", 9)
-			count_label.add_theme_color_override("font_color", Color(1.0, 0.94, 0.94))
-			count_label.add_theme_color_override("font_shadow_color", Color(0.22, 0.0, 0.0, 0.9))
-			count_label.add_theme_constant_override("shadow_offset_x", 1)
-			count_label.add_theme_constant_override("shadow_offset_y", 1)
-			count_label.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-			count_label.offset_left = -10
-			count_label.offset_top = -10
-			count_label.offset_right = 0
-			count_label.offset_bottom = 0
-			count_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			badge.add_child(count_label)
+		_flash_dromi_drain_badge(badge, entry)
 
 		badge_right -= DEBUFF_BADGE_SIZE + DEBUFF_AFFORDANCE_GAP
+
+func _flash_dromi_drain_badge(badge: Control, entry: Dictionary) -> void:
+	var dromi := entry.get("source_card", null) as Dromi
+	if dromi == null:
+		return
+	var source_uid := BoardZoneUI.get_action_point_card_uid(dromi)
+	var now := Time.get_ticks_msec()
+	# Keep the count and flash start across redraws and network card replacements.
+	# The first snapshot establishes a baseline so joining does not replay old drains.
+	var state: Dictionary = _dromi_drain_visual_states.get(source_uid, {
+		"count": dromi.follower_drain_count,
+		"flash_started_ms": -1,
+	})
+	if dromi.follower_drain_count > int(state["count"]):
+		state["flash_started_ms"] = now
+	state["count"] = dromi.follower_drain_count
+	_dromi_drain_visual_states[source_uid] = state
+	var started_ms := int(state["flash_started_ms"])
+	if started_ms >= 0:
+		DebuffBadgeScript.flash_red(badge, float(now - started_ms) / 1000.0)
+
+func _is_card_publicly_identified(card: Card) -> bool:
+	return card != null and card.is_publicly_identified(game_manager)
+
+func _add_publicly_identified_card_affordance(overlay: Control, card: Card) -> void:
+	if overlay == null or card == null:
+		return
+	if not _is_card_publicly_identified(card):
+		return
+	var viewer := _get_viewer_player()
+	if viewer == null or card.card_owner != viewer:
+		return
+
+	var preview := TextureRect.new()
+	preview.texture = MOPSUS_ABILITY_BADGE_TEXTURE
+	preview.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	preview.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	preview.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	preview.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	preview.offset_left = 2.0
+	preview.offset_top = 2.0
+	preview.offset_right = -2.0
+	preview.offset_bottom = -2.0
+
+	var badge_right := -6.0
+	if card.card_type == Card.CardType.CREATURE and not card.is_god:
+		var debuff_entries := _get_debuff_affordance_entries(card)
+		badge_right -= float(debuff_entries.size()) * (DEBUFF_BADGE_SIZE + DEBUFF_AFFORDANCE_GAP)
+	var badge_top := 32.0 if _is_card_targeted_on_stack(card) else _get_badge_row_top()
+	var badge := DebuffBadgeScript.create(preview)
+	badge.mouse_filter = Control.MOUSE_FILTER_PASS
+	_connect_badge_hover(badge, CardDetailContentBuilderScript.PUBLICLY_IDENTIFIED_HOVER_TEXT)
+	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	badge.offset_left = badge_right - DEBUFF_BADGE_SIZE
+	badge.offset_top = badge_top
+	badge.offset_right = badge_right
+	badge.offset_bottom = badge_top + DEBUFF_BADGE_SIZE
+	overlay.add_child(badge)
 
 func _add_boon_affordances(overlay: Control, card: Card) -> void:
 	if overlay == null or card == null or card.card_type != Card.CardType.CREATURE or card.is_god:
@@ -3025,7 +3798,7 @@ func _add_boon_affordances(overlay: Control, card: Card) -> void:
 			preview = label
 
 		var badge := PanelContainer.new()
-		badge.mouse_filter = Control.MOUSE_FILTER_STOP
+		badge.mouse_filter = Control.MOUSE_FILTER_PASS
 		badge.tooltip_text = str(entry.get("tooltip", "Good Fortune"))
 		badge.set_anchors_preset(Control.PRESET_TOP_LEFT)
 		badge.offset_left = badge_left
@@ -3055,6 +3828,21 @@ func _get_boon_affordance_entries(card: Card) -> Array[Dictionary]:
 	if card == null:
 		return entries
 	var seen: Dictionary = {}
+	for buff in card._get_effective_buffs():
+		if str(buff.get("effect_type", "")) != EN_HEDU_ANNA_EXALTATION_EFFECT_TYPE:
+			continue
+		var source_key := _get_debuff_source_key(buff)
+		var key := "exaltation:%s" % source_key
+		if seen.has(key):
+			continue
+		seen[key] = entries.size()
+		entries.append({
+			"key": key,
+			"source_card": buff.get("source_card", null),
+			"source": buff.get("source", EN_HEDU_ANNA_EXALTATION_SOURCE),
+			"label": "EX",
+			"tooltip": _get_exaltation_boon_tooltip(buff),
+		})
 	for status in card.active_statuses:
 		if str(status.get("name", "")) != THIRD_SAGE_GOOD_FORTUNE_STATUS:
 			continue
@@ -3087,16 +3875,59 @@ func _get_boon_affordance_entries(card: Card) -> Array[Dictionary]:
 		entries.append(entry)
 	return entries
 
+func _get_exaltation_boon_tooltip(buff: Dictionary) -> String:
+	var bonuses: Array[String] = []
+	var str_bonus := int(buff.get("str", 0))
+	var res_bonus := int(buff.get("res", 0))
+	var spd_bonus := int(buff.get("spd", 0))
+	if str_bonus != 0:
+		bonuses.append("%+d STR" % str_bonus)
+	if res_bonus != 0:
+		bonuses.append("%+d RES" % res_bonus)
+	if spd_bonus != 0:
+		bonuses.append("%+d SPD" % spd_bonus)
+	var bonus_text := ", ".join(bonuses)
+	if bonus_text == "":
+		bonus_text = "Exaltation"
+	return "%s from %s\nCannot attack, be destroyed, or be targeted until the end of the next turn." % [
+		bonus_text,
+		_get_effect_source_label(buff),
+	]
+
 func _get_good_fortune_tooltip(status: Dictionary, ward_kinds: Array) -> String:
-	var source := str(status.get("source", "Good Fortune"))
-	var readable_kinds: Array[String] = []
-	for ward_kind in ward_kinds:
-		var readable := str(ward_kind).replace("_", " ").capitalize()
-		if readable != "":
-			readable_kinds.append(readable)
-	if readable_kinds.is_empty():
+	var source := _get_effect_source_label(status)
+	var protection_text := _format_good_fortune_protection_text(ward_kinds)
+	if protection_text == "":
 		return "Good Fortune from " + source
-	return "Good Fortune vs " + " and ".join(readable_kinds) + " from " + source
+	return "Good Fortune from %s\nCannot be targeted by %s while %s remains face-up on the field." % [
+		source,
+		protection_text,
+		source,
+	]
+
+func _format_good_fortune_protection_text(ward_kinds: Array) -> String:
+	var protects_spells := false
+	var protects_creature_abilities := false
+	for ward_kind in ward_kinds:
+		match str(ward_kind).strip_edges():
+			"spells":
+				protects_spells = true
+			"creature_abilities":
+				protects_creature_abilities = true
+	if protects_spells and protects_creature_abilities:
+		return "spells or creature abilities"
+	if protects_spells:
+		return "spells"
+	if protects_creature_abilities:
+		return "creature abilities"
+	return ""
+
+func _get_effect_source_label(entry: Dictionary) -> String:
+	var source_card := entry.get("source_card", null) as Card
+	if source_card != null and source_card.card_name.strip_edges() != "":
+		return source_card.card_name
+	var source_label := str(entry.get("source", "")).strip_edges()
+	return source_label if source_label != "" else "?"
 
 func _get_debuff_affordance_entries(card: Card) -> Array[Dictionary]:
 	var entries: Array[Dictionary] = []
@@ -3110,6 +3941,7 @@ func _get_debuff_affordance_entries(card: Card) -> Array[Dictionary]:
 		_append_debuff_affordance_entry(entries, seen, _build_debuff_entry_from_buff(buff))
 	for binding in _get_attached_permanent_hexes(card):
 		_append_debuff_affordance_entry(entries, seen, _build_debuff_entry_from_binding(binding))
+	_append_debuff_affordance_entry(entries, seen, _build_mute_debuff_entry(card))
 	return entries
 
 func _is_card_soft_selected(card: Card) -> bool:
@@ -3204,7 +4036,7 @@ func _append_debuff_affordance_entry(entries: Array[Dictionary], seen: Dictionar
 func _make_card_art_preview(source_card: Card) -> Control:
 	if source_card == null or source_card.art_path == "":
 		return null
-	var tex := load(source_card.art_path) as Texture2D
+	var tex := UITextureCacheScript.get_texture(source_card.art_path)
 	if tex == null:
 		return null
 	var art := TextureRect.new()
@@ -3218,6 +4050,31 @@ func _make_card_art_preview(source_card: Card) -> Control:
 	art.offset_right = -2
 	art.offset_bottom = -2
 	return art
+
+func _add_snow_v2_card_weather_overlay(overlay: Control, card: Card, allow_melt: bool = false, show_falling: bool = true, show_body_powder: bool = true) -> void:
+	if overlay == null:
+		return
+	var snow_overlay := SnowV2CardMeltOverlayScript.new()
+	snow_overlay.name = "SnowV2CardMeltOverlay"
+	snow_overlay.snowflake_texture = SNOW_V2_SNOWFLAKE_TEXTURE
+	snow_overlay.paintbrush_texture = SNOW_V2_PAINTBRUSH_TEXTURE
+	snow_overlay.flake_atlas_texture = SNOW_V2_FLAKE_ATLAS_TEXTURE
+	snow_overlay.powder_texture = SNOW_V2_POWDER_TEXTURE
+	snow_overlay.edge_strip_texture = SNOW_V2_EDGE_STRIPS_TEXTURE
+	snow_overlay.corner_border_texture = SNOW_V2_CORNER_BORDER_TEXTURE
+	snow_overlay.allow_melt_on_land = allow_melt
+	snow_overlay.show_falling_flakes = show_falling
+	snow_overlay.show_body_powder = show_body_powder
+	snow_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	if card != null and card.is_god:
+		snow_overlay.body_inset = Vector4(14.0, 18.0, 14.0, 34.0)
+	elif card != null and card.card_type == Card.CardType.CREATURE:
+		snow_overlay.body_inset = Vector4(12.0, 18.0, 12.0, 56.0)
+	elif card != null and card.card_type == Card.CardType.STRUCTURE:
+		snow_overlay.body_inset = Vector4(12.0, 18.0, 12.0, 46.0)
+	else:
+		snow_overlay.body_inset = Vector4(10.0, 12.0, 10.0, 24.0)
+	overlay.add_child(snow_overlay)
 
 func _is_tiamat_power_creature_zone() -> bool:
 	if _preview_card != null:
@@ -3239,7 +4096,7 @@ func _get_power_lock_texture(card: Card, culture_is_known: bool = true) -> Textu
 	if card != null:
 		if not culture_is_known:
 			return POWER_LOCK_TEXTURE
-		if str(card.culture).strip_edges() == "Ancient" or card.has_type("Ancient Power"):
+		if card.culture.strip_edges() == "Ancient":
 			return ANCIENT_POWER_LOCK_TEXTURE
 		if str(card.culture).strip_edges() == "Norse":
 			return NORSE_POWER_LOCK_TEXTURE
@@ -3307,6 +4164,19 @@ func _is_tiamat_power_creature_stack_revealed() -> bool:
 	return false
 
 func _make_debuff_source_preview(entry: Dictionary) -> Control:
+	var preview_texture := entry.get("preview_texture", null) as Texture2D
+	if preview_texture != null:
+		var preview := TextureRect.new()
+		preview.texture = preview_texture
+		preview.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		preview.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		preview.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		preview.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		preview.offset_left = 2
+		preview.offset_top = 2
+		preview.offset_right = -2
+		preview.offset_bottom = -2
+		return preview
 	var source_card := entry.get("source_card", null) as Card
 	return _make_card_art_preview(source_card)
 
@@ -3328,32 +4198,64 @@ func _is_debuff_status_from_attached_binding(card: Card, status: Dictionary) -> 
 	var source_card = status.get("source_card", null)
 	return source_card is PermanentHexCard and (source_card as PermanentHexCard).attached_target == card
 
+func _build_mute_debuff_entry(card: Card) -> Dictionary:
+	if card == null or not card.is_muted:
+		return {}
+	if card.has_status_effect(Card.ABILITY_NEGATED_STATUS) or card.has_status_effect("silence"):
+		return {}
+	return {
+		"key": "mute:%s" % (card.uid if card.uid != "" else str(card.get_instance_id())),
+		"preview_texture": SILENCE_DEBUFF_TEXTURE,
+		"tooltip": "Silenced" if card.is_silenced() else "Muted",
+		"count": 1,
+	}
+
 func _build_debuff_entry_from_status(card: Card, status: Dictionary) -> Dictionary:
 	if card == null or status.is_empty():
 		return {}
 	var status_name := str(status.get("name", ""))
-	if status_name in ["", "sleep", "temporarily_revealed", "blessed_ward", Card.EXTERNAL_EFFECT_NEGATION_STATUS]:
+	if status_name in ["", "temporarily_revealed", "blessed_ward", Card.EXTERNAL_EFFECT_NEGATION_STATUS]:
+		return {}
+	if str(status.get("source", "")) == EN_HEDU_ANNA_EXALTATION_SOURCE:
 		return {}
 	if _is_debuff_status_from_attached_binding(card, status):
 		return {}
 	var source_key := _get_debuff_source_key(status)
 	var source_card := status.get("source_card", null) as Card
-	if status_name == "malinalxochitl_poison" or status_name.contains("poison"):
+	if status_name == "sleep":
+		var source_name := str(status.get("source", ""))
+		if (source_card != null and source_card.card_name == GIDIM_ENSI_CARD_NAME) or source_name == GIDIM_ENSI_SLEEP_SOURCE:
+			return {
+				"key": "source:%s:sleep" % source_key,
+				"source_card": source_card,
+				"count": 1,
+			}
+		return {}
+	if status_name == "poison" or status_name.contains("poison"):
 		return {
 			"key": "source:%s" % source_key,
 			"source_card": source_card,
 			"count": 1,
 		}
-	if status_name in ["cannot_attack", "cannot_intercept", "cannot_move", "activation_locked", Card.ABILITY_NEGATED_STATUS]:
+	if status_name in [FREYJA_RECEIVER_OF_THE_SLAIN_STATUS, FREYJA_ACTIVE_OPEN_SESSRUMNIR_STATUS]:
 		return {
 			"key": "source:%s" % source_key,
 			"source_card": source_card,
+			"preview_texture": FREYJA_ABILITY_BADGE_TEXTURE,
+			"count": 1,
+		}
+	if status_name in ["cannot_attack", "cannot_intercept", "cannot_move", "activation_locked", Card.ABILITY_NEGATED_STATUS, "silence", "paralyzed", "paralyze"]:
+		return {
+			"key": "source:%s" % source_key,
+			"source_card": source_card,
+			"preview_texture": SILENCE_DEBUFF_TEXTURE if source_card == null and status_name in [Card.ABILITY_NEGATED_STATUS, "silence"] else null,
 			"count": 1,
 		}
 	if status_name in ["doomed", "petrified"]:
 		return {
 			"key": "source:%s" % source_key,
 			"source_card": source_card,
+			"preview_texture": BANE_OF_THE_SVARTALFAR_BADGE_TEXTURE if status_name == "petrified" else null,
 			"count": 1,
 		}
 	return {}
@@ -3418,6 +4320,18 @@ func _is_card_targeted_on_stack(card: Card) -> bool:
 			return true
 	return false
 
+func _is_card_attack_targeted_on_stack(card: Card) -> bool:
+	if card == null or game_manager == null:
+		return false
+	for action in game_manager.action_stack:
+		if action == null or action.type != CardAction.Type.ATTACK:
+			continue
+		if not _is_attack_stack_action_active(action):
+			continue
+		if action.target is Card and action.target == card:
+			return true
+	return false
+
 func _is_attack_stack_action_active(action: CardAction) -> bool:
 	if action == null or action.type != CardAction.Type.ATTACK:
 		return true
@@ -3466,6 +4380,64 @@ func _get_hover_card_options_attacker(scene_root: Node = null) -> Card:
 			return preview_attacker as Card
 		return null
 	return _get_hover_card_options_card(root)
+
+func _get_board_drag_followers_attack_preview_attacker(scene_root: Node, target_player: Player) -> Card:
+	if scene_root == null or target_player == null:
+		return null
+	if not scene_root.has_method("_get_board_drag_followers_attack_preview_attacker"):
+		return null
+	var preview_attacker = scene_root.call("_get_board_drag_followers_attack_preview_attacker", target_player)
+	if preview_attacker is Card:
+		return preview_attacker as Card
+	return null
+
+func _is_board_drag_attack_target_preview(card: Card, scene_root: Node) -> bool:
+	if card == null or scene_root == null:
+		return false
+	if not scene_root.has_method("_is_board_drag_attack_target_preview"):
+		return false
+	return bool(scene_root.call("_is_board_drag_attack_target_preview", card))
+
+func _is_stealth_hidden_from_viewer(card: Card) -> bool:
+	if card == null or not card.is_stealth:
+		return false
+	var viewer := _get_viewer_player()
+	return card.get_controller() != viewer \
+		and not card.is_revealed_to_all() \
+		and not card.is_temporarily_revealed()
+
+func _get_hover_attack_preview_target(card: Card):
+	if card == null:
+		return null
+	if _is_card_attack_candidate(card):
+		return card
+	if _is_god_attack_candidate(card):
+		return owning_player
+	return null
+
+func _notify_hover_attack_preview_target_changed(attack_target) -> void:
+	var scene_root := _get_targeting_scene_root()
+	if scene_root == null or not scene_root.has_method("_set_hover_attack_preview_target"):
+		return
+	scene_root.call("_set_hover_attack_preview_target", attack_target)
+
+func _is_attack_preview_interceptor(card: Card) -> bool:
+	if card == null:
+		return false
+	if _is_stealth_hidden_from_viewer(card):
+		return false
+	var scene_root := _get_targeting_scene_root()
+	if scene_root == null or not scene_root.has_method("_is_attack_preview_interceptor"):
+		return false
+	return bool(scene_root.call("_is_attack_preview_interceptor", card))
+
+func _is_attack_preview_ambiguous_stealth_interceptor(card: Card) -> bool:
+	if card == null or not _is_stealth_hidden_from_viewer(card):
+		return false
+	var scene_root := _get_targeting_scene_root()
+	if scene_root == null or not scene_root.has_method("_is_attack_preview_ambiguous_stealth_interceptor"):
+		return false
+	return bool(scene_root.call("_is_attack_preview_ambiguous_stealth_interceptor", card))
 
 func _is_hover_card_options_preview_active() -> bool:
 	var scene_root := _get_targeting_scene_root()
@@ -3581,8 +4553,11 @@ func _allows_pending_self_target_highlight(source: Card, scene_root: Node) -> bo
 		return true
 	if source.has_method("is_valid_activation_target") and source.call("is_valid_activation_target", source) == true:
 		return true
-	if source.has_method("is_valid_target") and source.call("is_valid_target", source) == true:
-		return true
+	if source.has_method("is_valid_target"):
+		if source is HexCard and source.call("is_valid_target", game_manager, source) == true:
+			return true
+		elif not (source is HexCard) and source.call("is_valid_target", source) == true:
+			return true
 	if source.has_method("can_play_to_target") and source.call("can_play_to_target", game_manager, source) == true:
 		return true
 	if scene_root != null and scene_root.get("awaiting_pyre_target") == true and scene_root.get("pyre_source") == source:
@@ -3604,7 +4579,12 @@ func _is_card_pending_target(card: Card) -> bool:
 		return pending_validator.call(card) == true
 
 	if scene_root.get("awaiting_pyre_target") == true:
-		return true
+		var pyre_source = scene_root.get("pyre_source")
+		if pyre_source != null and pyre_source.has_method("is_valid_card_selection_target"):
+			return pyre_source.is_valid_card_selection_target(card, game_manager)
+		return pyre_source != null \
+			and pyre_source.has_method("is_valid_activation_target") \
+			and pyre_source.is_valid_activation_target(card)
 
 	if scene_root.get("awaiting_anointing_target") == true:
 		var anointing_source = scene_root.get("anointing_source")
@@ -3718,6 +4698,8 @@ func _is_card_attack_candidate(card: Card) -> bool:
 	var scene_root := _get_targeting_scene_root()
 	if scene_root == null:
 		return false
+	if _is_board_drag_attack_target_preview(card, scene_root):
+		return true
 	if _get_pending_attack_target(scene_root) != null:
 		return false
 	var attacker := _get_selected_attacker(scene_root)
@@ -3734,6 +4716,8 @@ func _can_selected_attacker_hit_followers(scene_root: Node) -> bool:
 	if _get_pending_attack_target(scene_root) != null:
 		return false
 	var attacker := _get_selected_attacker(scene_root)
+	if attacker == null:
+		attacker = _get_board_drag_followers_attack_preview_attacker(scene_root, owning_player)
 	if attacker == null or attacker.get_controller() == owning_player:
 		return false
 	var allied_attackers: Array = []
@@ -3829,46 +4813,41 @@ func _is_card_intercepting_followers_attack(card: Card) -> bool:
 func _is_hidden_board_card_for_priority_visuals(card: Card) -> bool:
 	if card == null:
 		return false
-	return card.current_zone != null \
-		and card.current_zone.is_board_zone() \
-		and (card.is_face_down or card.is_stealth or card.is_prepared)
+	if card.current_zone == null or not card.current_zone.is_board_zone():
+		return false
+	if not (card.is_face_down or card.is_stealth or card.is_prepared):
+		return false
+	var viewer := _get_viewer_player()
+	return card.get_controller() != viewer and not card.is_revealed_to_all()
+
+func _should_suppress_priority_response_visuals() -> bool:
+	var scene_root := _get_targeting_scene_root()
+	if scene_root == null or not scene_root.has_method("should_suppress_priority_response_visuals"):
+		return false
+	return bool(scene_root.call("should_suppress_priority_response_visuals"))
 
 func _is_card_usable_for_priority(card: Card) -> bool:
 	if card == null or game_manager == null:
 		return false
 	if _is_hidden_board_card_for_priority_visuals(card):
 		return false
+	if _should_suppress_priority_response_visuals():
+		return false
+	if game_manager.has_authoritative_priority_response_snapshot:
+		return game_manager.has_authoritative_priority_response(card)
 	return game_manager.can_card_respond_to_priority(card, game_manager.priority_player)
 
 func _should_show_playing_aura(card: Card) -> bool:
 	return _preview_card != null or _is_card_waiting_on_priority(card) or _is_card_pending_selection_source(card)
 
-func _should_show_aphrodite_activation_aura(card: Card) -> bool:
-	if card == null or game_manager == null:
-		return false
-	if card is not AphroditeAreia:
-		return false
-	if not _can_show_god_activation_aura(card):
-		return false
-	return card.can_activate(game_manager)
-
-func _should_show_nusku_activation_aura(card: Card) -> bool:
-	if card == null or game_manager == null:
-		return false
-	if card is not NuskuFirebearer:
-		return false
-	if not _can_show_god_activation_aura(card):
-		return false
-	return card.can_activate(game_manager)
-
-func _get_deckbuilder_god_glow_color(card: Card) -> Color:
+func _get_god_culture_glow_color(card: Card) -> Color:
 	if card == null:
 		return Color(0.0, 0.0, 0.0, 0.0)
 	match card.culture:
 		"Triskelion":
 			return Color(0.25, 0.56, 1.0, 0.95)
 		"Norse":
-			return Color(0.28, 0.92, 0.50, 0.95)
+			return PRIORITY_RESPONSE_GLOW_COLOR
 		"Ancient":
 			return Color(0.02, 0.02, 0.02, 0.95)
 		"Tian":
@@ -3879,40 +4858,16 @@ func _get_deckbuilder_god_glow_color(card: Card) -> Color:
 			return Color(0.66, 0.34, 0.98, 0.95)
 	return Color(0.0, 0.0, 0.0, 0.0)
 
-func _has_custom_god_activation_aura(card: Card) -> bool:
-	return card is AphroditeAreia or card is NuskuFirebearer
-
-func _can_show_god_activation_aura(card: Card) -> bool:
-	if card == null or game_manager == null:
-		return false
-	var viewer := _get_viewer_player()
-	if viewer == null or card.get_controller() != viewer:
-		return false
-	var controller := card.get_controller()
-	if controller == null:
-		return false
-	if game_manager.is_player_in_upkeep_window(controller):
-		return false
-	if game_manager.priority_player != null or not game_manager.action_stack.is_empty():
-		return false
-	return true
-
-func _should_show_generic_god_activation_aura(card: Card) -> bool:
-	if card == null or game_manager == null:
-		return false
-	if card is not GodCard:
-		return false
-	if _has_custom_god_activation_aura(card):
-		return false
-	if card is TezcatlipocaTheSmokingMirror:
-		return false
-	if not _can_show_god_activation_aura(card):
-		return false
-	if not card.has_method("can_activate"):
-		return false
-	if card.has_method("should_show_activation_aura"):
-		return bool(card.call("should_show_activation_aura", game_manager))
-	return bool(card.call("can_activate", game_manager))
+func _get_god_ability_badge_glow_color(card: Card) -> Color:
+	if card is AphroditeAreia:
+		return Color(1.0, 0.45, 0.74, 0.58)
+	if card != null and card.card_name in ["Nusku, Firebearer", "Nusku, Active God"]:
+		return Color(1.0, 0.18, 0.12, 0.62)
+	var glow_color := _get_god_culture_glow_color(card)
+	if glow_color.a <= 0.0:
+		return glow_color
+	glow_color.a = 0.52
+	return glow_color
 
 func _should_show_champions_call_badge(card: Card) -> bool:
 	var god := card as GodCard
@@ -3928,8 +4883,42 @@ func _should_glow_champions_call_badge(card: Card) -> bool:
 		return false
 	return god.can_use_champions_call(game_manager)
 
+func _is_priority_badge_filter_active() -> bool:
+	return game_manager != null and (game_manager.priority_player != null or not game_manager.action_stack.is_empty())
+
+func _should_emphasize_available_ability_badge(card: Card, badge_ready: bool) -> bool:
+	if not badge_ready or card == null:
+		return false
+	if _is_priority_badge_filter_active():
+		return _is_card_usable_for_priority(card)
+	if card.has_method("should_emphasize_ability_badge"):
+		return bool(card.call("should_emphasize_ability_badge", game_manager))
+	return false
+
+func _should_show_ability_badge_control(card: Card, badge_ready: bool = false, clickable: bool = false) -> bool:
+	if BoardZoneUI.get_always_show_ability_badges():
+		return true
+	if _is_priority_badge_filter_active():
+		return clickable and badge_ready and _is_card_usable_for_priority(card)
+	if clickable and _should_emphasize_available_ability_badge(card, badge_ready):
+		return true
+	if _hovered or _badge_hovered or _is_mouse_in_affordance_hover_area():
+		return true
+	if _is_card_click_selected(card):
+		return true
+	return false
+
 func set_preview_card(card: Card) -> void:
+	if _preview_card == card:
+		return
 	_preview_card = card
+	if _preview_refresh_queued:
+		return
+	_preview_refresh_queued = true
+	call_deferred("_apply_preview_card_refresh")
+
+func _apply_preview_card_refresh() -> void:
+	_preview_refresh_queued = false
 	_refresh_display()
 
 func _sync_visual_state_card(card: Card) -> void:
@@ -3949,7 +4938,14 @@ func _disconnect_visual_state_card() -> void:
 func _on_visual_state_card_changed() -> void:
 	if not is_inside_tree() or is_queued_for_deletion():
 		return
-	call_deferred("_refresh_display")
+	if _visual_state_refresh_queued:
+		return
+	_visual_state_refresh_queued = true
+	call_deferred("_apply_visual_state_refresh")
+
+func _apply_visual_state_refresh() -> void:
+	_visual_state_refresh_queued = false
+	_refresh_display()
 
 func _clear_followers_attack_result_if_current(sequence: int) -> void:
 	if is_queued_for_deletion():
@@ -3976,38 +4972,90 @@ func show_followers_attack_result(new_followers: int, duration_seconds: float = 
 		CONNECT_ONE_SHOT
 	)
 
-func get_visual_anchor_global() -> Vector2:
+func play_incorporeal_attack_fade(card: Card) -> void:
+	if card == null or zone == null or not zone.cards.has(card) or not is_inside_tree():
+		return
+	if _incorporeal_fade_tween == null:
+		_incorporeal_fade_base_alpha = modulate.a
+	else:
+		_incorporeal_fade_tween.kill()
+	_incorporeal_fade_card_uid = str(card.uid)
+	_incorporeal_fade_tween = create_tween().set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	_incorporeal_fade_tween.tween_property(self, "modulate:a", 0.0, 0.22)
+	_incorporeal_fade_tween.tween_interval(0.1)
+	_incorporeal_fade_tween.tween_property(self, "modulate:a", _incorporeal_fade_base_alpha, 0.35)
+	_incorporeal_fade_tween.tween_callback(_clear_incorporeal_attack_fade)
+
+func _clear_incorporeal_attack_fade() -> void:
+	if _incorporeal_fade_tween != null:
+		_incorporeal_fade_tween.kill()
+	_incorporeal_fade_tween = null
+	_incorporeal_fade_card_uid = ""
+	modulate.a = _incorporeal_fade_base_alpha
+
+func get_card_visual_global_rect() -> Rect2:
 	var anchor_control: Control = _raised_overlay
 	if anchor_control == null or not is_instance_valid(anchor_control):
 		anchor_control = _defense_overlay
 	if anchor_control == null or not is_instance_valid(anchor_control):
 		anchor_control = self
-	var rect: Rect2 = anchor_control.get_global_rect()
-	return rect.position + rect.size * 0.5
+	return anchor_control.get_global_transform() * Rect2(Vector2.ZERO, anchor_control.size)
+
+func _get_card_hover_avoid_rect() -> Rect2:
+	var avoid_rect := get_card_visual_global_rect().merge(get_global_rect())
+	for badge in _clickable_badges:
+		if is_instance_valid(badge) and badge.is_visible_in_tree() and not badge.is_queued_for_deletion():
+			avoid_rect = avoid_rect.merge(badge.get_global_transform() * Rect2(Vector2.ZERO, badge.size))
+	return avoid_rect
+
+func get_visual_anchor_global() -> Vector2:
+	return get_card_visual_global_rect().get_center()
 
 func _get_minimum_size() -> Vector2:
 	return get_zone_size()
 
 static func _load_png_texture(path: String) -> Texture2D:
-	var texture := load(path) as Texture2D
+	var texture := UITextureCacheScript.get_texture(path)
 	if texture == null:
 		push_warning("BoardZoneUI: failed to load board texture %s" % path)
 		return null
 	return texture
 
-static func _get_board_zone_slab_textures() -> Array[Texture2D]:
-	if _board_zone_slab_textures.is_empty():
-		for texture_path in BOARD_ZONE_SLAB_TEXTURE_PATHS:
-			var texture := _load_png_texture(texture_path)
-			if texture != null:
-				_board_zone_slab_textures.append(texture)
-	return _board_zone_slab_textures
+static func _get_current_board_style() -> String:
+	var config := ConfigFile.new()
+	if config.load("user://settings.cfg") == OK:
+		var style = config.get_value("combat", "board_style", "normal")
+		if style is String:
+			return str(style)
+	return "normal"
 
-static func _get_board_zone_slot_texture_indices() -> Array[int]:
-	var slab_textures := _get_board_zone_slab_textures()
+func _get_zone_board_style() -> String:
+	return board_style_override if board_style_override != "" else _get_current_board_style()
+
+static func _get_board_zone_slab_textures(board_style: String = "") -> Array[Texture2D]:
+	var current_style := board_style if board_style != "" else _get_current_board_style()
+	if current_style == "snow":
+		if _snow_board_zone_slab_textures.is_empty():
+			for texture_path in SNOW_BOARD_ZONE_SLAB_TEXTURE_PATHS:
+				var texture := _load_png_texture(texture_path)
+				if texture != null:
+					_snow_board_zone_slab_textures.append(texture)
+		return _snow_board_zone_slab_textures
+	else:
+		if _board_zone_slab_textures.is_empty():
+			for texture_path in BOARD_ZONE_SLAB_TEXTURE_PATHS:
+				var texture := _load_png_texture(texture_path)
+				if texture != null:
+					_board_zone_slab_textures.append(texture)
+		return _board_zone_slab_textures
+
+static func _get_board_zone_slot_texture_indices(board_style: String = "") -> Array[int]:
+	var current_style := board_style if board_style != "" else _get_current_board_style()
+	var slab_textures := _get_board_zone_slab_textures(current_style)
 	if slab_textures.is_empty():
 		return []
-	if _board_zone_slot_texture_indices.size() != slab_textures.size():
+	if _board_zone_slot_texture_indices.size() != slab_textures.size() or _last_loaded_board_style != current_style:
+		_last_loaded_board_style = current_style
 		_board_zone_slot_texture_indices.clear()
 		for texture_index in range(slab_textures.size()):
 			_board_zone_slot_texture_indices.append(texture_index)
@@ -4021,35 +5069,43 @@ static func _get_board_zone_slot_texture_indices() -> Array[int]:
 	return _board_zone_slot_texture_indices
 
 func _get_board_zone_slab_texture() -> Texture2D:
-	var slab_textures := _get_board_zone_slab_textures()
+	var board_style := _get_zone_board_style()
+	var slab_textures := _get_board_zone_slab_textures(board_style)
 	if slab_textures.is_empty():
 		return null
 
-	if zone != null and zone.zone_type in [Zone.ZoneType.FRONTLINE, Zone.ZoneType.RESERVE]:
-		var slot_texture_indices := _get_board_zone_slot_texture_indices()
-		var board_slot_index := zone_index
+	var slot_texture_indices := _get_board_zone_slot_texture_indices(board_style)
+	if slot_texture_indices.is_empty():
+		return slab_textures[0]
+
+	var board_slot_index := zone_index
+	if zone != null:
 		if zone.zone_index >= 0:
 			board_slot_index = zone.zone_index
 		if zone.zone_type == Zone.ZoneType.RESERVE:
 			board_slot_index += BOARD_ZONE_ROW_TILE_COUNT
-		var texture_index := slot_texture_indices[posmod(board_slot_index, slot_texture_indices.size())]
-		return slab_textures[texture_index]
+		elif zone.zone_type == Zone.ZoneType.GOD_SLOT:
+			board_slot_index += BOARD_ZONE_ROW_TILE_COUNT * 2
+		elif zone.zone_type == Zone.ZoneType.POWER_SLOT:
+			board_slot_index += BOARD_ZONE_ROW_TILE_COUNT * 2 + 2
+		else:
+			board_slot_index += int(zone.zone_type) * 13
 
-	var variant_seed := zone_index
-	if zone != null:
-		variant_seed += int(zone.zone_type) * 13
 	if _is_enemy:
-		variant_seed += 7
-	return slab_textures[posmod(variant_seed, slab_textures.size())]
+		board_slot_index += 7
+
+	var texture_index := slot_texture_indices[posmod(board_slot_index, slot_texture_indices.size())]
+	return slab_textures[texture_index]
 
 func _get_empty_zone_slab_tint() -> Color:
+	var is_snow := _get_zone_board_style() == "snow"
 	if zone == null:
-		return Color(1.0, 1.0, 1.0, 0.9)
+		return Color(1.05, 1.08, 1.15, 0.95) if is_snow else Color(1.0, 1.0, 1.0, 0.9)
 	if zone.zone_type == Zone.ZoneType.GOD_SLOT:
-		return Color(1.08, 0.98, 0.72, 0.96)
+		return Color(1.08, 1.12, 1.18, 0.96) if is_snow else Color(1.0, 1.0, 1.0, 0.94)
 	if zone.zone_type == Zone.ZoneType.POWER_SLOT:
-		return Color(1.02, 0.98, 0.88, 0.9)
-	return Color(1.0, 1.0, 1.0, 0.88)
+		return Color(1.05, 1.12, 1.18, 0.95) if is_snow else Color(0.98, 1.0, 1.0, 0.9)
+	return Color(1.02, 1.05, 1.12, 0.92) if is_snow else Color(1.0, 1.0, 1.0, 0.88)
 
 func _add_empty_zone_slab_label(parent: Control) -> void:
 	if not _should_show_empty_zone_label():
@@ -4096,16 +5152,33 @@ func _add_empty_zone_slab() -> void:
 	slab.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	overlay.add_child(slab)
 
+	_add_snow_v2_card_weather_overlay(overlay, null, false, true, true)
 	_add_empty_zone_slab_label(overlay)
 
+func _is_locked_power_cursor_card(card: Card) -> bool:
+	return card != null and card.card_type == Card.CardType.POWER and card.is_face_down
+
+func _set_locked_power_cursor_active(active: bool) -> void:
+	if _locked_power_cursor_active == active:
+		return
+	_locked_power_cursor_active = active
+	LockedPowerCursorScript.set_viewport_owner_active(get_viewport(), self, active)
+
+func _sync_locked_power_cursor_hover(card: Card = null) -> void:
+	_set_locked_power_cursor_active(_hovered and _is_mouse_actually_over_control() and _is_locked_power_cursor_card(card))
+
+func _is_mouse_actually_over_control() -> bool:
+	return is_inside_tree() and is_visible_in_tree() and get_global_rect().has_point(get_global_mouse_position())
+
 func _refresh_mouse_cursor_shape(card: Card = null) -> void:
-	if card != null and card.card_type == Card.CardType.POWER and card.is_face_down:
+	_sync_locked_power_cursor_hover(card)
+	if _is_locked_power_cursor_card(card):
 		mouse_default_cursor_shape = LockedPowerCursorScript.get_control_cursor_shape(Control.CURSOR_ARROW as Control.CursorShape)
 		return
 	if _is_hover_card_options_preview_active():
 		mouse_default_cursor_shape = Control.CURSOR_ARROW
 		return
-	if card != null and (_has_card_target_icon_candidate(card) or _is_god_attack_candidate(card)):
+	if card != null and (_is_card_attack_candidate(card) or _has_card_target_icon_candidate(card) or _is_god_attack_candidate(card)):
 		mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 		return
 	mouse_default_cursor_shape = Control.CURSOR_ARROW
@@ -4189,6 +5262,7 @@ func setup(p_zone: Zone, p_gm: GameManager, p_player: Player, idx: int,
 	size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	z_as_relative = false
+	set_process(false)
 	_refresh_display()
 
 func _get_resting_z_index() -> int:
@@ -4197,15 +5271,30 @@ func _get_resting_z_index() -> int:
 func _refresh_display() -> void:
 	if not is_inside_tree() or is_queued_for_deletion():
 		return
+	var card: Card = _preview_card if _preview_card != null else (zone.cards[0] if zone.cards.size() > 0 else null)
+	# Keep the fade through redraws, but never transfer it to another card or an empty slot.
+	if _incorporeal_fade_tween != null and (card == null or str(card.uid) != _incorporeal_fade_card_uid):
+		_clear_incorporeal_attack_fade()
+	var preserved_stealth_fog_overlay := _take_stealth_fog_overlay_for_refresh(card)
 	_hide_ability_popup()
 	_hide_badge_hover_popup()
+	_clickable_badges.clear()
+	_stop_prepared_magical_hover_shake()
 	_defense_overlay = null
 	_raised_overlay = null
-	for child in get_children():
+	_prepared_magical_cover_art = null
+	_prepared_magical_cover_overlay = null
+	_stealth_fog_overlay = null
+	for child in get_children().duplicate():
+		remove_child(child)
 		child.queue_free()
-	var card: Card = _preview_card if _preview_card != null else (zone.cards[0] if zone.cards.size() > 0 else null)
 	_sync_visual_state_card(card)
 	_refresh_mouse_cursor_shape(card)
+
+	var targeting_scene := _get_targeting_scene_root()
+	if targeting_scene != null and targeting_scene.has_method("_is_legal_ability_zone_target") \
+			and targeting_scene.call("_is_legal_ability_zone_target", zone) == true:
+		_add_target_aura(self, LEGAL_ABILITY_ZONE_TINT)
 
 	var style := StyleBoxFlat.new()
 	style.corner_radius_top_left    = 4
@@ -4227,13 +5316,16 @@ func _refresh_display() -> void:
 			tiamat_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 			add_child(tiamat_overlay)
 			_add_tiamat_brood_slot_art(tiamat_overlay)
+			_add_snow_v2_card_weather_overlay(tiamat_overlay, card, card.is_god or card.card_type == Card.CardType.CREATURE)
+			_add_follower_count_badge(tiamat_overlay)
+			_add_guard_indicator(tiamat_overlay)
 			_add_followers_attack_result_label(tiamat_overlay)
 			return
 
 		var face_down_viewer := _get_viewer_player()
 		var can_render_stealth_creature_normally := card.card_type == Card.CardType.CREATURE \
 			and card.is_stealth \
-			and (card.get_controller() == face_down_viewer or card.is_temporarily_revealed())
+			and (card.get_controller() == face_down_viewer or card.is_revealed_to_all())
 		var is_stack_magical_preview := game_manager != null \
 			and card.is_magical_card() \
 			and game_manager._has_pending_stack_action_for_card(card)
@@ -4248,18 +5340,31 @@ func _refresh_display() -> void:
 			fd_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			fd_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 			add_child(fd_overlay)
-			var revealed_face_down_power := (card is PowerCard and (card as PowerCard).is_publicly_revealed) or card.is_temporarily_revealed()
+			var revealed_face_down_card := (card is PowerCard and (card as PowerCard).is_publicly_revealed) or card.is_revealed_to_all()
 			var is_own_hidden_card := card.get_controller() == face_down_viewer and (
 				card.is_stealth
 				or card.is_power
 				or card.is_prepared
 			)
-			var show_revealed_power_art := revealed_face_down_power and card.art_path != ""
+			var use_prepared_magical_cover := card.is_prepared \
+				and card.is_magical_card() \
+				and card.get_controller() != face_down_viewer \
+				and not revealed_face_down_card
+			var show_revealed_card_art := revealed_face_down_card and card.art_path != ""
+			var active_god_preview := _get_locked_take_the_field_preview(card)
 			var tex: Texture2D = null
-			if show_revealed_power_art or (is_own_hidden_card and card.art_path != ""):
-				tex = load(card.art_path)
+			if active_god_preview != null:
+				tex = UITextureCacheScript.get_texture(active_god_preview.art_path)
+			elif use_prepared_magical_cover:
+				tex = (
+					PREPARED_MAGICAL_CARD_COVER_HOVER_TEXTURE
+					if _hovered
+					else PREPARED_MAGICAL_CARD_COVER_TEXTURE
+				)
+			elif show_revealed_card_art or (is_own_hidden_card and card.art_path != ""):
+				tex = UITextureCacheScript.get_texture(card.art_path)
 			else:
-				tex = load("res://images/cardbackAI.png")
+				tex = UITextureCacheScript.get_texture("res://images/cardbackAI.png")
 			if tex:
 				var art := TextureRect.new()
 				art.texture = tex
@@ -4267,11 +5372,20 @@ func _refresh_display() -> void:
 				art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 				art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				if use_prepared_magical_cover:
+					art.offset_left = -5.0
+					art.offset_top = -5.0
+					art.offset_right = 5.0
+					art.offset_bottom = 5.0
 				fd_overlay.add_child(art)
-			if show_revealed_power_art:
+				if use_prepared_magical_cover:
+					_prepared_magical_cover_art = art
+					_prepared_magical_cover_overlay = fd_overlay
+					fd_overlay.pivot_offset = get_zone_size() * 0.5
+			if show_revealed_card_art:
 				var revealed_haze := ColorRect.new()
-				var is_own_revealed_power := card.get_controller() == face_down_viewer
-				revealed_haze.color = Color(0.22, 0.45, 0.85, 0.26) if is_own_revealed_power else Color(0.85, 0.22, 0.45, 0.28)
+				var is_own_revealed_card := card.get_controller() == face_down_viewer
+				revealed_haze.color = Color(0.22, 0.45, 0.85, 0.26) if is_own_revealed_card else Color(0.85, 0.22, 0.45, 0.28)
 				revealed_haze.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				revealed_haze.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				fd_overlay.add_child(revealed_haze)
@@ -4303,34 +5417,47 @@ func _refresh_display() -> void:
 					mute_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 					mute_badge.add_child(mute_lbl)
 					fd_overlay.add_child(mute_badge)
-			elif is_own_hidden_card:
+			elif is_own_hidden_card and not use_prepared_magical_cover and active_god_preview == null:
 				var haze := ColorRect.new()
 				haze.color = Color(0.05, 0.05, 0.2, 0.38)
 				haze.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				haze.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				fd_overlay.add_child(haze)
+			_add_stealth_fog_overlay(fd_overlay, card, preserved_stealth_fog_overlay)
 			_add_power_lock_overlay(fd_overlay, card)
+			if active_god_preview != null:
+				_add_take_the_field_preview_badges(fd_overlay, active_god_preview)
+			_add_publicly_identified_card_affordance(fd_overlay, card)
 			if card.get_controller() == face_down_viewer and card.is_prepared and card.is_magical_card():
 				_add_speed_badge(fd_overlay, card)
 				_add_prepared_magical_mana_badge(fd_overlay, card)
 			if _is_card_attacking_on_stack(card) or _is_card_intercepting_on_stack(card) or _is_card_selected_attacker(card) or _is_card_selected_interceptor(card):
 				_add_attack_aura(fd_overlay)
-			var is_face_down_attack_candidate := _is_card_attack_candidate(card)
+			if _is_card_usable_for_priority(card):
+				_add_priority_response_aura(fd_overlay)
+			var is_face_down_stack_target := _is_card_targeted_on_stack(card)
+			var is_face_down_pending_target := _is_card_pending_target(card)
+			var is_face_down_attack_target := _is_card_attack_candidate(card) \
+				or _is_card_pending_attack_target(card) \
+				or _is_card_attack_targeted_on_stack(card)
 			var is_face_down_target_icon_candidate := _has_card_target_icon_candidate(card)
-			if _is_card_targeted_on_stack(card) or _is_card_pending_target(card) or _is_card_pending_attack_target(card) or is_face_down_target_icon_candidate:
-				if is_face_down_attack_candidate or _is_card_targeted_on_stack(card) or _is_card_pending_target(card) or _is_card_pending_attack_target(card):
+			if is_face_down_stack_target or is_face_down_pending_target or is_face_down_attack_target or is_face_down_target_icon_candidate:
+				if is_face_down_attack_target:
+					_add_attack_target_aura(fd_overlay)
+				elif is_face_down_stack_target or is_face_down_pending_target:
 					_add_target_aura(fd_overlay)
 				if is_face_down_target_icon_candidate:
 					_add_attack_target_icon(fd_overlay, card)
-				else:
+				elif is_face_down_stack_target or is_face_down_pending_target:
 					_add_stack_target_indicator(fd_overlay)
+			_add_intercept_preview_badge(fd_overlay, card)
 			var _fd_is_def := card.card_type == Card.CardType.CREATURE and (
 				card.creature_mode == Card.CreatureMode.DEFENSIVE
 				or card.is_stealth
 			)
 			if _fd_is_def:
-				var shield_scale := DefenseShieldOverlayScript.STEALTH_VIEW_SIZE_MULTIPLIER if card.is_stealth else 1.0
-				DefenseShieldOverlayScript.ensure_on(fd_overlay, DefenseShieldOverlayScript.LAYOUT_CENTER, shield_scale)
+				DefenseShieldOverlayScript.ensure_on(fd_overlay, DefenseShieldOverlayScript.LAYOUT_STAT_UNDER, 1.0, card.is_stealth)
+			_add_snow_v2_card_weather_overlay(fd_overlay, card, false)
 			_defense_overlay = fd_overlay if _fd_is_def else null
 			_raised_overlay  = fd_overlay if (_fd_is_def or card.is_stealth) else null
 			z_index = _get_resting_z_index()
@@ -4338,20 +5465,19 @@ func _refresh_display() -> void:
 
 		# God slot: show art image filling the zone
 		if zone.zone_type == Zone.ZoneType.GOD_SLOT and card.art_path != "":
-			var show_aphrodite_activation_aura := _should_show_aphrodite_activation_aura(card)
-			var show_nusku_activation_aura := _should_show_nusku_activation_aura(card)
-			var show_generic_god_activation_aura := _should_show_generic_god_activation_aura(card)
 			var show_champions_call_badge := _should_show_champions_call_badge(card)
 			var glow_champions_call_badge := _should_glow_champions_call_badge(card)
 			var show_god_attack_aura := _is_card_attacking_on_stack(card) or _is_card_intercepting_on_stack(card) or _is_card_selected_attacker(card) or _is_card_selected_interceptor(card)
 			var show_god_playing_aura := _should_show_playing_aura(card)
 			var show_god_priority_aura := _is_card_usable_for_priority(card)
+			var scene_root := _get_targeting_scene_root()
+			var is_pyre_convert_target: bool = scene_root != null \
+				and scene_root.has_method("_is_pyre_convert_target") \
+				and scene_root.call("_is_pyre_convert_target", owning_player) == true
 			var show_god_target_aura := _is_card_targeted_on_stack(card) \
-				or _is_card_pending_target(card) \
-				or _is_card_pending_attack_target(card) \
-				or _is_god_targeted_by_followers_attack(card) \
-				or _is_god_pending_followers_attack(card)
-			var show_god_followers_target_icon := _is_god_targeted_by_followers_attack(card) \
+				or (not is_pyre_convert_target and _is_card_pending_target(card)) \
+				or _is_card_pending_attack_target(card)
+			var show_god_followers_target_aura := _is_god_targeted_by_followers_attack(card) \
 				or _is_god_pending_followers_attack(card) \
 				or _is_god_attack_candidate(card)
 
@@ -4359,25 +5485,19 @@ func _refresh_display() -> void:
 			style.border_color = Color(0.9, 0.75, 0.2)
 			for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
 				style.set_border_width(side, 2)
-			if show_aphrodite_activation_aura:
-				_apply_aphrodite_activation_style(style)
-			elif show_nusku_activation_aura:
-				_apply_nusku_activation_style(style)
-			elif show_generic_god_activation_aura:
-				_apply_generic_god_activation_style(style, _get_deckbuilder_god_glow_color(card))
+			if show_god_priority_aura:
+				_apply_priority_response_style(style)
 			add_theme_stylebox_override("panel", style)
 			z_index = GOD_INDICATOR_Z_INDEX if (
-				show_aphrodite_activation_aura
-				or show_nusku_activation_aura
-				or show_generic_god_activation_aura
-				or show_god_attack_aura
+				show_god_attack_aura
 				or show_god_playing_aura
 				or show_god_priority_aura
 				or show_god_target_aura
-				or show_god_followers_target_icon
+				or show_god_followers_target_aura
+				or is_pyre_convert_target
 				or glow_champions_call_badge
 			) else BASE_BOARD_Z_INDEX
-			var tex: Texture2D = load(card.art_path)
+			var tex: Texture2D = UITextureCacheScript.get_texture(card.art_path)
 			if tex:
 				# Single Control overlay - PanelContainer fills it to the zone size.
 				# Children inside use anchors relative to the overlay, bypassing
@@ -4390,8 +5510,6 @@ func _refresh_display() -> void:
 					_add_attack_aura(god_overlay)
 				if show_god_playing_aura:
 					_add_playing_aura(god_overlay)
-				if show_god_priority_aura:
-					_add_priority_response_aura(god_overlay)
 				if show_god_target_aura:
 					_add_target_aura(god_overlay)
 					_add_stack_target_indicator(god_overlay)
@@ -4403,8 +5521,9 @@ func _refresh_display() -> void:
 				art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				god_overlay.add_child(art)
-				if show_god_followers_target_icon:
-					_add_followers_attack_target_icon(god_overlay)
+				_add_snow_v2_card_weather_overlay(god_overlay, card, true)
+				if show_god_followers_target_aura:
+					_add_attack_target_aura(god_overlay)
 
 				# VBoxContainer fills overlay via anchors; spacer pushes label to correct edge
 				var name_vbox := VBoxContainer.new()
@@ -4426,6 +5545,7 @@ func _refresh_display() -> void:
 				name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 				name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				name_lbl.text = card.get_display_name_for_control(name_lbl)
+				UIFontScript.apply_norse_card_name_font(name_lbl, card)
 				name_vbox.add_child(name_lbl)
 
 				if not card.name_at_bottom:
@@ -4434,17 +5554,18 @@ func _refresh_display() -> void:
 					bottom_name_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 					name_vbox.add_child(bottom_name_spacer)
 
-				var deck_lbl := Label.new()
-				deck_lbl.text = "Deck: %d" % owning_player.deck_zone.cards.size()
-				deck_lbl.add_theme_font_size_override("font_size", 10)
-				deck_lbl.add_theme_color_override("font_color", Color(0.9, 0.95, 1.0))
-				deck_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-				deck_lbl.vertical_alignment = VERTICAL_ALIGNMENT_TOP
-				deck_lbl.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
-				deck_lbl.offset_left = 6
-				deck_lbl.offset_top = 4
-				deck_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-				god_overlay.add_child(deck_lbl)
+				if show_god_deck_count:
+					var deck_lbl := Label.new()
+					deck_lbl.text = "Deck: %d" % owning_player.deck_zone.cards.size()
+					deck_lbl.add_theme_font_size_override("font_size", 10)
+					deck_lbl.add_theme_color_override("font_color", Color(0.9, 0.95, 1.0))
+					deck_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+					deck_lbl.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+					deck_lbl.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+					deck_lbl.offset_left = 6
+					deck_lbl.offset_top = 4
+					deck_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+					god_overlay.add_child(deck_lbl)
 				_add_level_badge(god_overlay, card, Control.PRESET_TOP_LEFT, 6, 24, 54, 42)
 
 				var _effect_lines: Array[String] = []
@@ -4489,7 +5610,6 @@ func _refresh_display() -> void:
 				if show_champions_call_badge:
 					_add_champions_call_badge(god_overlay, card, glow_champions_call_badge)
 				_add_god_custom_ability_badge(god_overlay, card)
-
 				if card.is_power and card.is_muted and card.mute_turns_remaining > 0:
 					var muted_badge := PanelContainer.new()
 					muted_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -4520,28 +5640,30 @@ func _refresh_display() -> void:
 					god_overlay.add_child(muted_badge)
 				_add_creature_action_symbols(god_overlay, card)
 				_add_stance_switch_symbol(god_overlay, card)
+				_add_follower_count_badge(god_overlay)
+				_add_guard_indicator(god_overlay)
 				_add_followers_attack_result_label(god_overlay)
 			return
 
 		var is_def_creature := card.card_type == Card.CardType.CREATURE and card.creature_mode == Card.CreatureMode.DEFENSIVE
 		var shows_defense_shield := card.card_type == Card.CardType.CREATURE and (is_def_creature or card.is_stealth)
 		var shows_aggressive_sword := card.card_type == Card.CardType.CREATURE and card.creature_mode == Card.CreatureMode.AGGRESSIVE and not card.is_stealth
+		var show_card_priority_aura := _is_card_usable_for_priority(card)
 		match card.card_type:
 			Card.CardType.CREATURE:
 				style.bg_color    = Color(0.13, 0.22, 0.42)
 				style.border_color = Color(0.4, 0.65, 1.0)
-				add_theme_stylebox_override("panel", style)
 			Card.CardType.STRUCTURE:
 				style.bg_color    = Color(0.28, 0.18, 0.08)
 				style.border_color = Color(0.75, 0.55, 0.3)
-				add_theme_stylebox_override("panel", style)
 			_:
 				style.bg_color    = Color(0.18, 0.18, 0.18)
 				style.border_color = Color(0.5, 0.5, 0.5)
-				add_theme_stylebox_override("panel", style)
+		if show_card_priority_aura:
+			_apply_priority_response_style(style)
+		add_theme_stylebox_override("panel", style)
 
 		var board_viewer := _get_viewer_player()
-		var can_view_stealth_details := card.get_controller() == board_viewer or card.is_temporarily_revealed()
 		var card_overlay := Control.new()
 		card_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		card_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -4550,16 +5672,20 @@ func _refresh_display() -> void:
 			_add_attack_aura(card_overlay)
 		if _should_show_playing_aura(card):
 			_add_playing_aura(card_overlay)
-		if _is_card_usable_for_priority(card):
-			_add_priority_response_aura(card_overlay)
-		var is_attack_candidate := _is_card_attack_candidate(card)
+		var is_stack_target := _is_card_targeted_on_stack(card)
+		var is_pending_target := _is_card_pending_target(card)
+		var is_attack_target := _is_card_attack_candidate(card) \
+			or _is_card_pending_attack_target(card) \
+			or _is_card_attack_targeted_on_stack(card)
 		var is_target_icon_candidate := _has_card_target_icon_candidate(card)
-		if _is_card_targeted_on_stack(card) or _is_card_pending_target(card) or _is_card_pending_attack_target(card) or is_target_icon_candidate:
-			if is_attack_candidate or _is_card_targeted_on_stack(card) or _is_card_pending_target(card) or _is_card_pending_attack_target(card):
+		if is_stack_target or is_pending_target or is_attack_target or is_target_icon_candidate:
+			if is_attack_target:
+				_add_attack_target_aura(card_overlay)
+			elif is_stack_target or is_pending_target:
 				_add_target_aura(card_overlay)
 			if is_target_icon_candidate:
 				_add_attack_target_icon(card_overlay, card)
-			else:
+			elif is_stack_target or is_pending_target:
 				_add_stack_target_indicator(card_overlay)
 		if _is_card_intercepting_followers_attack(card) or _is_card_pending_intercepting_followers_attack(card):
 			_add_followers_attack_target_tint(card_overlay)
@@ -4570,7 +5696,7 @@ func _refresh_display() -> void:
 			var stealth_viewer := _get_viewer_player()
 			var is_own := card.get_controller() == stealth_viewer
 			var tex_path := card.art_path if (is_own or show_public_stealth) and card.art_path != "" else "res://images/cardbackAI.png"
-			var tex: Texture2D = load(tex_path)
+			var tex: Texture2D = UITextureCacheScript.get_texture(tex_path)
 			if tex:
 				var art := TextureRect.new()
 				art.texture = tex
@@ -4585,8 +5711,9 @@ func _refresh_display() -> void:
 				haze.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				haze.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				card_overlay.add_child(haze)
+			_add_stealth_fog_overlay(card_overlay, card, preserved_stealth_fog_overlay)
 		elif card.art_path != "":
-			var tex: Texture2D = load(card.art_path)
+			var tex: Texture2D = UITextureCacheScript.get_texture(card.art_path)
 			if tex:
 				var art := TextureRect.new()
 				art.texture = tex
@@ -4596,27 +5723,30 @@ func _refresh_display() -> void:
 				art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				card_overlay.add_child(art)
 		if shows_defense_shield:
-			var shield_layout := DefenseShieldOverlayScript.LAYOUT_STAT_UNDER
-			if card.is_stealth and not can_view_stealth_details:
-				shield_layout = DefenseShieldOverlayScript.LAYOUT_CENTER
-			var shield_scale := DefenseShieldOverlayScript.STEALTH_VIEW_SIZE_MULTIPLIER if shield_layout == DefenseShieldOverlayScript.LAYOUT_CENTER else 1.0
-			DefenseShieldOverlayScript.ensure_on(card_overlay, shield_layout, shield_scale)
+			DefenseShieldOverlayScript.ensure_on(card_overlay, DefenseShieldOverlayScript.LAYOUT_STAT_UNDER, 1.0, card.is_stealth)
 		elif shows_aggressive_sword:
 			AggressiveSwordOverlay.ensure_on(card_overlay, AggressiveSwordOverlay.LAYOUT_STAT_UNDER)
+		_add_snow_v2_card_weather_overlay(card_overlay, card, card.is_god or card.card_type == Card.CardType.CREATURE)
 		_add_level_badge(card_overlay, card, Control.PRESET_TOP_LEFT, 6, LEVEL_BADGE_TOP, 54, LEVEL_BADGE_BOTTOM)
 		_add_token_badge(card_overlay, card, Control.PRESET_TOP_LEFT, 6, 28, 66, 46)
+		_add_turn_countdown_badge(card_overlay, card)
 		_add_prepared_magical_mana_badge(card_overlay, card)
+		_add_publicly_identified_card_affordance(card_overlay, card)
 		if card.is_power:
 			_add_power_cost_badge(card_overlay, card)
+			_add_breidablik_priest_badges(card_overlay, card)
 		_add_e2_abzu_badges(card_overlay, card)
 
 		_add_sleep_affordance(card_overlay, card)
 		if not card.is_stealth or card.get_controller() == board_viewer or card.is_temporarily_revealed():
 			_add_equipment_affordances(card_overlay, card)
+			_add_binding_affordances(card_overlay, card)
 			_add_boon_affordances(card_overlay, card)
 			_add_debuff_affordances(card_overlay, card)
 			_add_nimue_badges(card_overlay, card)
+			_add_white_serpent_medicine_badge(card_overlay, card)
 			_add_creature_ability_badge(card_overlay, card)
+			_add_board_card_custom_ability_badge(card_overlay, card)
 
 		# VBox fills the zone; spacer pushes the stat label to the bottom
 		var vbox := VBoxContainer.new()
@@ -4629,12 +5759,14 @@ func _refresh_display() -> void:
 		stats_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		vbox.add_child(stats_spacer)
 
+		var has_hover_stat_badge := false
 		var is_own_stealth_faceup := card.is_stealth and (card.get_controller() == board_viewer or card.is_temporarily_revealed())
 		if card.card_type == Card.CardType.CREATURE and not card.is_god and (not card.is_stealth or is_own_stealth_faceup):
 			var eff_str := card.get_effective_strength()
 			var eff_res := card.get_effective_resilience()
 			var eff_spd := card.get_effective_speed()
 			var is_def := card.creature_mode == Card.CreatureMode.DEFENSIVE
+			var side_badge_edge := 56.0 if _hovered else 66.0
 
 			var left_base := card.resilience if is_def else card.strength
 			var left_eff  := eff_res if is_def else eff_str
@@ -4650,14 +5782,16 @@ func _refresh_display() -> void:
 				Control.PRESET_BOTTOM_LEFT,
 				6,
 				-32,
-				66,
+				side_badge_edge,
 				-6,
 				left_font_color
 			)
 			var left_breakdown := card.get_full_stat_breakdown(left_stat)
 			if left_badge != null and left_breakdown != "":
 				left_badge.tooltip_text = left_breakdown
-				left_badge.mouse_filter = Control.MOUSE_FILTER_STOP
+				# Equipment and buffs add tooltips, but the badge must still let
+				# the creature receive clicks and start drags.
+				left_badge.mouse_filter = Control.MOUSE_FILTER_PASS
 
 			var right_font_color := Color(0.92, 0.97, 1.0)
 			if eff_spd > card.speed:
@@ -4668,7 +5802,7 @@ func _refresh_display() -> void:
 				card_overlay,
 				"SPD:%d" % eff_spd,
 				Control.PRESET_BOTTOM_RIGHT,
-				-66,
+				-side_badge_edge,
 				-32,
 				-6,
 				-6,
@@ -4677,8 +5811,51 @@ func _refresh_display() -> void:
 			var spd_breakdown := card.get_full_stat_breakdown("spd")
 			if right_badge != null and spd_breakdown != "":
 				right_badge.tooltip_text = spd_breakdown
-				right_badge.mouse_filter = Control.MOUSE_FILTER_STOP
+				right_badge.mouse_filter = Control.MOUSE_FILTER_PASS
 
+			if _hovered:
+				var hover_stat := "str" if is_def else "res"
+				var hover_value := eff_str if is_def else eff_res
+				var hover_base := card.strength if is_def else card.resilience
+				var hover_color := Color(0.92, 0.97, 1.0)
+				if hover_value > hover_base:
+					hover_color = Color(0.4, 1.0, 0.4)
+				elif hover_value < hover_base:
+					hover_color = Color(1.0, 0.35, 0.35)
+				var hover_badge := _add_overlay_stat_badge(
+					card_overlay, "%s:%d" % [hover_stat.to_upper(), hover_value],
+					Control.PRESET_BOTTOM_WIDE, side_badge_edge, -32, -side_badge_edge, -6, hover_color
+				)
+				if hover_badge != null:
+					has_hover_stat_badge = true
+					var hover_breakdown := card.get_full_stat_breakdown(hover_stat)
+					if hover_breakdown != "":
+						hover_badge.tooltip_text = hover_breakdown
+						hover_badge.mouse_filter = Control.MOUSE_FILTER_PASS
+
+		elif card.card_type == Card.CardType.CREATURE and not card.is_god and card.is_stealth \
+				and card.has_veil_of_night() and card.is_combat_resilience_inferable() \
+				and not is_own_stealth_faceup:
+			var eff_res := card.get_effective_resilience()
+			var res_font_color := Color(0.92, 0.97, 1.0)
+			if eff_res < card.resilience:
+				res_font_color = Color(1.0, 0.35, 0.35)
+			elif eff_res > card.resilience:
+				res_font_color = Color(0.4, 1.0, 0.4)
+			var res_badge := _add_overlay_stat_badge(
+				card_overlay,
+				"RES:%d" % eff_res,
+				Control.PRESET_BOTTOM_LEFT,
+				6,
+				-32,
+				56 if _hovered else 66,
+				-6,
+				res_font_color
+			)
+			var res_breakdown := card.get_full_stat_breakdown("res")
+			if res_badge != null and res_breakdown != "":
+				res_badge.tooltip_text = res_breakdown
+				res_badge.mouse_filter = Control.MOUSE_FILTER_PASS
 		elif card.card_type == Card.CardType.STRUCTURE:
 			var eff_res_s := card.get_effective_resilience()
 			var breakdown := card.get_buff_tooltip("res")
@@ -4699,7 +5876,7 @@ func _refresh_display() -> void:
 			)
 			if res_badge != null and breakdown != "":
 				res_badge.tooltip_text = "RES:\n" + breakdown
-				res_badge.mouse_filter = Control.MOUSE_FILTER_STOP
+				res_badge.mouse_filter = Control.MOUSE_FILTER_PASS
 
 		if card.is_power and card.is_muted and card.mute_turns_remaining > 0:
 			var muted_badge := PanelContainer.new()
@@ -4729,8 +5906,10 @@ func _refresh_display() -> void:
 			muted_badge.add_child(muted_lbl)
 			card_overlay.add_child(muted_badge)
 
-		_add_creature_action_symbols(card_overlay, card)
+		_add_intercept_preview_badge(card_overlay, card)
+		_add_creature_action_symbols(card_overlay, card, has_hover_stat_badge)
 		_add_stance_switch_symbol(card_overlay, card)
+		_add_follower_count_badge(card_overlay)
 		_defense_overlay = card_overlay if shows_defense_shield else null
 		_raised_overlay  = card_overlay if card.is_stealth else null
 		z_index = _get_resting_z_index()
@@ -4738,10 +5917,19 @@ func _refresh_display() -> void:
 	else:
 		z_index = BASE_BOARD_Z_INDEX
 		_add_empty_zone_slab()
+		# Player resources stay at the god slot when the Active God takes the field.
+		if zone.zone_type == Zone.ZoneType.GOD_SLOT:
+			var god_overlay := Control.new()
+			god_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			god_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			add_child(god_overlay)
+			_add_follower_count_badge(god_overlay)
+			_add_guard_indicator(god_overlay)
+			_add_followers_attack_result_label(god_overlay)
 
 	_add_move_indicator_overlay()
 
-func _add_creature_action_symbols(overlay: Control, card: Card) -> void:
+func _add_creature_action_symbols(overlay: Control, card: Card, has_hover_stat_badge: bool = false) -> void:
 	if overlay == null or card == null or card.card_type != Card.CardType.CREATURE:
 		return
 	var viewer := _get_viewer_player()
@@ -4752,25 +5940,13 @@ func _add_creature_action_symbols(overlay: Control, card: Card) -> void:
 	if symbols.is_empty():
 		return
 
-	var card_uid := BoardZoneUI.get_action_point_card_uid(card)
-	var current_state := BoardZoneUI.get_creature_action_symbol_state(card)
-	var previous_state = _creature_action_symbol_state_by_card_uid.get(card_uid, {})
-	var spent_kinds: Array[String] = []
-	if previous_state is Dictionary:
-		spent_kinds = BoardZoneUI.get_spent_action_kinds(previous_state as Dictionary, current_state)
-	_creature_action_symbol_state_by_card_uid[card_uid] = current_state
-	var pending_spend_kinds := BoardZoneUI.get_pending_action_point_spend_visual_kinds(card)
-	var has_spend_effect := not spent_kinds.is_empty() or not pending_spend_kinds.is_empty()
-
 	var has_visible_symbol := false
 	for symbol in symbols:
 		if not bool(symbol.get("used", false)):
 			has_visible_symbol = true
 			break
 	var should_render_static_icons := _hovered and _should_show_creature_action_symbols(card)
-	if not should_render_static_icons and not has_spend_effect:
-		return
-	if not has_visible_symbol and not has_spend_effect:
+	if not should_render_static_icons or not has_visible_symbol:
 		return
 
 	var icon_size := 22.0
@@ -4784,43 +5960,22 @@ func _add_creature_action_symbols(overlay: Control, card: Card) -> void:
 	row.anchor_bottom = 1.0
 	row.offset_left = -total_width * 0.5
 	row.offset_right = total_width * 0.5
-	row.offset_top = -32.0
-	row.offset_bottom = -8.0
+	var row_bottom := -38.0 if has_hover_stat_badge else -8.0
+	row.offset_top = row_bottom - icon_size
+	row.offset_bottom = row_bottom
 	row.custom_minimum_size = Vector2(total_width, icon_size)
 	row.size = Vector2(total_width, icon_size)
 	overlay.add_child(row)
 
-	var zone_rect := get_global_rect()
-	var row_global_origin := Vector2(
-		zone_rect.position.x + zone_rect.size.x * 0.5 - total_width * 0.5,
-		zone_rect.position.y + zone_rect.size.y - 32.0
-	)
-	var burst_requests: Array[Dictionary] = []
 	for symbol_index in range(symbols.size()):
 		var symbol := symbols[symbol_index] as Dictionary
 		var kind := str(symbol.get("kind", Card.ACTION_COST_NONE))
 		var used := bool(symbol.get("used", false))
-		var key := str(symbol.get("key", ""))
 		var left := float(symbol_index) * (icon_size + gap)
 		if used:
-			var should_burst := false
-			if previous_state is Dictionary and (previous_state as Dictionary).has(key):
-				var previous_entry = (previous_state as Dictionary).get(key, {})
-				if previous_entry is Dictionary and not bool((previous_entry as Dictionary).get("used", false)):
-					should_burst = true
-			if kind in pending_spend_kinds:
-				should_burst = true
-				pending_spend_kinds.erase(kind)
-			if should_burst:
-				burst_requests.append({
-					"kind": kind,
-					"center": row_global_origin + Vector2(left + icon_size * 0.5, icon_size * 0.5),
-				})
-			continue
-		if not should_render_static_icons:
 			continue
 		var slot := PanelContainer.new()
-		slot.mouse_filter = Control.MOUSE_FILTER_STOP
+		slot.mouse_filter = Control.MOUSE_FILTER_PASS
 		slot.custom_minimum_size = Vector2(icon_size, icon_size)
 		slot.set_anchors_preset(Control.PRESET_TOP_LEFT)
 		slot.offset_left = left
@@ -4848,10 +6003,6 @@ func _add_creature_action_symbols(overlay: Control, card: Card) -> void:
 		slot.add_child(icon)
 		_connect_badge_hover(slot, hover_text)
 		row.add_child(slot)
-
-	if not burst_requests.is_empty():
-		BoardZoneUI.clear_pending_action_point_spend_visual_kinds(card)
-		call_deferred("_play_creature_action_symbol_spend_bursts", burst_requests, icon_size)
 
 func _add_stance_switch_symbol(overlay: Control, card: Card) -> void:
 	if overlay == null or card == null:
@@ -4937,22 +6088,43 @@ func _add_stance_switch_symbol(overlay: Control, card: Card) -> void:
 	_connect_badge_click_action(badge, "creature_stance_switch", card_uid, int(target_mode))
 	overlay.add_child(badge)
 
-func _play_creature_action_symbol_spend_bursts(burst_requests: Array, icon_size: float) -> void:
+func play_action_point_spend_effects(card: Card, spent_kinds: Array[String]) -> void:
 	if not is_inside_tree() or is_queued_for_deletion():
+		return
+	if card == null or spent_kinds.is_empty():
+		return
+	var symbols := BoardZoneUI.get_creature_action_symbol_entries(card)
+	if symbols.is_empty():
 		return
 	var parent := _get_floating_popup_parent()
 	if parent == null:
 		return
-	for raw_request in burst_requests:
-		if not (raw_request is Dictionary):
+	var icon_size := 22.0
+	var gap := 3.0
+	var total_width := icon_size * float(symbols.size()) + gap * float(maxi(0, symbols.size() - 1))
+	var zone_rect := get_global_rect()
+	var row_global_origin := Vector2(
+		zone_rect.position.x + zone_rect.size.x * 0.5 - total_width * 0.5,
+		zone_rect.position.y + zone_rect.size.y - 32.0
+	)
+	var used_symbol_indices: Array[int] = []
+	for spent_kind in spent_kinds:
+		var symbol_index := -1
+		for candidate_index in range(symbols.size()):
+			if candidate_index in used_symbol_indices:
+				continue
+			var candidate := symbols[candidate_index] as Dictionary
+			if str(candidate.get("kind", Card.ACTION_COST_NONE)) == spent_kind and bool(candidate.get("used", false)):
+				symbol_index = candidate_index
+				break
+		if symbol_index < 0:
 			continue
-		var request := raw_request as Dictionary
-		var kind := str(request.get("kind", Card.ACTION_COST_NONE))
-		var center = request.get("center", Vector2.ZERO)
-		if not (center is Vector2):
-			continue
-		var center_vec: Vector2 = center
-		BoardZoneUI.spawn_action_point_spend_effect(parent, center_vec, kind, icon_size)
+		used_symbol_indices.append(symbol_index)
+		var center := row_global_origin + Vector2(
+			float(symbol_index) * (icon_size + gap) + icon_size * 0.5,
+			icon_size * 0.5
+		)
+		BoardZoneUI.spawn_action_point_spend_effect(parent, center, spent_kind, icon_size)
 
 func _is_draggable_creature() -> bool:
 	if zone.cards.size() == 0:
@@ -4971,17 +6143,23 @@ func _is_draggable_creature() -> bool:
 	return true
 
 func _gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion:
+		_push_stealth_fog_cursor_from_motion(event as InputEventMouseMotion)
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		# Dispatch can rebuild the board, so consume the event while this control is live.
+		accept_event()
 		if _is_draggable_creature():
 			creature_drag_started.emit(zone.cards[0], zone)
-			accept_event()
 		elif zone.cards.size() > 0:
 			card_clicked.emit(zone.cards[0])
-			accept_event()
 		else:
 			zone_clicked.emit(zone)
-			accept_event()
 	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
+		if not _is_enemy and zone.zone_type == Zone.ZoneType.GOD_SLOT and zone.zone_owner == _get_viewer_player():
+			# The slot remains usable when an Active God has left it empty, on either turn.
+			accept_event()
+			god_right_clicked.emit(zone.cards[0] if not zone.cards.is_empty() else null)
+			return
 		if zone.cards.size() > 0:
 			var card := zone.cards[0]
 			if not _is_enemy and card.card_type == Card.CardType.CREATURE and card.get_controller() == game_manager.current_player:
@@ -4992,45 +6170,179 @@ func _gui_input(event: InputEvent) -> void:
 				return
 			# Pin the info popup on right-click for any visible card
 			var viewer := _get_viewer_player()
-			if not card.is_face_down or card.get_controller() == viewer or _is_public_power(card) or card.is_temporarily_revealed():
+			if not card.is_face_down or card.get_controller() == viewer or _is_public_power(card) or card.is_revealed_to_all():
 				_pinned = true
 				_hide_ability_popup()
 				_show_ability_popup()
 				accept_event()
 
+func _push_stealth_fog_cursor_from_motion(event: InputEventMouseMotion) -> void:
+	var fog_overlay := _get_live_stealth_fog_overlay()
+	if fog_overlay == null:
+		return
+	var cursor_hotspot := get_global_transform() * event.position
+	if fog_overlay.has_method("push_cursor_hotspot_position"):
+		fog_overlay.call("push_cursor_hotspot_position", cursor_hotspot)
+
+func _get_live_stealth_fog_overlay() -> Control:
+	if _stealth_fog_overlay != null \
+			and is_instance_valid(_stealth_fog_overlay) \
+			and not _stealth_fog_overlay.is_queued_for_deletion():
+		return _stealth_fog_overlay
+	_stealth_fog_overlay = _find_stealth_fog_overlay(self)
+	if _stealth_fog_overlay != null \
+			and is_instance_valid(_stealth_fog_overlay) \
+			and not _stealth_fog_overlay.is_queued_for_deletion():
+		return _stealth_fog_overlay
+	_stealth_fog_overlay = null
+	return null
+
 func _notification(what: int) -> void:
 	match what:
+		NOTIFICATION_ENTER_TREE:
+			if zone != null:
+				call_deferred("_refresh_display")
 		NOTIFICATION_EXIT_TREE:
+			set_process(false)
+			if _active_affordance_hover_owner_id == get_instance_id():
+				_active_affordance_hover_owner_id = 0
+			_set_locked_power_cursor_active(false)
 			_pinned = false
 			_hovered = false
+			_badge_hovered = false
 			_hide_pending = false
+			_hover_exit_refresh_pending = false
 			_disconnect_visual_state_card()
 			_hide_badge_hover_popup()
 			_hide_ability_popup()
 		NOTIFICATION_MOUSE_ENTER:
 			_hovered = true
+			set_process(true)
+			_active_affordance_hover_owner_id = get_instance_id()
 			var _c := _preview_card if _preview_card != null else (zone.cards[0] if zone != null and zone.cards.size() > 0 else null)
+			_sync_locked_power_cursor_hover(_c)
+			_notify_hover_attack_preview_target_changed(_get_hover_attack_preview_target(_c))
 			if _c != null:
 				_notify_hover_card_options_changed(_c)
-				_refresh_display()
+				if not _set_prepared_magical_cover_hovered(true):
+					_refresh_display()
 			if _c != null:
 				z_index = HOVER_BOARD_Z_INDEX
 			elif zone != null and zone.cards.is_empty():
 				_refresh_display()
 			var viewer := _get_viewer_player()
-			if _c != null and (not _c.is_face_down or _c.get_controller() == viewer or _is_public_power(_c) or _c.is_temporarily_revealed()):
-				var _delay := 1.0 if (_c.is_god) else 1.5
+			if _c != null and _should_show_hover_popup_for_card(_c, viewer):
 				if is_inside_tree() and not is_queued_for_deletion():
-					get_tree().create_timer(_delay).timeout.connect(Callable(self, "_try_show_popup"))
+					get_tree().create_timer(CARD_HOVER_POPUP_DELAY).timeout.connect(Callable(self, "_try_show_popup"))
 		NOTIFICATION_MOUSE_EXIT:
+			if _badge_hovered or _is_mouse_over_owned_badge() or _is_mouse_in_affordance_hover_area():
+				_hovered = true
+				_schedule_hover_exit_refresh()
+				return
 			_hovered = false
+			_badge_hovered = false
+			_set_locked_power_cursor_active(false)
 			_notify_hover_card_options_changed(null)
+			_notify_hover_attack_preview_target_changed(null)
+			_set_prepared_magical_cover_hovered(false)
 			z_index = _get_resting_z_index()
 			if zone != null and zone.cards.is_empty():
 				_refresh_display()
-			elif zone != null and not zone.cards.is_empty():
-				_refresh_display()
+			elif zone != null and not zone.cards.is_empty() and _prepared_magical_cover_art == null:
+				_schedule_hover_exit_refresh()
 			_schedule_hide()
+			_update_hover_polling()
+
+func _set_prepared_magical_cover_hovered(is_hovered: bool) -> bool:
+	if _prepared_magical_cover_art == null or not is_instance_valid(_prepared_magical_cover_art):
+		return false
+	_prepared_magical_cover_art.texture = (
+		PREPARED_MAGICAL_CARD_COVER_HOVER_TEXTURE
+		if is_hovered
+		else PREPARED_MAGICAL_CARD_COVER_TEXTURE
+	)
+	if is_hovered:
+		_shake_snow_from_prepared_magical_cover()
+		_start_prepared_magical_hover_shake()
+	else:
+		_stop_prepared_magical_hover_shake()
+	return true
+
+func _shake_snow_from_prepared_magical_cover() -> void:
+	if _prepared_magical_cover_overlay == null or not is_instance_valid(_prepared_magical_cover_overlay):
+		return
+	var snow_overlay := _prepared_magical_cover_overlay.get_node_or_null("SnowV2CardMeltOverlay")
+	if snow_overlay != null and snow_overlay.has_method("shake_off_snow"):
+		snow_overlay.call("shake_off_snow", 0.22)
+
+func _start_prepared_magical_hover_shake() -> void:
+	if _prepared_magical_cover_overlay == null or not is_instance_valid(_prepared_magical_cover_overlay):
+		return
+	if _prepared_magical_hover_tween != null and _prepared_magical_hover_tween.is_valid():
+		return
+	_prepared_magical_cover_overlay.rotation_degrees = 0.0
+	_prepared_magical_hover_tween = create_tween().set_loops()
+	_prepared_magical_hover_tween.set_trans(Tween.TRANS_SINE)
+	_prepared_magical_hover_tween.set_ease(Tween.EASE_IN_OUT)
+	_prepared_magical_hover_tween.tween_property(
+		_prepared_magical_cover_overlay,
+		"rotation_degrees",
+		-0.45,
+		0.055
+	)
+	_prepared_magical_hover_tween.tween_property(
+		_prepared_magical_cover_overlay,
+		"rotation_degrees",
+		0.5,
+		0.075
+	)
+	_prepared_magical_hover_tween.tween_property(
+		_prepared_magical_cover_overlay,
+		"rotation_degrees",
+		-0.25,
+		0.065
+	)
+	_prepared_magical_hover_tween.tween_property(
+		_prepared_magical_cover_overlay,
+		"rotation_degrees",
+		0.0,
+		0.055
+	)
+
+func _stop_prepared_magical_hover_shake() -> void:
+	if _prepared_magical_hover_tween != null and _prepared_magical_hover_tween.is_valid():
+		_prepared_magical_hover_tween.kill()
+	_prepared_magical_hover_tween = null
+	if _prepared_magical_cover_overlay != null and is_instance_valid(_prepared_magical_cover_overlay):
+		_prepared_magical_cover_overlay.rotation_degrees = 0.0
+
+func _update_hover_polling() -> void:
+	var has_popup := _popup != null and is_instance_valid(_popup)
+	var has_badge_popup := _badge_hover_popup != null and is_instance_valid(_badge_hover_popup)
+	set_process(_hovered or _badge_hovered or _pinned or has_popup or has_badge_popup)
+
+func _schedule_hover_exit_refresh() -> void:
+	if _hover_exit_refresh_pending:
+		return
+	if not is_inside_tree() or is_queued_for_deletion():
+		return
+	_hover_exit_refresh_pending = true
+	await get_tree().create_timer(0.06).timeout
+	_hover_exit_refresh_pending = false
+	if not is_inside_tree() or is_queued_for_deletion() or get_viewport() == null:
+		return
+	if _hovered or _badge_hovered or _is_mouse_over_owned_badge():
+		return
+	if get_global_rect().has_point(get_global_mouse_position()) or _is_mouse_in_affordance_hover_area():
+		_hovered = true
+		var card := _preview_card if _preview_card != null else (zone.cards[0] if zone != null and zone.cards.size() > 0 else null)
+		_sync_locked_power_cursor_hover(card)
+		_schedule_hover_exit_refresh()
+		return
+	_set_locked_power_cursor_active(false)
+	if not _set_prepared_magical_cover_hovered(false):
+		_refresh_display()
+	_update_hover_polling()
 
 func _schedule_hide() -> void:
 	if _pinned or _hide_pending:
@@ -5047,14 +6359,29 @@ func _schedule_hide() -> void:
 	if _popup and is_instance_valid(_popup):
 		if _popup.get_global_rect().has_point(get_global_mouse_position()):
 			return  # Mouse is over the popup
+	if _badge_hovered or _is_mouse_over_owned_badge() or _is_mouse_in_affordance_hover_area():
+		return  # Mouse is over an affordance extending outside the zone
 	if get_global_rect().has_point(get_global_mouse_position()):
 		return  # Mouse returned to zone
 	_hide_ability_popup()
+
+func _should_show_hover_popup_for_card(card: Card, viewer: Player) -> bool:
+	if card == null:
+		return false
+	if not card.is_face_down:
+		return true
+	if card.get_controller() == viewer or _is_public_power(card) or card.is_revealed_to_all():
+		return true
+	if card.is_prepared and card.is_magical_card():
+		return true
+	return card.card_type == Card.CardType.CREATURE and card.is_stealth
 
 func _input(event: InputEvent) -> void:
 	if not _pinned:
 		return
 	if event is InputEventMouseButton and event.pressed:
+		if event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
+			return
 		# Any click anywhere unpins
 		_pinned = false
 		_hide_ability_popup()
@@ -5065,14 +6392,32 @@ func _process(_delta: float) -> void:
 		return
 	if not is_inside_tree() or is_queued_for_deletion() or get_viewport() == null:
 		return
+	var mouse_pos := get_global_mouse_position()
+	var zone_rect := get_global_rect()
+	if _hovered \
+		and not _badge_hovered \
+		and not _is_mouse_over_owned_badge() \
+		and not _is_mouse_in_affordance_hover_area() \
+		and not zone_rect.has_point(mouse_pos):
+		_hovered = false
+		_set_locked_power_cursor_active(false)
+		_notify_hover_card_options_changed(null)
+		z_index = _get_resting_z_index()
+		if not _set_prepared_magical_cover_hovered(false):
+			_refresh_display()
+		_update_hover_polling()
+		return
 	if _popup and is_instance_valid(_popup):
-		var over_zone  := get_global_rect().has_point(get_global_mouse_position())
-		var over_popup := _popup.get_global_rect().has_point(get_global_mouse_position())
-		if not over_zone and not over_popup:
+		var over_zone := zone_rect.has_point(mouse_pos)
+		var over_popup := _popup.get_global_rect().has_point(mouse_pos)
+		var over_badge := _badge_hovered or _is_mouse_over_owned_badge() or _is_mouse_in_affordance_hover_area()
+		if not over_zone and not over_popup and not over_badge:
 			_schedule_hide()
 
 func _try_show_popup() -> void:
 	if not _hovered:
+		return
+	if _badge_hovered or _is_mouse_over_owned_badge() or not get_global_rect().has_point(get_global_mouse_position()):
 		return
 	if not is_inside_tree() or is_queued_for_deletion() or get_viewport() == null:
 		return
@@ -5088,15 +6433,23 @@ func _show_ability_popup() -> void:
 	if not is_inside_tree() or is_queued_for_deletion():
 		return
 	var card := zone.cards[0]
+	# Show the manifestation's regular details instead of nesting a second full
+	# card below Take the Field. The board still uses the locked power for input.
+	var active_god_preview := _get_locked_take_the_field_preview(card)
+	if active_god_preview != null:
+		card = active_god_preview
 	var floating_parent := _get_floating_popup_parent()
 	if floating_parent == null:
 		return
 
 	var popup_root := Control.new()
+	popup_root.name = "CardHoverPanel"
+	popup_root.add_to_group("stealth_fog_clear_ui")
 	popup_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	popup_root.top_level = true
 	popup_root.z_as_relative = false
 	popup_root.z_index = POPUP_Z_INDEX
+	popup_root.visible = false
 
 	var popup := PanelContainer.new()
 	var pstyle := StyleBoxFlat.new()
@@ -5109,11 +6462,12 @@ func _show_ability_popup() -> void:
 		pstyle.set_border_width(side, 1)
 	pstyle.border_color = Color(0.5, 0.5, 0.75)
 	popup.add_theme_stylebox_override("panel", pstyle)
-	popup.mouse_filter = Control.MOUSE_FILTER_STOP
-	popup.mouse_exited.connect(Callable(self, "_on_popup_mouse_exited"))
+	popup.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	var popup_viewer_shared := _get_viewer_player()
-	var is_hidden_card_shared := (card.is_stealth or (card.is_face_down and not _is_public_power(card))) and card.get_controller() != popup_viewer_shared and not card.is_temporarily_revealed()
+	var is_hidden_card_shared := (card.is_stealth or card.is_prepared or (card.is_face_down and not _is_public_power(card))) \
+		and card.get_controller() != popup_viewer_shared \
+		and not card.is_revealed_to_all()
 
 	var effect_lines_shared: Array[String] = []
 	var equipment_lines_shared: Array[String] = []
@@ -5155,7 +6509,7 @@ func _show_ability_popup() -> void:
 		elif card.is_prepared and card.is_magical_card():
 			cost_lines_shared = _get_prepared_magical_hover_cost_lines(card)
 
-	popup.add_child(CardDetailContentBuilderScript.build_board_popup_body(
+	var hover_body := CardDetailContentBuilderScript.build_board_popup_body(
 		card,
 		popup_viewer_shared,
 		{
@@ -5168,7 +6522,9 @@ func _show_ability_popup() -> void:
 			"power_cost_lines": power_cost_lines_shared,
 			"game_manager": game_manager
 		}
-	))
+	)
+	var hover_max_height := minf(520.0, maxf(80.0, get_viewport_rect().size.y - 32.0))
+	popup.add_child(CardDetailContentBuilderScript.wrap_hover_body(hover_body, hover_max_height))
 
 	popup_root.add_child(popup)
 
@@ -5179,12 +6535,17 @@ func _show_ability_popup() -> void:
 			keywords_panel = CardDetailContentBuilderScript.build_keywords_panel(keywords)
 			popup_root.add_child(keywords_panel)
 
+	CardDetailContentBuilderScript.set_hover_mouse_passthrough(popup_root)
 	_popup = popup_root
 	floating_parent.add_child(popup_root)
 	popup_root.move_to_front()
 
 	await get_tree().process_frame
+	# Nested active-god previews need another container layout pass before sizing.
+	await get_tree().process_frame
 	if not is_instance_valid(popup_root) or not is_instance_valid(popup):
+		return
+	if popup_root.is_queued_for_deletion() or _popup != popup_root:
 		return
 	var popup_vp_size_shared := get_viewport_rect().size
 	var popup_size := popup.get_combined_minimum_size()
@@ -5208,21 +6569,65 @@ func _show_ability_popup() -> void:
 		maxf(popup_size.y, keyword_size.y)
 	)
 	popup_root.size = popup_root_size
-
-	var popup_pos_shared := global_position
-	popup_pos_shared.y -= popup.size.y + 6
-	if popup_pos_shared.y < 0:
-		popup_pos_shared.y = global_position.y + size.y + 6
-	var desired_x := global_position.x - (keyword_size.x + KEYWORD_PANEL_GAP if keywords_on_left else 0.0)
-	popup_pos_shared.x = clamp(desired_x, 4.0, popup_vp_size_shared.x - popup_root_size.x - 4.0)
-	popup_root.global_position = popup_pos_shared
+	var card_rect := get_card_visual_global_rect()
+	CardDetailContentBuilderScript.place_hover_panel(
+		popup_root, card_rect, _get_card_hover_avoid_rect(), active_god_preview != null
+	)
 
 func _hide_ability_popup() -> void:
 	if _popup and is_instance_valid(_popup):
+		_popup.hide()
 		_popup.queue_free()
 	_popup = null
+	_update_hover_polling()
+
+func is_valid_hand_drag_target(card: Card) -> bool:
+	if card == null or zone == null or game_manager == null:
+		return false
+	# Preview target compatibility independently of costs and priority timing.
+	# A stack preview can occupy a display slot without belonging to its zone.
+	var candidates: Array[Card] = []
+	if _preview_card != null:
+		candidates.append(_preview_card)
+	else:
+		candidates.append_array(zone.cards)
+	if card is EquipmentCard:
+		if zone.zone_owner != card.card_owner:
+			return false
+		for target in candidates:
+			if card.can_equip_to(target):
+				return true
+		return false
+	if card is Absence:
+		for target in candidates:
+			if target is PowerCard or target.is_god:
+				return true
+		return false
+	var valid_targets: Array = []
+	if card is CharmCard:
+		var source_action: CardAction = game_manager.action_stack.back() if not game_manager.action_stack.is_empty() else null
+		valid_targets = card.get_priority_targets(game_manager, source_action) if source_action != null else card.get_valid_targets(game_manager)
+	elif card is SpellCard and card.targets and card.has_method("get_valid_targets"):
+		valid_targets = card.get_valid_targets(game_manager)
+	for target in candidates:
+		if target in valid_targets:
+			return true
+	return false
 
 func can_accept_card(card: Card) -> bool:
+	if card is SpellCard and card.targets and not (card is Absence) and not zone.cards.is_empty():
+		var spell := card as SpellCard
+		var valid_targets: Array = spell.get_valid_targets(game_manager)
+		var has_valid_target := false
+		for target in zone.cards:
+			if target in valid_targets:
+				has_valid_target = true
+				break
+		if not has_valid_target:
+			return false
+		if spell.is_prepared and spell.current_zone != null and spell.current_zone.is_board_zone():
+			return spell.can_activate_prepared(game_manager, spell.card_owner)
+		return game_manager.can_play_card(spell.card_owner, spell, null)
 	if card is BitMeseri:
 		if zone.cards.size() == 0:
 			return game_manager.can_play_card(game_manager.current_player, card, null)
@@ -5238,18 +6643,21 @@ func can_accept_card(card: Card) -> bool:
 			return false
 		return game_manager.can_play_card(game_manager.current_player, card, null)
 	if card is CharmCard and (card as CharmCard).targets:
-		if zone.cards.size() == 0:
-			if card.current_zone == card.card_owner.hand_zone:
-				return (card as CharmCard).can_activate_from_hand(game_manager) \
-					or game_manager.can_prepare_card(game_manager.current_player, card, zone)
-			return (card as CharmCard).can_activate_prepared(game_manager)
 		var charm := card as CharmCard
-		var target := zone.cards[0]
-		if not charm.is_valid_target(target):
-			return false
+		var source_action: CardAction = game_manager.action_stack.back() if not game_manager.action_stack.is_empty() else null
+		var valid_targets: Array = charm.get_priority_targets(game_manager, source_action) if source_action != null else charm.get_valid_targets(game_manager)
+		if not zone.cards.is_empty():
+			var has_valid_target := false
+			for target in zone.cards:
+				if target in valid_targets:
+					has_valid_target = true
+					break
+			if not has_valid_target:
+				return false
 		if card.current_zone == card.card_owner.hand_zone:
-			return charm.can_activate_from_hand(game_manager)
-		return charm.can_activate_prepared(game_manager)
+			return charm.can_activate_from_hand(game_manager, source_action) \
+				or (zone.cards.is_empty() and game_manager.can_prepare_card(game_manager.current_player, card, zone))
+		return charm.can_activate_prepared(game_manager, source_action)
 	if card is CharmCard:
 		if zone.cards.size() > 0:
 			return false

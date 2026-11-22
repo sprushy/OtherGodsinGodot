@@ -3,11 +3,13 @@ extends SceneTree
 var _client = null
 var _port: int = 22345
 var _scene_root: Node = null
+var _probe_username: String = ""
 
 func _initialize() -> void:
 	var args := OS.get_cmdline_user_args()
 	if not args.is_empty():
 		_port = int(str(args[0]).to_int())
+	_probe_username = "Attach%d" % int(Time.get_ticks_msec() % 1000000)
 	call_deferred("_run_probe")
 
 func _run_probe() -> void:
@@ -44,7 +46,16 @@ func _run_probe() -> void:
 
 	await process_frame
 
-	var err: Error = _client.connect_to_server("127.0.0.1", "AttachProbe", "", "", _port)
+	var err: Error = _client.connect_to_server(
+		"127.0.0.1",
+		_probe_username,
+		"",
+		"",
+		_port,
+		"",
+		"register",
+		"ProbePass123"
+	)
 	if err != OK:
 		push_error("dedicated_lobby_attach_probe: connect_to_server failed")
 		quit(1)

@@ -14,7 +14,7 @@ func _init() -> void:
 	speed = 2
 	culture = "Olympic"
 	card_types = ["Hex", "Permanent", "Binding", "Lasting", "Targeting"]
-	ability_text = "Bind a creature. Move it back 1 row. All its actions cost 1 more mana.\n[b]Upkeep[/b]: You may pay 1 mana to move the bound card back 1 row. From the reserve line you may send it to the grave; from the grave you may [b]Void[/b] it. If the bound creature leaves the field or grave, destroy this card."
+	ability_text = "Bind a creature. Move it back 1 row. All its actions cost 1 more mana.\n[b]Upkeep[/b]: You may pay 1 mana to move the bound card back 1 row. From the reserve line you may send it to the grave; from the grave you may [b]Void[/b] it. If the bound creature leaves the field or grave, destroy Wheel of Fire."
 	flavor_text = ""
 	artist = "Ricardo Zoppello"
 	art_path = ART_PATH
@@ -176,8 +176,6 @@ func _advance_target_step(game_manager: GameManager, pay_cost: bool, emit_feedba
 
 	var target_name := attached_target.get_target_log_display_name(game_manager.get_feedback_viewer())
 	var from_zone := attached_target.current_zone
-	if from_zone != null and from_zone.is_board_zone():
-		attached_target.reveal_from_stealth(game_manager)
 	attached_target.card_owner.move_card(attached_target, next_zone)
 
 	var movement_text := _get_movement_text(from_zone, next_zone)

@@ -72,5 +72,18 @@ func summon_silenced_creature(game_manager: GameManager, creature: Card) -> Card
 		false
 	):
 		return null
-	creature.mute_permanently(game_manager)
+	_silence_summoned_creature(creature, game_manager)
 	return creature
+
+func _silence_summoned_creature(creature: Card, game_manager: GameManager) -> void:
+	if creature == null:
+		return
+	creature.mute_permanently(game_manager)
+	creature.remove_status_effects_from_source_card(self, Card.ABILITY_NEGATED_STATUS)
+	creature.add_status_effect(
+		Card.ABILITY_NEGATED_STATUS,
+		card_name,
+		self,
+		card_owner,
+		{"remove_when_leaves_board": true}
+	)

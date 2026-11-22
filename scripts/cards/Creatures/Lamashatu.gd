@@ -11,7 +11,7 @@ const SUCKLE_RESILIENCE_BONUS := 5
 func _init() -> void:
 	super._init()
 	card_name = "Lamashatu"
-	card_types = ["Demon", "Ancient Creature"]
+	card_types = ["Demon"]
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
 	level = 4
@@ -21,7 +21,7 @@ func _init() -> void:
 	resilience = 26
 	strength = 23
 	targets = true
-	ability_text = "[b]Suckle[/b] ([b]Activate[/b]): Once per turn, choose another friendly Demon or Animal. It gains +1 Lvl, +1 Spd, +5 Str, and +5 Res."
+	ability_text = "[b]Suckle[/b] ([b]Activate[/b], once per turn): Give another friendly Demon or Animal +1 LVL, +5 STR, +5 RES, and +1 SPD."
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricardo Zoppello"

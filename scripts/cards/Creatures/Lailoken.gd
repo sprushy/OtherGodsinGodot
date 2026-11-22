@@ -7,7 +7,7 @@ const MAGIC_DRAIN_STR_BONUS := 5
 func _init() -> void:
 	super._init()
 	card_name = "Lailoken"
-	card_types = ["Human", "Mage", "Triskelion Creature", "Targeting"]
+	card_types = ["Human", "Mage", "Targeting"]
 	level = 1
 	mana_cost = 0
 	sacrifice_cost = 0
@@ -40,6 +40,7 @@ func on_reveal(game_manager: GameManager) -> void:
 		"target_uids": target_uids,
 		"queue_with_priority": true,
 		"event_name": "lailoken_reveal",
+		"completion_command_type": "lailoken_reveal_choice",
 	})
 
 func get_valid_targets(game_manager: GameManager) -> Array[Card]:
@@ -71,7 +72,8 @@ func begin_magic_drain_reveal(
 		return
 
 	var valid_targets := get_valid_targets(game_manager)
-	if target == null or target not in valid_targets:
+	target = _resolve_valid_target(target, valid_targets)
+	if target == null:
 		finish.call(card_name + " found no valid prepared magical card to drain.")
 		return
 	if game_manager.is_immune_to_source(target, self):
@@ -86,10 +88,11 @@ func begin_magic_drain_reveal(
 	var viewer := game_manager.get_feedback_viewer()
 	var target_name := target.get_target_log_display_name(viewer)
 	var on_destroy_complete := func() -> void:
-		var destroyed := target.current_zone == null or not target.current_zone.is_board_zone()
+		var destroyed := game_manager.reached_public_destroyed_destination(target)
 		if not destroyed:
 			finish.call("%s failed to destroy %s with Magic Drain." % [card_name, target_name])
 			return
+		var destroyed_name := game_manager.get_resolved_destruction_log_name(target, viewer, target_name)
 		add_buff(
 			MAGIC_DRAIN_BUFF_SOURCE,
 			MAGIC_DRAIN_STR_BONUS,
@@ -101,7 +104,7 @@ func begin_magic_drain_reveal(
 		)
 		finish.call("%s destroyed %s with Magic Drain and gained %d Str." % [
 			card_name,
-			target_name,
+			destroyed_name,
 			MAGIC_DRAIN_STR_BONUS
 		])
 	game_manager.request_send_to_graveyard(
@@ -118,3 +121,14 @@ func _is_valid_magic_drain_target(target: Card) -> bool:
 		and target.current_zone.is_board_zone() \
 		and target.is_prepared \
 		and target.is_magical_card()
+
+func _resolve_valid_target(target: Card, valid_targets: Array) -> Card:
+	if target == null:
+		return null
+	var target_uid := str(target.uid).strip_edges()
+	for valid_target in valid_targets:
+		if valid_target == target:
+			return valid_target
+		if valid_target is Card and target_uid != "" and str(valid_target.uid).strip_edges() == target_uid:
+			return valid_target
+	return null

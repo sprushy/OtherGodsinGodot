@@ -4,33 +4,53 @@ class_name MatchSupervisor
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const ServerPathsScript = preload("res://scripts/server/ServerPaths.gd")
 const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
+const WebSocketEndpointsScript = preload("res://scripts/network/WebSocketEndpoints.gd")
 const HEADLESS_ENTRY_SCRIPT_PATH := "res://scripts/server/HeadlessMatchServerMain.gd"
 const DEDICATED_SERVER_EXPORT_RELATIVE_PATH := "res://.exports/server/OtherGodsServer.exe"
+const MATCH_STATUS_FILE_STALE_SECONDS := 20
+const MATCH_STATUS_FILE_STARTUP_GRACE_SECONDS := 150
+const MIN_FREE_BOT_DISK_BYTES := 512 * 1024 * 1024
+const SUPERVISOR_HEARTBEAT_INTERVAL_MSEC := 5000
+## Override for the concurrent supervisor-hosted human match limit
+## (OTHERGODS_MAX_HUMAN_MATCHES). Unset means one logical core per match with
+## one core reserved for the lobby itself.
+const MAX_HOSTED_HUMAN_MATCHES_ENV := "OTHERGODS_MAX_HUMAN_MATCHES"
+const HOST_LOBBY_CORE_RESERVE := 1
+const SERVER_HOST_FULL_MESSAGE := "The server is full at the moment — sorry! Please try again in a few minutes."
 
 signal match_created(match_session)
 signal match_closed(match_id: String, room_id: String, final_status: String)
 
 var server_ip: String = "127.0.0.1"
 var default_match_port: int = 12345
+var public_websocket_url: String = ""
 var use_dedicated_headless: bool = true
 var godot_executable_path: String = ""
 var project_path: String = ""
 var allow_in_process_fallback: bool = true
 var active_matches: Dictionary = {}
 var last_create_match_error: String = ""
+var _shared_bot_match_servers: Dictionary = {}
 
 var _rng := RandomNumberGenerator.new()
 var _cleanup_poll_interval_seconds: float = 1.0
 var _cleanup_poll_elapsed: float = 0.0
+var _supervisor_heartbeat_path: String = ""
+var _next_supervisor_heartbeat_msec: int = 0
 
 func _ready() -> void:
 	_rng.randomize()
+
+func _exit_tree() -> void:
+	_remove_supervisor_heartbeat()
 
 func _process(delta: float) -> void:
 	_cleanup_poll_elapsed += delta
 	if _cleanup_poll_elapsed < _cleanup_poll_interval_seconds:
 		return
 	_cleanup_poll_elapsed = 0.0
+	if not _supervisor_heartbeat_path.is_empty() and Time.get_ticks_msec() >= _next_supervisor_heartbeat_msec:
+		_write_supervisor_heartbeat()
 	_refresh_active_matches()
 
 func configure(
@@ -53,33 +73,80 @@ func create_match(
 	player_session_ids: Array[String],
 	player_decks_by_session: Dictionary = {},
 	player_identity_by_session: Dictionary = {},
-	is_ranked: bool = true
+	spectator_visible_player_indices_by_session: Dictionary = {},
+	is_ranked: bool = true,
+	best_of: int = 1,
+	player_host_session_id: String = "",
+	player_host_reachable_ip: String = "",
+	player_host_reachable_port: int = 0,
+	player_host_bind_port: int = 0
 ):
 	last_create_match_error = ""
 	var match_id: String = _generate_match_id()
 	while active_matches.has(match_id):
 		match_id = _generate_match_id()
 
-	var match_port := _allocate_match_port()
-
 	var session := MatchSessionScript.new(
 		match_id,
 		room_id,
 		server_ip,
-		match_port,
+		0,
 		player_session_ids,
 		player_decks_by_session,
 		player_identity_by_session
 	)
+	session.spectator_visible_player_indices_by_session = spectator_visible_player_indices_by_session.duplicate(true)
 	session.is_ranked = is_ranked
+	var require_dedicated := session.get_human_player_count() < player_session_ids.size()
+	# Player-hosted (listen-server) matches never bind a supervisor port: the
+	# host binds its own endpoint and match info points clients at
+	# host_reachable_ip/port. Skip the allocation so these matches do not
+	# consume slots from the dedicated match port pool.
+	var is_player_hosted := not require_dedicated \
+		and not player_host_session_id.strip_edges().is_empty() \
+		and player_host_reachable_port > 0
+	# Supervisor-hosted human matches (dedicated subprocess or in-process host)
+	# each consume a logical core for the life of the match. When the server is
+	# already at sustainable concurrency, decline the new match with an
+	# apology instead of launching it and degrading every running match.
+	# Player-hosted matches run on the host's machine and bot self-play is
+	# shed separately, so neither is gated here.
+	if not is_player_hosted and not session.is_bot_self_play():
+		var capacity_blocker := get_human_match_capacity_blocker()
+		if not capacity_blocker.is_empty():
+			last_create_match_error = capacity_blocker
+			return null
+	var match_port := 0
+	if not is_player_hosted:
+		match_port = _allocate_match_port()
+		if match_port <= 0:
+			last_create_match_error = "All dedicated match ports are in use. Try again shortly."
+			return null
+		session.match_port = match_port
+	session.configure_series_format(best_of)
 	session.mark_active()
-	if use_dedicated_headless and _launch_dedicated_match(session):
+	if player_host_session_id.is_empty():
+		session.match_websocket_url = WebSocketEndpointsScript.match_url(public_websocket_url, match_port)
+	# Player-hosted (listen-server) match: one player runs the authoritative
+	# GameManager in their own process. No dedicated subprocess, no supervisor-
+	# allocated port bound here (the host binds its own). The supervisor does not
+	# poll a status file for this mode; lifecycle is driven by the lobby.
+	if is_player_hosted:
+		session.server_mode = MatchSessionScript.SERVER_MODE_PLAYER_HOST
+		session.host_session_id = player_host_session_id.strip_edges()
+		session.host_reachable_ip = player_host_reachable_ip.strip_edges()
+		session.host_reachable_port = int(player_host_reachable_port)
+		session.host_bind_port = int(player_host_bind_port) if player_host_bind_port > 0 else int(player_host_reachable_port)
+	elif use_dedicated_headless and _launch_dedicated_match(session):
 		session.server_mode = MatchSessionScript.SERVER_MODE_DEDICATED_HEADLESS
-	elif use_dedicated_headless and not allow_in_process_fallback:
+	elif require_dedicated or (use_dedicated_headless and (not allow_in_process_fallback or not public_websocket_url.is_empty())):
 		last_create_match_error = session.process_launch_error
+		if last_create_match_error.is_empty():
+			last_create_match_error = "This match requires a dedicated match server."
 		return null
 	else:
 		session.server_mode = MatchSessionScript.SERVER_MODE_IN_PROCESS_HOST
+		session.match_websocket_url = ""
 	active_matches[match_id] = session
 	match_created.emit(session)
 	return session
@@ -87,22 +154,153 @@ func create_match(
 func get_match(match_id: String):
 	return active_matches.get(match_id, null)
 
+func start_shared_bot_match(session: MatchSession) -> bool:
+	if session == null or not session.is_bot_self_play() or active_matches.has(session.match_id):
+		return false
+	if not _launch_shared_bot_match(session):
+		return false
+	active_matches[session.match_id] = session
+	match_created.emit(session)
+	return true
+
+## Current turn number for an in-process shared bot match, or 0 when the match
+## has not started, runs as a dedicated subprocess, or already closed.
+func get_bot_match_turn_count(match_id: String) -> int:
+	var match_server = _shared_bot_match_servers.get(match_id.strip_edges(), null)
+	if not is_instance_valid(match_server) or match_server.game_manager == null:
+		return 0
+	return maxi(0, int(match_server.game_manager.turn_number))
+
+## Returns "" when a background bot worker may launch, otherwise a short
+## reason naming the port or disk constraint that blocks it.
+func get_background_worker_capacity_blocker() -> String:
+	var port_limit := 65536 - default_match_port
+	if not public_websocket_url.is_empty():
+		port_limit = mini(port_limit, WebSocketEndpointsScript.MATCH_PORT_COUNT)
+	# Only sessions holding a supervisor-allocated port compete for the port
+	# pool; player-hosted matches bind their own endpoint elsewhere.
+	var port_bound_match_count := 0
+	for session in active_matches.values():
+		if session != null and int(session.match_port) > 0:
+			port_bound_match_count += 1
+	if port_bound_match_count >= port_limit - 2:
+		return "All dedicated match ports are in use."
+	var disk := DirAccess.open(ServerPathsScript.get_server_root_dir())
+	if disk == null:
+		return "Server data directory is unavailable."
+	if disk.get_space_left() < MIN_FREE_BOT_DISK_BYTES:
+		return "Free disk space on the server data volume is below 512 MB."
+	return ""
+
+## Returns "" when one more supervisor-hosted human match may launch, otherwise
+## the apologetic "server full" message shown to the declined players. The
+## sustainable concurrency is one match per logical core with one core reserved
+## for the lobby; every active non-bot, non-player-hosted session consumes a
+## slot regardless of whether it runs as a dedicated subprocess or in-process.
+func get_human_match_capacity_blocker() -> String:
+	var hosted_match_count := 0
+	for session in active_matches.values():
+		if session == null or session.is_bot_self_play() or session.is_player_host():
+			continue
+		hosted_match_count += 1
+	if hosted_match_count >= get_max_hosted_human_matches():
+		return SERVER_HOST_FULL_MESSAGE
+	return ""
+
+func get_max_hosted_human_matches() -> int:
+	if OS.has_environment(MAX_HOSTED_HUMAN_MATCHES_ENV):
+		var configured := int(OS.get_environment(MAX_HOSTED_HUMAN_MATCHES_ENV))
+		if configured > 0:
+			return configured
+	return maxi(1, OS.get_processor_count() - HOST_LOBBY_CORE_RESERVE)
+
+func set_spectator_visible_player_indices(match_id: String, session_id: String, player_indices: Array) -> void:
+	var session = active_matches.get(match_id.strip_edges(), null)
+	if session == null:
+		return
+	session.set_spectator_visible_player_indices(session_id, player_indices)
+	if not session.is_dedicated_headless():
+		return
+	var config_path := str(session.launch_config_path).strip_edges()
+	if config_path.is_empty():
+		return
+	JsonStoreScript.save_json(config_path, session.to_launch_config(), "MatchSupervisor")
+
+func refresh_match_status(match_id: String) -> void:
+	var resolved_match_id := match_id.strip_edges()
+	if resolved_match_id.is_empty() or not active_matches.has(resolved_match_id):
+		return
+	_refresh_match(resolved_match_id, int(Time.get_unix_time_from_system()))
+
+func is_match_ready_for_clients(match_id: String, allow_finished_reconnect: bool = true) -> bool:
+	var resolved_match_id := match_id.strip_edges()
+	if resolved_match_id.is_empty() or not active_matches.has(resolved_match_id):
+		return false
+	var session = active_matches.get(resolved_match_id, null)
+	if session == null:
+		return false
+	if not session.is_dedicated_headless():
+		return true
+	var status_data := _load_status_file(session)
+	if status_data.is_empty():
+		return false
+	var status := str(status_data.get("status", "")).strip_edges()
+	if status == MatchSessionScript.STATUS_ACTIVE:
+		return true
+	if status == MatchSessionScript.STATUS_FINISHED and allow_finished_reconnect:
+		return _finished_status_allows_reconnect(status_data)
+	return false
+
+func get_match_startup_failure_reason(match_id: String) -> String:
+	var resolved_match_id := match_id.strip_edges()
+	if resolved_match_id.is_empty():
+		return "Match server was not assigned."
+	if not active_matches.has(resolved_match_id):
+		return "Match server is no longer available."
+	var session = active_matches.get(resolved_match_id, null)
+	if session == null:
+		return "Match server is no longer available."
+	if not session.is_dedicated_headless():
+		return ""
+	var status_data := _load_status_file(session)
+	if not status_data.is_empty():
+		var status := str(status_data.get("status", "")).strip_edges()
+		if status == MatchSessionScript.STATUS_ABANDONED:
+			var reason := str(status_data.get("reason", "")).strip_edges()
+			return reason if not reason.is_empty() else "Match server abandoned startup."
+		if status == MatchSessionScript.STATUS_FINISHED:
+			return "Match server closed before players joined."
+	if session.has_spawned_process() and not OS.is_process_running(int(session.process_id)):
+		return "Match server exited before it became available."
+	var now_unix := int(Time.get_unix_time_from_system())
+	if int(session.created_unix) > 0 and now_unix - int(session.created_unix) >= MATCH_STATUS_FILE_STARTUP_GRACE_SECONDS:
+		return "Match server did not become available in time."
+	return ""
+
 func close_match(
 	match_id: String,
 	final_status: String = MatchSessionScript.STATUS_FINISHED,
-	terminate_process: bool = true
+	terminate_process: bool = true,
+	reason: String = ""
 ) -> void:
 	if not active_matches.has(match_id):
 		return
 	var session = active_matches[match_id]
+	if session.is_bot_self_play():
+		var last_status := _load_status_file(session)
+		if last_status.get("status") == MatchSessionScript.STATUS_FINISHED:
+			final_status = MatchSessionScript.STATUS_FINISHED
+			reason = ""
+		_record_bot_match_close(session, final_status, reason, last_status)
 	_apply_final_status(session, final_status)
 	_shutdown_match_runtime(session, terminate_process)
 	active_matches.erase(match_id)
 	match_closed.emit(match_id, str(session.room_id), str(session.status))
 
-func clear() -> void:
+func clear(reason: String = "") -> void:
 	for match_id in active_matches.keys().duplicate():
-		close_match(str(match_id), MatchSessionScript.STATUS_ABANDONED, true)
+		close_match(str(match_id), MatchSessionScript.STATUS_ABANDONED, true, reason)
+	_remove_supervisor_heartbeat()
 
 func _generate_match_id() -> String:
 	const CHARS := "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -120,22 +318,35 @@ func _allocate_match_port() -> int:
 		used_ports[int(session.match_port)] = true
 	while used_ports.has(allocated_port):
 		allocated_port += 1
+		if not public_websocket_url.is_empty() and allocated_port >= default_match_port + WebSocketEndpointsScript.MATCH_PORT_COUNT:
+			return -1
+	if allocated_port > 65535:
+		return -1
 	return allocated_port
 
 func _launch_dedicated_match(session) -> bool:
 	if session == null:
 		return false
+	if session.is_bot_self_play():
+		return _launch_shared_bot_match(session)
 	var uses_exported_runtime := _is_exported_server_runtime(godot_executable_path)
 	if godot_executable_path.is_empty() or (not uses_exported_runtime and project_path.is_empty()):
 		session.mark_process_launch_failed("Godot executable path or project path was not configured.")
 		return false
 
+	var previous_mode := str(session.server_mode)
+	session.server_mode = MatchSessionScript.SERVER_MODE_DEDICATED_HEADLESS
 	var config_path := _write_launch_config(session)
 	if config_path.is_empty():
+		session.server_mode = previous_mode
 		session.mark_process_launch_failed("Failed to write the dedicated match launch config.")
 		return false
 
 	var args := PackedStringArray(["--headless"])
+	# Capture the dedicated match server's stdout (incl. [HT-DEBUG] prints) to a log
+	# next to its launch config so smoke runs and manual debugging can read it.
+	var match_log_path := config_path.get_basename() + ".log"
+	args.append_array(["--log-file", match_log_path])
 	if uses_exported_runtime:
 		args.append_array([
 			"--",
@@ -154,11 +365,48 @@ func _launch_dedicated_match(session) -> bool:
 		])
 	var pid := OS.create_process(godot_executable_path, args, false)
 	if pid <= 0:
+		session.server_mode = previous_mode
 		session.mark_process_launch_failed("OS.create_process failed for the dedicated headless match server.")
 		_cleanup_launch_config_path(config_path)
 		return false
 
 	session.mark_process_launched(pid, config_path)
+	return true
+
+func _launch_shared_bot_match(session) -> bool:
+	if session == null:
+		return false
+	var previous_mode := str(session.server_mode)
+	session.server_mode = MatchSessionScript.SERVER_MODE_DEDICATED_HEADLESS
+	var config_path := _write_launch_config(session)
+	if config_path.is_empty():
+		session.server_mode = previous_mode
+		session.mark_process_launch_failed("Failed to write the shared bot match config.")
+		return false
+	var match_server_script := load("res://scripts/server/HeadlessMatchServer.gd") as Script
+	if match_server_script == null or not match_server_script.can_instantiate():
+		session.server_mode = previous_mode
+		session.mark_process_launch_failed("Could not load the shared headless match runtime.")
+		_cleanup_launch_config_path(config_path)
+		return false
+	var match_server = match_server_script.new()
+	match_server.name = "BotMatch_%s" % str(session.match_id).validate_node_name()
+	match_server.exit_tree_on_shutdown = false
+	var launch_config: Dictionary = session.to_launch_config()
+	launch_config["_launch_config_path"] = config_path
+	launch_config["_shared_worker"] = true
+	session.launch_config_path = config_path
+	add_child(match_server)
+	var start_error: Error = match_server.start_from_config(launch_config)
+	if start_error != OK:
+		var reason := "Shared bot match failed to start (%s)." % error_string(start_error)
+		match_server.queue_free()
+		session.server_mode = previous_mode
+		session.mark_process_launch_failed(reason)
+		_cleanup_launch_config_path(config_path)
+		_cleanup_launch_config_path(_get_status_file_path_for_match(str(session.match_id)))
+		return false
+	_shared_bot_match_servers[str(session.match_id)] = match_server
 	return true
 
 func _write_launch_config(session) -> String:
@@ -167,23 +415,82 @@ func _write_launch_config(session) -> String:
 	if mkdir_err != OK and mkdir_err != ERR_ALREADY_EXISTS:
 		return ""
 	var config_path := base_dir.path_join("%s.json" % str(session.match_id))
+	session.status_file_path = _get_status_file_path_for_match(str(session.match_id))
+	if _supervisor_heartbeat_path.is_empty():
+		_supervisor_heartbeat_path = base_dir.path_join(
+			"supervisor_%d_%d.heartbeat" % [OS.get_process_id(), get_instance_id()]
+		)
+	if not _write_supervisor_heartbeat():
+		return ""
+	session.supervisor_heartbeat_path = _supervisor_heartbeat_path
 	if not JsonStoreScript.save_json(config_path, session.to_launch_config(), "MatchSupervisor"):
 		return ""
 	return config_path
+
+func _write_supervisor_heartbeat() -> bool:
+	_next_supervisor_heartbeat_msec = Time.get_ticks_msec() + SUPERVISOR_HEARTBEAT_INTERVAL_MSEC
+	var heartbeat := FileAccess.open(_supervisor_heartbeat_path, FileAccess.WRITE)
+	if heartbeat == null:
+		return false
+	var written := heartbeat.store_8(1)
+	heartbeat.close()
+	return written
+
+func _remove_supervisor_heartbeat() -> void:
+	if not _supervisor_heartbeat_path.is_empty():
+		DirAccess.remove_absolute(_supervisor_heartbeat_path)
+		_supervisor_heartbeat_path = ""
 
 func _refresh_active_matches() -> void:
 	if active_matches.is_empty():
 		return
 	var now_unix := int(Time.get_unix_time_from_system())
 	for match_id in active_matches.keys().duplicate():
-		var session = active_matches.get(match_id, null)
-		if session == null or not session.is_dedicated_headless():
-			continue
-		if session.has_reconnect_timed_out(now_unix):
-			close_match(str(match_id), MatchSessionScript.STATUS_ABANDONED, true)
-			continue
-		if session.has_spawned_process() and not OS.is_process_running(int(session.process_id)):
-			close_match(str(match_id), MatchSessionScript.STATUS_FINISHED, false)
+		_refresh_match(str(match_id), now_unix)
+
+func _refresh_match(match_id: String, now_unix: int) -> void:
+	var session = active_matches.get(match_id, null)
+	if session == null or not session.is_dedicated_headless():
+		return
+	var status_close_reason := _get_status_file_close_reason(session, now_unix)
+	if not status_close_reason.is_empty():
+		if session.is_bot_self_play() and status_close_reason == MatchSessionScript.STATUS_FINISHED:
+			# Let the match server deliver its final state before cleanup.
+			if is_instance_valid(_shared_bot_match_servers.get(match_id)) \
+					or (session.has_spawned_process() and OS.is_process_running(int(session.process_id))):
+				return
+		close_match(match_id, status_close_reason, status_close_reason != MatchSessionScript.STATUS_FINISHED)
+		return
+	if session.has_reconnect_timed_out(now_unix):
+		close_match(match_id, MatchSessionScript.STATUS_ABANDONED, true)
+		return
+	if session.has_spawned_process() and not OS.is_process_running(int(session.process_id)):
+		close_match(match_id, MatchSessionScript.STATUS_ABANDONED, false, "Worker process exited before recording a result.")
+
+func _record_bot_match_close(session, final_status: String, reason: String, status: Dictionary) -> void:
+	var path := ServerPathsScript.get_bot_review_path(str(session.match_id))
+	var review := JsonStoreScript.load_dictionary(path, {}, "BotSelfPlay")
+	review["match_id"] = session.match_id
+	review["status"] = final_status
+	review["closed_unix"] = Time.get_unix_time_from_system()
+	review["names"] = session.get_public_player_names()
+	review["log_path"] = str(session.launch_config_path).get_basename() + ".log"
+	var log_file := FileAccess.open(review["log_path"], FileAccess.READ)
+	if log_file != null:
+		var issues: Array[String] = []
+		while not log_file.eof_reached() and issues.size() < 20:
+			var line := log_file.get_line()
+			if line.begins_with("SCRIPT ERROR:") or line.begins_with("ERROR:"):
+				if not line.contains("resources still in use at exit") and line not in issues:
+					issues.append(line)
+		if not issues.is_empty():
+			review["engine_errors"] = issues
+	if not reason.is_empty():
+		review["close_reason"] = reason
+	elif final_status == MatchSessionScript.STATUS_ABANDONED:
+		review["close_reason"] = str(status.get("reason", "Worker heartbeat or startup timed out."))
+	review["last_status"] = status
+	JsonStoreScript.save_json(path, review, "BotSelfPlay")
 
 func _apply_final_status(session, final_status: String) -> void:
 	match final_status:
@@ -199,6 +506,11 @@ func _apply_final_status(session, final_status: String) -> void:
 func _shutdown_match_runtime(session, terminate_process: bool) -> void:
 	if session == null:
 		return
+	var match_id := str(session.match_id)
+	var shared_match_server = _shared_bot_match_servers.get(match_id, null)
+	if is_instance_valid(shared_match_server):
+		shared_match_server.queue_free()
+	_shared_bot_match_servers.erase(match_id)
 	if session.is_dedicated_headless() and terminate_process and session.has_spawned_process() and OS.is_process_running(int(session.process_id)):
 		OS.kill(int(session.process_id))
 	_cleanup_launch_config(session)
@@ -208,9 +520,11 @@ func _cleanup_launch_config(session) -> void:
 	if session == null:
 		return
 	var config_path := str(session.launch_config_path).strip_edges()
-	if config_path.is_empty():
-		return
-	_cleanup_launch_config_path(config_path)
+	if not config_path.is_empty():
+		_cleanup_launch_config_path(config_path)
+	var status_file_path := str(session.status_file_path).strip_edges()
+	if not status_file_path.is_empty():
+		_cleanup_launch_config_path(status_file_path)
 
 func _cleanup_launch_config_path(config_path: String) -> void:
 	var resolved_path := config_path.strip_edges()
@@ -219,6 +533,55 @@ func _cleanup_launch_config_path(config_path: String) -> void:
 	for path in [resolved_path, "%s.tmp" % resolved_path, "%s.bak" % resolved_path]:
 		if FileAccess.file_exists(path):
 			DirAccess.remove_absolute(path)
+
+func _get_status_file_path_for_match(match_id: String) -> String:
+	var resolved_match_id := match_id.strip_edges()
+	if resolved_match_id.is_empty():
+		return ""
+	return ServerPathsScript.get_dedicated_matches_dir().path_join("%s.status.json" % resolved_match_id)
+
+func _get_status_file_close_reason(session, now_unix: int) -> String:
+	if session == null:
+		return MatchSessionScript.STATUS_ABANDONED
+	var status_path := str(session.status_file_path).strip_edges()
+	if status_path.is_empty():
+		return ""
+	if not FileAccess.file_exists(status_path):
+		var created_unix := int(session.created_unix)
+		if created_unix > 0 and now_unix - created_unix >= MATCH_STATUS_FILE_STARTUP_GRACE_SECONDS:
+			return MatchSessionScript.STATUS_ABANDONED
+		return ""
+	var status_data := JsonStoreScript.load_dictionary(status_path, {}, "MatchSupervisor")
+	if status_data.is_empty():
+		return ""
+	var status := str(status_data.get("status", "")).strip_edges()
+	if status == MatchSessionScript.STATUS_FINISHED:
+		if _finished_status_allows_reconnect(status_data, now_unix):
+			return ""
+		return MatchSessionScript.STATUS_FINISHED
+	if status == MatchSessionScript.STATUS_ABANDONED:
+		return MatchSessionScript.STATUS_ABANDONED
+	var heartbeat_unix := int(status_data.get("heartbeat_unix", 0))
+	if heartbeat_unix > 0 and now_unix - heartbeat_unix >= MATCH_STATUS_FILE_STALE_SECONDS:
+		return MatchSessionScript.STATUS_ABANDONED
+	return ""
+
+func _finished_status_allows_reconnect(status_data: Dictionary, now_unix: int = -1) -> bool:
+	if not bool(status_data.get("waiting_for_reconnect", false)):
+		return false
+	var reconnect_deadline := int(status_data.get("reconnect_deadline_unix", 0))
+	if reconnect_deadline <= 0:
+		return false
+	var resolved_now := now_unix if now_unix >= 0 else int(Time.get_unix_time_from_system())
+	return resolved_now < reconnect_deadline
+
+func _load_status_file(session) -> Dictionary:
+	if session == null:
+		return {}
+	var status_path := str(session.status_file_path).strip_edges()
+	if status_path.is_empty() or not FileAccess.file_exists(status_path):
+		return {}
+	return JsonStoreScript.load_dictionary(status_path, {}, "MatchSupervisor")
 
 func _resolve_headless_executable_path(executable_path: String) -> String:
 	var normalized_path := executable_path.strip_edges()

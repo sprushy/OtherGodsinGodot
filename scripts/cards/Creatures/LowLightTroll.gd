@@ -10,7 +10,7 @@ const PARTIAL_PETRIFICATION_RES_DELTA := 5
 func _init() -> void:
 	super._init()
 	card_name = "Low-Light Troll"
-	card_types = ["Monster", "Troll", "Norse Creature"]
+	card_types = ["Monster", "Troll"]
 	level = 2
 	mana_cost = 0
 	sacrifice_cost = 0
@@ -18,7 +18,7 @@ func _init() -> void:
 	resilience = 23
 	strength = 13
 	flavor_text = ""
-	ability_text = "[b]Partial Petrification[/b] ([b]Passive[/b]): This card loses 5 Str and gains 5 Res any time a Magical or Power effect reveals a card."
+	ability_text = "[b]Partial Petrification[/b] ([b]Passive[/b]): Low-Light Troll loses 5 Str and gains 5 Res any time a Magical or Power effect reveals a card."
 	culture = "Norse"
 	artist = "CC0"
 	art_path = ART_PATH

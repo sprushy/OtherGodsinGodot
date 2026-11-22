@@ -7,7 +7,7 @@ func _init() -> void:
 	super._init()
 	card_name = "Gungnir, the Spear of Odin"
 	culture = "Norse"
-	card_types = ["Charm", "Combat Aid", "Runic", "Destruction"]
+	card_types = ["Charm", "Combat Aid", "Runic", "Destruction", "Targeting"]
 	level = 3
 	mana_cost = 1
 	speed = 3
@@ -18,7 +18,16 @@ func _init() -> void:
 	artist = "Lorinda Tomko"
 	art_path = ART_PATH
 
-func can_respond_to_action(action: CardAction, _game_manager: GameManager = null) -> bool:
+func requires_priority_target_selection() -> bool:
+	return false
+
+func get_priority_targets(game_manager: GameManager, action: CardAction) -> Array[Card]:
+	var target := _get_combat_target(action) if action != null else null
+	if target == null or (game_manager != null and game_manager.is_guardian_protected(target, self)):
+		return []
+	return [target]
+
+func can_respond_to_action(action: CardAction, game_manager: GameManager = null) -> bool:
 	if action == null or action.type != CardAction.Type.ATTACK:
 		return false
 	if action.attacker == null:
@@ -27,8 +36,7 @@ func can_respond_to_action(action: CardAction, _game_manager: GameManager = null
 		return false
 	if not _is_norse_warrior(action.attacker):
 		return false
-	var combat_target := _get_combat_target(action)
-	if combat_target == null:
+	if get_priority_targets(game_manager, action).is_empty():
 		return false
 	return get_effective_speed() >= action.get_timing_speed()
 
@@ -61,14 +69,14 @@ func resolve(game_manager: GameManager, _target = null) -> void:
 	game_manager.note_player_feedback(
 		"%s destroys %s." % [card_name, combat_target.card_name]
 	)
-	game_manager.request_send_to_graveyard(combat_target, Callable(), false, true)
+	game_manager.request_send_to_graveyard(combat_target, Callable(), false, true, false, self)
 
 func _is_norse_warrior(card: Card) -> bool:
 	if card == null or card.card_type != Card.CardType.CREATURE:
 		return false
 	if not card.has_type("Warrior"):
 		return false
-	return card.has_type("Norse Creature") or card.culture == "Norse"
+	return card.culture == "Norse"
 
 func _get_combat_target(action: CardAction) -> Card:
 	if action == null:

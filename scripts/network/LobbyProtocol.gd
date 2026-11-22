@@ -2,15 +2,30 @@ extends RefCounted
 class_name LobbyProtocol
 
 const PORT: int = 22345
+const PUNCH_REFLECTOR_PORT: int = 22346
+# Plain WebSocket backend, reached through a TLS reverse proxy on public 443.
+const WS_PORT: int = 24443
 const MATCH_PORT: int = 12345
+const PASSWORD_RESET_CODE_LENGTH := 6
+const LADDER_PAGE_SIZE := 50
+const LADDER_FILTER_EVERYONE := "everyone"
+const LADDER_FILTER_PLAYERS := "players"
+const LADDER_FILTER_BOTS := "bots"
 
 const LOGIN_GUEST := "login_guest"
 const LOGIN_ACCOUNT := "login_account"
 const REGISTER_ACCOUNT := "register_account"
+const CLAIM_LEGACY_ACCOUNT := "claim_legacy_account"
+const UPDATE_ACCOUNT_SETTINGS := "update_account_settings"
+const REQUEST_PASSWORD_RESET := "request_password_reset"
+const RESET_PASSWORD := "reset_password"
 const CREATE_ROOM := "create_room"
 const LIST_ROOMS := "list_rooms"
 const JOIN_ROOM := "join_room"
+const REJOIN_ROOM := "rejoin_room"
 const OBSERVE_ROOM := "observe_room"
+const OBSERVE_ROOM_AUTH_ERROR := "Join the lobby before observing a match."
+const REQUEST_NEXT := "request_next"
 const LEAVE_ROOM := "leave_room"
 const SET_READY := "set_ready"
 const SELECT_DECK := "select_deck"
@@ -20,24 +35,83 @@ const DELETE_ACCOUNT_DECK := "delete_account_deck"
 const SET_ACCOUNT_PREFERRED_DECK := "set_account_preferred_deck"
 const SET_OBSERVER_FRIEND_CARD_VISIBILITY := "set_observer_friend_card_visibility"
 const REQUEST_PROFILE_SUMMARY := "request_profile_summary"
+const SET_RANK_BADGE := "set_rank_badge"
+const REQUEST_BOT_LADDER := "request_bot_ladder"
+const REQUEST_BOT_DECK := "request_bot_deck"
+const REQUEST_BOT_MATCH_HISTORY := "request_bot_match_history"
+const REQUEST_BOT_WORK := "request_bot_work"
+const REPORT_BOT_WORK_STARTED := "report_bot_work_started"
+const CANCEL_BOT_WORK := "cancel_bot_work"
+const SUBMIT_BOT_WORK_RESULT := "submit_bot_work_result"
 const REQUEST_FRIENDS := "request_friends"
 const SEND_FRIEND_REQUEST := "send_friend_request"
 const RESPOND_FRIEND_REQUEST := "respond_friend_request"
 const SEND_DECK_TO_FRIEND := "send_deck_to_friend"
 const RESPOND_DECK_SHARE := "respond_deck_share"
 const REQUEST_RECONNECT_LOBBY := "request_reconnect_lobby"
+const REPORT_HOST_VIABILITY := "report_host_viability"
+const SUBMIT_ISSUE_REPORT := "submit_issue_report"
+const SUBMIT_BOT_PROPOSAL := "submit_bot_proposal"
+const SUBMIT_BOT_DECK := "submit_bot_deck"
+const REQUEST_MY_BOTS := "request_my_bots"
+const DELETE_BOT := "delete_bot"
+const QUARANTINE_BOT := "quarantine_bot"
+const SEED_BOT_LEAGUE := "seed_bot_league"
+const FINALIZE_BOT_LEAGUE := "finalize_bot_league"
+const REQUEST_BOT_LEAGUE_STATUS := "request_bot_league_status"
+const BOT_LEAGUE_STATUS := "bot_league_status"
+const RUN_LEAGUE_ROUND_ROBIN := "run_league_round_robin"
+const LEAGUE_ROUND_ROBIN_RESULT := "league_round_robin_result"
+const CLEAR_LEAGUE_BOTS := "clear_league_bots"
+const CLEAR_LEAGUE_BOTS_RESULT := "clear_league_bots_result"
+const REBUILD_LEAGUE_RECORDS := "rebuild_league_records"
+const REBUILD_LEAGUE_RECORDS_RESULT := "rebuild_league_records_result"
+const DUMP_BOT_DECK_RESULTS := "dump_bot_deck_results"
+const DUMP_BOT_DECK_RESULTS_RESULT := "dump_bot_deck_results_result"
+const BOT_LEAGUE_RESULT := "bot_league_result"
 
 const HELLO_OK := "hello_ok"
 const ROOM_LIST := "room_list"
 const ROOM_SNAPSHOT := "room_snapshot"
 const ROOM_ERROR := "room_error"
 const MATCH_ASSIGNED := "match_assigned"
+const LOCAL_BOT_MATCH_ASSIGNED := "local_bot_match_assigned"
+const LOCAL_BOT_MATCH_RESULT := "local_bot_match_result"
+const LOCAL_BOT_MATCH_CONFIRMED := "local_bot_match_confirmed"
+const LOCAL_BOT_MATCH_SPECTATE_INFO := "local_bot_match_spectate_info"
+const MATCH_SPECTATOR_APPROVED := "match_spectator_approved"
+const MATCH_SPECTATOR_ACK := "match_spectator_ack"
+const LOCAL_BOT_MATCH_PUNCH_READY := "local_bot_match_punch_ready"
+const MATCH_SPECTATOR_PUNCH := "match_spectator_punch"
+const MATCH_SPECTATOR_PUNCH_RELAYED := "match_spectator_punch_relayed"
+const REQUEST_NEXT_RECEIVED := "request_next_received"
+const REQUEST_NEXT_RESULT := "request_next_result"
 const LOBBY_RECONNECT_OK := "lobby_reconnect_ok"
 const ACCOUNT_DECK_LIST := "account_deck_list"
 const ACCOUNT_DECK_SAVED := "account_deck_saved"
 const ACCOUNT_DECK_DELETED := "account_deck_deleted"
+const ACCOUNT_DECK_NAME_MAX_LENGTH := 80
 const PROFILE_SUMMARY := "profile_summary"
+const RANK_BADGE_RESULT := "rank_badge_result"
+const BOT_LADDER := "bot_ladder"
+const BOT_DECK := "bot_deck"
+const BOT_MATCH_HISTORY := "bot_match_history"
+const BOT_WORK_ASSIGNMENT := "bot_work_assignment"
+const BOT_WORK_RESULT := "bot_work_result"
 const FRIENDS_STATE := "friends_state"
+const ACCOUNT_SETTINGS_UPDATED := "account_settings_updated"
+const PASSWORD_RESET_RESULT := "password_reset_result"
+const MATCH_HOST_VIABILITY_REQUEST := "match_host_viability_request"
+const ISSUE_REPORT_RESULT := "issue_report_result"
+const BOT_PROPOSAL_RESULT := "bot_proposal_result"
+const BOT_DECK_SUBMISSION_RESULT := "bot_deck_submission_result"
+const MY_BOTS := "my_bots"
+const BOT_DELETED := "bot_deleted"
+const BOT_QUARANTINED := "bot_quarantined"
+## Debug-only roster of every account signed in to the lobby. The server only
+## answers on debug/editor builds, so release builds never expose this list.
+const REQUEST_PLAYERS_ONLINE := "request_players_online"
+const PLAYERS_ONLINE := "players_online"
 
 static func make_message(message_type: String, payload: Dictionary = {}) -> Dictionary:
 	return {
@@ -62,19 +136,66 @@ static func validate_request(message: Dictionary) -> String:
 		return "Missing lobby message type."
 
 	match message_type:
+		REQUEST_PASSWORD_RESET, RESET_PASSWORD:
+			var email := str(payload.get("email", "")).strip_edges()
+			if email.is_empty() or email.length() > 254:
+				return "Enter a valid account email address."
+			if message_type == RESET_PASSWORD:
+				if not is_valid_password_reset_code(str(payload.get("token", ""))):
+					return "Enter the 6-digit recovery code from your email."
+				var password := str(payload.get("new_password", ""))
+				if password.is_empty() or password.length() > 1024:
+					return "Enter a new password (at most 1024 characters)."
 		LOGIN_GUEST:
 			return "Guest sign-in is no longer supported."
 		LOGIN_ACCOUNT, REGISTER_ACCOUNT:
-			if str(payload.get("username", "")).strip_edges().is_empty():
-				return "Missing username."
+			if str(payload.get("email", "")).strip_edges().is_empty():
+				return "Missing email address."
 			if str(payload.get("password", "")).strip_edges().is_empty():
 				return "Missing password."
-		JOIN_ROOM:
+			if message_type == REGISTER_ACCOUNT and str(payload.get("username", "")).strip_edges().is_empty():
+				return "Missing username."
+		CLAIM_LEGACY_ACCOUNT:
+			if str(payload.get("username", "")).strip_edges().is_empty():
+				return "Missing username."
+			if str(payload.get("email", "")).strip_edges().is_empty():
+				return "Missing email address."
+			if str(payload.get("password", "")).strip_edges().is_empty():
+				return "Missing password."
+		UPDATE_ACCOUNT_SETTINGS:
+			var changing_email := not str(payload.get("new_email", "")).strip_edges().is_empty()
+			var changing_password := not str(payload.get("new_password", "")).is_empty()
+			if (changing_email or changing_password) and str(payload.get("current_password", "")).is_empty():
+				return "Missing current password."
+		JOIN_ROOM, REJOIN_ROOM:
 			if str(payload.get("room_id", "")).strip_edges().is_empty():
 				return "Missing room code."
 		OBSERVE_ROOM:
 			if str(payload.get("room_id", "")).strip_edges().is_empty():
 				return "Missing room code."
+		REQUEST_NEXT:
+			var match_id = payload.get("match_id", "")
+			if not match_id is String or match_id.strip_edges().is_empty() or match_id.length() > 64:
+				return "Invalid match id."
+		LOCAL_BOT_MATCH_RESULT:
+			var match_id = payload.get("match_id", "")
+			if not match_id is String or match_id.strip_edges().is_empty() or match_id.length() > 64:
+				return "Invalid match id."
+		LOCAL_BOT_MATCH_SPECTATE_INFO:
+			var match_id = payload.get("match_id", "")
+			if not match_id is String or match_id.strip_edges().is_empty() or match_id.length() > 64:
+				return "Invalid match id."
+		MATCH_SPECTATOR_ACK:
+			var match_id = payload.get("match_id", "")
+			if not match_id is String or match_id.strip_edges().is_empty() or match_id.length() > 64:
+				return "Invalid match id."
+			var observer_session_id = payload.get("observer_session_id", "")
+			if not observer_session_id is String or observer_session_id.strip_edges().is_empty() or observer_session_id.length() > 64:
+				return "Invalid observer session id."
+		LOCAL_BOT_MATCH_PUNCH_READY:
+			var punch_match_id = payload.get("match_id", "")
+			if not punch_match_id is String or punch_match_id.strip_edges().is_empty() or punch_match_id.length() > 64:
+				return "Invalid match id."
 		SELECT_DECK:
 			var has_deck_id := not str(payload.get("deck_id", "")).strip_edges().is_empty()
 			var has_cards := payload.has("cards") and payload.get("cards") is Dictionary
@@ -82,11 +203,15 @@ static func validate_request(message: Dictionary) -> String:
 				return "Missing saved deck id or deck cards."
 			if has_cards and str(payload.get("deck_name", "")).strip_edges().is_empty():
 				return "Missing deck name."
+			if payload.has("reinforcements") and not (payload.get("reinforcements") is Dictionary):
+				return "Invalid Reinforcements."
 		SAVE_ACCOUNT_DECK:
 			if str(payload.get("deck_name", "")).strip_edges().is_empty():
 				return "Missing deck name."
 			if not payload.has("cards") or not (payload.get("cards") is Dictionary):
 				return "Missing deck cards."
+			if payload.has("reinforcements") and not (payload.get("reinforcements") is Dictionary):
+				return "Invalid Reinforcements."
 		DELETE_ACCOUNT_DECK:
 			if str(payload.get("deck_id", "")).strip_edges().is_empty():
 				return "Missing deck id."
@@ -96,6 +221,11 @@ static func validate_request(message: Dictionary) -> String:
 		SET_OBSERVER_FRIEND_CARD_VISIBILITY:
 			if not payload.has("allow_friend_observers_to_see_cards"):
 				return "Missing observe visibility setting."
+		SET_RANK_BADGE:
+			var league = payload.get("league")
+			if payload.get("best_of") not in [1, 3] or not (league is int or league is float) \
+					or not payload.get("portrait") is Dictionary:
+				return "Invalid rank badge selection."
 		SEND_FRIEND_REQUEST:
 			if str(payload.get("username", "")).strip_edges().is_empty():
 				return "Missing friend username."
@@ -111,6 +241,8 @@ static func validate_request(message: Dictionary) -> String:
 				return "Missing deck name."
 			if not payload.has("cards") or not (payload.get("cards") is Dictionary):
 				return "Missing deck cards."
+			if payload.has("reinforcements") and not (payload.get("reinforcements") is Dictionary):
+				return "Invalid Reinforcements."
 		RESPOND_DECK_SHARE:
 			if str(payload.get("share_id", "")).strip_edges().is_empty():
 				return "Missing deck share id."
@@ -119,14 +251,135 @@ static func validate_request(message: Dictionary) -> String:
 		SET_READY:
 			if not payload.has("is_ready"):
 				return "Missing ready state."
+		CREATE_ROOM:
+			if payload.has("best_of"):
+				var best_of := int(payload.get("best_of", 1))
+				if best_of not in [1, 3]:
+					return "Invalid match format."
 		REQUEST_RECONNECT_LOBBY:
 			if str(payload.get("session_id", "")).strip_edges().is_empty():
 				return "Missing session id."
 			if str(payload.get("reconnect_token", "")).strip_edges().is_empty():
 				return "Missing reconnect token."
-		CREATE_ROOM, LIST_ROOMS, LEAVE_ROOM, REQUEST_ACCOUNT_DECKS, REQUEST_PROFILE_SUMMARY, REQUEST_FRIENDS:
+		LIST_ROOMS, LEAVE_ROOM, REQUEST_ACCOUNT_DECKS, REQUEST_PROFILE_SUMMARY, REQUEST_FRIENDS, REQUEST_PLAYERS_ONLINE:
 			pass
+		REQUEST_BOT_LADDER:
+			var quarantined_only = payload.get("quarantined_only", false)
+			if not quarantined_only is bool or (quarantined_only and not payload.has("request_id")):
+				return "Invalid quarantined bot list request."
+			if payload.has("request_id"):
+				var request_id = payload["request_id"]
+				var page = payload.get("page")
+				if not request_id is int or not page is int or page < 0 or payload.get("best_of") not in [1, 3]:
+					return "Invalid ladder page request."
+				if payload.get("player_type", LADDER_FILTER_EVERYONE) not in [LADDER_FILTER_EVERYONE, LADDER_FILTER_PLAYERS, LADDER_FILTER_BOTS]:
+					return "Invalid ladder player filter."
+			if payload.has("search_query"):
+				var search_query = payload["search_query"]
+				if not search_query is String or search_query.length() > 64:
+					return "Invalid ladder search query."
+		REQUEST_BOT_DECK:
+			var list_id = payload.get("list_id", "")
+			if not list_id is String or list_id.is_empty() or list_id.length() > 64:
+				return "Invalid bot list id."
+			if not payload.get("quarantined_only", false) is bool:
+				return "Invalid quarantined bot deck request."
+		REQUEST_BOT_MATCH_HISTORY:
+			var cursor = payload.get("before_match_id", "")
+			if not cursor is String or cursor.length() > 64:
+				return "Invalid bot match history cursor."
+		REQUEST_BOT_WORK:
+			var bot_id = payload.get("bot_id", "")
+			if not bot_id is String or bot_id.length() > 80:
+				return "Invalid community bot id."
+			var excluded_list_ids = payload.get("excluded_list_ids", [])
+			if not excluded_list_ids is Array or excluded_list_ids.size() > 10:
+				return "Invalid bot gauntlet exclusions."
+			var top_50 = payload.get("top_50", false)
+			if not top_50 is bool or (top_50 and not bot_id.is_empty()):
+				return "Invalid top 50 bot match request."
+			if payload.has("best_of") and payload.get("best_of") not in [1, 3]:
+				return "Invalid bot work match format."
+		SEED_BOT_LEAGUE, FINALIZE_BOT_LEAGUE:
+			if payload.has("count_per_god"):
+				var count := int(payload.get("count_per_god", 10))
+				if count < 1 or count > 64:
+					return "Invalid bot league count per god."
+		REQUEST_BOT_LEAGUE_STATUS:
+			pass
+		RUN_LEAGUE_ROUND_ROBIN:
+			if payload.has("matches_per_bot"):
+				var count := int(payload.get("matches_per_bot", 50))
+				if count < 1 or count > 500:
+					return "Invalid matches per bot."
+		CLEAR_LEAGUE_BOTS:
+			pass
+		REBUILD_LEAGUE_RECORDS:
+			pass
+		DUMP_BOT_DECK_RESULTS:
+			pass
+		REQUEST_MY_BOTS:
+			pass
+		DELETE_BOT:
+			var bot_id = payload.get("bot_id", "")
+			if not bot_id is String or bot_id.is_empty() or bot_id.length() > 80:
+				return "Invalid community bot id."
+		QUARANTINE_BOT:
+			var bot_id = payload.get("bot_id", "")
+			if not bot_id is String or bot_id.is_empty() or bot_id.length() > 80:
+				return "Invalid community bot id."
+			if payload.has("quarantined") and not payload.get("quarantined") is bool:
+				return "Invalid quarantine state."
+		SUBMIT_BOT_DECK:
+			var deck = payload.get("deck", {})
+			if not deck is Dictionary or JSON.stringify(deck).length() > 30000:
+				return "The submitted bot deck is invalid or too large."
+		REPORT_BOT_WORK_STARTED:
+			var started_job_id = payload.get("job_id", "")
+			if not started_job_id is String or started_job_id.is_empty() or started_job_id.length() > 64:
+				return "Invalid bot worker job id."
+		CANCEL_BOT_WORK:
+			var canceled_job_id = payload.get("job_id", "")
+			if not canceled_job_id is String or canceled_job_id.is_empty() or canceled_job_id.length() > 64:
+				return "Invalid bot worker job id."
+		SUBMIT_BOT_WORK_RESULT:
+			var job_id = payload.get("job_id", "")
+			var winner = payload.get("winner_index", -1)
+			if not job_id is String or job_id.length() > 64 or not winner is int or winner not in [0, 1]:
+				return "Invalid bot worker result."
+		REPORT_HOST_VIABILITY:
+			if not payload.has("viable"):
+				return "Missing viability flag."
+		SUBMIT_ISSUE_REPORT:
+			var expected = payload.get("expected", "")
+			var actual = payload.get("actual", "")
+			var screenshot_jpeg = payload.get("screenshot_jpeg", "")
+			if not expected is String or expected.strip_edges().is_empty() or expected.length() > 1200:
+				return "Enter what you expected to happen (at most 1200 characters)."
+			if not actual is String or actual.strip_edges().is_empty() or actual.length() > 1200:
+				return "Enter what happened (at most 1200 characters)."
+			if not screenshot_jpeg is String or screenshot_jpeg.length() > 16000:
+				return "The screenshot is too large. Choose a smaller image."
+		SUBMIT_BOT_PROPOSAL:
+			var strategy = payload.get("strategy", "")
+			var deck_code = payload.get("deck_code", "")
+			var deck_text = payload.get("deck_text", "")
+			if not strategy is String or strategy.strip_edges().is_empty() or strategy.length() > 2000:
+				return "Describe the strategy in at most 2000 characters."
+			if not deck_code is String or not deck_code.begins_with("OGDECK1:") or deck_code.length() > 12000:
+				return "The deck import code is invalid or too large."
+			if not deck_text is String or deck_text.strip_edges().is_empty() or deck_text.length() > 12000:
+				return "The deck list is invalid or too large."
 		_:
 			return "Unknown lobby message type: %s" % message_type
 
 	return ""
+
+static func is_valid_password_reset_code(code: String) -> bool:
+	if code.length() != PASSWORD_RESET_CODE_LENGTH:
+		return false
+	for index in range(code.length()):
+		var digit := code.unicode_at(index)
+		if digit < 48 or digit > 57:
+			return false
+	return true

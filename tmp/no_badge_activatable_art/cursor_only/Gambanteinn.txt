@@ -1,0 +1,1 @@
+﻿Pay 2 mana. If equipped to a Mage, put a creature to [b]Sleep[/b] until end of turn. If equipped to a Shaman, it may instead switch a defensive creature to aggressive stance until end of turn. Only Mages and Shamans can equip this card.

@@ -6,7 +6,7 @@ const ART_PATH := "res://images/card_art/creatures/ValkyrieWarrior.png"
 func _init() -> void:
 	super._init()
 	card_name = "Valkyrie Warrior"
-	card_types = ["Aerial", "Warrior", "Valkyrie", "Norse Creature"]
+	card_types = ["Aerial", "Warrior", "Valkyrie"]
 	level = 4
 	mana_cost = 2
 	sacrifice_cost = 0

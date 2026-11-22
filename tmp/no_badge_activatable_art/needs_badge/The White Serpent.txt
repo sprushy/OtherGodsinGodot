@@ -1,0 +1,2 @@
+﻿[b]Shift[/b] ([b]Activate[/b], [b]Minor Action[/b], once per turn): Switch between Human, Mage, Shapeshifter and Animal, Anguine, Shapeshifter.
+Medicine ([b]Activate[/b], [b]Spd[/b] 2): Negate enemy effects targeting your cards until end of turn.

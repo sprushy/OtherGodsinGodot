@@ -6,7 +6,7 @@ const ART_PATH := "res://images/card_art/creatures/TelchineApprenticeEdit.png"
 func _init() -> void:
 	super._init()
 	card_name = "Telchine Apprentice"
-	card_types = ["Human", "Mage", "Smith", "Olympic Creature"]
+	card_types = ["Human", "Mage", "Smith"]
 	level = 3
 	mana_cost = 0
 	sacrifice_cost = 0

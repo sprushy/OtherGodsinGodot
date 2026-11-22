@@ -2,6 +2,27 @@ name: Desktop Release
 
 on:
   workflow_dispatch:
+    inputs:
+      include_ios:
+        description: "Build iPad/iOS assets (only when explicitly requested)"
+        type: boolean
+        required: false
+        default: false
+      include_android:
+        description: "Build Android APK (preview signing when release secrets are absent)"
+        type: boolean
+        required: false
+        default: true
+      android_only:
+        description: "Build only the Android APK (manual builds)"
+        type: boolean
+        required: false
+        default: false
+      android_version:
+        description: "Android version for manual builds (blank uses project version)"
+        type: string
+        required: false
+        default: ""
   push:
     tags:
       - "v*"
@@ -11,23 +32,49 @@ permissions:
 
 jobs:
   export-windows:
+    if: ${{ inputs.android_only != true }}
     runs-on: ubuntu-latest
+    env:
+      WINDOWS_CODESIGN_CERTIFICATE_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_CERTIFICATE_PFX_BASE64 }}
+      WINDOWS_CODESIGN_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_CERTIFICATE_PASSWORD }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Load Godot version
+        shell: pwsh
+        run: |
+          $version = (Get-Content .godot-version -Raw).Trim()
+          if (-not $version) {
+            throw ".godot-version is empty."
+          }
+          $setupVersion = $version
+          if ($setupVersion -match '^\d+\.\d+$') {
+            $setupVersion = "$setupVersion.0"
+          }
+          "GODOT_VERSION=$setupVersion" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Stamp build version
         shell: pwsh
         env:
           BUILD_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
         run: |
-          ((Get-Content project.godot) -replace '^config/version=.*$', "config/version=`"$env:BUILD_VERSION`"") | Set-Content project.godot
+          $resourceVersion = $env:BUILD_VERSION -replace '^v', ''
+          if ($resourceVersion -notmatch '^\d+(\.\d+){1,3}$') {
+            $resourceVersion = '0.0.0'
+          }
+          $projectContent = Get-Content project.godot -Raw
+          $projectContent = $projectContent -replace '(?m)^config/version=.*$', "config/version=`"$env:BUILD_VERSION`""
+          Set-Content project.godot $projectContent -NoNewline
+          $exportContent = Get-Content export_presets.cfg -Raw
+          $exportContent = $exportContent -replace '(?m)^(application/(?:file_version|product_version|short_version|version)=)".*"$', "`${1}`"$resourceVersion`""
+          Set-Content export_presets.cfg $exportContent -NoNewline
 
       - name: Setup Godot
         uses: chickensoft-games/setup-godot@v2
         with:
-          version: 4.6.1
+          version: ${{ env.GODOT_VERSION }}
           use-dotnet: false
           include-templates: true
 
@@ -37,12 +84,58 @@ jobs:
           godot --headless --path . --export-release "Windows Desktop" .exports/windows/OtherGods.exe
           godot --headless --path . --export-release "Windows Dedicated Server" .exports/server/OtherGodsServer.exe
 
+      - name: Sign Windows builds
+        if: ${{ env.WINDOWS_CODESIGN_CERTIFICATE_PFX_BASE64 != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y osslsigncode
+
+          certificate_path="$RUNNER_TEMP/othergods-windows-codesign.pfx"
+          printf '%s' "$WINDOWS_CODESIGN_CERTIFICATE_PFX_BASE64" | base64 --decode > "$certificate_path"
+
+          sign_windows_binary() {
+            local binary_path="$1"
+            local signed_path="${binary_path}.signed"
+            osslsigncode sign \
+              -pkcs12 "$certificate_path" \
+              -pass "$WINDOWS_CODESIGN_CERTIFICATE_PASSWORD" \
+              -n "Other Gods" \
+              -i "https://github.com/sprushy/OtherGodsinGodot" \
+              -ts "http://timestamp.digicert.com" \
+              -h sha256 \
+              -in "$binary_path" \
+              -out "$signed_path"
+            mv "$signed_path" "$binary_path"
+            osslsigncode verify -in "$binary_path"
+          }
+
+          sign_windows_binary .exports/windows/OtherGods.exe
+          sign_windows_binary .exports/server/OtherGodsServer.exe
+
+      - name: Report unsigned Windows build
+        if: ${{ env.WINDOWS_CODESIGN_CERTIFICATE_PFX_BASE64 == '' }}
+        run: |
+          echo "::warning::Windows signing secrets are not configured. Unsigned builds are more likely to be blocked by SmartScreen and antivirus."
+
+      - name: Check server runtime packaging
+        shell: pwsh
+        run: ./scripts/ci/server_runtime_package_test.ps1
+
+      - name: Stage server startup and WebSocket configuration
+        shell: pwsh
+        run: ./scripts/server/lightsail/Stage-ServerRuntimeFiles.ps1 -OutputDirectory .exports/server
+
       - name: Package release zips
         run: |
           cd .exports/windows
           zip -9 -r ../../dist/OtherGods-windows.zip *
           cd ../server
           zip -9 -r ../../dist/OtherGodsServer-windows.zip *
+          cd ../..
+          sha256sum dist/OtherGods-windows.zip > dist/OtherGods-windows.zip.sha256
+          sha256sum dist/OtherGodsServer-windows.zip > dist/OtherGodsServer-windows.zip.sha256
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
@@ -50,51 +143,643 @@ jobs:
           name: OtherGods-windows
           path: |
             dist/OtherGods-windows.zip
+            dist/OtherGods-windows.zip.sha256
             dist/OtherGodsServer-windows.zip
-
-      - name: Publish GitHub release assets
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist/OtherGods-windows.zip
-            dist/OtherGodsServer-windows.zip
+            dist/OtherGodsServer-windows.zip.sha256
 
   export-macos:
+    if: ${{ inputs.android_only != true }}
     runs-on: macos-latest
+    env:
+      SPARKLE_VERSION: 2.9.3
+      GODOT_CPP_REF: "4.7"
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Load Godot version
+        shell: pwsh
+        run: |
+          $version = (Get-Content .godot-version -Raw).Trim()
+          if (-not $version) {
+            throw ".godot-version is empty."
+          }
+          $setupVersion = $version
+          if ($setupVersion -match '^\d+\.\d+$') {
+            $setupVersion = "$setupVersion.0"
+          }
+          "GODOT_VERSION=$setupVersion" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Stamp build version
         shell: pwsh
         env:
           BUILD_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
         run: |
-          ((Get-Content project.godot) -replace '^config/version=.*$', "config/version=`"$env:BUILD_VERSION`"") | Set-Content project.godot
+          $resourceVersion = $env:BUILD_VERSION -replace '^v', ''
+          if ($resourceVersion -notmatch '^\d+(\.\d+){1,3}$') {
+            $resourceVersion = '0.0.0'
+          }
+          $projectContent = Get-Content project.godot -Raw
+          $projectContent = $projectContent -replace '(?m)^config/version=.*$', "config/version=`"$env:BUILD_VERSION`""
+          Set-Content project.godot $projectContent -NoNewline
+          $exportContent = Get-Content export_presets.cfg -Raw
+          $exportContent = $exportContent -replace '(?m)^(application/(?:file_version|product_version|short_version|version)=)".*"$', "`${1}`"$resourceVersion`""
+          Set-Content export_presets.cfg $exportContent -NoNewline
 
       - name: Setup Godot
         uses: chickensoft-games/setup-godot@v2
         with:
-          version: 4.6.1
+          version: ${{ env.GODOT_VERSION }}
           use-dotnet: false
           include-templates: true
+
+      - name: Prepare optional Sparkle tooling
+        shell: bash
+        env:
+          SPARKLE_PUBLIC_ED_KEY: ${{ secrets.SPARKLE_PUBLIC_ED_KEY }}
+          SPARKLE_PRIVATE_ED_KEY: ${{ secrets.SPARKLE_PRIVATE_ED_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${SPARKLE_PUBLIC_ED_KEY}" ] || [ -z "${SPARKLE_PRIVATE_ED_KEY}" ]; then
+            echo "::warning::SPARKLE_PUBLIC_ED_KEY and SPARKLE_PRIVATE_ED_KEY are not configured; building macOS without Sparkle auto-updates."
+            echo "SPARKLE_ENABLED=false" >> "$GITHUB_ENV"
+            rm -f addons/macos_sparkle/macos_sparkle.gdextension
+            exit 0
+          fi
+
+          godot_cpp_ref="${GODOT_CPP_REF:-4.7}"
+          if ! git ls-remote --exit-code --heads https://github.com/godotengine/godot-cpp.git "$godot_cpp_ref" >/dev/null 2>&1; then
+            echo "::warning::godot-cpp branch '${godot_cpp_ref}' was not found; building macOS without Sparkle auto-updates."
+            echo "SPARKLE_ENABLED=false" >> "$GITHUB_ENV"
+            rm -f addons/macos_sparkle/macos_sparkle.gdextension
+            exit 0
+          fi
+
+          echo "SPARKLE_ENABLED=true" >> "$GITHUB_ENV"
+          rm -f addons/macos_sparkle/.gdignore
+
+          python3 -m pip install --user scons
+          echo "$(python3 -m site --user-base)/bin" >> "$GITHUB_PATH"
+
+          sparkle_archive="$RUNNER_TEMP/Sparkle-${SPARKLE_VERSION}.tar.xz"
+          curl -L --fail \
+            -o "$sparkle_archive" \
+            "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz"
+          tar -xJf "$sparkle_archive" -C "$RUNNER_TEMP"
+
+          sparkle_root="$RUNNER_TEMP/Sparkle-${SPARKLE_VERSION}"
+          if [ ! -d "$sparkle_root/Sparkle.framework" ]; then
+            echo "Sparkle.framework was not found in ${sparkle_root}." >&2
+            exit 1
+          fi
+
+          godot_cpp_dir="$RUNNER_TEMP/godot-cpp"
+          git clone --depth 1 --branch "$godot_cpp_ref" https://github.com/godotengine/godot-cpp.git "$godot_cpp_dir"
+
+          echo "SPARKLE_ROOT=$sparkle_root" >> "$GITHUB_ENV"
+          echo "SPARKLE_FRAMEWORK_DIR=$sparkle_root" >> "$GITHUB_ENV"
+          echo "SPARKLE_BIN_DIR=$sparkle_root/bin" >> "$GITHUB_ENV"
+          echo "GODOT_CPP_DIR=$godot_cpp_dir" >> "$GITHUB_ENV"
+
+      - name: Build macOS Sparkle bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "${SPARKLE_ENABLED:-false}" != "true" ]; then
+            echo "Skipping Sparkle bridge build because Sparkle is disabled for this run."
+            exit 0
+          fi
+
+          mkdir -p addons/macos_sparkle/bin
+
+          scons -C native/macos_sparkle \
+            platform=macos \
+            target=template_release \
+            arch=x86_64 \
+            godot_cpp_dir="$GODOT_CPP_DIR" \
+            sparkle_framework_dir="$SPARKLE_FRAMEWORK_DIR"
+
+          scons -C native/macos_sparkle \
+            platform=macos \
+            target=template_release \
+            arch=arm64 \
+            godot_cpp_dir="$GODOT_CPP_DIR" \
+            sparkle_framework_dir="$SPARKLE_FRAMEWORK_DIR"
+
+          lipo -create \
+            addons/macos_sparkle/bin/libmacos_sparkle.macos.x86_64.dylib \
+            addons/macos_sparkle/bin/libmacos_sparkle.macos.arm64.dylib \
+            -output addons/macos_sparkle/bin/libmacos_sparkle.macos.universal.dylib
+
+          file addons/macos_sparkle/bin/libmacos_sparkle.macos.universal.dylib
+
+      - name: Test macOS updater
+        run: python3 scripts/tests/macos_self_update_test.py
 
       - name: Export macOS build
         run: |
           mkdir -p .exports/macos dist
           godot --headless --path . --export-release "macOS" .exports/macos/OtherGods-macos.zip
-          cp .exports/macos/OtherGods-macos.zip dist/OtherGods-macos.zip
 
-      - name: Upload workflow artifact
+      - name: Configure macOS Developer ID certificate
+        shell: bash
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${MACOS_CERTIFICATE_P12_BASE64}" ]; then
+            echo "MACOS_SIGN_IDENTITY=-" >> "$GITHUB_ENV"
+            echo "No Developer ID certificate configured; using ad-hoc signing."
+            exit 0
+          fi
+
+          if [ -z "${MACOS_CERTIFICATE_PASSWORD}" ]; then
+            echo "MACOS_CERTIFICATE_PASSWORD is required when MACOS_CERTIFICATE_P12_BASE64 is set." >&2
+            exit 1
+          fi
+
+          keychain_password="$(openssl rand -hex 16)"
+          keychain_path="$RUNNER_TEMP/othergods-signing.keychain-db"
+          certificate_path="$RUNNER_TEMP/othergods-certificate.p12"
+
+          echo "${MACOS_CERTIFICATE_P12_BASE64}" | base64 --decode > "$certificate_path"
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$certificate_path" -P "${MACOS_CERTIFICATE_PASSWORD}" -A -t cert -f pkcs12 -k "$keychain_path" -T /usr/bin/codesign
+          security list-keychains -d user -s "$keychain_path" $(security list-keychains -d user | sed 's/"//g')
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain_path"
+
+          if [ -z "${MACOS_CODESIGN_IDENTITY}" ]; then
+            MACOS_CODESIGN_IDENTITY="$(security find-identity -v -p codesigning "$keychain_path" | awk -F '"' '/Developer ID Application/ { print $2; exit }')"
+          fi
+          if [ -z "${MACOS_CODESIGN_IDENTITY}" ]; then
+            echo "Could not find a Developer ID Application signing identity." >&2
+            exit 1
+          fi
+
+          echo "MACOS_SIGN_IDENTITY=${MACOS_CODESIGN_IDENTITY}" >> "$GITHUB_ENV"
+          echo "MACOS_KEYCHAIN_PATH=${keychain_path}" >> "$GITHUB_ENV"
+
+      - name: Sign and package macOS build
+        shell: bash
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          SPARKLE_PUBLIC_ED_KEY: ${{ secrets.SPARKLE_PUBLIC_ED_KEY }}
+          SPARKLE_PRIVATE_ED_KEY: ${{ secrets.SPARKLE_PRIVATE_ED_KEY }}
+          BUILD_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
+        run: |
+          set -euo pipefail
+
+          feed_url="https://github.com/sprushy/OtherGodsinGodot/releases/latest/download/appcast.xml"
+
+          rm -rf .exports/macos/unpacked dist/macos dist/OtherGods-macos.zip
+          mkdir -p .exports/macos/unpacked dist/macos
+          ditto -x -k .exports/macos/OtherGods-macos.zip .exports/macos/unpacked
+
+          app_path="$(find .exports/macos/unpacked -maxdepth 1 -name "*.app" -print -quit)"
+          if [ -z "${app_path}" ]; then
+            echo "No .app bundle found in macOS export." >&2
+            exit 1
+          fi
+
+          if [ "$BUILD_VERSION" != "dev" ]; then
+            actual_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app_path/Contents/Info.plist")
+            test "$actual_version" = "${BUILD_VERSION#v}"
+            bundle_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app_path/Contents/Info.plist")
+            test "$bundle_version" = "${BUILD_VERSION#v}"
+          fi
+
+          if [ "${SPARKLE_ENABLED:-false}" = "true" ]; then
+            bridge_extension_path="$(find "$app_path" -name macos_sparkle.gdextension -print -quit)"
+            bridge_library_path="$(find "$app_path" -name "libmacos_sparkle.macos.universal.dylib" -print -quit)"
+            if [ -z "$bridge_extension_path" ] || [ -z "$bridge_library_path" ]; then
+              echo "MacSparkleBridge was not exported into the app bundle." >&2
+              echo "gdextension=${bridge_extension_path:-missing}" >&2
+              echo "library=${bridge_library_path:-missing}" >&2
+              exit 1
+            fi
+
+            mkdir -p "$app_path/Contents/Frameworks"
+            rm -rf "$app_path/Contents/Frameworks/Sparkle.framework"
+            ditto "$SPARKLE_FRAMEWORK_DIR/Sparkle.framework" "$app_path/Contents/Frameworks/Sparkle.framework"
+
+            info_plist="$app_path/Contents/Info.plist"
+            set_plist_string() {
+              local key="$1"
+              local value="$2"
+              /usr/libexec/PlistBuddy -c "Set :${key} '${value}'" "$info_plist" >/dev/null 2>&1 || \
+                /usr/libexec/PlistBuddy -c "Add :${key} string '${value}'" "$info_plist"
+            }
+            set_plist_string "SUFeedURL" "$feed_url"
+            set_plist_string "SUPublicEDKey" "$SPARKLE_PUBLIC_ED_KEY"
+          fi
+
+          if [ "${MACOS_SIGN_IDENTITY}" = "-" ]; then
+            codesign --force --deep --sign - "$app_path"
+          else
+            codesign --force --deep --options runtime --timestamp --sign "${MACOS_SIGN_IDENTITY}" "$app_path"
+          fi
+          codesign --verify --deep --strict --verbose=2 "$app_path"
+
+          if [ "${MACOS_SIGN_IDENTITY}" != "-" ] && [ -n "${APPLE_ID}" ] && [ -n "${APPLE_APP_PASSWORD}" ] && [ -n "${APPLE_TEAM_ID}" ]; then
+            notary_zip=".exports/macos/OtherGods-macos-notary.zip"
+            ditto -c -k --keepParent "$app_path" "$notary_zip"
+            xcrun notarytool submit "$notary_zip" \
+              --apple-id "${APPLE_ID}" \
+              --password "${APPLE_APP_PASSWORD}" \
+              --team-id "${APPLE_TEAM_ID}" \
+              --wait
+            xcrun stapler staple "$app_path"
+            spctl --assess --type execute --verbose=4 "$app_path"
+          elif [ "${MACOS_SIGN_IDENTITY}" != "-" ]; then
+            echo "Developer ID signing is configured, but notarization secrets are missing; packaging signed but unnotarized app."
+          else
+            echo "Packaged ad-hoc signed app. Users may still need Finder Open Anyway unless Developer ID notarization is configured."
+          fi
+
+          ditto -c -k --keepParent "$app_path" dist/macos/OtherGods-macos.zip
+          shasum -a 256 dist/macos/OtherGods-macos.zip > dist/macos/OtherGods-macos.zip.sha256
+
+          if [ "${SPARKLE_ENABLED:-false}" = "true" ]; then
+            sparkle_private_key_file="$RUNNER_TEMP/sparkle_private_ed_key.txt"
+            printf '%s' "$SPARKLE_PRIVATE_ED_KEY" > "$sparkle_private_key_file"
+            "$SPARKLE_BIN_DIR/generate_appcast" \
+              --ed-key-file "$sparkle_private_key_file" \
+              dist/macos
+            test -s dist/macos/appcast.xml
+          fi
+
+      - name: Upload macOS workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: OtherGods-macos
-          path: dist/OtherGods-macos.zip
+          path: dist/macos/*
+
+  export-ios:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.include_ios == true }}
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Load Godot version
+        shell: pwsh
+        run: |
+          $version = (Get-Content .godot-version -Raw).Trim()
+          if (-not $version) {
+            throw ".godot-version is empty."
+          }
+          $setupVersion = $version
+          if ($setupVersion -match '^\d+\.\d+$') {
+            $setupVersion = "$setupVersion.0"
+          }
+          "GODOT_VERSION=$setupVersion" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Stamp build version
+        shell: pwsh
+        env:
+          BUILD_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
+        run: |
+          $resourceVersion = $env:BUILD_VERSION -replace '^v', ''
+          if ($resourceVersion -notmatch '^\d+(\.\d+){1,3}$') {
+            $resourceVersion = '0.0.0'
+          }
+          $projectContent = Get-Content project.godot -Raw
+          $projectContent = $projectContent -replace '(?m)^config/version=.*$', "config/version=`"$env:BUILD_VERSION`""
+          Set-Content project.godot $projectContent -NoNewline
+          $exportContent = Get-Content export_presets.cfg -Raw
+          $exportContent = $exportContent -replace '(?m)^(application/(?:file_version|product_version|short_version|version)=)".*"$', "`${1}`"$resourceVersion`""
+          Set-Content export_presets.cfg $exportContent -NoNewline
+
+      - name: Stamp iOS App Store team ID
+        shell: bash
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          team_id="${APPLE_TEAM_ID}"
+          if [ -z "${team_id}" ]; then
+            team_id="AAAAAAAAAA"
+            echo "::warning::APPLE_TEAM_ID secret is not configured; stamping placeholder team ${team_id}. Select the real team in Xcode (Signing & Capabilities) before archiving."
+            echo "## iOS App Store Team ID not configured" >> "$GITHUB_STEP_SUMMARY"
+            echo "The APPLE_TEAM_ID secret is missing, so the exported Xcode project has a placeholder DEVELOPMENT_TEAM (AAAAAAAAAA). Open the project in Xcode and select the real team under Signing & Capabilities before building." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          python3 - "$team_id" <<'PY'
+          import pathlib
+          import sys
+
+          team_id = sys.argv[1]
+          preset_path = pathlib.Path("export_presets.cfg")
+          text = preset_path.read_text(encoding="utf-8")
+          placeholder = 'application/app_store_team_id=""'
+          if placeholder not in text:
+              print('::error::iOS preset placeholder application/app_store_team_id="" was not found in export_presets.cfg')
+              sys.exit(1)
+          preset_path.write_text(
+              text.replace(placeholder, f'application/app_store_team_id="{team_id}"', 1),
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Setup Godot
+        uses: chickensoft-games/setup-godot@v2
+        with:
+          version: ${{ env.GODOT_VERSION }}
+          use-dotnet: false
+          include-templates: true
+
+      - name: Export iOS Xcode project
+        run: |
+          mkdir -p .exports/ios dist/ios
+          godot --headless --path . --export-release "iOS" .exports/ios/OtherGods.xcodeproj
+
+      - name: Package unsigned iOS IPA
+        run: |
+          set -euo pipefail
+          cd .exports/ios
+          scheme="$(xcodebuild -list -json -project OtherGods.xcodeproj | python3 -c "import json,sys; d=json.load(sys.stdin)['project']; print((d.get('schemes') or [''])[0])")"
+          target="$(xcodebuild -list -json -project OtherGods.xcodeproj | python3 -c "import json,sys; d=json.load(sys.stdin)['project']; print((d.get('targets') or [''])[0])")"
+          echo "Building iOS app without signing (scheme='${scheme}' target='${target}')."
+          if [ -n "$scheme" ]; then
+            xcodebuild -project OtherGods.xcodeproj -scheme "$scheme" -configuration Release -sdk iphoneos -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -quiet
+          else
+            xcodebuild -project OtherGods.xcodeproj -target "$target" -configuration Release -sdk iphoneos -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -quiet
+          fi
+          app_path="$(find build/Build/Products -maxdepth 3 -name '*.app' -print -quit)"
+          if [ -z "$app_path" ]; then
+            echo "::error::No .app product was produced by xcodebuild." >&2
+            exit 1
+          fi
+          mkdir -p Payload
+          cp -R "$app_path" Payload/
+          zip -qry "../../dist/ios/OtherGods-ios-unsigned.ipa" Payload
+          cd ../..
+          shasum -a 256 dist/ios/OtherGods-ios-unsigned.ipa > dist/ios/OtherGods-ios-unsigned.ipa.sha256
+
+      - name: Upload iOS workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OtherGods-ios
+          path: dist/ios/*
+
+  export-android:
+    if: ${{ github.event_name == 'push' || inputs.include_android == true }}
+    runs-on: ubuntu-latest
+    outputs:
+      release_signed: ${{ steps.signing.outputs.release_signed }}
+    env:
+      GODOT_MCP_DISABLED: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Load Godot version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(tr -d '\r\n' < .godot-version)"
+          test -n "$version"
+          if [[ "$version" =~ ^[0-9]+\.[0-9]+$ ]]; then version="${version}.0"; fi
+          echo "GODOT_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Install Android build tools
+        run: sdkmanager "platform-tools" "build-tools;36.1.0"
+
+      - name: Setup Godot
+        uses: chickensoft-games/setup-godot@v2
+        with:
+          version: ${{ env.GODOT_VERSION }}
+          use-dotnet: false
+          include-templates: true
+
+      - name: Configure signing and Android version
+        id: signing
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          BUILD_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || inputs.android_version || '' }}
+        run: |
+          set -euo pipefail
+          key_path="$RUNNER_TEMP/othergods-android.keystore"
+          args=(--editor-settings "$HOME/.config/godot/editor_settings-4.7.tres"
+                --java-sdk "$JAVA_HOME" --android-sdk "$ANDROID_HOME")
+          if [ -n "$BUILD_VERSION" ]; then args+=(--version "$BUILD_VERSION"); fi
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ] && [ -n "$ANDROID_KEY_ALIAS" ] && [ -n "$ANDROID_KEYSTORE_PASSWORD" ]; then
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$key_path"
+            chmod 600 "$key_path"
+            keytool -list -keystore "$key_path" -storepass:env ANDROID_KEYSTORE_PASSWORD -alias "$ANDROID_KEY_ALIAS" > /dev/null
+            echo "GODOT_ANDROID_KEYSTORE_RELEASE_PATH=$key_path" >> "$GITHUB_ENV"
+            echo "GODOT_ANDROID_KEYSTORE_RELEASE_USER=$ANDROID_KEY_ALIAS" >> "$GITHUB_ENV"
+            echo "GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD=$ANDROID_KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+            echo "ANDROID_EXPORT_MODE=--export-release" >> "$GITHUB_ENV"
+            echo "ANDROID_APK_NAME=OtherGods-android.apk" >> "$GITHUB_ENV"
+            echo "release_signed=true" >> "$GITHUB_OUTPUT"
+          elif [ -n "$ANDROID_KEYSTORE_BASE64$ANDROID_KEY_ALIAS$ANDROID_KEYSTORE_PASSWORD" ]; then
+            echo "::error::Configure all three Android signing secrets, or remove the partial configuration."
+            exit 1
+          else
+            keytool -genkeypair -noprompt -keystore "$key_path" -storepass android -keypass android \
+              -alias androiddebugkey -dname "CN=Android Debug,O=Android,C=US" \
+              -keyalg RSA -keysize 2048 -validity 10000
+            echo "GODOT_ANDROID_KEYSTORE_DEBUG_PATH=$key_path" >> "$GITHUB_ENV"
+            echo "GODOT_ANDROID_KEYSTORE_DEBUG_USER=androiddebugkey" >> "$GITHUB_ENV"
+            echo "GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD=android" >> "$GITHUB_ENV"
+            echo "ANDROID_EXPORT_MODE=--export-debug" >> "$GITHUB_ENV"
+            echo "ANDROID_APK_NAME=OtherGods-android-preview.apk" >> "$GITHUB_ENV"
+            echo "release_signed=false" >> "$GITHUB_OUTPUT"
+            args+=(--preview)
+            echo "::warning::Android release signing is not configured. Building a preview artifact only."
+            echo "Android preview APK is available under workflow artifacts. Configure ANDROID_KEYSTORE_BASE64, ANDROID_KEY_ALIAS and ANDROID_KEYSTORE_PASSWORD to publish an Android release." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          python3 scripts/ci/prepare_android_export.py "${args[@]}"
+
+      - name: Test Android export configuration
+        run: python3 -m unittest discover -s scripts/tests -p android_export_test.py
+
+      - name: Test Android updater
+        run: godot --headless --path . --script scripts/tests/android_self_update_test.gd
+
+      - name: Export Android APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .exports/android dist/android
+          godot --headless --path . --editor --import
+          godot --headless --path . "$ANDROID_EXPORT_MODE" "Android" ".exports/android/$ANDROID_APK_NAME"
+          "$ANDROID_HOME/build-tools/36.1.0/apksigner" verify --verbose ".exports/android/$ANDROID_APK_NAME"
+          "$ANDROID_HOME/build-tools/36.1.0/zipalign" -c -P 16 -v 4 ".exports/android/$ANDROID_APK_NAME"
+          badging="$("$ANDROID_HOME/build-tools/36.1.0/aapt" dump badging ".exports/android/$ANDROID_APK_NAME")"
+          grep -q "native-code: 'arm64-v8a' 'x86_64'" <<< "$badging"
+          grep -q "uses-permission: name='android.permission.INTERNET'" <<< "$badging"
+          grep -q "uses-permission: name='android.permission.REQUEST_INSTALL_PACKAGES'" <<< "$badging"
+          if grep -q 'android.hardware.vulkan' <<< "$badging"; then
+            echo "::error::The Compatibility build must not require Vulkan."
+            exit 1
+          fi
+          cp ".exports/android/$ANDROID_APK_NAME" dist/android/
+          cd dist/android
+          sha256sum "$ANDROID_APK_NAME" > "$ANDROID_APK_NAME.sha256"
+
+      - name: Upload Android workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OtherGods-android
+          path: dist/android/*
+          if-no-files-found: error
+
+      - name: Remove signing keystore
+        if: ${{ always() }}
+        run: rm -f "$RUNNER_TEMP/othergods-android.keystore"
+
+  publish-release:
+    if: ${{ startsWith(github.ref, 'refs/tags/') && always() && needs.export-windows.result == 'success' && needs.export-macos.result == 'success' }}
+    runs-on: ubuntu-latest
+    needs:
+      - export-windows
+      - export-macos
+      - export-ios
+      - export-android
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: OtherGods-windows
+          path: dist/windows
+
+      - name: Download macOS zip artifact
+        if: ${{ needs.export-macos.result == 'success' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: OtherGods-macos
+          path: dist/macos
+
+      - name: Report missing macOS assets
+        if: ${{ needs.export-macos.result != 'success' }}
+        run: |
+          echo "::warning::Publishing Windows assets without macOS assets because export-macos finished with '${{ needs.export-macos.result }}'."
+          echo "## macOS assets were not published" >> "$GITHUB_STEP_SUMMARY"
+          echo "The export-macos job finished with \`${{ needs.export-macos.result }}\`; this release contains Windows assets only." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Validate macOS release artifacts
+        if: ${{ needs.export-macos.result == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s dist/macos/OtherGods-macos.zip
+          test -s dist/macos/OtherGods-macos.zip.sha256
+          if [ -e dist/macos/appcast.xml ]; then
+            test -s dist/macos/appcast.xml
+          else
+            echo "Sparkle appcast.xml was not produced; macOS clients use the built-in bundle updater."
+          fi
+
+      - name: Download iOS artifact
+        if: ${{ needs.export-ios.result == 'success' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: OtherGods-ios
+          path: dist/ios
+
+      - name: Report missing iOS assets
+        if: ${{ needs.export-ios.result == 'failure' || needs.export-ios.result == 'cancelled' }}
+        run: |
+          echo "::warning::Publishing without iOS assets because export-ios finished with '${{ needs.export-ios.result }}'."
+          echo "## iOS assets were not published" >> "$GITHUB_STEP_SUMMARY"
+          echo "The export-ios job finished with \`${{ needs.export-ios.result }}\`; this release contains no iOS Xcode project." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Validate iOS release artifacts
+        if: ${{ needs.export-ios.result == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s dist/ios/OtherGods-ios-unsigned.ipa
+          test -s dist/ios/OtherGods-ios-unsigned.ipa.sha256
+
+      - name: Download signed Android artifact
+        if: ${{ needs.export-android.result == 'success' && needs.export-android.outputs.release_signed == 'true' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: OtherGods-android
+          path: dist/android
+
+      - name: Report unavailable Android release
+        if: ${{ needs.export-android.result != 'skipped' && (needs.export-android.result != 'success' || needs.export-android.outputs.release_signed != 'true') }}
+        run: |
+          echo "::warning::No release-signed Android APK was produced; Android assets will not be published. Check export-android for a preview artifact or build errors."
+          echo "No signed Android release APK was produced. See export-android for signing setup or build errors." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish GitHub release assets
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/OtherGods-macos.zip
+          fail_on_unmatched_files: false
+          files: |
+            dist/windows/OtherGods-windows.zip
+            dist/windows/OtherGods-windows.zip.sha256
+            dist/windows/OtherGodsServer-windows.zip
+            dist/windows/OtherGodsServer-windows.zip.sha256
+            dist/macos/*
+            dist/ios/*
+            dist/android/*
+
+      - name: Sync tagged version back to default branch
+        shell: pwsh
+        env:
+          BUILD_VERSION: ${{ github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          $resourceVersion = $env:BUILD_VERSION -replace '^v', ''
+          if ($resourceVersion -notmatch '^\d+(\.\d+){1,3}$') {
+            throw "Tagged release version '$env:BUILD_VERSION' is not a numeric version."
+          }
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B $env:DEFAULT_BRANCH origin/$env:DEFAULT_BRANCH
+          git pull --ff-only origin $env:DEFAULT_BRANCH
+
+          $projectContent = Get-Content project.godot -Raw
+          $projectContent = $projectContent -replace '(?m)^config/version=.*$', "config/version=`"$env:BUILD_VERSION`""
+          Set-Content project.godot $projectContent -NoNewline
+
+          $exportContent = Get-Content export_presets.cfg -Raw
+          $exportContent = $exportContent -replace '(?m)^(application/(?:file_version|product_version|short_version|version)=)".*"$', "`${1}`"$resourceVersion`""
+          Set-Content export_presets.cfg $exportContent -NoNewline
+
+          git add project.godot export_presets.cfg
+          if (git diff --cached --quiet) {
+            Write-Host "Version files already match $env:BUILD_VERSION on $env:DEFAULT_BRANCH."
+            exit 0
+          }
+
+          git commit -m "Sync release version $env:BUILD_VERSION"
+          git push origin HEAD:$env:DEFAULT_BRANCH

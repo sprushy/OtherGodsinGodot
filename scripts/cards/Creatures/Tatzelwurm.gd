@@ -6,14 +6,14 @@ const ART_PATH := "res://images/card_art/creatures/TatzelwyrmEdit.png"
 func _init() -> void:
 	super._init()
 	card_name = "Tatzelwurm"
-	card_types = ["Animal", "Cryptid", "Norse Creature"]
+	card_types = ["Animal", "Cryptid"]
 	level = 2
 	mana_cost = 0
 	sacrifice_cost = 0
 	speed = 2
 	resilience = 9
 	strength = 16
-	ability_text = "[b]Dragon Heart[/b]: [b]Slay[/b]: Add a Dragon from your deck to your hand."
+	ability_text = "[b]Dragon Heart[/b]: [b]Slay[/b]: [b]Acquire[/b] a Dragon."
 	flavor_text = ""
 	culture = "Norse"
 	artist = "Ricardo Zoppello"
@@ -78,7 +78,7 @@ func resolve_no_dragon_heart_targets() -> String:
 func _shuffle_deck(controller: Player) -> void:
 	if controller == null or controller.deck_zone == null:
 		return
-	controller.deck_zone.cards.shuffle()
+	controller.deck_zone.shuffle_deck()
 
 func _is_valid_dragon_target(card: Card, controller: Player) -> bool:
 	return card != null \

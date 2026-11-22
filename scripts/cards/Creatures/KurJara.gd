@@ -11,14 +11,14 @@ var _tree_of_life_pending_destroy_count: int = 0
 func _init() -> void:
 	super._init()
 	card_name = "Kur-Jara"
-	card_types = ["Divine Accolyte", "Golem", "Aerial", "Ancient Creature"]
+	card_types = ["Divine Accolyte", "Golem", "Aerial"]
 	level = 4
 	mana_cost = 2
 	sacrifice_cost = 0
 	speed = 3
 	resilience = 26
 	strength = 21
-	ability_text = "Tree of Life ([b]Activate[/b]): Choose a Divine or Priest in your graveyard and send this to the grave.\nAfter 2 of your turns, [b]Resurrect[/b] both to your reserve line.\nThen destroy a friendly creature for each level the chosen card exceeds this one by."
+	ability_text = "Tree of Life ([b]Activate[/b]): Choose a Divine or Priest in your grave and send this to the grave.\nAfter 2 of your turns, [b]Resurrect[/b] both to your reserve line.\nThen destroy a friendly creature for each level the chosen card exceeds this one by."
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricardo Zoppello"
@@ -103,7 +103,22 @@ func _resolve_tree_of_life() -> void:
 	if current_zone == card_owner.graveyard_zone:
 		var self_zone := _find_open_board_zone(gm, null)
 		if self_zone != null:
-			card_owner.move_card(self, self_zone)
+			var self_summoned := gm.summon_creature_by_effect(
+				card_owner,
+				self,
+				self_zone,
+				Card.CreatureMode.AGGRESSIVE,
+				false,
+				false,
+				self,
+				false,
+				false,
+				false
+			)
+			if not self_summoned:
+				gm.note_player_feedback("%s could not resurrect via Tree of Life." % card_name)
+				_clear_tree_of_life_state()
+				return
 			has_acted_this_turn = false
 			is_stealth = false
 			is_face_down = false
@@ -115,7 +130,22 @@ func _resolve_tree_of_life() -> void:
 	if chosen != null and chosen.current_zone == card_owner.graveyard_zone:
 		var chosen_zone := _find_open_board_zone(gm, current_zone)
 		if chosen_zone != null:
-			card_owner.move_card(chosen, chosen_zone)
+			var chosen_summoned := gm.summon_creature_by_effect(
+				card_owner,
+				chosen,
+				chosen_zone,
+				Card.CreatureMode.AGGRESSIVE,
+				false,
+				false,
+				self,
+				false,
+				false,
+				false
+			)
+			if not chosen_summoned:
+				gm.note_player_feedback("Tree of Life: %s could not be resurrected." % chosen.card_name)
+				_clear_tree_of_life_state()
+				return
 			chosen.has_acted_this_turn = false
 			chosen.is_stealth = false
 			chosen.is_face_down = false
@@ -135,6 +165,7 @@ func _resolve_tree_of_life() -> void:
 			gm.decision_requested.emit(card_owner, "kur_jara_tree_of_life", {
 				source_uid = uid,
 				target_uids = target_uids,
+				required_count = level_diff,
 			})
 			return
 
@@ -171,6 +202,8 @@ func get_tree_of_life_destroy_candidates(gm: GameManager) -> Array[Card]:
 	for zone in card_owner.frontline_zones + card_owner.reserve_zones:
 		for card: Card in zone.cards:
 			if card != null and card.card_type == Card.CardType.CREATURE:
+				if gm.is_immune_to_source(card, self):
+					continue
 				friendly.append(card)
 	return friendly
 
@@ -186,7 +219,7 @@ func resolve_tree_of_life_destroy_selection(gm: GameManager, selected_cards: Arr
 	for card: Card in chosen_cards:
 		if destroyed_names.size() >= required:
 			break
-		if gm != null and gm._send_to_graveyard_with_hook(card, false, true):
+		if gm != null and gm._send_to_graveyard_with_hook(card, false, true, self):
 			destroyed_names.append(card.card_name)
 	var remaining := maxi(0, required - destroyed_names.size())
 	var feedback_parts: Array[String] = []
@@ -238,7 +271,7 @@ func _apply_destruction_cost(gm: GameManager, count: int) -> void:
 		gm.note_player_feedback(
 			"Tree of Life costs %s — %s is destroyed." % [card_name, card.card_name]
 		)
-		gm._send_to_graveyard_with_hook(card, false, true)
+		gm._send_to_graveyard_with_hook(card, false, true, self)
 		remaining -= 1
 	if remaining > 0:
 		gm.note_player_feedback(

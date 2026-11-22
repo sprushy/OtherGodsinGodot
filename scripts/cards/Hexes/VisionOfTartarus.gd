@@ -16,7 +16,7 @@ func _init() -> void:
 	card_types = ["Sap"]
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
-	ability_text = "Choose a creature. It gets -3 Str and -3 Res until end of turn for each creature in the Void."
+	ability_text = "Choose a creature. It gets -3 Str and -3 Res until end of turn for each creature in either player's Void."
 	flavor_text = ""
 	artist = ""
 	art_path = ART_PATH

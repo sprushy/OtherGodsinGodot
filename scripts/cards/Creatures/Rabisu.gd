@@ -9,18 +9,37 @@ const DRAIN_PER_SLEEPING_CREATURE := 3
 func _init() -> void:
 	super._init()
 	card_name = "Rabisu"
-	card_types = ["Demon", "Vampire", "Ancient Creature"]
+	card_types = ["Demon", "Vampire"]
 	level = 2
 	mana_cost = 0
 	sacrifice_cost = 0
 	speed = 2
 	resilience = 17
 	strength = 17
-	ability_text = "[b]Life Drain[/b] ([b]Impact[/b]): [b]Leech[/b] 3 Str and Res from each sleeping creature."
+	ability_text = "[b]Life Drain[/b] ([b]Impact[/b]): [b]Leech[/b] 3 Str and Res from each sleeping creature. Sleep Immunity."
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Riccardo Zoppello"
 	art_path = ART_PATH
+
+func is_immune_to_sleep() -> bool:
+	return true
+
+func apply_sleep(_source_card: Card) -> void:
+	# Rabisu is immune to Sleep; do not change stance or add the status.
+	pass
+
+func add_status_effect(
+	status_name: String,
+	source: String,
+	source_card: Card = null,
+	source_owner: Player = null,
+	extra_metadata: Dictionary = {}
+) -> void:
+	# Rabisu is immune to Sleep, covering direct status applications (e.g. Heavy Snow).
+	if status_name == "sleep":
+		return
+	super.add_status_effect(status_name, source, source_card, source_owner, extra_metadata)
 
 func on_impact(game_manager: GameManager) -> void:
 	if game_manager == null or abilities_suppressed():

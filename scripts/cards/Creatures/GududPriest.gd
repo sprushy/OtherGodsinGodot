@@ -8,7 +8,7 @@ const WARD_SOURCE := "Gudu Priest Creature Ward"
 func _init() -> void:
 	super._init()
 	card_name = "Gudu Priest"
-	card_types = ["Human", "Mage", "Priest", "Ancient Creature"]
+	card_types = ["Human", "Mage", "Priest"]
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
 	level = 1
@@ -53,6 +53,9 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 	if target == null or target not in get_valid_targets(game_manager):
 		if game_manager != null:
 			game_manager.note_player_feedback("Creature Ward fizzles: invalid target.")
+		return
+	if game_manager.is_immune_to_source(target, self):
+		game_manager.note_player_feedback("Creature Ward fizzles: %s is immune to creature abilities." % target.card_name)
 		return
 
 	_clear_creature_applied_effects(target)

@@ -4,7 +4,7 @@ class_name DevastatorMech
 func _init() -> void:
 	super._init()
 	card_name = "Devastator Mech"
-	card_types = ["Machine", "Mech", "Atlanitan Creature"]
+	card_types = ["Machine", "Mech"]
 	level = 3
 	mana_cost = 0
 	sacrifice_cost = 0

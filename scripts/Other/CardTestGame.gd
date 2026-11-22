@@ -5,9 +5,24 @@ const SharurTheFlyingMaceScript := preload("res://scripts/cards/Equipment/Sharur
 
 var _test_turn_owner: Player = null
 var _test_turn_opponent: Player = null
+var _test_discard_bot: ThorPracticeBot = null
 
 func _ready() -> void:
 	super._ready()
+
+func _detach_test_discard_bot() -> void:
+	if _test_discard_bot != null:
+		_test_discard_bot.detach()
+	_test_discard_bot = null
+
+func _exit_tree() -> void:
+	_detach_test_discard_bot()
+	super._exit_tree()
+
+func _show_ragnarok_discard_prompt(power: Ragnarok, player: Player, hand_limit: int, prompt_cards: Array[Card] = []) -> void:
+	if _test_discard_bot != null and player == _test_discard_bot.bot_player:
+		return
+	super._show_ragnarok_discard_prompt(power, player, hand_limit, prompt_cards)
 
 # Override start_game to set up a focused test board while preserving
 # the CombatMockGame interface.
@@ -19,8 +34,9 @@ func start_game(
 	match_info: Dictionary = {},
 	server_match_session = null
 ) -> void:
+	_detach_test_discard_bot()
 	await super.start_game(is_host, is_client, server_ip, server_port, match_info, server_match_session)
-	load_e2_abzu_badge_test_scenario()
+	load_featured_card_test_scenario()
 
 func update_ui() -> void:
 	_sync_test_priority_control()
@@ -61,10 +77,16 @@ func _sync_test_priority_control() -> void:
 func _add_test_hand_card(player: Player, card: Card) -> void:
 	card.card_owner = player
 	player.hand_zone.add_card(card)
+	player.record_starting_creature_typings([card])
+
+func _add_weather_visual_test_hand_cards(player: Player) -> void:
+	_add_test_hand_card(player, HeavySnow.new())
+	_add_test_hand_card(player, DivineLightning.new())
 
 func _add_test_deck_card(player: Player, card: Card) -> void:
 	card.card_owner = player
 	player.deck_zone.add_card(card)
+	player.record_starting_creature_typings([card])
 
 func _add_test_graveyard_card(player: Player, card: Card) -> void:
 	card.card_owner = player
@@ -184,6 +206,7 @@ func _clear_zone(zone: Zone) -> void:
 func _reset_player_test_state(player: Player) -> void:
 	if player == null:
 		return
+	player.starting_creature_typings.clear()
 	_clear_zone(player.hand_zone)
 	_clear_zone(player.deck_zone)
 	_clear_zone(player.graveyard_zone)
@@ -197,8 +220,10 @@ func _reset_player_test_state(player: Player) -> void:
 		_clear_zone(zone)
 
 func _reset_test_match_state() -> void:
+	_detach_test_discard_bot()
 	_reset_player_test_state(player1)
 	_reset_player_test_state(player2)
+	game_manager.restore_metamorphosis_auras()
 	game_manager.prepared_hexes.clear()
 	game_manager.prepared_charms.clear()
 	if game_manager.has_method("_clear_pending_doorway_choice"):
@@ -225,56 +250,44 @@ func _reset_test_match_state() -> void:
 		match_manager.reset_runtime_state()
 
 func _setup_test_board() -> void:
-	load_e2_abzu_badge_test_scenario()
+	load_featured_card_test_scenario()
 
-func load_e2_abzu_badge_test_scenario() -> void:
+func load_featured_card_test_scenario() -> void:
+	load_pai_long_cursor_test_scenario()
+
+func load_pai_long_cursor_test_scenario() -> void:
 	_reset_test_match_state()
 	_add_test_god(player1, Odin.new())
 	_add_test_god(player2, Thor.new())
 
-	var e2_abzu := E2Abzu.new()
-	_place_test_board_permanent(player1, player1.reserve_zones[2], e2_abzu)
+	# A temporary board copy is ascended in place, leaving the real ascended god in
+	# P1's god slot with the exact card name "Pai Long" that the badge handler expects.
+	var ascended_pai_long := PaiLongAutumnKing.new()
+	_place_test_board_card(player1, player1.frontline_zones[4], ascended_pai_long)
+	game_manager.ascend_creature(ascended_pai_long, player1)
 
-	var field_mer_mage := EnkiLordOfEridu.new()
-	_place_test_board_card(player1, player1.frontline_zones[1], field_mer_mage, Card.CreatureMode.DEFENSIVE)
+	# The normal copy stays in hand so Stormcloud can be triggered by a normal summon.
+	_add_test_hand_card(player1, PaiLongAutumnKing.new())
+	_add_test_hand_card(player1, HeavySnow.new())
+	_add_test_hand_card(player1, Storm.new())
+	_add_test_hand_card(player1, Drought.new())
 
-	var void_mer_mage := FirstSageAdapa.new()
-	_add_test_abyss_card(player1, void_mer_mage)
+	# Weather targets for Stormcloud, plus non-Weather cards for the ascended draw.
+	_add_test_deck_card(player1, Drought.new())
+	_add_test_deck_card(player1, Storm.new())
+	_add_test_deck_card(player1, BrownBear.new())
+	_add_test_deck_card(player1, GiantMasterArchitect.new())
+	_add_test_deck_card(player1, HeroicStand.new())
 
-	_place_test_board_card(player1, player1.frontline_zones[0], Berserker.new(), Card.CreatureMode.AGGRESSIVE)
-	_place_test_board_card(player1, player1.frontline_zones[2], HariiShaman.new(), Card.CreatureMode.DEFENSIVE)
-	_place_test_board_card(player1, player1.frontline_zones[3], GududPriest.new(), Card.CreatureMode.DEFENSIVE)
-	_place_test_board_card(player1, player1.frontline_zones[4], ClayEaters.new(), Card.CreatureMode.DEFENSIVE)
-
-	var nimue := Nimue.new()
-	_place_test_board_card(player1, player1.reserve_zones[0], nimue, Card.CreatureMode.DEFENSIVE)
-	_place_test_board_card(player1, player1.reserve_zones[1], Gawain.new(), Card.CreatureMode.DEFENSIVE)
-
-	var en_hedu_anna := EnHeduAnna.new()
-	_place_test_board_card(player1, player1.reserve_zones[3], en_hedu_anna, Card.CreatureMode.DEFENSIVE)
-
-	var shift_creature := Jiaolong.new()
-	_place_test_board_card(player1, player1.reserve_zones[4], shift_creature, Card.CreatureMode.DEFENSIVE)
-
-	_place_test_board_card(player2, player2.frontline_zones[1], MinotaurFootsoldier.new(), Card.CreatureMode.DEFENSIVE)
-	_place_test_board_card(player2, player2.frontline_zones[2], Alu.new(), Card.CreatureMode.DEFENSIVE)
-	_place_test_board_card(player2, player2.frontline_zones[3], Lindwyrm.new(), Card.CreatureMode.DEFENSIVE)
-	_place_test_board_card(player2, player2.reserve_zones[1], BrownBear.new(), Card.CreatureMode.AGGRESSIVE)
-	_place_test_board_card(player2, player2.reserve_zones[2], Mopsus.new(), Card.CreatureMode.DEFENSIVE)
-
-	_add_test_hand_card(player1, HeroicStand.new())
-	_add_test_hand_card(player1, BrownBear.new())
-	_add_test_graveyard_card(player1, RunicShortsword.new())
-	_add_test_deck_card(player1, GududPriest.new())
-	_add_test_deck_card(player1, ClayEaters.new())
-
+	_place_test_board_card(player2, player2.frontline_zones[2], MinotaurFootsoldier.new(), Card.CreatureMode.DEFENSIVE)
 	_add_test_hand_card(player2, DivineLightning.new())
+	_add_test_deck_card(player2, BrownBear.new())
 	_add_test_deck_card(player2, Berserker.new())
 
 	player1.spend_mana(player1.mana)
-	player1.gain_mana(10)
+	player1.gain_mana(20)
 	player2.spend_mana(player2.mana)
-	player2.gain_mana(8)
+	player2.gain_mana(12)
 	player1.followers = 100
 	player2.followers = 100
 	player1.followers_changed.emit(player1.followers)
@@ -296,10 +309,407 @@ func load_e2_abzu_badge_test_scenario() -> void:
 	game_manager.start_turn()
 	_open_upkeep_choice_window()
 	action_label.text = (
-		"Ability Badge Test Scenario. Choose Mana first, then inspect the larger badges across both boards. "
-		+ "Odin, Thor, E2-abzu, Nimue, Berserker, Harii Shaman, Gudu Priest, Clay-Eaters, Gawain, En-hedu-anna, and Jiaolong are all visible. "
-		+ "E2-abzu's top badge returns First Sage Adapa from your Void; the lower badge sends Enki, Lord of Eridu to the Void until end of turn. "
-		+ "Nimue can Entomb enemy creatures or Present Runic Shortsword from your graveyard."
+		"Pai Long Cursor Test. P1's god slot holds ascended Pai Long, and P1 also has a normal Pai Long, Autumn King in hand. "
+		+ "Choose Mana for upkeep. Hover P1's god slot to reveal Pai Long's badge and click it. "
+		+ "With multiple Weather spells in hand, the ascended ability first opens a normal click-to-select fan to choose which Weather to discard; the deck picker then uses the weather-emblem cursor. "
+		+ "Cancel or pick a card. Then summon Pai Long, Autumn King from hand into an empty frontline lane: Stormcloud should open the Weather picker with the same weather-emblem cursor. "
+		+ "Heavy Snow, Storm, and Drought in hand are Weather discard fuel. Both selection cursors should use PaiLongWeatherEmblemCursor.png, not the badge art."
+	)
+	update_ui()
+
+func load_hermes_dodge_test_scenario() -> void:
+	_reset_test_match_state()
+	_add_test_god(player1, Hermes.new())
+	_add_test_god(player2, Thor.new())
+	_add_test_power(player1, 0, AspectShift.new(), false)
+
+	_place_test_board_card(player1, player1.frontline_zones[0], HariiWarrior.new(), Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player1, player1.frontline_zones[1], Asaruludu.new())
+	_place_test_board_card(player1, player1.frontline_zones[2], Enkidu.new())
+	_place_test_board_card(player2, player2.frontline_zones[0], Gullinbursti.new(), Card.CreatureMode.DEFENSIVE)
+	_place_test_hidden_creature(player1, player1.reserve_zones[2], BrownBear.new())
+	_place_test_hidden_creature(player2, player2.reserve_zones[2], MinotaurFootsoldier.new())
+	_place_test_prepared_card(player2, player2.reserve_zones[3], Smite.new())
+
+	_add_test_hand_card(player1, Metamorphosis.new())
+	_add_test_hand_card(player1, OccultSingularity.new())
+	# Enkidus in hand for both players.
+	_add_test_hand_card(player1, Enkidu.new())
+	_add_test_hand_card(player1, Enkidu.new())
+	_add_test_hand_card(player2, Enkidu.new())
+	_add_test_hand_card(player2, Enkidu.new())
+
+	# Ghost/Spirit cards for Hermes Psychopompus: graveyard copies pay for Wings of the Departed,
+	# while deck copies are Call of the Crossing targets.
+	_add_test_graveyard_card(player1, Edimmu.new())
+	_add_test_graveyard_card(player1, TheChainedGhostOfAthens.new())
+
+	_add_test_deck_card(player1, BrownBear.new())
+	_add_test_deck_card(player1, Gawain.new())
+	_add_test_deck_card(player1, Edimmu.new())
+	_add_test_deck_card(player1, TheChainedGhostOfAthens.new())
+	_add_test_deck_card(player2, BrownBear.new())
+	player1.record_starting_creature_typings([RavenStorm.new()]) # Card Test Reinforcements.
+
+	player1.spend_mana(player1.mana)
+	player1.gain_mana(12)
+	player2.spend_mana(player2.mana)
+	player2.gain_mana(12)
+	player1.followers = 100
+	player2.followers = 100
+	player1.followers_changed.emit(player1.followers)
+	player2.followers_changed.emit(player2.followers)
+	player1.has_summoned_this_turn = false
+	player2.has_summoned_this_turn = false
+
+	game_manager.current_player = player1
+	game_manager.other_player = player2
+	game_manager.feedback_viewer = player1
+	player1.is_turn_player = true
+	player2.is_turn_player = false
+	selected_card = null
+	selected_attacker = null
+	selected_interceptor = null
+	_test_turn_owner = player1
+	_test_turn_opponent = player2
+	game_manager.turn_number = 1
+	game_manager.start_turn()
+	_open_upkeep_choice_window()
+	action_label.text = (
+		"Choose an upkeep option, then cast Metamorphosis and search for Knight or Raven. "
+		+ "Reveal a reserve creature to see it gain the chosen typing. Cast Occult Singularity to remove the Aura. "
+		+ "Aspect Shift is locked in P1's first power slot: unlock for 4 to become Hermes Psychopompus, then use Call of the Crossing on a Ghost/Spirit in deck or Wings of the Departed with the Ghost/Spirit cards in your grave. Return to Form shifts back for 4. "
+		+ "You can also use Hermes's Deceptive Speed to test Dodge against Gullinbursti. "
+		+ "On P1's next turn, attack P2's Followers with Enkidu to test Guardian. Then attack with Asaruludu to test Smite against Asaruludu himself."
+	)
+	update_ui()
+
+func load_apotheosis_test_scenario() -> void:
+	_reset_test_match_state()
+	_add_test_god(player1, GuanYu.new())
+	_add_test_god(player2, Thor.new())
+
+	var enki := EnkiLordOfEridu.new()
+	var fenrir := Fenrir.new()
+	var pai_long := PaiLongAutumnKing.new()
+	_place_test_board_card(player1, player1.frontline_zones[0], enki, Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player1, player1.frontline_zones[2], fenrir, Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player1, player1.frontline_zones[4], pai_long, Card.CreatureMode.AGGRESSIVE)
+
+	_add_test_hand_card(player1, Apotheosis.new())
+	_add_test_hand_card(player1, Apotheosis.new())
+	_add_test_hand_card(player1, Apotheosis.new())
+	_add_test_hand_card(player1, BrownBear.new())
+	_add_test_hand_card(player1, HeavySnow.new())
+	_add_test_hand_card(player2, BrownBear.new())
+	_add_test_hand_card(player2, HeroicStand.new())
+	_add_test_hand_card(player2, Dromi.new())
+	_add_test_hand_card(player2, Sap.new())
+	_add_test_hand_card(player2, HeavySnow.new())
+
+	_add_test_deck_card(player1, BrownBear.new())
+	_add_test_deck_card(player1, GiantMasterArchitect.new())
+	_add_test_deck_card(player1, AsagTheDestroyer.new())
+	_add_test_deck_card(player2, AsagTheDestroyer.new())
+
+	player1.spend_mana(player1.mana)
+	player1.gain_mana(8)
+	player2.spend_mana(player2.mana)
+	player2.gain_mana(8)
+	player1.followers = 100
+	player2.followers = 100
+	player1.followers_changed.emit(player1.followers)
+	player2.followers_changed.emit(player2.followers)
+	player1.has_summoned_this_turn = false
+	player2.has_summoned_this_turn = false
+
+	game_manager.current_player = player1
+	game_manager.other_player = player2
+	game_manager.feedback_viewer = player1
+	player1.is_turn_player = true
+	player2.is_turn_player = false
+	selected_card = null
+	selected_attacker = null
+	selected_interceptor = null
+	_test_turn_owner = player1
+	_test_turn_opponent = player2
+	game_manager.start_turn()
+	_open_upkeep_choice_window()
+	action_label.text = (
+		"Apotheosis Test Scenario. P1 has Enki, Fenrir, and Pai Long on the field, plus 3 Apotheosis in hand. "
+		+ "Cast Apotheosis on any of them to test ascension. P2 has Dromi and Sap hexes plus weather to test Enki's hex immunity."
+	)
+	update_ui()
+
+func load_changeling_exchange_test_scenario() -> void:
+	_reset_test_match_state()
+	_add_test_god(player1, GuanYu.new())
+	_add_test_god(player2, Thor.new())
+
+	# P1 board: a Brown Bear you control - this is the creature you will give away.
+	var friendly_bear := BrownBear.new()
+	_place_test_board_card(player1, player1.frontline_zones[0], friendly_bear, Card.CreatureMode.AGGRESSIVE)
+	# P2 board: an enemy Minotaur Footsoldier - this is the creature you will take.
+	var enemy_minotaur := MinotaurFootsoldier.new()
+	_place_test_board_card(player2, player2.frontline_zones[0], enemy_minotaur, Card.CreatureMode.AGGRESSIVE)
+
+	# P1 hand: The Changeling Exchange costs 2 mana.
+	_add_test_hand_card(player1, TheChangelingExchange.new())
+	_add_test_hand_card(player2, HeroicStand.new())
+
+	player1.spend_mana(player1.mana)
+	player1.gain_mana(2)
+	player2.spend_mana(player2.mana)
+	player2.gain_mana(8)
+	player1.followers = 100
+	player2.followers = 100
+	player1.followers_changed.emit(player1.followers)
+	player2.followers_changed.emit(player2.followers)
+	player1.has_summoned_this_turn = false
+	player2.has_summoned_this_turn = false
+
+	game_manager.current_player = player1
+	game_manager.other_player = player2
+	game_manager.feedback_viewer = player1
+	player1.is_turn_player = true
+	player2.is_turn_player = false
+	selected_card = null
+	selected_attacker = null
+	selected_interceptor = null
+	_test_turn_owner = player1
+	_test_turn_opponent = player2
+	game_manager.start_turn()
+	_open_upkeep_choice_window()
+	action_label.text = (
+		"The Changeling Exchange Test Scenario. P1 (you) controls GuanYu and a Brown Bear in frontline 1. "
+		+ "P2 controls Thor and a Minotaur Footsoldier in frontline 1. "
+		+ "You have The Changeling Exchange (2 mana) in hand. "
+		+ "Cast it: first choose your Brown Bear to give to P2, then choose P2's Minotaur Footsoldier to take. "
+		+ "Control of the two creatures swaps permanently. Verify each creature's controller changed after resolution."
+	)
+	update_ui()
+
+func load_ragnarok_animation_test_scenario() -> void:
+	_reset_test_match_state()
+	_add_test_god(player1, Odin.new())
+	_add_test_god(player2, Thor.new())
+	for player in [player1, player2]:
+		_add_test_power(player, 0, Ragnarok.new(), false)
+		# Fill every lane with non-token cards so each departure has artwork.
+		var frontline: Array[Card] = [BrownBear.new(), HariiWarrior.new(), MinotaurFootsoldier.new(), Pegasus.new(), Berserker.new()]
+		for lane in range(frontline.size()):
+			_place_test_board_card(player, player.frontline_zones[lane], frontline[lane])
+		# Non-creatures exercise Ragnarok's full field wipe as well as the hunt.
+		_place_test_board_permanent(player, player.reserve_zones[0], Watchtower.new())
+		_place_test_board_permanent(player, player.reserve_zones[1], HildskjalfThroneOfOdin.new())
+		_place_test_board_permanent(player, player.reserve_zones[2], AnointingStatue.new())
+		_place_test_prepared_card(player, player.reserve_zones[3], HeroicStand.new())
+		_place_test_prepared_card(player, player.reserve_zones[4], HeroicStand.new())
+		var hand: Array[Card] = [
+			BrownBear.new(), HariiWarrior.new(), HeroicStand.new(),
+			DivineLightning.new(), OccultSingularity.new(), FiresOfJudgment.new(),
+		]
+		for card in hand:
+			_add_test_hand_card(player, card)
+		# Leave follow-up draws available without an empty-deck interruption.
+		for _copy in range(3):
+			_add_test_deck_card(player, BrownBear.new())
+			_add_test_deck_card(player, HariiWarrior.new())
+			_add_test_deck_card(player, HeroicStand.new())
+		player.spend_mana(player.mana)
+		player.gain_mana(40)
+		player.followers = 100
+		player.followers_changed.emit(player.followers)
+		player.has_summoned_this_turn = false
+		player.has_summoned_structure_this_turn = false
+
+	game_manager.current_player = player1
+	game_manager.other_player = player2
+	game_manager.feedback_viewer = player1
+	player1.is_turn_player = true
+	player2.is_turn_player = false
+	_test_turn_owner = player1
+	_test_turn_opponent = player2
+	game_manager.turn_number = 1
+	game_manager.start_turn()
+	_test_discard_bot = ThorPracticeBot.new()
+	_test_discard_bot.prompt_types_only = ["ragnarok_discard"]
+	_test_discard_bot.attach(game_manager, match_manager, BotGameInput.new(match_manager, 1), 1)
+	_open_upkeep_choice_window()
+	action_label.text = (
+		"Ragnarok Animation Test. Choose Mana for upkeep, then unlock Ragnarok (12 mana). "
+		+ "Both fields are full: 20 cards across all frontline and reserve slots, including structures and prepared magic. "
+		+ "Both players start with 6 cards in hand. Choose your one discard; the opponent bot discards automatically. "
+		+ "Gods and powers survive. Reopen Card Test to reset the scene."
+	)
+	update_ui()
+
+func load_card_selection_test_scenario() -> void:
+	_reset_test_match_state()
+	_add_test_god(player1, Odin.new())
+	_add_test_god(player2, Thor.new())
+	for player in [player1, player2]:
+		_add_test_power(player, 0, CallOfTheValkyrie.new(), true)
+		# Eighteen legal targets exercise both a crowded fan and scrolling.
+		for _copy in range(3):
+			_add_test_graveyard_card(player, Berserker.new())
+			_add_test_graveyard_card(player, HariiWarrior.new())
+			_add_test_graveyard_card(player, HariiFransiscan.new())
+			_add_test_graveyard_card(player, HariiJarl.new())
+			_add_test_graveyard_card(player, ValkyrieWarrior.new())
+			_add_test_graveyard_card(player, Askelladen.new())
+		# These remain visible in the pile viewer but must not be selectable
+		# by Call of the Valkyrie (wrong type/culture).
+		_add_test_graveyard_card(player, BrownBear.new())
+		_add_test_graveyard_card(player, DivineLightning.new())
+		_add_test_deck_card(player, BrownBear.new())
+		_add_test_deck_card(player, Berserker.new())
+		_add_test_deck_card(player, HeroicStand.new())
+		_add_test_hand_card(player, HeroicStand.new())
+		_add_test_hand_card(player, FiresOfJudgment.new())
+		_add_test_hand_card(player, DivineLightning.new())
+		_add_test_hand_card(player, OccultSingularity.new())
+		# Prepared magical targets retain normal opponent concealment.
+		_place_test_prepared_card(player, player.reserve_zones[0], HeroicStand.new())
+		_place_test_prepared_card(player, player.frontline_zones[0], HeroicStand.new())
+		# Keep visible targets on both sides for the meteor storm animation.
+		_place_test_board_card(player, player.frontline_zones[2], HariiWarrior.new())
+		_place_test_board_card(player, player.reserve_zones[2], BrownBear.new())
+		player.spend_mana(player.mana)
+		player.gain_mana(40)
+		player.followers = 100
+		player.followers_changed.emit(player.followers)
+		player.has_summoned_this_turn = false
+
+	game_manager.current_player = player1
+	game_manager.other_player = player2
+	game_manager.feedback_viewer = player1
+	player1.is_turn_player = true
+	player2.is_turn_player = false
+	_test_turn_owner = player1
+	_test_turn_opponent = player2
+	game_manager.turn_number = 1
+	game_manager.start_turn()
+	_open_upkeep_choice_window()
+	action_label.text = (
+		"Card Selection Fan Test. Choose Mana for upkeep, then activate the unlocked Call of the Valkyrie. "
+		+ "Cast Fires of Judgment from either player's hand to test the meteor storm against the opposing board. "
+		+ "Activate Divine Lightning and target a prepared magical card to test the separate lightning strike. "
+		+ "Cast Occult Singularity to lift and swing all four magical cards into its pink aura, then send the spell to grave before they tumble after it. "
+		+ "Each player has 18 Norse Warrior targets in their graveyard and 40 starting mana. "
+		+ "Choose a card and pass priority to prime it; reopen the power to test smaller fans as targets leave. "
+		+ "Open the graveyard to compare the pile viewer, including the two ineligible cards."
+	)
+	update_ui()
+
+func load_gala_tura_test_scenario() -> void:
+	_reset_test_match_state()
+	_add_test_god(player1, Odin.new())
+	_add_test_god(player2, Thor.new())
+
+	# P1 controls Gala-Tura. When it is destroyed, its Water of Life destroyed
+	# trigger offers up to 3 graveyard creatures to return to the bottom of the deck.
+	var gala_tura := GalaTura.new()
+	_place_test_board_card(player1, player1.frontline_zones[0], gala_tura, Card.CreatureMode.AGGRESSIVE)
+
+	# Valid targets: creatures in P1's graveyard (not Gala-Tura itself, not a god).
+	for _copy in range(3):
+		_add_test_graveyard_card(player1, Berserker.new())
+		_add_test_graveyard_card(player1, HariiWarrior.new())
+		_add_test_graveyard_card(player1, BrownBear.new())
+	# Ineligible targets: a non-creature and a god.
+	_add_test_graveyard_card(player1, DivineLightning.new())
+	_add_test_graveyard_card(player2, Thor.new())
+
+	player1.spend_mana(player1.mana)
+	player1.gain_mana(40)
+	player2.spend_mana(player2.mana)
+	player2.gain_mana(40)
+	player1.followers = 100
+	player2.followers = 100
+	player1.followers_changed.emit(player1.followers)
+	player2.followers_changed.emit(player2.followers)
+	player1.has_summoned_this_turn = false
+	player2.has_summoned_this_turn = false
+
+	game_manager.current_player = player1
+	game_manager.other_player = player2
+	game_manager.feedback_viewer = player1
+	player1.is_turn_player = true
+	player2.is_turn_player = false
+	_test_turn_owner = player1
+	_test_turn_opponent = player2
+	game_manager.turn_number = 1
+	game_manager.start_turn()
+	_open_upkeep_choice_window()
+	action_label.text = (
+		"Gala-Tura Water of Life Test. P1 controls Gala-Tura with graveyard creatures. "
+		+ "Choose Mana for upkeep, then destroy Gala-Tura to open the Water of Life prompt. "
+		+ "Click up to 3 graveyard creatures, then Submit (or Decline). "
+		+ "Returned creatures go to the bottom of P1's deck."
+	)
+	update_ui()
+
+func load_void_whorl_test_scenario() -> void:
+	_reset_test_match_state()
+	_add_test_god(player1, Odin.new())
+	_add_test_god(player2, Thor.new())
+
+	# Void visual sandbox: BitMeseri can target either side of the field.
+	# Empty Abyss piles make each arrival easy to verify at its owner's gate.
+	_place_test_board_card(player1, player1.frontline_zones[1], BrownBear.new())
+	_place_test_board_card(player1, player1.frontline_zones[3], PictishBeast.new())
+	_place_test_board_card(player1, player1.reserve_zones[2], Pegasus.new())
+	_place_test_board_card(player2, player2.frontline_zones[1], MinotaurFootsoldier.new())
+	_place_test_board_card(player2, player2.frontline_zones[3], Berserker.new())
+	_place_test_board_card(player2, player2.reserve_zones[2], BrownBear.new())
+	for player in [player1, player2]:
+		for _copy in range(3):
+			_add_test_hand_card(player, BitMeseri.new())
+
+	# An unlocked power also exercises voiding from the deck's position.
+	_add_test_power(player1, 0, WalkOfTheSage.new(), true)
+	_add_test_deck_card(player1, Nimue.new())
+	_add_test_deck_card(player1, Lailoken.new())
+
+	# Keep draw/upkeep choices stable if the sandbox runs longer.
+	_add_test_deck_card(player1, BrownBear.new())
+	_add_test_deck_card(player1, PictishBeast.new())
+	_add_test_deck_card(player1, TheWhiteSerpent.new())
+	_add_test_deck_card(player1, HeroicStand.new())
+	_add_test_deck_card(player2, BrownBear.new())
+	_add_test_deck_card(player2, Berserker.new())
+	_add_test_deck_card(player2, TheWhiteSerpent.new())
+
+	player1.spend_mana(player1.mana)
+	player1.gain_mana(20)
+	player2.spend_mana(player2.mana)
+	player2.gain_mana(20)
+	player1.followers = 100
+	player2.followers = 100
+	player1.followers_changed.emit(player1.followers)
+	player2.followers_changed.emit(player2.followers)
+	player1.has_summoned_this_turn = false
+	player2.has_summoned_this_turn = false
+
+	game_manager.current_player = player1
+	game_manager.other_player = player2
+	game_manager.feedback_viewer = player1
+	player1.is_turn_player = true
+	player2.is_turn_player = false
+	selected_card = null
+	selected_attacker = null
+	selected_interceptor = null
+	_test_turn_owner = player1
+	_test_turn_opponent = player2
+	game_manager.turn_number = 1
+	game_manager.start_turn()
+	_open_upkeep_choice_window()
+	action_label.text = (
+		"Void Whorl Test. Choose Mana for upkeep, then cast BitMeseri from hand and target a creature on either side. "
+		+ "Pass priority to resolve it: the purple whorl should appear at the creature's former position and in its owner's Abyss gate. "
+		+ "Both players have three BitMeseri and 20 starting mana for repeated tests. "
+		+ "P1 also has unlocked Walk of the Sage: pay 2 mana to void Nimue or Lailoken from the deck and check the deck-position whorl."
 	)
 	update_ui()
 
@@ -365,7 +775,7 @@ func load_badge_test_scenario() -> void:
 	_place_test_board_card(player1, player1.frontline_zones[2], badge_attacker, Card.CreatureMode.AGGRESSIVE)
 	_place_test_board_card(player1, player1.reserve_zones[2], BrownBear.new(), Card.CreatureMode.DEFENSIVE)
 
-	# Enemy targets cover each target badge type while keeping the board easy to scan.
+	# Enemy targets cover attack glows and equipment action affordances while keeping the board easy to scan.
 	_place_test_board_card(player2, player2.frontline_zones[0], BrownBear.new(), Card.CreatureMode.AGGRESSIVE)
 	_place_test_board_card(player2, player2.frontline_zones[1], MinotaurFootsoldier.new(), Card.CreatureMode.DEFENSIVE)
 	_place_test_board_permanent(player2, player2.frontline_zones[2], BeardedAxe.new())
@@ -408,10 +818,10 @@ func load_badge_test_scenario() -> void:
 	_open_upkeep_choice_window()
 	selected_attacker = badge_attacker
 	action_label.text = (
-		"Badge Test Scenario. Harii Warrior starts selected on turn 2 so target badges render immediately. "
+		"Badge Test Scenario. Harii Warrior starts selected on turn 2 so attack-target glows render immediately. "
 		+ "Choose Mana first to make the actions live, then reselect Harii Warrior if the selection is cleared. "
-		+ "Brown Bear should show the aggressive target badge, Minotaur Footsoldier and Warding Stone should show the break target badge, and Bearded Axe should show the break badge plus the steal glove centered together. "
-		+ "Runic Shortsword in reserve gives a second legal enemy equipment steal target for checking the paired badge spacing on a lower row."
+		+ "Brown Bear, Minotaur Footsoldier, and Warding Stone should show red attack-target glows instead of centered attack badges. "
+		+ "Bearded Axe should show the attack glow plus the steal glove affordance, and Runic Shortsword in reserve gives a second legal enemy equipment steal target for checking equipment action spacing on a lower row."
 	)
 	update_ui()
 
@@ -581,7 +991,7 @@ func load_tiamat_ragnarok_scenario() -> void:
 		"Tiamat vs Thor / Ragnarok Scenario. Choose an upkeep option first.  |  "
 		+ "Tiamat - your three power slots are filled with face-up Ancient Demons and Dragons. The slot chains should remain over each stack until that slot is emptied into your hand.  |  "
 		+ "Matriarch Rule - choose it on upkeep to add one slotted creature to hand instead of drawing, then repeat on later turns until a slot is empty and its chain disappears.  |  "
-		+ "Thor - Ragnarok is locked on the opposing side, with creatures on both fields so you can unlock it and confirm only creatures are destroyed.  |  "
+		+ "Thor - Ragnarok is locked on the opposing side; unlock it to destroy all cards in the frontline and reserve.  |  "
 		+ "Board - Gudud Priest and Brown Bear give Tiamat simple bodies to preserve or sacrifice, while Thor starts with Berserker and Minotaur Footsoldier so the wipe has obvious results."
 	)
 	update_ui()
@@ -687,6 +1097,7 @@ func load_s_card_scenario() -> void:
 	_add_test_hand_card(player1, Storm.new())
 	_add_test_hand_card(player1, TabletOfLife.new())
 	_add_test_hand_card(player1, Tatzelwurm.new())
+	_add_weather_visual_test_hand_cards(player1)
 
 	# P1 graveyard/deck: Tablet of Life has multiple Ancient ability creatures to bring back immediately,
 	# and Tatzelwurm has multiple Dragons to search after a combat kill.
@@ -700,18 +1111,18 @@ func load_s_card_scenario() -> void:
 	_add_test_deck_card(player1, Jiaolong.new())
 
 	# P2 board: Brown Bear is ready to attack into Smite, Pegasus is a live Storm target,
-	# Gudud Priest in lane 2 is a clean Tatzelwurm kill and also another activated-ability body
-	# for silence testing, and Heavy Snow is face-up so Storm can destroy an existing Weather charm on resolution.
+	# and Gudud Priest in lane 2 is a clean Tatzelwurm kill and also another activated-ability body
+	# for silence testing.
 	_place_test_board_card(player2, player2.frontline_zones[0], BrownBear.new(), Card.CreatureMode.AGGRESSIVE)
 	_place_test_board_card(player2, player2.frontline_zones[1], GududPriest.new(), Card.CreatureMode.DEFENSIVE)
 	_place_test_board_card(player2, player2.reserve_zones[0], Pegasus.new(), Card.CreatureMode.DEFENSIVE)
-	_place_test_board_permanent(player2, player2.reserve_zones[1], HeavySnow.new())
 
 	# P2 hand/deck: Earthquake is the clean Spell Demolition target, with a second spell and follow-up creatures
 	# available for longer S/T test lines after the first response window.
 	_add_test_hand_card(player2, Earthquake.new())
 	_add_test_hand_card(player2, FoolishOptimism.new())
 	_add_test_hand_card(player2, BrownBear.new())
+	_add_weather_visual_test_hand_cards(player2)
 	_add_test_deck_card(player2, Pegasus.new())
 	_add_test_deck_card(player2, BrownBear.new())
 	_add_test_deck_card(player2, Earthquake.new())
@@ -743,10 +1154,10 @@ func load_s_card_scenario() -> void:
 		"S/T Scenario: Sharur through Tablet of Life alphabetically. Choose an upkeep option first.  |  "
 		+ "Tatzelwurm - A ready Tatzelwurm starts in your second frontline lane with enemy Gudu Priest directly across from it. Attack there first for a clean Dragon Heart trigger, then choose Lindwyrm, Lesser Mushussu, or Jiaolong from your deck. A second Tatzelwurm is also in hand for repeat tests.  |  "
 		+ "Power - Summoned Sap starts unlocked. Because Brown Bear is already on your field, Sulak is slowed by 1; switch Sulak's stance to confirm the aura makes it use up its full turn action.  |  "
-		+ "Hand - Sharur, Storm, and Tablet of Life are ready now. Play Sharur onto Sulak or any valid bearer, cast Storm to destroy the face-up Heavy Snow and silence Gudud Priest while stripping Pegasus of Aerial, and cast Tablet of Life to resurrect Alu or First Sage Adapa from your graveyard with negated abilities.  |  "
+		+ "Hand - Sharur, Storm, Tablet of Life, Heavy Snow, and Divine Lightning are ready now. Play Heavy Snow to start snow accumulation, destroy it with Divine Lightning or Storm to clear the snow visuals, play Sharur onto Sulak or any valid bearer, and cast Tablet of Life to resurrect Alu or First Sage Adapa from your graveyard with negated abilities.  |  "
 		+ "Prepared - Shroud of the Ancients, Smite, and Spell Demolition are already prepared in reserve. Pass to P2 so Brown Bear can attack into Smite, and let Earthquake or Foolish Optimism give you clean response windows for Spell Demolition or Shroud.  |  "
 		+ "Board - Your own Gudu Priest gives you an activated creature ability to test before and after Storm, while Sulak is your simple Ancient Demon body for Sharur and Summoned Sap testing.  |  "
-		+ "Opponent - Pegasus is the best Storm target, Heavy Snow is the face-up Weather charm Storm should destroy on resolve, enemy Gudud Priest is another silence target, and P2 has extra spell and creature follow-ups in hand and deck for longer test loops."
+		+ "Opponent - Pegasus is the best Storm target, enemy Gudud Priest is another silence target, and P2 has Heavy Snow, Divine Lightning, plus extra spell and creature follow-ups in hand and deck for longer test loops."
 	)
 	update_ui()
 
@@ -918,7 +1329,7 @@ func load_n_o_card_scenario() -> void:
 	_add_test_power(player1, 0, OraclesSight.new(), false)
 	_add_test_power(player1, 1, NorseBloodlust.new(), true)
 
-	# P1 board: live N-creatures plus a prepared Namburbi for the opening turn-start window.
+	# P1 board: live N-creatures plus a prepared Namburbi for a defensive combat/destruction response.
 	_place_test_board_card(player1, player1.frontline_zones[0], Berserker.new(), Card.CreatureMode.AGGRESSIVE)
 	_place_test_board_card(player1, player1.frontline_zones[1], Nagual.new(), Card.CreatureMode.AGGRESSIVE)
 	_place_test_board_card(player1, player1.reserve_zones[0], Nimue.new(), Card.CreatureMode.DEFENSIVE)
@@ -988,7 +1399,7 @@ func load_n_o_card_scenario() -> void:
 		"N/O Scenario: All cards starting with N and O. Choose an upkeep option first.  |  "
 		+ "Gods - Odin leads P1 with a ready Runic Knowledge guess, while Nusku leads P2 with a full seven-card Ancient deck to mill.  |  "
 		+ "Powers - Oracle's Sight starts locked so you can unlock it immediately, and Norse Bloodlust is already active for Berserker's first kill.  |  "
-		+ "Board - Berserker, Nagual, and Nimue are live, and Namburbi Apotropaeon is already prepared for the opening turn-start window.  |  "
+		+ "Board - Berserker, Nagual, and Nimue are live, and Namburbi Apotropaeon is already prepared as a defensive combat/destruction response.  |  "
 		+ "Hand - Nergal Lion, Occult Singularity, Gungnir, Harii Warrior, and Runic Shortsword cover the remaining N/O cards and Bloodlust follow-up.  |  "
 		+ "Graveyard - Runic Shortsword lets Nimue use Present, and Earthquake gives Nergal Lion a destruction spell to immolate.  |  "
 		+ "Opponent - Brown Bears and a Minotaur Footsoldier give you clean combat and Entomb targets before passing to Nusku for Well of Fire."
@@ -1194,7 +1605,7 @@ func load_test_scenario_one() -> void:
 		"Scenario 1: Lailoken, Heroic Stand, Kurnugia, and Kur-Jara. Choose an upkeep option first.  |  "
 		+ "Hand - Heroic Stand is already live because En-hedu-anna counts as having intercepted twice this turn.  |  "
 		+ "Hand - Lailoken can reveal into any open lane and drain the prepared enemy Exorcism in reserve.  |  "
-		+ "Power - Kurnugia is unlocked and ready to shelter your Ancient Humans or Mer when they are destroyed or voided.  |  "
+		+ "Power - Kurnugia is unlocked and ready to shelter your Ancient Humans or Mer when they are destroyed or voided from the field; sheltered creatures still count as field creatures for effects like Immortal Techniques.  |  "
 		+ "Opponent - Thor starts with two Fall of the Mighty and a Void Shield in hand for repeated destroy and protection tests.  |  "
 		+ "Board - Enki, Lord of Eridu is on your frontline as a live Mer target for Kurnugia, and another copy is in your graveyard as a Tree of Life target.  |  "
 		+ "Follow-up - activate Kur-Jara, then end your turns twice to resurrect Kur-Jara and Enki while Kurnugia shelters En-hedu-anna and Enkidu from the level-cost destruction."
@@ -1268,7 +1679,7 @@ func load_sap_ragnarok_scenario() -> void:
 		"Sap / Sap Strength / Ragnarok Scenario. Choose an upkeep option first.  |  "
 		+ "Sap - already prepared in your reserve; summon Rabid Wolf or Berserker from hand to the frontline to watch Sap destroy it on entry. Pass to P2 and let them summon their Brown Bear to test that it fires on the opponent's summons too.  |  "
 		+ "Sap Strength - play it from hand and target any creature on the board to reduce its Str by 10 for the rest of the turn; useful for weakening a strong attacker before combat.  |  "
-		+ "Ragnarok - unlock it to wipe all frontline and reserve creatures; Odin, Thor, and the Ragnarok power itself should all survive untouched."
+		+ "Ragnarok - unlock it to wipe all frontline and reserve cards; Odin, Thor, and the Ragnarok power itself should all survive untouched."
 	)
 	update_ui()
 
@@ -1281,8 +1692,8 @@ func load_v_w_card_scenario() -> void:
 	# a Mage from your deck; Lailoken and Nimue are both valid targets in the deck.
 	_add_test_power(player1, 0, WalkOfTheSage.new(), true)
 
-	# P1 board: Wolf Cub fires Maturation automatically on the very first upkeep and converts
-	# into Skoll from the deck. Wolf Adolescent is live and aggressive on the frontline —
+	# P1 board: Wolf Cub offers Maturation on the very first upkeep and can convert into Skoll
+	# from the deck. Wolf Adolescent is live and aggressive on the frontline —
 	# attack Gudud Priest this turn to earn the kill, then Maturation is offered on your next
 	# upkeep to send Wolf Adolescent to the grave and summon Hati. Warrior Dragon is a ready
 	# Aerial Ancient body. White Stag sits in reserve; let it die to trigger Hunter's Mark.
@@ -1364,12 +1775,60 @@ func load_v_w_card_scenario() -> void:
 	_open_upkeep_choice_window()
 	action_label.text = (
 		"V/W Scenario: All V and W cards except Warding Stone. Choose an upkeep option first.  |  "
-		+ "Upkeep - when you choose Draw or Gain Mana, Wolf Cub's Maturation fires automatically: it sends itself to the graveyard and Skoll is summoned from your deck to its reserve lane.  |  "
+		+ "Upkeep - when you choose Draw or Gain Mana, Wolf Cub offers Maturation: choose Skoll to send the Cub to the graveyard and summon Skoll into its reserve lane, or skip.  |  "
 		+ "Board - attack Gudud Priest with Wolf Adolescent this turn to earn the kill; on your next P1 upkeep (after choosing Draw or Gain Mana) the Maturation prompt appears and you can send Wolf Adolescent to the grave and summon Hati from your deck.  |  "
 		+ "Warrior Dragon - ready Aerial Ancient on frontline lane 1; attack with it or hold it as a wall.  |  "
 		+ "White Stag - in reserve, aggressive; let it attack into something that can kill it to trigger Hunter's Mark and hand your opponent 2 mana.  |  "
 		+ "Hand - Wild Magic shelves Brown Bear then Lailoken from the top of your deck before landing on Heroic Stand and preparing it revealed in your first open reserve slot. Vision of Tartarus hits any board creature for -6 Str / -6 Res (two creatures are already banished in your Abyss). Wheel of Fire binds the enemy Minotaur Footsoldier, pushes it back one row on cast, then lets you pay 1 mana at the start of your turn to push it further again.  |  "
 		+ "Prepared - pass to P2 and let the aggressive Brown Bear declare an attack on your creature: Void Shield intercepts and banishes the attacker. Vision of Odin is also prepared; respond to any action, target a non-Norse creature for -7 Str / -1 Spd, or target Wolf Adolescent (Norse) for +7 Str / +1 Spd instead.  |  "
 		+ "Power - Walk of the Sage is unlocked; pay 2 mana to Void Lailoken or Nimue (both Mages) from your deck."
+	)
+	update_ui()
+
+func load_saving_grace_vs_baldr_active_test_scenario() -> void:
+	_reset_test_match_state()
+	_add_test_god(player1, Thor.new())
+	_add_test_god(player2, Thor.new())
+
+	# P1 (attacker) controls Baldr, Active God. P2 (defender) has Saving Grace face-down.
+	_place_test_board_card(player1, player1.frontline_zones[0], BaldrActive.new(), Card.CreatureMode.AGGRESSIVE)
+
+	_add_test_power(player2, 0, SavingGrace.new(), false)
+
+	# Empty P2 field is required for Saving Grace's Ward condition.
+	_add_test_hand_card(player1, BrownBear.new())
+	_add_test_hand_card(player2, BrownBear.new())
+	_add_test_deck_card(player1, BrownBear.new())
+	_add_test_deck_card(player2, BrownBear.new())
+
+	player1.spend_mana(player1.mana)
+	player1.gain_mana(12)
+	player2.spend_mana(player2.mana)
+	player2.gain_mana(12)
+	player1.followers = 100
+	player2.followers = 100
+	player1.followers_changed.emit(player1.followers)
+	player2.followers_changed.emit(player2.followers)
+	player1.has_summoned_this_turn = false
+	player2.has_summoned_this_turn = false
+
+	game_manager.current_player = player1
+	game_manager.other_player = player2
+	game_manager.feedback_viewer = player1
+	player1.is_turn_player = true
+	player2.is_turn_player = false
+	selected_card = null
+	selected_attacker = null
+	selected_interceptor = null
+	_test_turn_owner = player1
+	_test_turn_opponent = player2
+	game_manager.turn_number = 1
+	game_manager.start_turn()
+	_open_upkeep_choice_window()
+	action_label.text = (
+		"Saving Grace vs Baldr Active Test. P1 controls Baldr, Active God in frontline 1. "
+		+ "P2 has face-down Saving Grace in power slot 1 and an empty field. "
+		+ "Choose an upkeep option, then attack P2's followers with Baldr Active. "
+		+ "Saving Grace can flip in response (base cost only, no fast surcharge) and should prevent all follower conversion."
 	)
 	update_ui()

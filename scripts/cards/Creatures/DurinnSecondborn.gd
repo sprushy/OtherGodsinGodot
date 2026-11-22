@@ -6,14 +6,14 @@ const REFORGE_COST := 2
 func _init() -> void:
 	super._init()
 	card_name = "Durinn Secondborn"
-	card_types = ["Dwarf", "Smith", "Norse Creature", "Targeting"]
+	card_types = ["Dwarf", "Smith", "Targeting"]
 	level = 2
 	mana_cost = 0
 	sacrifice_cost = 0
 	speed = 1
 	resilience = 5
 	strength = 14
-	ability_text = "Reforge ([b]Impact[/b], 2 mana): Add a Weapon from either graveyard to your hand."
+	ability_text = "Reforge ([b]Impact[/b], %d mana): Add a Weapon from either grave to your hand." % REFORGE_COST
 	flavor_text = ""
 	culture = "Norse"
 	artist = "Lorinda Tomko"

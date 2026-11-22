@@ -1,9 +1,7 @@
 extends AudioStreamPlayer
 class_name PowerUnlockSoundPlayer
 
-const UNLOCK_SOUNDS: Array[AudioStream] = [
-	preload("res://audio/power_unlock_01.wav"),
-]
+const UNLOCK_SOUND_PATHS: Array[String] = ["res://audio/power_unlock_01.wav"]
 
 var _sound_index := 0
 
@@ -18,13 +16,14 @@ static func play_sequence() -> void:
 	player._play_next()
 
 func _ready() -> void:
+	bus = "SFX"
 	finished.connect(_on_finished)
 
 func _play_next() -> void:
-	if _sound_index >= UNLOCK_SOUNDS.size():
+	if _sound_index >= UNLOCK_SOUND_PATHS.size():
 		queue_free()
 		return
-	stream = UNLOCK_SOUNDS[_sound_index]
+	stream = load(UNLOCK_SOUND_PATHS[_sound_index]) as AudioStream
 	_sound_index += 1
 	play()
 

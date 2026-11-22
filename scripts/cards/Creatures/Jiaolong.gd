@@ -1,6 +1,9 @@
 extends CreatureCard
 class_name Jiaolong
 
+const ART_PATH := "res://images/card_art/creatures/Jiaolong.jpg"
+const ALT_ART_PATH := "res://images/card_art/creatures/jiaolong_alt.png"
+
 var in_human_form: bool = false
 
 func _init() -> void:
@@ -13,11 +16,12 @@ func _init() -> void:
 	resilience = 16
 	strength = 22
 	sacrifice_cost = 0
-	ability_text = "[b]Shift[/b] ([b]Activate[/b], [b]Minor Action[/b], once per turn): Switch this card between Dragon, Animal, Piscine, Aqueous and Human, Aqueous, Shapeshifter."
+	ability_text = "[b]Shift[/b] ([b]Activate[/b], [b]Minor Action[/b], once per turn): Switch Jiaolong between Dragon, Animal, Piscine, Aqueous and Human, Aqueous, Shapeshifter."
 	flavor_text = ""
 	culture = "Tian"
 	artist = "Riccardo Zoppello"
-	art_path = "res://images/card_art/creatures/Jiaolong.jpg"
+	art_path = ART_PATH
+	art_variants = [ART_PATH, ALT_ART_PATH]
 
 func get_activation_label() -> String:
 	return "Shift"
@@ -78,18 +82,11 @@ func apply_serialized_state(state: Dictionary) -> void:
 	card_types = _get_human_form_types() if in_human_form else _get_dragon_form_types()
 
 func get_hover_detail_lines(_viewer: Player = null) -> Array[String]:
+	var active_form := _get_human_form_types() if in_human_form else _get_dragon_form_types()
+	var inactive_form := _get_dragon_form_types() if in_human_form else _get_human_form_types()
 	return [
-		"[b]Shift Forms[/b]",
-		_current_form_hover_text(),
-		_inactive_form_hover_text(),
+		BaseCard.format_shapeshifter_form_summary(active_form, inactive_form),
 	]
-
-func _current_form_hover_text() -> String:
-	return "Current: " + ("Human, Aqueous, Shapeshifter" if in_human_form else "Dragon, Animal, Piscine, Aqueous")
-
-func _inactive_form_hover_text() -> String:
-	var inactive_form := "Dragon, Animal, Piscine, Aqueous" if in_human_form else "Human, Aqueous, Shapeshifter"
-	return "[color=#8a8a8a]Can shift to: %s[/color]" % inactive_form
 
 func _get_dragon_form_types() -> Array[String]:
 	var types: Array[String] = []
@@ -98,7 +95,6 @@ func _get_dragon_form_types() -> Array[String]:
 	types.append("Piscine")
 	types.append("Aqueous")
 	types.append("Shapeshifter")
-	types.append("Tian Creature")
 	return types
 
 func _get_human_form_types() -> Array[String]:
@@ -106,5 +102,4 @@ func _get_human_form_types() -> Array[String]:
 	types.append("Human")
 	types.append("Aqueous")
 	types.append("Shapeshifter")
-	types.append("Tian Creature")
 	return types

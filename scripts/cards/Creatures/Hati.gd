@@ -7,14 +7,14 @@ const MOON_HUNT_EXTRA_MANA := 2
 func _init() -> void:
 	super._init()
 	card_name = "Hati"
-	card_types = ["Animal", "Lupine", "Aerial", "Norse Creature"]
+	card_types = ["Animal", "Lupine", "Aerial"]
 	level = 4
 	mana_cost = 0
 	sacrifice_cost = 1
 	speed = 2
 	resilience = 27
 	strength = 27
-	ability_text = "[b]Moon Hunt[/b]: At the end of your turn, you may sacrifice 1 creature to summon this card; if you have already normal summoned, also pay 2 mana."
+	ability_text = "[b]Moon Hunt[/b]: At the end of your turn, you may sacrifice 1 creature to summon Hati; if you have already normal summoned, also pay %d mana." % MOON_HUNT_EXTRA_MANA
 	culture = "Norse"
 	artist = "Unknown"
 	art_path = ART_PATH
@@ -30,14 +30,14 @@ func can_use_moon_hunt_summon(game_manager: GameManager) -> bool:
 		return false
 	if get_valid_moon_hunt_sacrifices().is_empty():
 		return false
-	if get_moon_hunt_mana_cost(game_manager) > card_owner.mana:
+	if not can_pay_moon_hunt_mana_cost(game_manager):
 		return false
 	return true
 
 func get_moon_hunt_prompt_text(game_manager: GameManager) -> String:
-	var extra_mana := get_moon_hunt_mana_cost(game_manager)
-	if extra_mana > 0:
-		return "Moon Hunt: sacrifice 1 friendly creature and pay %d mana to summon this Hati from your hand." % extra_mana
+	var total_mana := get_total_moon_hunt_mana_cost(game_manager)
+	if total_mana > 0:
+		return "Moon Hunt: sacrifice 1 friendly creature and pay %d mana to summon this Hati from your hand." % total_mana
 	return "Moon Hunt: sacrifice 1 friendly creature to summon this Hati from your hand."
 
 func get_moon_hunt_mana_cost(game_manager: GameManager) -> int:
@@ -46,6 +46,19 @@ func get_moon_hunt_mana_cost(game_manager: GameManager) -> int:
 	if card_owner.has_summoned_this_turn:
 		return MOON_HUNT_EXTRA_MANA
 	return 0
+
+func get_moon_hunt_summon_mana_cost(game_manager: GameManager) -> int:
+	if game_manager == null or card_owner == null:
+		return 0
+	return game_manager.get_creature_summon_mana_cost(card_owner, self, self, true)
+
+func get_total_moon_hunt_mana_cost(game_manager: GameManager) -> int:
+	return get_moon_hunt_mana_cost(game_manager) + get_moon_hunt_summon_mana_cost(game_manager)
+
+func can_pay_moon_hunt_mana_cost(game_manager: GameManager) -> bool:
+	if game_manager == null or card_owner == null:
+		return false
+	return card_owner.mana >= get_total_moon_hunt_mana_cost(game_manager)
 
 func get_valid_moon_hunt_sacrifices() -> Array[Card]:
 	var valid_targets: Array[Card] = []
@@ -75,13 +88,11 @@ func resolve_moon_hunt_summon(
 ) -> bool:
 	if not can_use_moon_hunt_summon(game_manager):
 		return false
-	if target_zone == null or target_zone.zone_owner != card_owner:
-		return false
-	if target_zone.zone_type not in [Zone.ZoneType.FRONTLINE, Zone.ZoneType.RESERVE]:
-		return false
-	if not target_zone.cards.is_empty():
+	if not is_valid_moon_hunt_destination(target_zone, sacrificed_card):
 		return false
 	if not is_valid_moon_hunt_sacrifice(sacrificed_card):
+		return false
+	if not can_pay_moon_hunt_mana_cost(game_manager):
 		return false
 
 	var extra_mana := get_moon_hunt_mana_cost(game_manager)
@@ -90,6 +101,7 @@ func resolve_moon_hunt_summon(
 
 	if game_manager != null:
 		game_manager._send_to_graveyard_with_hook(sacrificed_card, false, false)
+		game_manager.note_creature_sacrifice(sacrificed_card)
 	else:
 		card_owner.move_card(sacrificed_card, card_owner.graveyard_zone)
 	if sacrificed_card.has_method("on_sacrificed_for_summon") and not sacrificed_card.post_field_abilities_suppressed():
@@ -108,11 +120,32 @@ func resolve_moon_hunt_summon(
 		true
 	)
 
+func is_valid_moon_hunt_destination(target_zone: Zone, sacrificed_card: Card = null) -> bool:
+	if target_zone == null or target_zone.zone_owner != card_owner:
+		return false
+	if target_zone.zone_type not in [Zone.ZoneType.FRONTLINE, Zone.ZoneType.RESERVE]:
+		return false
+	if target_zone.cards.is_empty():
+		return true
+	return sacrificed_card != null \
+		and target_zone.cards.size() == 1 \
+		and _is_same_moon_hunt_card(target_zone.cards[0], sacrificed_card) \
+		and is_valid_moon_hunt_sacrifice(sacrificed_card)
+
+func _is_same_moon_hunt_card(left: Card, right: Card) -> bool:
+	if left == null or right == null:
+		return false
+	if left == right:
+		return true
+	return left.uid.strip_edges() != "" and left.uid == right.uid
+
 func _get_open_summon_zones() -> Array[Zone]:
 	var open_zones: Array[Zone] = []
 	if card_owner == null:
 		return open_zones
 	for zone in card_owner.frontline_zones + card_owner.reserve_zones:
 		if zone.cards.is_empty():
+			open_zones.append(zone)
+		elif zone.cards.size() == 1 and is_valid_moon_hunt_sacrifice(zone.cards[0]):
 			open_zones.append(zone)
 	return open_zones

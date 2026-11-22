@@ -1,0 +1,2 @@
+﻿[b]Shift[/b] ([b]Activate[/b], [b]Minor Action[/b], once per turn): Switch between Human, Mage, Shaman, Shapeshifter and Animal, Feline, Mage, Shaman, Shapeshifter.
+Tonal Strengths ([b]Passive[/b]): Feline form gets +4 STR and +1 SPD. Human form gets +5 RES.

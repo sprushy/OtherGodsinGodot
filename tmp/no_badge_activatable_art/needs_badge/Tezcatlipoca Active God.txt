@@ -1,0 +1,4 @@
+﻿[b]Shift[/b] ([b]Activate[/b], [b]Minor Action[/b], once per turn): Switch between Divine Manifestation, God, Shapeshifter and Divine Manifestation, God, Animal, Feline, Jaguar, Shapeshifter.
+[b]Jaguar Form[/b] ([b]Passive[/b]): While in Jaguar form, this card's stats become SPD 3 / RES 24 / STR 35.
+[b]The Smoking Mirror[/b] ([b]Passive[/b]): Instead of damaging followers, convert half of those that would have been destroyed.
+[b]Titlacauan[/b] ([b]Impact[/b]): Enslave up to 2 creatures whose total levels are less than or equal to the total levels sacrificed for Necoc Yaotl.

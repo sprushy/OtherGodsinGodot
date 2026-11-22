@@ -3,6 +3,7 @@ class_name ActiveGodCard
 
 var linked_god_name: String = ""
 var stored_normal_god: Card = null
+var summoned_by_champions_call: bool = false
 
 func _init() -> void:
 	super._init()
@@ -45,6 +46,16 @@ func set_stored_normal_god(god_card: Card) -> void:
 func get_stored_normal_god() -> Card:
 	return stored_normal_god
 
+func get_combat_follower_damage_halving_sources(inflicts_damage: bool) -> PackedStringArray:
+	var sources := super.get_combat_follower_damage_halving_sources(inflicts_damage)
+	if inflicts_damage and summoned_by_champions_call:
+		sources.append("Champion's Call")
+	return sources
+
+func clear_board_leave_state() -> void:
+	super.clear_board_leave_state()
+	summoned_by_champions_call = false
+
 func restore_stored_normal_god() -> Card:
 	if card_owner == null or stored_normal_god == null:
 		return null
@@ -63,12 +74,15 @@ func restore_stored_normal_god() -> Card:
 
 func get_serialized_state() -> Dictionary:
 	var state := super.get_serialized_state()
+	if summoned_by_champions_call:
+		state["summoned_by_champions_call"] = true
 	if stored_normal_god != null:
 		state["stored_normal_god"] = GameState.serialize_embedded_card(stored_normal_god)
 	return state
 
 func apply_serialized_state(state: Dictionary) -> void:
 	super.apply_serialized_state(state)
+	summoned_by_champions_call = bool(state.get("summoned_by_champions_call", false))
 	stored_normal_god = null
 	var stored_god_data = state.get("stored_normal_god", {})
 	if not (stored_god_data is Dictionary):

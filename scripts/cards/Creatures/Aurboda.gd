@@ -1,10 +1,12 @@
 extends CreatureCard
 class_name Aurboda
 
+const PIERCE_FOLLOWERS := 7
+
 func _init() -> void:
 	super._init()
 	card_name = "Aurbo" + char(240) + "a"
-	card_types = ["Giant", "Warrior", "Norse Creature"]
+	card_types = ["Giant", "Warrior"]
 	level = 3
 	mana_cost = 0
 	sacrifice_cost = 0
@@ -18,7 +20,7 @@ func _init() -> void:
 
 func on_kill(game_manager: GameManager, victim: Card) -> void:
 	var opponent := game_manager.get_opponent(card_owner)
-	game_manager.convert_followers(opponent, card_owner, 7)
+	game_manager.convert_followers(opponent, card_owner, PIERCE_FOLLOWERS, self)
 	if victim != null:
 		game_manager.note_player_feedback("Pierce! %s destroyed %s and converted 7 followers." % [
 			get_display_name(),

@@ -1,0 +1,27 @@
+shader_type spatial;
+render_mode blend_mix, depth_draw_opaque, cull_back, diffuse_burley, specular_schlick_ggx;
+
+// Optional material shader for meshes that should visually accumulate snow.
+// Best for the 3D board terrain/tiles. Use decals for piles and banks.
+
+uniform sampler2D albedo_texture : source_color;
+uniform sampler2D snow_noise : repeat_enable;
+uniform sampler2D snow_normal : hint_normal;
+uniform vec4 base_tint : source_color = vec4(1.0);
+uniform vec4 snow_color : source_color = vec4(0.86, 0.94, 1.0, 1.0);
+uniform float snow_amount : hint_range(0.0, 1.0) = 0.0;
+uniform float top_bias : hint_range(0.0, 1.0) = 0.45;
+uniform float snow_roughness : hint_range(0.0, 1.0) = 0.82;
+
+void fragment() {
+    vec4 base = texture(albedo_texture, UV) * base_tint;
+    float n = texture(snow_noise, UV * 2.7).r;
+    float upward = smoothstep(top_bias, 1.0, NORMAL.y);
+    float coverage = clamp((snow_amount * 1.35 + n * 0.22 - 0.12) * upward, 0.0, 1.0);
+
+    ALBEDO = mix(base.rgb, snow_color.rgb, coverage);
+    ROUGHNESS = mix(0.58, snow_roughness, coverage);
+    METALLIC = 0.0;
+    NORMAL_MAP = texture(snow_normal, UV * 6.0).rgb;
+    NORMAL_MAP_DEPTH = coverage * 0.18;
+}

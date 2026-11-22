@@ -1,0 +1,2 @@
+﻿Knowledge of the General ([b]Impact[/b]): Put 7 tactic counters on this. Whenever a friendly Warrior destroys a creature, put 1 tactic counter on this.
+Manoeuvre ([b]Activate[/b]): Move a tactic counter from this to another tactic-counter card you control.

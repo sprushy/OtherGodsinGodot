@@ -2,11 +2,15 @@ extends SceneTree
 class_name DedicatedLobbyServerMainLoop
 
 const LobbyServerScript = preload("res://scripts/server/LobbyServer.gd")
+## Dedicated lobby runtimes host bot workers on the main loop; cap the loop so
+## the idle process does not spin a CPU core at maximum frame rate.
+const SERVER_RUNTIME_MAX_FPS := 30
 
 var _server = null
 var _scene_root: Node = null
 
 func _initialize() -> void:
+	Engine.max_fps = SERVER_RUNTIME_MAX_FPS
 	var launch_args: Dictionary = _parse_user_args(OS.get_cmdline_user_args())
 	call_deferred("_boot_server", launch_args)
 
@@ -28,6 +32,7 @@ func _boot_server(launch_args: Dictionary) -> void:
 	_server.name = "LobbyPeer"
 	_server.use_dedicated_match_processes = true
 	_server.allow_in_process_match_fallback = false
+	_server.server_bot_self_play_limit = LobbyServerScript.get_dedicated_bot_self_play_limit(launch_args)
 	_server.use_default_multiplayer = true
 	_server.trace_network = true
 	_server.trace_file_path = trace_file_path

@@ -6,7 +6,7 @@ const ART_PATH := "res://images/card_art/creatures/MalinalxochitlThrall.png"
 func _init() -> void:
 	super._init()
 	card_name = "Malinalxochitl Thrall"
-	card_types = ["Thrall", "Human", "Monster", "Animal", "Insect", "Warrior", "Nahuatl Creature"]
+	card_types = ["Thrall", "Human", "Monster", "Animal", "Insect", "Warrior"]
 	level = 3
 	mana_cost = 0
 	sacrifice_cost = 0

@@ -6,6 +6,7 @@ const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
 const DeckStoreScript = preload("res://scripts/server/DeckStore.gd")
 const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
+const CardArtVariantsScript = preload("res://scripts/core/CardArtVariants.gd")
 
 const FRIEND_REQUEST_COOLDOWN_SECONDS := 10 * 60
 const DECK_SHARE_COOLDOWN_SECONDS := 5
@@ -152,7 +153,8 @@ func send_deck_share(
 	recipient_account_id: String,
 	deck_name: String,
 	cards,
-	special_setup = {}
+	special_setup = {},
+	reinforcements = {}
 ) -> Dictionary:
 	_ensure_loaded()
 	var sender_id := sender_account_id.strip_edges()
@@ -185,6 +187,7 @@ func send_deck_share(
 		"deck": {
 			"name": clean_name,
 			"cards": sanitized_cards,
+			"reinforcements": _sanitize_cards(reinforcements),
 			"special_setup": _sanitize_special_setup(special_setup),
 		},
 		"created_unix": now_unix,
@@ -227,7 +230,8 @@ func respond_to_deck_share(
 			str((deck as Dictionary).get("name", DeckStoreScript.DEFAULT_DECK_NAME)),
 			(deck as Dictionary).get("cards", {}),
 			"",
-			(deck as Dictionary).get("special_setup", {})
+			(deck as Dictionary).get("special_setup", {}),
+			(deck as Dictionary).get("reinforcements", {})
 		)
 		if not bool(save_result.get("success", false)):
 			return save_result
@@ -256,6 +260,73 @@ func are_friends(first_account_id: String, second_account_id: String) -> bool:
 	if first_id.is_empty() or second_id.is_empty():
 		return false
 	return bool(_get_friend_lookup(first_id).get(second_id, false))
+
+func merge_account_references(source_account_id: String, target_account_id: String) -> Dictionary:
+	_ensure_loaded()
+	var source_id := source_account_id.strip_edges()
+	var target_id := target_account_id.strip_edges()
+	if source_id.is_empty() or target_id.is_empty() or source_id == target_id:
+		return _result(true, "")
+	var previous_friends_by_account_id := _friends_by_account_id.duplicate(true)
+	var previous_friend_requests_by_id := _friend_requests_by_id.duplicate(true)
+	var previous_deck_shares_by_id := _deck_shares_by_id.duplicate(true)
+
+	var target_friends := _get_friend_lookup(target_id)
+	var source_friends := _get_friend_lookup(source_id)
+	for raw_friend_id in source_friends.keys():
+		var friend_id := str(raw_friend_id).strip_edges()
+		if friend_id.is_empty() or friend_id == target_id:
+			continue
+		target_friends[friend_id] = true
+	for account_id_variant in _friends_by_account_id.keys():
+		var account_id := str(account_id_variant).strip_edges()
+		if account_id.is_empty() or account_id == source_id:
+			continue
+		var friend_lookup := _get_friend_lookup(account_id)
+		if not friend_lookup.has(source_id):
+			continue
+		friend_lookup.erase(source_id)
+		if account_id != target_id:
+			friend_lookup[target_id] = true
+		_friends_by_account_id[account_id] = friend_lookup
+	target_friends.erase(source_id)
+	_friends_by_account_id[target_id] = target_friends
+	_friends_by_account_id.erase(source_id)
+
+	for request_id in _friend_requests_by_id.keys():
+		var request = _friend_requests_by_id.get(request_id, {})
+		if not (request is Dictionary):
+			continue
+		var updated_request := (request as Dictionary).duplicate(true)
+		if str(updated_request.get("requester_account_id", "")).strip_edges() == source_id:
+			updated_request["requester_account_id"] = target_id
+		if str(updated_request.get("recipient_account_id", "")).strip_edges() == source_id:
+			updated_request["recipient_account_id"] = target_id
+		if str(updated_request.get("requester_account_id", "")).strip_edges() \
+				== str(updated_request.get("recipient_account_id", "")).strip_edges():
+			updated_request["status"] = "rejected"
+		_friend_requests_by_id[request_id] = updated_request
+
+	for share_id in _deck_shares_by_id.keys():
+		var share = _deck_shares_by_id.get(share_id, {})
+		if not (share is Dictionary):
+			continue
+		var updated_share := (share as Dictionary).duplicate(true)
+		if str(updated_share.get("sender_account_id", "")).strip_edges() == source_id:
+			updated_share["sender_account_id"] = target_id
+		if str(updated_share.get("recipient_account_id", "")).strip_edges() == source_id:
+			updated_share["recipient_account_id"] = target_id
+		if str(updated_share.get("sender_account_id", "")).strip_edges() \
+				== str(updated_share.get("recipient_account_id", "")).strip_edges():
+			updated_share["status"] = "rejected"
+		_deck_shares_by_id[share_id] = updated_share
+
+	if not _save():
+		_friends_by_account_id = previous_friends_by_account_id
+		_friend_requests_by_id = previous_friend_requests_by_id
+		_deck_shares_by_id = previous_deck_shares_by_id
+		return _result(false, "Could not merge account friend storage.")
+	return _result(true, "")
 
 func _ensure_loaded() -> void:
 	if _loaded:
@@ -408,9 +479,7 @@ func _sanitize_cards(cards) -> Dictionary:
 func _sanitize_special_setup(special_setup) -> Dictionary:
 	if not (special_setup is Dictionary) or (special_setup as Dictionary).is_empty():
 		return {}
-	return TiamatScript.build_special_setup(
-		TiamatScript.get_slot_card_names_from_setup(special_setup as Dictionary)
-	)
+	return CardArtVariantsScript.sanitize_special_setup(special_setup)
 
 func _get_username(account_id: String, username_by_account_id: Dictionary) -> String:
 	var username := str(username_by_account_id.get(account_id, "")).strip_edges()

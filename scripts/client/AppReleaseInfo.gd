@@ -5,16 +5,44 @@ const VERSION_PROJECT_SETTING := "application/config/version"
 const UNKNOWN_VERSION := "dev"
 const RELEASES_API_URL := "https://api.github.com/repos/sprushy/OtherGodsinGodot/releases/latest"
 const RELEASES_PAGE_URL := "https://github.com/sprushy/OtherGodsinGodot/releases/latest"
+const RELEASE_TAG_PAGE_URL_TEMPLATE := "https://github.com/sprushy/OtherGodsinGodot/releases/tag/%s"
+const RELEASE_DOWNLOAD_URL_TEMPLATE := "https://github.com/sprushy/OtherGodsinGodot/releases/download/%s/%s"
 const WINDOWS_ASSET_NAME := "OtherGods-windows.zip"
 const LEGACY_WINDOWS_ASSET_NAME := "ClaudeOtherGods-windows.zip"
+const MACOS_ASSET_NAME := "OtherGods-macos.zip"
+const ANDROID_ASSET_NAME := "OtherGods-android.apk"
+const MACOS_APPCAST_ASSET_NAME := "appcast.xml"
 const WINDOWS_ASSET_NAMES = [
 	WINDOWS_ASSET_NAME,
 	LEGACY_WINDOWS_ASSET_NAME,
 ]
+const MACOS_ASSET_NAMES = [
+	MACOS_ASSET_NAME,
+]
 const PREFERRED_WINDOWS_EXECUTABLE_NAME := "OtherGods.exe"
 
+static var _editor_version: String = ""
+
 static func get_current_version() -> String:
+	# Release exports are stamped by CI. Editor runs use the release tag on
+	# their own checkout rather than the last project.godot version sync.
+	if OS.has_feature("editor"):
+		if _editor_version.is_empty():
+			var output: Array = []
+			var result := OS.execute("git", PackedStringArray([
+				"-C", ProjectSettings.globalize_path("res://"), "describe",
+				"--tags", "--match", "v[0-9]*", "--abbrev=0",
+			]), output, false, false)
+			if result == 0 and not output.is_empty():
+				_editor_version = normalize_version(str(output[0]))
+			if not is_release_version(_editor_version):
+				_editor_version = normalize_version(str(ProjectSettings.get_setting(VERSION_PROJECT_SETTING, UNKNOWN_VERSION)))
+		return _editor_version
 	return normalize_version(str(ProjectSettings.get_setting(VERSION_PROJECT_SETTING, UNKNOWN_VERSION)))
+
+static func get_display_version() -> String:
+	var version := get_current_version()
+	return "%s (debug)" % version if OS.is_debug_build() else version
 
 static func normalize_version(value: String) -> String:
 	var normalized := value.strip_edges()
@@ -44,6 +72,29 @@ static func compare_versions(left: String, right: String) -> int:
 			continue
 		return -1 if left_value < right_value else 1
 	return 0
+
+static func get_asset_names_for_platform(platform_name: String) -> Array:
+	match platform_name:
+		"Windows":
+			return WINDOWS_ASSET_NAMES
+		"macOS":
+			return MACOS_ASSET_NAMES
+		"Android":
+			return [ANDROID_ASSET_NAME]
+		_:
+			return []
+
+static func get_release_page_url_for_version(version: String) -> String:
+	var normalized := normalize_version(version)
+	if not is_release_version(normalized):
+		return RELEASES_PAGE_URL
+	return RELEASE_TAG_PAGE_URL_TEMPLATE % normalized
+
+static func get_download_url_for_version(version: String, asset_name: String) -> String:
+	var normalized := normalize_version(version)
+	if not is_release_version(normalized) or asset_name.strip_edges().is_empty():
+		return ""
+	return RELEASE_DOWNLOAD_URL_TEMPLATE % [normalized, asset_name.strip_edges()]
 
 static func parse_semver(value: String) -> Array[int]:
 	var normalized := normalize_version(value)

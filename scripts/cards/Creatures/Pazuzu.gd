@@ -3,18 +3,19 @@ class_name Pazuzu
 
 const ART_PATH := "res://images/card_art/creatures/PazuzuEdit.png"
 const MANA_DRAIN := 2
+const LocustSwarmSoundPlayerScript = preload("res://scripts/audio/LocustSwarmSoundPlayer.gd")
 
 func _init() -> void:
 	super._init()
 	card_name = "Pazuzu"
-	card_types = ["Demon", "Aerial", "Ancient Creature"]
+	card_types = ["Demon", "Aerial"]
 	level = 5
 	mana_cost = 0
 	sacrifice_cost = 1
 	speed = 2
 	resilience = 15
 	strength = 28
-	ability_text = "[b]Locust Swarm[/b] ([b]Impact[/b]): Reduce your opponent's mana by 2.\n[b]Locust Plague[/b] ([b]Passive[/b]): At the beginning of your turn, reduce your opponent's mana by 2."
+	ability_text = "[b]Locust Swarm[/b] ([b]Impact[/b]): Your opponent loses 2 mana.\n[b]Locust Plague[/b] ([b]Passive[/b]): At the start of your turn, your opponent loses 2 mana."
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricardo Zoppello"
@@ -53,6 +54,12 @@ func _drain_opponent_mana(game_manager: GameManager, ability_name: String) -> St
 			ability_name,
 			opponent.player_name
 		]
+
+	# Play locust swarm sound effect
+	if game_manager.sfx_enabled:
+		LocustSwarmSoundPlayerScript.play_sound()
+	game_manager.note_ui_sound_cue("locust_swarm")
+
 	return "%s triggers %s and reduces %s's mana by %d." % [
 		card_name,
 		ability_name,

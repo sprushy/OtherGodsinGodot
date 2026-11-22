@@ -6,14 +6,14 @@ const ART_PATH := "res://images/card_art/creatures/Hyena Pack(print).jpg"
 func _init() -> void:
 	super._init()
 	card_name = "Hyena Pack"
-	card_types = ["Animal", "Feline", "Pack", "Scavenger", "Ancient Creature"]
+	card_types = ["Animal", "Feline", "Pack", "Scavenger"]
 	level = 2
 	mana_cost = 0
 	sacrifice_cost = 0
 	speed = 1
 	resilience = 13
 	strength = 16
-	ability_text = "[b]Scavenge[/b]: [b]Slay[/b]: Summon all in-deck \"Hyena Pack\"s."
+	ability_text = "[b]Scavenge[/b] ([b]Slay[/b]): Summon every Hyena Pack from your deck."
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricardo Zoppello"

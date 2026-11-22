@@ -1,6 +1,8 @@
 extends RefCounted
 class_name JsonStore
 
+const MAX_JSON_STORE_BYTES := 16777216
+
 static func load_dictionary(storage_path: String, fallback: Dictionary = {}, label: String = "JsonStore") -> Dictionary:
 	var resolved_path := _globalize_path(storage_path)
 	var primary := _read_dictionary_result(resolved_path)
@@ -23,11 +25,16 @@ static func save_json(storage_path: String, payload, label: String = "JsonStore"
 
 	var temp_path := _temp_path(resolved_path)
 	var backup_path := _backup_path(resolved_path)
+	var json_text := JSON.stringify(payload, "\t")
+	if json_text.to_utf8_buffer().size() > MAX_JSON_STORE_BYTES:
+		push_warning("%s: refusing to write oversized JSON store %s." % [label, resolved_path])
+		return false
+
 	var file := FileAccess.open(temp_path, FileAccess.WRITE)
 	if file == null:
 		push_warning("%s: failed to open temp JSON store %s." % [label, temp_path])
 		return false
-	file.store_string(JSON.stringify(payload, "\t"))
+	file.store_string(json_text)
 	file.flush()
 	file.close()
 
@@ -59,6 +66,9 @@ static func _read_dictionary_result(storage_path: String) -> Dictionary:
 		return {"ok": false, "data": {}}
 	var file := FileAccess.open(storage_path, FileAccess.READ)
 	if file == null:
+		return {"ok": false, "data": {}}
+	if file.get_length() > MAX_JSON_STORE_BYTES:
+		file.close()
 		return {"ok": false, "data": {}}
 	var parsed = JSON.parse_string(file.get_as_text())
 	file.close()

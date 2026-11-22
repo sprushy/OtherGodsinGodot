@@ -20,11 +20,9 @@ func resolve(game_manager: GameManager, _target = null) -> void:
 	if game_manager == null:
 		return
 	var doomed_cards: Array[Card] = []
-	for player: Player in game_manager.players:
-		for zone: Zone in player.frontline_zones + player.reserve_zones:
-			for card: Card in zone.cards:
-				if _is_doomed_card(card):
-					doomed_cards.append(card)
+	for card in game_manager.get_field_cards():
+		if _is_doomed_card(card):
+			doomed_cards.append(card)
 	if doomed_cards.is_empty():
 		print("Earthquake found no structures or face-up non-aerial machines to destroy.")
 		return
@@ -46,11 +44,10 @@ func _is_doomed_card(card: Card) -> bool:
 		return true
 	return card.has_type("Machine") and not card.has_type("Aerial") and not card.is_stealth
 
-func would_destroy_creature_of_player(_game_manager: GameManager, protected_player: Player, _chosen_target = null) -> bool:
-	if protected_player == null:
+func would_destroy_creature_of_player(game_manager: GameManager, protected_player: Player, _chosen_target = null) -> bool:
+	if game_manager == null or protected_player == null:
 		return false
-	for zone in protected_player.frontline_zones + protected_player.reserve_zones:
-		for card in zone.cards:
-			if card != null and _is_doomed_card(card):
-				return true
+	for card in game_manager.get_field_cards(protected_player):
+		if card != null and _is_doomed_card(card):
+			return true
 	return false

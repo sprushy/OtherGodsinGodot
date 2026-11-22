@@ -2,15 +2,21 @@ class_name CardDetailContentBuilder
 extends RefCounted
 
 const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
+const UITextureCacheScript = preload("res://scripts/ui/UITextureCache.gd")
+const UIFontScript = preload("res://scripts/ui/UIFont.gd")
 const _BULLET_SEPARATOR := " | "
 const _BOARD_POPUP_WIDTH := 210.0
 const _KEYWORD_PANEL_WIDTH := 210.0
 const _DECKBUILDER_SCROLLBAR_CONTENT_CLEARANCE := 32.0
+const _DROMI_BINDING_NAME := "Dromi"
+const _DROMI_BINDING_HOVER_TEXT := "Cannot attack. Losing 7 followers on opponent's turn start - Dromi"
+const PUBLICLY_IDENTIFIED_HOVER_TEXT := "opponent can see this card"
 
 static func build_visual_hover_body(card: Card, viewer: Player, config: Dictionary = {}) -> Control:
 	var content_width := float(config.get("content_width", 300.0))
 	var display_mana_cost := int(config.get("display_mana_cost", card.mana_cost))
 	var display_cost_adjustment_lines: Array[String] = _to_string_array(config.get("display_cost_adjustment_lines", []))
+	var game_manager = config.get("game_manager", card.card_owner.game_manager if card.card_owner != null else null)
 
 	var scroll := ScrollContainer.new()
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -32,11 +38,16 @@ static func build_visual_hover_body(card: Card, viewer: Player, config: Dictiona
 		Color(1.0, 0.95, 0.7),
 		true
 	)
+	UIFontScript.apply_norse_card_name_font(name_lbl, card)
 	vbox.add_child(name_lbl)
 
-	if card.card_types.size() > 0:
+	if card.is_publicly_identified(game_manager):
+		vbox.add_child(_make_label(PUBLICLY_IDENTIFIED_HOVER_TEXT, 14, Color(1.0, 0.72, 0.72), true))
+
+	var subtypes := card.get_subtypes()
+	if not subtypes.is_empty():
 		var type_lbl := _make_label(
-			_BULLET_SEPARATOR.join(card.card_types),
+			_BULLET_SEPARATOR.join(subtypes),
 			14,
 			Color(0.7, 0.85, 1.0),
 			true
@@ -44,9 +55,12 @@ static func build_visual_hover_body(card: Card, viewer: Player, config: Dictiona
 		vbox.add_child(type_lbl)
 
 	var meta_parts: Array[String] = []
+	var show_meta_mana_cost := display_mana_cost > 0
+	if card is PowerCard and card.is_face_down:
+		show_meta_mana_cost = false
 	if not card.is_god and card.get_effective_level() > 0:
 		vbox.add_child(_make_level_symbol_row(card, 13.0))
-	if display_mana_cost > 0:
+	if show_meta_mana_cost:
 		meta_parts.append("Mana: " + str(display_mana_cost))
 	if card.culture != "":
 		meta_parts.append(card.culture)
@@ -82,7 +96,7 @@ static func build_visual_hover_body(card: Card, viewer: Player, config: Dictiona
 
 	if card.has_additional_costs():
 		vbox.add_child(_make_rich_text(
-			BaseCard.apply_mana_cost_symbols("Extra Costs: " + " ".join(card.get_cost_shorthand_parts(0)), 14),
+			BaseCard.apply_cost_symbols("Extra Costs: " + " ".join(card.get_cost_shorthand_parts(0)), 14),
 			14,
 			Color(1.0, 0.6, 0.4)
 		))
@@ -102,7 +116,7 @@ static func build_visual_hover_body(card: Card, viewer: Player, config: Dictiona
 
 	if card.ability_text != "":
 		var ability_lbl := _make_rich_text(
-			BaseCard.apply_keyword_hints(BaseCard.apply_action_cost_symbols(card.ability_text, card)),
+			BaseCard.apply_keyword_hints(BaseCard.apply_action_cost_symbols(card.get_display_ability_bbcode_text(game_manager), card)),
 			17,
 			Color(0.9, 0.85, 1.0),
 			210.0
@@ -112,7 +126,7 @@ static func build_visual_hover_body(card: Card, viewer: Player, config: Dictiona
 	if card.should_show_flavor_text_in_hover():
 		vbox.add_child(_make_label(card.flavor_text, 14, Color(0.6, 0.6, 0.6), true))
 
-	var hover_details := card.get_hover_detail_lines(viewer)
+	var hover_details := _get_hover_detail_lines(card, viewer)
 	if hover_details.size() > 0:
 		vbox.add_child(_make_separator(Color(0.22, 0.45, 0.4)))
 		var detail_lbl := _make_rich_text(
@@ -124,7 +138,70 @@ static func build_visual_hover_body(card: Card, viewer: Player, config: Dictiona
 		vbox.add_child(detail_lbl)
 
 	_add_hover_stored_card_section(vbox, card, viewer, content_width)
+	_add_hover_summoned_active_god_section(vbox, card, viewer, content_width, game_manager)
 
+	return scroll
+
+static func set_hover_mouse_passthrough(node: Node) -> void:
+	# Ignoring only the popup root leaves labels, margins and scrollbars hit-testable.
+	if node is Control:
+		(node as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
+	for child in node.get_children():
+		set_hover_mouse_passthrough(child)
+
+static func place_hover_panel(panel: Control, anchor_rect: Rect2, avoid_rect: Rect2, prefer_sides: bool = false) -> void:
+	var viewport := panel.get_viewport_rect().grow(-4.0)
+	var reserved := avoid_rect.grow(6.0)
+	var left_edge := clampf(reserved.position.x, viewport.position.x, viewport.end.x)
+	var right_edge := clampf(reserved.end.x, viewport.position.x, viewport.end.x)
+	var top_edge := clampf(reserved.position.y, viewport.position.y, viewport.end.y)
+	var bottom_edge := clampf(reserved.end.y, viewport.position.y, viewport.end.y)
+	var above := Rect2(viewport.position, Vector2(viewport.size.x, top_edge - viewport.position.y))
+	var below := Rect2(viewport.position.x, bottom_edge, viewport.size.x, viewport.end.y - bottom_edge)
+	var right := Rect2(right_edge, viewport.position.y, viewport.end.x - right_edge, viewport.size.y)
+	var left := Rect2(viewport.position, Vector2(left_edge - viewport.position.x, viewport.size.y))
+	var areas: Array[Rect2] = []
+	areas.assign([right, left, above, below] if prefer_sides else [above, below, right, left])
+
+	# Fit the entire panel in one of the spaces beside the card and its controls.
+	var best_area := Rect2()
+	var best_scale := 0.0
+	for area in areas:
+		if not area.has_area():
+			continue
+		var fit_scale := minf(1.0, minf(area.size.x / panel.size.x, area.size.y / panel.size.y))
+		if fit_scale > best_scale:
+			best_area = area
+			best_scale = fit_scale
+		if best_scale == 1.0:
+			break
+	if best_scale <= 0.0:
+		panel.hide()
+		return
+
+	var scaled_size := panel.size * best_scale
+	var desired_origin := anchor_rect.get_center() - scaled_size * 0.5
+	panel.scale = Vector2.ONE * best_scale
+	panel.global_position = desired_origin.clamp(best_area.position, best_area.end - scaled_size)
+	panel.show()
+
+static func wrap_hover_body(content: Control, max_height: float) -> ScrollContainer:
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	scroll.mouse_filter = Control.MOUSE_FILTER_STOP
+	apply_deckbuilder_scrollbar_style(scroll)
+	# Reserve scrollbar space even before overflow, so wrapping has a stable width.
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_right", 22)
+	margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	margin.add_child(content)
+	scroll.add_child(margin)
+	var update_height := func() -> void:
+		var content_size := content.get_combined_minimum_size()
+		scroll.custom_minimum_size = Vector2(content_size.x + 22.0, minf(content_size.y, max_height))
+	content.minimum_size_changed.connect(update_height)
+	update_height.call()
 	return scroll
 
 static func apply_deckbuilder_scrollbar_style(scroll: ScrollContainer, force_visible: bool = false) -> void:
@@ -197,6 +274,217 @@ static func apply_deckbuilder_scrollbar_style(scroll: ScrollContainer, force_vis
 	grabber_pressed.bg_color = Color(1.0, 0.84, 0.44, 1.0)
 	bar.add_theme_stylebox_override("grabber_pressed", grabber_pressed)
 
+static func build_board_popup_body_from_game_state(
+	card: Card,
+	viewer: Player,
+	game_manager,
+	config: Dictionary = {}
+) -> Control:
+	var merged_config := config.duplicate(true)
+	# Cards in public piles remain inspectable even if they retain hidden flags.
+	var is_public_pile := card.current_zone != null \
+		and card.current_zone.zone_type in [Zone.ZoneType.GRAVEYARD, Zone.ZoneType.ABYSS]
+	var is_hidden_card := not is_public_pile \
+		and (card.is_stealth or card.is_prepared or (card.is_face_down and not _is_public_power(card))) \
+		and card.get_controller() != viewer \
+		and not card.is_revealed_to_all()
+	merged_config["is_hidden_card"] = is_hidden_card
+	merged_config["type_label"] = _get_card_type_label(card)
+	merged_config["game_manager"] = game_manager
+	merged_config["effect_lines"] = []
+	merged_config["equipment_lines"] = []
+	merged_config["binding_lines"] = []
+	merged_config["cost_lines"] = []
+	merged_config["power_cost_lines"] = []
+
+	if not is_hidden_card:
+		if card.card_type == Card.CardType.CREATURE:
+			merged_config["effect_lines"] = card.get_effect_summary_lines()
+			merged_config["equipment_lines"] = card.get_equipment_summary_lines()
+			var binding_lines: Array[String] = []
+			for binding in _get_attached_permanent_hexes(card, game_manager):
+				var line := binding.card_name
+				var binding_effect_lines := _get_binding_hover_lines(binding)
+				if binding_effect_lines.is_empty():
+					binding_lines.append(line)
+				else:
+					binding_lines.append(line + ": " + " | ".join(binding_effect_lines))
+			var has_dromi_line := false
+			for line in binding_lines:
+				if line.begins_with(_DROMI_BINDING_NAME):
+					has_dromi_line = true
+					break
+			if not has_dromi_line and _has_dromi_binding(card, game_manager):
+				var dromi_source := _get_dromi_binding_source(card, game_manager)
+				if dromi_source != null and dromi_source != card:
+					var dromi_effect_lines := _get_binding_hover_lines(dromi_source)
+					if dromi_effect_lines.is_empty():
+						binding_lines.append(_DROMI_BINDING_NAME + ": " + _DROMI_BINDING_HOVER_TEXT)
+					else:
+						binding_lines.append(_DROMI_BINDING_NAME + ": " + " | ".join(dromi_effect_lines))
+				else:
+					binding_lines.append(_DROMI_BINDING_NAME + ": " + _DROMI_BINDING_HOVER_TEXT)
+			merged_config["binding_lines"] = binding_lines
+		elif card.card_type == Card.CardType.STRUCTURE or card.card_type == Card.CardType.EQUIPMENT:
+			merged_config["effect_lines"] = card.get_effect_summary_lines()
+
+		if card is PowerCard:
+			merged_config["power_cost_lines"] = _get_power_hover_cost_lines(card as PowerCard, game_manager)
+		elif _can_show_prepared_magical_cost(card, viewer):
+			merged_config["cost_lines"] = _get_prepared_magical_hover_cost_lines(card, viewer, game_manager)
+
+	return build_board_popup_body(card, viewer, merged_config)
+
+static func _is_public_power(card: Card) -> bool:
+	var power := card as PowerCard
+	return power != null and power.is_publicly_revealed
+
+static func _get_card_type_label(card: Card) -> String:
+	if card == null:
+		return "Card"
+	if card.is_god:
+		return "God"
+	if card.is_power:
+		return "Power"
+	if card.has_type("Charm"):
+		return "Charm"
+	match card.card_type:
+		Card.CardType.CREATURE:
+			return "Creature"
+		Card.CardType.CHARM:
+			return "Charm"
+		Card.CardType.SPELL:
+			return "Spell"
+		Card.CardType.STRUCTURE:
+			return "Structure"
+		Card.CardType.HEX:
+			return "Hex"
+		Card.CardType.EQUIPMENT:
+			return "Equipment"
+	return "Card"
+
+static func _get_power_hover_cost_lines(power: PowerCard, game_manager) -> Array[String]:
+	var lines: Array[String] = []
+	if power == null or game_manager == null:
+		return lines
+	if power.is_face_down:
+		return power.get_unlock_display_cost_lines(game_manager)
+	var hover_data: Dictionary = power.get_activation_cost_hover_data(game_manager)
+	if hover_data.is_empty():
+		return lines
+	var base_cost: int = int(hover_data.get("base_cost", 0))
+	var cost_kind: String = str(hover_data.get("cost_kind", Card.COST_KIND_POWER_ACTIVATION))
+	var metadata: Dictionary = hover_data.get("metadata", {})
+	var label: String = str(hover_data.get("label", "Activation Cost"))
+	var current_cost := power.get_adjusted_mana_cost(base_cost, cost_kind, game_manager, metadata)
+	if power.should_include_activation_cost_summary_line(game_manager):
+		lines.append("%s: %d" % [label, current_cost])
+	for breakdown_line in power.get_cost_adjustment_lines(base_cost, cost_kind, game_manager, metadata):
+		lines.append(breakdown_line)
+	for extra_line in hover_data.get("extra_lines", []):
+		var text := str(extra_line).strip_edges()
+		if text != "":
+			lines.append(text)
+	return lines
+
+static func _can_show_prepared_magical_cost(card: Card, viewer: Player) -> bool:
+	if card == null:
+		return false
+	if not card.is_prepared or not card.is_magical_card():
+		return false
+	if card.current_zone == null or not card.current_zone.is_board_zone():
+		return false
+	return card.get_controller() == viewer
+
+static func _get_prepared_magical_cost_player(card: Card) -> Player:
+	if card == null:
+		return null
+	var controller := card.get_controller()
+	if controller != null:
+		return controller
+	return card.card_owner
+
+static func _get_prepared_magical_hover_cost_lines(card: Card, viewer: Player, game_manager) -> Array[String]:
+	var lines: Array[String] = []
+	if not _can_show_prepared_magical_cost(card, viewer) or game_manager == null:
+		return lines
+	var current_cost := card.mana_cost
+	var paying_player := _get_prepared_magical_cost_player(card)
+	if paying_player != null:
+		current_cost = game_manager.get_prepared_card_activation_mana_cost(paying_player, card)
+	var cost_parts := card.get_cost_shorthand_parts(current_cost)
+	if not cost_parts.is_empty():
+		lines.append("Activation Cost: " + " ".join(cost_parts))
+	if paying_player != null:
+		for breakdown_line in card.get_cost_adjustment_lines(
+			card.mana_cost,
+			Card.COST_KIND_HAND_PLAY,
+			game_manager,
+			{"player": paying_player, "prepared": true}
+		):
+			lines.append(breakdown_line)
+	return lines
+
+static func _get_attached_permanent_hexes(card: Card, game_manager) -> Array[Card]:
+	var bindings: Array[Card] = []
+	if card == null:
+		return bindings
+	var scanned_zones: Array[Zone] = []
+	if game_manager != null:
+		for player in game_manager.players:
+			scanned_zones.append_array(player.frontline_zones)
+			scanned_zones.append_array(player.reserve_zones)
+			scanned_zones.append_array(player.power_zones)
+	elif card.current_zone != null:
+		scanned_zones.append(card.current_zone)
+	for scanned_zone in scanned_zones:
+		if scanned_zone == null:
+			continue
+		for zone_card in scanned_zone.cards:
+			if zone_card == null or zone_card == card or zone_card in bindings:
+				continue
+			if zone_card is PermanentHexCard and (zone_card as PermanentHexCard).attached_target == card:
+				bindings.append(zone_card)
+	return bindings
+
+static func _get_dromi_binding_source(card: Card, game_manager) -> Card:
+	if card == null:
+		return null
+	for binding in _get_attached_permanent_hexes(card, game_manager):
+		if binding != null and binding.card_name == _DROMI_BINDING_NAME:
+			return binding
+	var cannot_attack_status := card.get_status_effect("cannot_attack")
+	if cannot_attack_status.is_empty():
+		return null
+	var source_name := str(cannot_attack_status.get("source", ""))
+	var source_card = cannot_attack_status.get("source_card", null)
+	if source_card is Card and (source_card as Card).card_name == _DROMI_BINDING_NAME:
+		return source_card as Card
+	if source_name == _DROMI_BINDING_NAME:
+		if source_card is Card:
+			return source_card as Card
+		return card
+	return null
+
+static func _has_dromi_binding(card: Card, game_manager) -> bool:
+	return _get_dromi_binding_source(card, game_manager) != null
+
+static func _get_binding_hover_lines(binding: Card) -> Array[String]:
+	var details: Array[String] = []
+	if binding == null:
+		return details
+	if binding.card_name == _DROMI_BINDING_NAME:
+		details.append(_DROMI_BINDING_HOVER_TEXT)
+		return details
+	var ability_summary := binding.get_inline_ability_summary()
+	if ability_summary != "":
+		details.append(ability_summary)
+	for effect_line in binding.get_effect_summary_lines():
+		if effect_line == "" or effect_line in details:
+			continue
+		details.append(effect_line)
+	return details
+
 static func build_board_popup_body(card: Card, viewer: Player, config: Dictionary = {}) -> Control:
 	var is_hidden_card := bool(config.get("is_hidden_card", false))
 	var type_label := str(config.get("type_label", ""))
@@ -206,6 +494,7 @@ static func build_board_popup_body(card: Card, viewer: Player, config: Dictionar
 	var cost_lines: Array[String] = _to_string_array(config.get("cost_lines", []))
 	var power_cost_lines: Array[String] = _to_string_array(config.get("power_cost_lines", []))
 	var game_manager = config.get("game_manager", null)
+	var show_listed_costs := bool(config.get("show_listed_costs", false))
 
 	var vbox := _make_vbox(_BOARD_POPUP_WIDTH, 4)
 
@@ -215,11 +504,19 @@ static func build_board_popup_body(card: Card, viewer: Player, config: Dictionar
 	vbox.add_child(header_row)
 
 	var name_lbl := _make_label(
-		card.get_display_name_for_control() if not is_hidden_card else "???",
+		card.get_display_name_for_control() if not is_hidden_card else _get_hidden_card_hover_label(card),
 		15
 	)
+	if not is_hidden_card:
+		UIFontScript.apply_norse_card_name_font(name_lbl, card)
 	name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header_row.add_child(name_lbl)
+
+	if is_hidden_card:
+		return vbox
+
+	if card.is_publicly_identified(game_manager):
+		vbox.add_child(_make_label(PUBLICLY_IDENTIFIED_HOVER_TEXT, 13, Color(1.0, 0.72, 0.72), true))
 
 	if not is_hidden_card and card.culture != "":
 		var culture_lbl := _make_label(card.culture, 13, Color(0.96, 0.88, 0.62))
@@ -230,7 +527,7 @@ static func build_board_popup_body(card: Card, viewer: Player, config: Dictionar
 		var type_parts: Array[String] = []
 		if type_label != "":
 			type_parts.append(type_label)
-		for card_type_name in card.card_types:
+		for card_type_name in card.get_subtypes():
 			if card_type_name not in type_parts:
 				type_parts.append(card_type_name)
 		if type_parts.size() > 0:
@@ -247,7 +544,13 @@ static func build_board_popup_body(card: Card, viewer: Player, config: Dictionar
 				13,
 				Color(1.0, 0.35, 0.35)
 			))
-		if card.is_muted and card.mute_turns_remaining > 0:
+		if card.is_silenced():
+			vbox.add_child(_make_label(
+				"Status: Silenced",
+				13,
+				Color(1.0, 0.78, 0.86)
+			))
+		elif card.is_muted and card.mute_turns_remaining > 0:
 			vbox.add_child(_make_label(
 				"Status: Muted (%d turn%s)" % [
 					card.mute_turns_remaining,
@@ -260,16 +563,17 @@ static func build_board_popup_body(card: Card, viewer: Player, config: Dictionar
 	if not is_hidden_card and not card.is_god:
 		vbox.add_child(_make_level_symbol_row(card, 13.0))
 
+	if not is_hidden_card and show_listed_costs and card.has_listed_play_costs():
+		vbox.add_child(_make_rich_text(
+			BaseCard.apply_cost_symbols("Summon Cost: " + card.get_cost_shorthand(), 13),
+			13,
+			Color(1.0, 0.78, 0.58)
+		))
+
 	if card.card_type == Card.CardType.CREATURE and not card.is_god:
 		if not is_hidden_card:
 			if card.is_sleeping:
 				vbox.add_child(_make_label("Sleeping", 13, Color(0.7, 0.86, 1.0)))
-
-			vbox.add_child(_make_label(
-				"DEF" if card.creature_mode == Card.CreatureMode.DEFENSIVE else "AGG",
-				13,
-				Color(0.7, 0.7, 0.7)
-			))
 
 			var stats_rtl := _make_rich_text(_build_board_creature_stats_text(card), 14, Color.WHITE, 0.0)
 			var tooltip_lines := _build_board_creature_tooltips(card)
@@ -346,7 +650,7 @@ static func build_board_popup_body(card: Card, viewer: Player, config: Dictionar
 		vbox.add_child(spd_lbl)
 
 	if card.ability_text != "" and not is_hidden_card:
-		var display_ability_text := (card as PowerCard).get_display_ability_bbcode_text(game_manager) if card is PowerCard else card.ability_text
+		var display_ability_text := card.get_display_ability_bbcode_text(game_manager)
 		vbox.add_child(_make_rich_text(
 			BaseCard.apply_keyword_hints(BaseCard.apply_action_cost_symbols(display_ability_text, card)),
 			13,
@@ -354,34 +658,99 @@ static func build_board_popup_body(card: Card, viewer: Player, config: Dictionar
 		))
 
 	if cost_lines.size() > 0 and not is_hidden_card:
-		vbox.add_child(_make_rich_text(BaseCard.apply_mana_cost_symbols("\n".join(cost_lines), 12), 12, Color(0.78, 0.9, 1.0)))
+		vbox.add_child(_make_rich_text(BaseCard.apply_cost_symbols("\n".join(cost_lines), 12), 12, Color(0.78, 0.9, 1.0)))
 
 	if power_cost_lines.size() > 0 and not is_hidden_card:
-		vbox.add_child(_make_rich_text(BaseCard.apply_mana_cost_symbols("\n".join(power_cost_lines), 12), 12, Color(1.0, 0.84, 0.62)))
+		vbox.add_child(_make_rich_text(BaseCard.apply_cost_symbols("\n".join(power_cost_lines), 12), 12, Color(1.0, 0.84, 0.62)))
 
-	var hover_detail_lines := card.get_hover_detail_lines(viewer)
+	var hover_detail_lines := _get_hover_detail_lines(card, viewer)
 	if hover_detail_lines.size() > 0 and not is_hidden_card:
 		vbox.add_child(_make_rich_text("\n".join(hover_detail_lines), 13, Color(0.66, 0.97, 0.93)))
 
 	if not is_hidden_card:
 		_add_hover_stored_card_section(vbox, card, viewer, _BOARD_POPUP_WIDTH)
+		_add_hover_summoned_active_god_section(vbox, card, viewer, _BOARD_POPUP_WIDTH, game_manager)
 
 	if card.should_show_flavor_text_in_hover() and not is_hidden_card:
 		vbox.add_child(_make_label(card.flavor_text, 13, Color(0.55, 0.55, 0.55), true))
 
 	return vbox
 
+static func _get_hover_detail_lines(card: Card, viewer: Player) -> Array[String]:
+	var lines := card.get_hover_detail_lines(viewer)
+	if viewer != null and viewer.starting_deck_has_heroic_stand and card.is_creature_card() and card.get_controller() == viewer:
+		lines.append("Combats this game: %d" % card.combats_this_game)
+	return lines
+
+static func _get_hidden_card_hover_label(card: Card) -> String:
+	if card != null and card.is_prepared and card.is_magical_card():
+		return "Prepared magical card"
+	if card != null and card.card_type == Card.CardType.CREATURE:
+		var cost_text := _get_hidden_creature_cost_text(card)
+		if cost_text != "":
+			return "Hidden Creature that cost " + cost_text
+		return "Hidden Creature"
+	return "Hidden card"
+
+static func _get_hidden_creature_cost_text(card: Card) -> String:
+	if card == null:
+		return ""
+	var cost_parts: Array[String] = []
+	if card.mana_cost > 0:
+		cost_parts.append(_format_hidden_cost_amount(card.mana_cost, "mana", "mana"))
+	if card.sacrifice_cost > 0:
+		cost_parts.append(_format_hidden_cost_amount(card.sacrifice_cost, "sacrifice", "sacrifices"))
+	if card.discard_cost > 0:
+		cost_parts.append(_format_hidden_cost_amount(card.discard_cost, "discard", "discards"))
+	if card.banish_cost > 0:
+		cost_parts.append(_format_hidden_cost_amount(card.banish_cost, "banish", "banishes"))
+	if card.shelve_cost > 0:
+		cost_parts.append(_format_hidden_cost_amount(card.shelve_cost, "shelve", "shelves"))
+	if cost_parts.is_empty():
+		return ""
+	if cost_parts.size() == 1:
+		return cost_parts[0]
+	if cost_parts.size() == 2:
+		return cost_parts[0] + " and " + cost_parts[1]
+	var last_part: String = str(cost_parts.pop_back())
+	return ", ".join(cost_parts) + ", and " + last_part
+
+static func _format_hidden_cost_amount(amount: int, singular: String, plural: String) -> String:
+	return "%d %s" % [amount, singular if amount == 1 else plural]
+
 static func extract_card_keywords(card: Card) -> Array[String]:
 	var found: Array[String] = []
 	if card == null or card.ability_text == "":
 		return found
+	var seen: Dictionary = {}
 	var regex := RegEx.new()
 	regex.compile("\\[b\\](.*?)\\[/b\\]")
-	for match in regex.search_all(card.ability_text):
+	for match in regex.search_all(BaseCard.mark_relationship_keywords(card.ability_text)):
 		var keyword := match.get_string(1)
-		if keyword in BaseCard.KEYWORD_HINTS and keyword not in found:
+		if keyword in ["allied", "friendly"]:
+			keyword = keyword.capitalize()
+		if keyword in BaseCard.KEYWORD_HINTS and not seen.has(keyword):
 			found.append(keyword)
+			seen[keyword] = true
+	if "Fractions" not in seen and BaseCard.ability_text_uses_fractions(card.ability_text):
+		found.append("Fractions")
+		seen["Fractions"] = true
 	return found
+
+static func extract_card_keyword_sections(card: Card) -> Array[Dictionary]:
+	var sections: Array[Dictionary] = []
+	for keyword in extract_card_keywords(card):
+		sections.append(build_keyword_section(keyword))
+	return sections
+
+static func build_keyword_section(keyword: String) -> Dictionary:
+	var normalized_keyword := keyword.strip_edges()
+	return {
+		"title": normalized_keyword,
+		"body": str(BaseCard.KEYWORD_HINTS.get(normalized_keyword, "")),
+		"title_color": Color(0.95, 0.88, 0.5),
+		"body_color": Color(0.72, 0.72, 0.72),
+	}
 
 static func build_keywords_panel(keywords: Array[String]) -> Control:
 	var panel := PanelContainer.new()
@@ -411,23 +780,24 @@ static func build_keywords_panel(keywords: Array[String]) -> Control:
 
 	for i in keywords.size():
 		var keyword := keywords[i]
+		var section := build_keyword_section(keyword)
 		var keyword_box := VBoxContainer.new()
 		keyword_box.add_theme_constant_override("separation", 3)
 		keyword_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		vbox.add_child(keyword_box)
 
 		var name_lbl := Label.new()
-		name_lbl.text = keyword
+		name_lbl.text = str(section.get("title", keyword))
 		name_lbl.add_theme_font_size_override("font_size", 13)
-		name_lbl.add_theme_color_override("font_color", Color(0.95, 0.88, 0.5))
+		name_lbl.add_theme_color_override("font_color", section.get("title_color", Color(0.95, 0.88, 0.5)))
 		name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		keyword_box.add_child(name_lbl)
 
 		var desc_lbl := Label.new()
-		desc_lbl.text = BaseCard.KEYWORD_HINTS[keyword]
+		desc_lbl.text = str(section.get("body", ""))
 		desc_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		desc_lbl.add_theme_font_size_override("font_size", 14)
-		desc_lbl.add_theme_color_override("font_color", Color(0.72, 0.72, 0.72))
+		desc_lbl.add_theme_color_override("font_color", section.get("body_color", Color(0.72, 0.72, 0.72)))
 		desc_lbl.custom_minimum_size = Vector2(_KEYWORD_PANEL_WIDTH - 24.0, 0.0)
 		desc_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		keyword_box.add_child(desc_lbl)
@@ -481,6 +851,70 @@ static func _add_hover_stored_card_section(vbox: VBoxContainer, card: Card, view
 		if stored_card != null:
 			vbox.add_child(_make_stored_card_preview(stored_card, viewer, width))
 
+static func _add_hover_summoned_active_god_section(
+	vbox: VBoxContainer,
+	card: Card,
+	viewer: Player,
+	width: float,
+	game_manager = null
+) -> void:
+	if vbox == null or card == null:
+		return
+	var active_gods := card.get_hover_summoned_active_gods(viewer)
+	if active_gods.is_empty():
+		return
+	vbox.add_child(_make_separator(Color(0.64, 0.48, 0.16)))
+	vbox.add_child(_make_label(
+		card.get_hover_summoned_active_gods_title(viewer),
+		13,
+		Color(1.0, 0.88, 0.48),
+		true
+	))
+	for active_god in active_gods:
+		if active_god != null:
+			vbox.add_child(make_full_card_preview(active_god, viewer, width, game_manager))
+
+static func make_full_card_preview(card: Card, viewer: Player, width: float, game_manager = null) -> Control:
+	var panel := PanelContainer.new()
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.custom_minimum_size = Vector2(width, 0.0)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.05, 0.07, 0.12, 0.92)
+	style.border_color = Color(0.72, 0.54, 0.18, 0.9)
+	style.corner_radius_top_left = 4
+	style.corner_radius_top_right = 4
+	style.corner_radius_bottom_left = 4
+	style.corner_radius_bottom_right = 4
+	style.content_margin_left = 6
+	style.content_margin_right = 6
+	style.content_margin_top = 5
+	style.content_margin_bottom = 5
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side, 1)
+	panel.add_theme_stylebox_override("panel", style)
+
+	var content := VBoxContainer.new()
+	content.add_theme_constant_override("separation", 5)
+	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(content)
+
+	if card.art_path != "":
+		var tex := UITextureCacheScript.get_texture(card.art_path)
+		if tex != null:
+			var art := TextureRect.new()
+			art.texture = tex
+			art.custom_minimum_size = Vector2(maxf(80.0, width - 12.0), 72.0)
+			art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+			art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			content.add_child(art)
+
+	content.add_child(build_board_popup_body(card, viewer, {
+		"game_manager": game_manager,
+		"show_listed_costs": true,
+	}))
+	return panel
+
 static func _make_stored_card_preview(card: Card, _viewer: Player, width: float) -> Control:
 	var panel := PanelContainer.new()
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -501,29 +935,51 @@ static func _make_stored_card_preview(card: Card, _viewer: Player, width: float)
 	panel.add_theme_stylebox_override("panel", style)
 
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 6)
+	row.add_theme_constant_override("separation", 10)
+	row.custom_minimum_size = Vector2(width - 10.0, 104.0)
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.add_child(row)
 
+	var thumbnail := Control.new()
+	thumbnail.custom_minimum_size = Vector2(76, 104)
+	thumbnail.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	thumbnail.clip_contents = true
+	thumbnail.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	row.add_child(thumbnail)
 	if card.art_path != "":
-		var tex := load(card.art_path) as Texture2D
+		var tex := UITextureCacheScript.get_texture(card.art_path)
 		if tex != null:
 			var art := TextureRect.new()
 			art.texture = tex
-			art.custom_minimum_size = Vector2(40, 54)
 			art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 			art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 			art.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			row.add_child(art)
+			art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			thumbnail.add_child(art)
+	if thumbnail.get_child_count() == 0:
+		var initial := Label.new()
+		initial.text = card.card_name.substr(0, 1) if card.card_name.strip_edges() != "" else "?"
+		initial.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		initial.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		initial.add_theme_font_size_override("font_size", 18)
+		initial.add_theme_color_override("font_color", Color(0.86, 0.92, 1.0))
+		initial.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		initial.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		thumbnail.add_child(initial)
 
 	var info := VBoxContainer.new()
-	info.add_theme_constant_override("separation", 2)
+	info.add_theme_constant_override("separation", 5)
+	info.custom_minimum_size = Vector2(maxf(120.0, width - 106.0), 0.0)
 	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	info.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(info)
 
-	info.add_child(_make_label(card.get_display_name_for_control(), 12, Color(1.0, 0.95, 0.76), true))
+	var name_label := _make_label(card.get_display_name_for_control(), 13, Color(1.0, 0.95, 0.76), true)
+	name_label.custom_minimum_size.x = maxf(120.0, width - 106.0)
+	info.add_child(name_label)
 	var meta_parts: Array[String] = []
+	if not card.is_god and card.get_effective_level() > 0:
+		meta_parts.append("Level %d" % card.get_effective_level())
 	if card.card_type == Card.CardType.CREATURE:
 		meta_parts.append("STR %d" % card.get_effective_strength())
 		meta_parts.append("RES %d" % card.get_effective_resilience())
@@ -532,28 +988,21 @@ static func _make_stored_card_preview(card: Card, _viewer: Player, width: float)
 		meta_parts.append("RES %d" % card.get_effective_resilience())
 	elif card.get_effective_speed() > 0:
 		meta_parts.append("SPD %d" % card.get_effective_speed())
-	if not meta_parts.is_empty() or (not card.is_god and card.get_effective_level() > 0):
-		var meta_row := HBoxContainer.new()
-		meta_row.add_theme_constant_override("separation", 5)
-		meta_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		if not card.is_god and card.get_effective_level() > 0:
-			meta_row.add_child(_make_level_symbol_row(card, 10.0))
-		if not meta_parts.is_empty():
-			meta_row.add_child(_make_label("  |  ".join(meta_parts), 11, Color(0.72, 0.84, 0.95), true))
-		info.add_child(meta_row)
-
-	var summary := card.get_inline_ability_summary()
-	if summary == "":
-		var effect_lines := card.get_effect_summary_lines()
-		if not effect_lines.is_empty():
-			summary = " | ".join(effect_lines)
-	if summary != "":
-		info.add_child(_make_label(summary, 11, Color(0.82, 0.86, 0.94), true))
+	if not meta_parts.is_empty():
+		var meta_label := _make_label(
+			"\n".join(meta_parts),
+			11,
+			Color(0.72, 0.84, 0.95),
+			false
+		)
+		meta_label.custom_minimum_size.x = maxf(120.0, width - 106.0)
+		info.add_child(meta_label)
 	return panel
 
 static func _make_vbox(width: float, separation: int) -> VBoxContainer:
 	var vbox := VBoxContainer.new()
 	vbox.custom_minimum_size = Vector2(width, 0.0)
+	vbox.size.x = width
 	vbox.add_theme_constant_override("separation", separation)
 	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return vbox
@@ -593,6 +1042,8 @@ static func _make_label(
 	label.add_theme_font_size_override("font_size", font_size)
 	label.add_theme_color_override("font_color", font_color)
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART if enable_wrap else TextServer.AUTOWRAP_OFF
+	if enable_wrap:
+		label.size.x = _BOARD_POPUP_WIDTH
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return label
 
@@ -600,11 +1051,17 @@ static func _make_rich_text(
 	text: String,
 	font_size: int,
 	font_color: Color,
-	min_width: float = 0.0
+	min_width: float = _BOARD_POPUP_WIDTH
 ) -> RichTextLabel:
 	var rtl := RichTextLabel.new()
 	rtl.bbcode_enabled = true
-	rtl.text = text
+	# Establish a wrap width before fit_content measures the text. Measuring at
+	# zero width can leave the enclosing popup with a huge cached minimum height.
+	rtl.size.x = maxf(min_width, _BOARD_POPUP_WIDTH)
+	# A negative maximum leaves height unlimited so fit_content can show all rules.
+	rtl.custom_maximum_size = Vector2(maxf(min_width, _BOARD_POPUP_WIDTH), -1.0)
+	if min_width > 0.0:
+		rtl.custom_minimum_size = Vector2(min_width, 0.0)
 	rtl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	rtl.scroll_active = false
 	rtl.fit_content = true
@@ -613,8 +1070,7 @@ static func _make_rich_text(
 	rtl.add_theme_color_override("default_color", font_color)
 	# Keyword hints in BBCode need mouse interaction so hover tooltips can appear.
 	rtl.mouse_filter = Control.MOUSE_FILTER_STOP if text.contains("[hint=") else Control.MOUSE_FILTER_IGNORE
-	if min_width > 0.0:
-		rtl.custom_minimum_size = Vector2(min_width, 0.0)
+	rtl.text = text
 	return rtl
 
 static func _make_separator(color: Color) -> HSeparator:

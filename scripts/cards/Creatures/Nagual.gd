@@ -42,6 +42,30 @@ func can_activate(game_manager: GameManager) -> bool:
 		return false
 	return can_take_minor_creature_action() and can_use_shift_ability_this_turn()
 
+func get_activation_failure_reason(game_manager: GameManager) -> String:
+	if game_manager == null:
+		return card_name + " cannot shift right now."
+	var controller := get_controller()
+	if controller == null:
+		return card_name + " has no controller."
+	if not game_manager.action_stack.is_empty() or not game_manager.resolving_stack_actions.is_empty():
+		return "Resolve the pending stack action before shifting " + card_name + "."
+	if controller != game_manager.current_player:
+		return "It is not " + card_name + "'s turn to act."
+	if current_zone == null or not current_zone.is_board_zone():
+		return card_name + " must be on the field to shift."
+	if abilities_suppressed():
+		return card_name + " is suppressed."
+	if is_shapeshift_locked():
+		return card_name + " cannot shift right now."
+	if is_sleeping:
+		return card_name + " is asleep."
+	if not can_take_minor_creature_action():
+		return card_name + " has no minor actions left."
+	if not can_use_shift_ability_this_turn():
+		return card_name + " has already shifted this turn."
+	return ""
+
 func get_tonal_extraction_spirit_profile() -> Dictionary:
 	return {
 		"card_name": card_name + " Spirit",
@@ -57,6 +81,8 @@ func get_tonal_extraction_spirit_profile() -> Dictionary:
 
 func activate(game_manager: GameManager, _target: Card = null) -> void:
 	if not can_activate(game_manager):
+		if game_manager != null:
+			game_manager.note_player_feedback(get_activation_failure_reason(game_manager))
 		return
 	shift_forms()
 	spend_minor_creature_action()
@@ -83,29 +109,30 @@ func apply_serialized_state(state: Dictionary) -> void:
 		in_feline_form = bool(state.get("in_feline_form", false))
 	card_types = _get_feline_form_types() if in_feline_form else _get_human_form_types()
 
-func get_effective_speed() -> int:
-	var total := super.get_effective_speed()
+func get_effective_speed(speed_delta: int = 0) -> int:
+	var total := super.get_effective_speed(speed_delta)
 	if in_feline_form:
 		total += FELINE_SPD_BONUS
 	return clampi(total, 1, 7)
 
-func get_effective_strength() -> int:
-	var total := super.get_effective_strength()
+func get_effective_strength(strength_delta: int = 0) -> int:
+	var total := super.get_effective_strength(strength_delta)
 	if in_feline_form:
 		total += FELINE_STR_BONUS
 	return max(0, total)
 
-func get_effective_resilience() -> int:
-	var total := super.get_effective_resilience()
+func get_effective_resilience(resilience_delta: int = 0) -> int:
+	var total := super.get_effective_resilience(resilience_delta)
 	if not in_feline_form:
 		total += HUMAN_RES_BONUS
 	return max(0, total)
 
 func get_hover_detail_lines(_viewer: Player = null) -> Array[String]:
+	var active_form := _get_feline_form_types() if in_feline_form else _get_human_form_types()
+	var inactive_form := _get_human_form_types() if in_feline_form else _get_feline_form_types()
 	return [
-		"[b]Current Form[/b]: %s" % ("Feline" if in_feline_form else "Human"),
-		"[b]Feline[/b]: Animal, Feline, Mage, Shaman, Shapeshifter; +4 STR and +1 SPD.",
-		"[b]Human[/b]: Human, Mage, Shaman, Shapeshifter; +5 RES.",
+		BaseCard.format_shapeshifter_form_summary(active_form, inactive_form),
+		"[b]Feline[/b]: +4 STR and +1 SPD. [b]Human[/b]: +5 RES.",
 	]
 
 func _get_human_form_types() -> Array[String]:
@@ -114,7 +141,6 @@ func _get_human_form_types() -> Array[String]:
 		"Mage",
 		"Shaman",
 		"Shapeshifter",
-		"Nahuatl Creature",
 	]
 
 func _get_feline_form_types() -> Array[String]:
@@ -124,5 +150,4 @@ func _get_feline_form_types() -> Array[String]:
 		"Mage",
 		"Shaman",
 		"Shapeshifter",
-		"Nahuatl Creature",
 	]

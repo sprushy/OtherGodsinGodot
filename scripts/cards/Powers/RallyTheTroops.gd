@@ -13,7 +13,7 @@ func _init() -> void:
 	level = 0
 	mana_cost = UNLOCK_COST
 	card_types = ["Power", "Aura", "Warrior", "Search"]
-	ability_text = "Aura ([b]Passive[/b]): When you summon a Lvl 5 or higher Warrior from your hand, you may look at the top 3 cards of your deck and add a Warrior from among them to your hand. [b]Shelve[/b] the rest."
+	ability_text = "Aura ([b]Passive[/b]): When you summon a Lvl 5 or higher Warrior from your hand, you may look at the top 3 cards of your deck and [b]Acquire[/b] a Warrior from among them. [b]Shelve[/b] the rest."
 	artist = "Mike Caprotti"
 	art_path = ART_PATH
 
@@ -57,8 +57,7 @@ func on_creature_summoned(
 		return
 
 	if game_manager != null:
-		var auto_choice: Card = valid_targets[0] if not valid_targets.is_empty() else null
-		game_manager.note_player_feedback(resolve_rally_choice(game_manager, auto_choice, card))
+		game_manager.note_player_feedback(resolve_rally_choice(game_manager, null, card))
 
 func get_rally_cards() -> Array[Card]:
 	var cards: Array[Card] = []
@@ -110,10 +109,12 @@ func resolve_rally_choice(game_manager: GameManager, chosen_card: Card = null, s
 		if card == recruited_card:
 			controller.move_card(card, controller.hand_zone)
 			card.card_owner = controller
+			controller.deck_zone.reveal_deck_card(card)
 			continue
 		if card.current_zone == controller.deck_zone:
-			controller.deck_zone.cards.erase(card)
-			controller.deck_zone.cards.append(card)
+			# These cards were just revealed publicly, so the shelve keeps
+			# their identity known to both players.
+			controller.deck_zone.shelve_deck_card(card, true)
 		shelved_cards.append(card)
 
 	var summon_text := ""

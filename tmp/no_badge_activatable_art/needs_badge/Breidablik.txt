@@ -1,0 +1,4 @@
+﻿Peaceful Runes: You may [b]Harbor[/b] a friendly Priest that hasn't attacked this turn.
+End of turn: gain followers equal to 3x the level of the harbored Priests.
+[b]Upkeep[/b]: Pay 1 mana to return a harbored Priest to the field.
+If this card is flipped, return all harbored Priests to the field.

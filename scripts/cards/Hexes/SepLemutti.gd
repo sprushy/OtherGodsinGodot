@@ -14,7 +14,7 @@ func _init() -> void:
 	card_types = ["Hex"]
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
-	ability_text = "Activate when a Spirit, Monster, Undead, or Demon is summoned; return it to the deck."
+	ability_text = "When a Spirit, Monster, Undead, or Demon is summoned, [b]Shelve[/b] it."
 	flavor_text = ""
 	artist = "Lorinda Tomko"
 	art_path = ART_PATH
@@ -33,6 +33,9 @@ func get_priority_targets(game_manager: GameManager, action: CardAction) -> Arra
 		return []
 	return [summoned_card]
 
+func requires_priority_target_selection() -> bool:
+	return false
+
 func on_activate_action(game_manager: GameManager, action: CardAction) -> void:
 	var target := action.target as Card
 	if not is_valid_target(game_manager, target):
@@ -49,7 +52,7 @@ func on_activate_action(game_manager: GameManager, action: CardAction) -> void:
 		return
 
 	game_manager.send_to_deck_bottom_with_hook(target)
-	game_manager.note_player_feedback("%s returned %s to its owner's deck." % [card_name, target_name])
+	game_manager.note_player_feedback("%s shelved %s." % [card_name, target_name])
 	if card_owner != null:
 		card_owner.move_card(self, card_owner.graveyard_zone)
 

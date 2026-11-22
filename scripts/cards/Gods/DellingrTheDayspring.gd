@@ -14,7 +14,7 @@ func _init() -> void:
 	culture = "Norse"
 	targets = true
 	flavor_text = ""
-	ability_text = "Revealing Light (%d mana, [b]Activate[/b]): Reveal an opponent's card until the end of the turn; if it is magical, it cannot be activated this turn." % ACTIVATION_COST
+	ability_text = "Revealing Light (%d mana, [b]Activate[/b]): Reveal an opponent's card until end of turn; if it is magical, it cannot be activated this turn." % ACTIVATION_COST
 	artist = "Ricardo Zoppello"
 	art_path = "res://images/card_art/gods/Dellingr(web).jpg"
 

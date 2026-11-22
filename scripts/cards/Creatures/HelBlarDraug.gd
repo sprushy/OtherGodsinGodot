@@ -9,7 +9,7 @@ const ART_PATH := "res://images/card_art/creatures/Hel-BlarDraugEdit.png"
 func _init() -> void:
 	super._init()
 	card_name = "Hel-blar Draug"
-	card_types = ["Undead", "Draug", "Mage", "Battlemage", "Norse Creature"]
+	card_types = ["Undead", "Draug", "Mage", "Battlemage"]
 	level = 2
 	mana_cost = 0
 	sacrifice_cost = 0
@@ -33,6 +33,8 @@ func on_impact(game_manager: GameManager) -> void:
 			for card in zone.cards:
 				var creature := card as Card
 				if creature == null or creature.card_type != Card.CardType.CREATURE:
+					continue
+				if game_manager.is_immune_to_source(creature, self):
 					continue
 				var was_aerial := creature.has_type(AERIAL_TYPE)
 				_apply_groundbound(creature)

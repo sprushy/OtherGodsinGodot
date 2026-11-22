@@ -11,6 +11,8 @@ var host_session_id: String = ""
 var assigned_match_id: String = ""
 var status: String = STATUS_WAITING
 var is_ranked: bool = true
+var is_bot_self_play: bool = false
+var best_of: int = 1
 var members: Array[String] = []
 var ready_by_session_id: Dictionary = {}
 var deck_submission_by_session_id: Dictionary = {}
@@ -87,7 +89,9 @@ func submit_deck(
 	deck_id: String,
 	deck_cards: Dictionary,
 	validation: Dictionary,
-	special_setup: Dictionary = {}
+	special_setup: Dictionary = {},
+	reinforcements: Dictionary = {},
+	is_purpose_deck: bool = false
 ) -> bool:
 	if not contains_session(session_id):
 		return false
@@ -95,9 +99,11 @@ func submit_deck(
 		"deck_name": deck_name.strip_edges(),
 		"deck_id": deck_id.strip_edges(),
 		"cards": deck_cards.duplicate(true),
+		"reinforcements": reinforcements.duplicate(true),
 		"special_setup": special_setup.duplicate(true),
-		"deck_hash": compute_deck_hash(deck_name, deck_cards, special_setup),
+		"deck_hash": compute_deck_hash(deck_name, deck_cards, special_setup, reinforcements),
 		"validation": validation.duplicate(true),
+		"is_purpose_deck": is_purpose_deck,
 	}
 	refresh_status()
 	return true
@@ -149,6 +155,7 @@ func to_snapshot(sessions_by_id: Dictionary) -> Dictionary:
 		member_snapshots.append({
 			"session_id": session_id,
 			"player_name": str(session.get("player_name", "Guest")),
+			"is_bot": bool(session.get("is_bot", false)),
 			"is_host": session_id == host_session_id,
 			"is_ready": bool(ready_by_session_id.get(session_id, false)),
 			"is_connected": bool(session.get("connected", false)),
@@ -165,6 +172,7 @@ func to_snapshot(sessions_by_id: Dictionary) -> Dictionary:
 		"assigned_match_id": assigned_match_id,
 		"status": status,
 		"is_ranked": is_ranked,
+		"best_of": best_of,
 		"member_count": members.size(),
 		"max_players": MAX_PLAYERS,
 		"members": member_snapshots,
@@ -174,16 +182,40 @@ func to_room_list_entry(sessions_by_id: Dictionary) -> Dictionary:
 	var host_name := "Host"
 	if sessions_by_id.has(host_session_id):
 		host_name = str(sessions_by_id[host_session_id].get("player_name", "Host"))
-	return {
+	var host_is_bot := false
+	if sessions_by_id.has(host_session_id):
+		host_is_bot = bool(sessions_by_id[host_session_id].get("is_bot", false))
+	var is_bot_challenge := host_is_bot and status != STATUS_IN_MATCH
+	var entry := {
 		"room_id": room_id,
-		"host_name": host_name,
+		"host_name": "Challenge" if is_bot_challenge else host_name,
+		"host_is_bot": host_is_bot,
 		"is_ranked": is_ranked,
+		"best_of": best_of,
 		"member_count": members.size(),
 		"max_players": MAX_PLAYERS,
 		"status": status,
 	}
+	if host_is_bot and not is_bot_challenge:
+		entry["bot_stars"] = int(get_deck_submission(host_session_id).get("bot_stars", 0))
+	if is_bot_self_play:
+		entry["is_bot_self_play"] = true
+		var bot_names: Array[String] = []
+		var bot_stars_list: Array = []
+		for session_id in members:
+			bot_names.append(str(sessions_by_id.get(session_id, {}).get("player_name", "Bot")))
+			var submission := get_deck_submission(session_id)
+			bot_stars_list.append(maxi(-1, int(submission.get("bot_stars", 0))) if not submission.is_empty() else -1)
+		entry["bot_names"] = bot_names
+		entry["bot_stars_list"] = bot_stars_list
+	return entry
 
-static func compute_deck_hash(deck_name: String, deck_cards: Dictionary, special_setup: Dictionary = {}) -> String:
+static func compute_deck_hash(
+	deck_name: String,
+	deck_cards: Dictionary,
+	special_setup: Dictionary = {},
+	reinforcements: Dictionary = {}
+) -> String:
 	var card_rows: Array[String] = []
 	for raw_card_name in deck_cards.keys():
 		var card_name := str(raw_card_name).strip_edges()
@@ -191,6 +223,13 @@ static func compute_deck_hash(deck_name: String, deck_cards: Dictionary, special
 			continue
 		card_rows.append("%s=%d" % [card_name, int(deck_cards[raw_card_name])])
 	card_rows.sort()
+	var reinforcement_rows: Array[String] = []
+	for raw_card_name in reinforcements.keys():
+		var reinforcement_name := str(raw_card_name).strip_edges()
+		if reinforcement_name.is_empty():
+			continue
+		reinforcement_rows.append("%s=%d" % [reinforcement_name, int(reinforcements[raw_card_name])])
+	reinforcement_rows.sort()
 	var special_rows: Array[String] = []
 	var tiamat_slots = special_setup.get("tiamat_slots", [])
 	if tiamat_slots is Array:
@@ -206,5 +245,17 @@ static func compute_deck_hash(deck_name: String, deck_cards: Dictionary, special
 			slot_rows.sort()
 			if not slot_rows.is_empty():
 				special_rows.append("slot%d=%s" % [slot_index + 1, ",".join(slot_rows)])
+	var art_variants = special_setup.get("art_variants", {})
+	if art_variants is Dictionary:
+		for raw_card_name in (art_variants as Dictionary).keys():
+			var card_name := str(raw_card_name).strip_edges()
+			var variant_index := int((art_variants as Dictionary)[raw_card_name])
+			if not card_name.is_empty() and variant_index > 0:
+				special_rows.append("art:%s=%d" % [card_name, variant_index])
 	special_rows.sort()
-	return "%s|%s|%s" % [deck_name.strip_edges(), "|".join(card_rows), "|".join(special_rows)]
+	return "%s|%s|%s|%s" % [
+		deck_name.strip_edges(),
+		"|".join(card_rows),
+		"|".join(reinforcement_rows),
+		"|".join(special_rows)
+	]

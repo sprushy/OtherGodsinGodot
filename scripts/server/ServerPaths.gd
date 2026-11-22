@@ -21,6 +21,9 @@ static func get_server_data_file_path(file_name: String) -> String:
 static func get_dedicated_matches_dir() -> String:
 	return get_server_root_dir().path_join("dedicated_matches")
 
+static func get_bot_review_path(match_id: String) -> String:
+	return get_server_data_file_path("bot_self_play").path_join("%s.json" % match_id.sha256_text())
+
 static func _should_use_portable_server_root() -> bool:
 	if OS.has_feature("dedicated_server"):
 		return true

@@ -6,14 +6,14 @@ const ART_PATH := "res://images/card_art/creatures/giant_master_architect_ai_edi
 func _init() -> void:
 	super._init()
 	card_name = "Giant Master Architect"
-	card_types = ["Giant", "Smith", "Norse Creature"]
+	card_types = ["Giant", "Smith"]
 	level = 5
-	mana_cost = 6
+	mana_cost = 7
 	sacrifice_cost = 0
 	speed = 1
 	resilience = 32
 	strength = 27
-	ability_text = "Master Plan ([b]Impact[/b]): Add one structure from your deck to your hand."
+	ability_text = "Master Plan ([b]Impact[/b]): [b]Acquire[/b] a structure."
 	flavor_text = ""
 	culture = "Norse"
 	artist = "Tim Nguyen"
@@ -82,7 +82,7 @@ func resolve_no_structure_targets() -> String:
 func _shuffle_deck(controller: Player) -> void:
 	if controller == null or controller.deck_zone == null:
 		return
-	controller.deck_zone.cards.shuffle()
+	controller.deck_zone.shuffle_deck()
 
 func _is_valid_structure_target(card: Card, controller: Player) -> bool:
 	return card != null \

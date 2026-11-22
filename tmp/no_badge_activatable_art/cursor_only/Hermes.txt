@@ -1,0 +1,1 @@
+﻿Deceptive Speed (2 mana, Spd 7): Once per turn increase a creature's Spd by 3 until the end of the turn.

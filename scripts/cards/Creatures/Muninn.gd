@@ -4,7 +4,7 @@ class_name Muninn
 func _init() -> void:
 	super._init()
 	card_name = "Muninn"
-	card_types = ["Animal", "Avian", "Raven", "Aerial", "Norse Creature"]
+	card_types = ["Animal", "Avian", "Raven", "Aerial"]
 	level = 1
 	mana_cost = 0
 	sacrifice_cost = 0
@@ -17,10 +17,7 @@ func _init() -> void:
 	artist = "Daniel Decena"
 	art_path = "res://images/card_art/creatures/Muninn.jpg"
 
-func on_removed(game_manager: GameManager) -> void:
-	call_deferred("_resolve_perish_prime", game_manager)
-
-func _resolve_perish_prime(game_manager: GameManager) -> void:
+func on_perish(game_manager: GameManager) -> void:
 	if game_manager == null or card_owner == null or card_owner.deck_zone == null:
 		return
 	if current_zone != card_owner.graveyard_zone:
@@ -45,8 +42,7 @@ func resolve_perish_prime_choice(game_manager: GameManager, chosen_charm: Card =
 	if valid_charms.is_empty():
 		return "%s perished, but found no charm to prime." % card_name
 	var resolved_charm := chosen_charm if chosen_charm != null and chosen_charm in valid_charms else valid_charms[0]
-	card_owner.deck_zone.cards.erase(resolved_charm)
-	card_owner.deck_zone.cards.insert(0, resolved_charm)
+	card_owner.deck_zone.prime_card(resolved_charm)
 	return "%s perished and primed %s." % [card_name, resolved_charm.card_name]
 
 func get_valid_charm_targets() -> Array[Card]:

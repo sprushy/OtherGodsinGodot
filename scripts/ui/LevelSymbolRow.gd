@@ -1,7 +1,7 @@
 class_name LevelSymbolRow
 extends Control
 
-const LEVEL_SYMBOL_TEXTURE_PATH := "res://images/ui/LevelSymbol.jpg"
+const NEUTRAL_LEVEL_SYMBOL_TEXTURE_PATH := "res://images/ui/NeutralLevelSymbol.png"
 const ANCIENT_LEVEL_SYMBOL_TEXTURE_PATH := "res://images/ui/AncientLevelSymbol.jpg"
 const NORSE_LEVEL_SYMBOL_TEXTURE_PATH := "res://images/ui/NorseLevelSymbol.png"
 const TIAN_LEVEL_SYMBOL_TEXTURE_PATH := "res://images/ui/TianLevelSymbol.png"
@@ -82,9 +82,7 @@ static func _get_ancient_level_symbol_texture() -> Texture2D:
 
 static func _get_neutral_level_symbol_texture() -> Texture2D:
 	if _neutral_level_symbol_texture == null:
-		_neutral_level_symbol_texture = _load_symbol_texture(LEVEL_SYMBOL_TEXTURE_PATH)
-		if _neutral_level_symbol_texture == null:
-			_neutral_level_symbol_texture = _get_ancient_level_symbol_texture()
+		_neutral_level_symbol_texture = _load_symbol_texture(NEUTRAL_LEVEL_SYMBOL_TEXTURE_PATH)
 	return _neutral_level_symbol_texture
 
 static func _get_norse_level_symbol_texture() -> Texture2D:
@@ -145,8 +143,6 @@ static func get_symbol_texture_for_card(card: Card) -> Texture2D:
 	if str(card.culture).strip_edges() == "Atlanitan" or str(card.culture).strip_edges() == "Atlantian":
 		return _get_atlanitan_level_symbol_texture()
 	if str(card.culture).strip_edges() == "Ancient":
-		return _get_ancient_level_symbol_texture()
-	if card.has_type("Ancient") or card.has_type("Ancient Creature") or card.has_type("Ancient Power") or card.has_type("Ancient Structure"):
 		return _get_ancient_level_symbol_texture()
 	return _get_neutral_level_symbol_texture()
 

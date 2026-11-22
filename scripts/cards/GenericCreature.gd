@@ -11,10 +11,8 @@ func _init(p_data: Dictionary = {}) -> void:
 		return
 
 	card_name = p_data.get("name", "Unnamed")
-	var parsed_types: Array[String] = []
-	for raw_type in p_data.get("types", []):
-		parsed_types.append(str(raw_type))
-	card_types = parsed_types
+	var types: Array = p_data.get("types", [])
+	card_types = CardSubtypes.without_culture_labels(types)
 	level = p_data.get("level", 1)
 	mana_cost = p_data.get("mana_cost", 0)
 	sacrifice_cost = p_data.get("sacrifice_cost", 0)
@@ -22,6 +20,6 @@ func _init(p_data: Dictionary = {}) -> void:
 	resilience = p_data.get("resilience", 1)
 	strength = p_data.get("strength", 1)
 	flavor_text = p_data.get("flavor", "")
-	culture = p_data.get("culture", "Ancient")
+	culture = p_data.get("culture", CardSubtypes.legacy_culture(types, "Ancient"))
 	art_path = p_data.get("art", "")
 	artist = p_data.get("artist", "")

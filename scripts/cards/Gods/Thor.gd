@@ -12,7 +12,7 @@ func _init() -> void:
 	culture = "Norse"
 	# flavor_text = "Thunder echoes across Midgard wherever he walks."
 	flavor_text = ""
-	ability_text = "Patron of Midguard ([b]Passive[/b]): Friendly Human Warriors on the field gain +3 STR and +3 RES.\n[b]Champion's Call[/b] ([b]Activate[/b]): Summon Thor, Active God. You may [b]Shelve[/b] cards from your hand to pay 4 mana each of its summon cost."
+	ability_text = "Patron of Midguard ([b]Passive[/b]): Friendly Human Warriors on the field gain +3 STR and +3 RES.\n[b]Champion's Call[/b] ([b]Activate[/b]): Summon Thor, Active God. You may [b]Shelve[/b] cards from your hand to pay %d mana each of its summon cost. Halve the Follower damage dealt by the Active God summoned this way." % CHAMPIONS_CALL_SHELVE_MANA_VALUE
 	art_path = "res://images/card_art/gods/ThorAIedit.png"
 	name_at_bottom = true
 	artist = "Ricarrdo Zoppello"
@@ -97,27 +97,37 @@ func applies_to(card: Card) -> bool:
 		and card.card_owner == card_owner
 		and card.has_type("Human")
 		and card.has_type("Warrior")
-		and card.current_zone != null
-		and card.current_zone.is_board_zone()
+		and card.counts_as_on_field()
 	)
 
-func apply_passive_to_board() -> void:
+func apply_passive_to_board(game_manager: GameManager = null) -> void:
 	if card_owner == null:
 		return
-	remove_passive_from_board()
+	remove_passive_from_board(game_manager)
 	if is_muted:
+		return
+	var resolved_game_manager := game_manager if game_manager != null else card_owner.game_manager
+	if resolved_game_manager != null:
+		for card in resolved_game_manager.get_field_cards(card_owner):
+			if applies_to(card):
+				card.add_buff(PASSIVE_SOURCE, 3, 3, 0, self, card_owner, "passive")
 		return
 	for zone in card_owner.frontline_zones + card_owner.reserve_zones:
 		for card in zone.cards:
 			if applies_to(card):
 				card.add_buff(PASSIVE_SOURCE, 3, 3, 0, self, card_owner, "passive")
 
-func remove_passive_from_board() -> void:
+func remove_passive_from_board(game_manager: GameManager = null) -> void:
 	if card_owner == null:
 		return
 	for zone in _get_passive_cleanup_zones(card_owner):
 		for card in zone.cards:
 			card.clear_buffs_from(PASSIVE_SOURCE)
+	var resolved_game_manager := game_manager if game_manager != null else card_owner.game_manager
+	if resolved_game_manager == null:
+		return
+	for card in resolved_game_manager.get_field_cards(card_owner):
+		card.clear_buffs_from(PASSIVE_SOURCE)
 
 func _get_passive_cleanup_zones(player: Player) -> Array[Zone]:
 	var zones: Array[Zone] = []
@@ -133,20 +143,20 @@ func _get_passive_cleanup_zones(player: Player) -> Array[Zone]:
 	zones.append_array(player.reserve_zones)
 	return zones
 
-func on_summon(_game_manager: GameManager) -> void:
-	apply_passive_to_board()
+func on_summon(game_manager: GameManager) -> void:
+	apply_passive_to_board(game_manager)
 
-func on_turn_start(_game_manager: GameManager) -> void:
-	apply_passive_to_board()
+func on_turn_start(game_manager: GameManager) -> void:
+	apply_passive_to_board(game_manager)
 
-func on_removed(_game_manager: GameManager) -> void:
-	remove_passive_from_board()
+func on_removed(game_manager: GameManager) -> void:
+	remove_passive_from_board(game_manager)
 
-func on_muted(_game_manager: GameManager) -> void:
-	remove_passive_from_board()
+func on_muted(game_manager: GameManager) -> void:
+	remove_passive_from_board(game_manager)
 
-func on_unmuted(_game_manager: GameManager) -> void:
-	apply_passive_to_board()
+func on_unmuted(game_manager: GameManager) -> void:
+	apply_passive_to_board(game_manager)
 
-func on_any_card_moved(_game_manager: GameManager, _moved_card: Card, _from_zone: Zone, _to_zone: Zone) -> void:
-	apply_passive_to_board()
+func on_any_card_moved(game_manager: GameManager, _moved_card: Card, _from_zone: Zone, _to_zone: Zone) -> void:
+	apply_passive_to_board(game_manager)

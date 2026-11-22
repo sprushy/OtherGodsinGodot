@@ -6,7 +6,7 @@ const ART_PATH := "res://images/card_art/creatures/ankou_servant_to_the_reaper.p
 func _init() -> void:
 	super._init()
 	card_name = "Ankou, Servant to the Reaper"
-	card_types = ["Monster", "Ghoul", "Triskelion", "Creature"]
+	card_types = ["Monster", "Ghoul", "Creature"]
 	level = 4
 	mana_cost = 0
 	sacrifice_cost = 1

@@ -6,20 +6,27 @@ class_name DeckBuilderUI
 const LocalProfileStoreScript = preload("res://scripts/core/LocalProfileStore.gd")
 const DeckCatalogUtilsScript = preload("res://scripts/core/DeckCatalogUtils.gd")
 const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
+const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
+const CardArtVariantsScript = preload("res://scripts/core/CardArtVariants.gd")
 const LevelSymbolRowScript = preload("res://scripts/ui/LevelSymbolRow.gd")
+const ReinforcementCardTileScript = preload("res://scripts/ui/ReinforcementCardTile.gd")
+const ReinforcementDropAreaScript = preload("res://scripts/ui/ReinforcementDropArea.gd")
+const UIHoverSfxScript = preload("res://scripts/core/UIHoverSfx.gd")
 const MANA_ORB_TEXTURE := preload("res://images/ui/ManaOrb.png")
 
 signal back_pressed
+signal account_deck_saved_locally(profile_id: String, deck: Dictionary)
 signal account_deck_deleted_locally(deck_id: String)
 signal send_deck_to_friend_requested(friend_username: String, deck: Dictionary)
 
 # ── constants ──────────────────────────────────────────────────────
 const CARD_W    := 140
 const CARD_H    := 192
-const MIN_REGULAR_CARDS := 35
+const MIN_REGULAR_CARDS := 40
 const DEFAULT_COLLECTION_ROWS := 3
 const COLLECTION_GAP  := 8.0
+const SAVED_DECK_COVER_MARGIN := 12
 const PAGE_REPEAT_INTERVAL_MS := 90
 const COLLECTION_MODE_CARDS := "cards"
 const COLLECTION_MODE_SAVED_DECKS := "saved_decks"
@@ -40,6 +47,7 @@ const COLLECTION_ADD_FOOTER_HEIGHT := 30.0
 const COLLECTION_DRAG_THRESHOLD := 8.0
 const COLLECTION_GRID_TOP_INSET := 16.0
 const COLLECTION_SELECTED_CARD_Z_INDEX := 100
+const DRAG_GHOST_Z_INDEX := 4096
 const CARD_VIEW_PRESETS := [
 	{"label": "Tiny", "rows": 5},
 	{"label": "Small", "rows": 4},
@@ -51,6 +59,8 @@ const CARD_VIEW_PRESETS := [
 # ── state ──────────────────────────────────────────────────────────
 var _all_cards: Array  = []        # template Card instances (read-only)
 var _deck: Dictionary  = {}        # card_name (String) -> count (int)
+var _reinforcements: Dictionary = {}
+var _editing_reinforcements: bool = false
 var _filter: String         = "All"
 var _faction_filter: String = "All"
 var _level_filter: String = LEVEL_FILTER_ANY
@@ -65,9 +75,11 @@ var _collection_rows: int   = DEFAULT_COLLECTION_ROWS
 var _visible_collection_rows: int = DEFAULT_COLLECTION_ROWS
 var _page_visible_collection_rows: int = DEFAULT_COLLECTION_ROWS
 var _last_page_turn_ms: int = -PAGE_REPEAT_INTERVAL_MS
-var _art_cache: Dictionary = {}
+static var _art_cache: Dictionary = {}
 var _collection_mode: String = COLLECTION_MODE_CARDS
 var _saved_decks_cache: Array[Dictionary] = []
+var _grid_refresh_queued: bool = false
+var _collection_layout_refresh_queued: bool = false
 
 # ── major UI refs ──────────────────────────────────────────────────
 var _grid:             HFlowContainer
@@ -80,6 +92,8 @@ var _page_label:       Label
 var _prev_page_btn:    Button
 var _next_page_btn:    Button
 var _card_view_controls_bar: HBoxContainer
+var _card_view_label:       Label
+var _card_overlays_toggle:  CheckBox
 var _deck_panel:       VBoxContainer
 var _preview_outer:    PanelContainer
 var _preview_layout:   HBoxContainer
@@ -87,9 +101,14 @@ var _preview_text_box: VBoxContainer
 var _preview_details_scroll: ScrollContainer
 var _deck_list:        VBoxContainer
 var _deck_count_lbl:   Label
+var _deck_status_box:  VBoxContainer
 var _validation_lbl:   Label
+var _status_flash_lbl: Label
+var _status_flash_timer: Timer
 var _profile_lbl:      Label
 var _deck_name_edit:   LineEdit
+var _reinforcements_mode_btn: Button
+var _visual_deck_view_btn: Button
 var _saved_decks_option: OptionButton
 var _saved_decks_view_btn: Button
 var _saved_actions_bar: HBoxContainer
@@ -97,11 +116,18 @@ var _deck_scroll_nav_bar: HBoxContainer
 var _deck_scroll_up_btn: Button
 var _deck_scroll_down_btn: Button
 var _deck_footer_buttons: HFlowContainer
+var _autofill_deck_btn: Button
 var _delete_confirm_dialog: ConfirmationDialog
+var _exit_confirm_dialog: ConfirmationDialog
 var _import_deck_dialog: ConfirmationDialog
 var _import_deck_text_edit: TextEdit
 var _send_friend_dialog: ConfirmationDialog
 var _send_friend_option: OptionButton
+var _submit_bot_button: Button
+var _bot_submission_overlay: Control
+var _bot_submission_status: Label
+var _bot_submission_button: Button
+var _bot_strategy_report_button: Button
 var _search_edit:      LineEdit
 var _tiamat_panel:     PanelContainer
 var _tiamat_hint_lbl:  Label
@@ -122,16 +148,19 @@ var _local_profile_store = null
 var _active_profile_id: String = ""
 var _active_player_name: String = "Player"
 var _selected_saved_deck_id: String = ""
-var _pending_remote_saved_deck_id: String = ""
 var _online_lobby_client = null
 var _remote_account_decks_cache: Array[Dictionary] = []
 var _use_remote_account_decks: bool = false
 var _remote_preferred_deck_id: String = ""
+var _profile_configured: bool = false
+var _account_decks_configured: bool = false
+var _remote_account_decks_key: String = ""
 var _friend_usernames := PackedStringArray()
 var _pending_delete_deck_id: String = ""
 var _tiamat_slots: Array = [[], [], []]
+var _art_variant_selections: Dictionary = {}
+var _preview_card_name: String = ""
 var _tiamat_assignment_slot_index: int = -1
-var _deck_id_rng := RandomNumberGenerator.new()
 var _deck_undo_history: Array[Dictionary] = []
 var _collection_card_roots: Dictionary = {}
 var _selected_collection_card_name: String = ""
@@ -141,7 +170,30 @@ var _collection_drag_active: bool = false
 var _collection_drag_was_selected: bool = false
 var _collection_drag_offset: Vector2 = Vector2.ZERO
 var _collection_drag_ghost: Control = null
+var _deck_row_drag_card: Card = null
+var _deck_row_drag_from_reinforcements: bool = false
+var _deck_row_drag_start_pos: Vector2 = Vector2.ZERO
+var _deck_row_drag_active: bool = false
+var _deck_row_drag_offset: Vector2 = Vector2.ZERO
+var _deck_row_drag_ghost: Control = null
+var _main_deck_section_header: Label = null
+var _reinforcement_section_header: Label = null
+var _visual_deck_view_enabled: bool = false
+var _deck_visual_board: HBoxContainer = null
+var _deck_visual_main_grid: GridContainer = null
+var _deck_visual_side_list: VBoxContainer = null
+var _deck_visual_main_scroll: ScrollContainer = null
+var _deck_visual_side_scroll: ScrollContainer = null
+var _deck_visual_main_drop_area = null
+var _deck_visual_side_drop_area = null
+var _visual_deck_drag_card: Card = null
+var _visual_deck_drag_source_zone: String = ""
+var _visual_deck_drag_start_pos: Vector2 = Vector2.ZERO
+var _visual_deck_drag_active: bool = false
+var _visual_deck_drag_offset: Vector2 = Vector2.ZERO
+var _visual_deck_drag_ghost: Control = null
 var _show_collection_card_overlays: bool = false
+var _saved_deck_state: Dictionary = {}
 
 func _escape_preview_bbcode_text(text: String) -> String:
 	return text.replace("[", "[lb]").replace("]", "[rb]")
@@ -157,10 +209,23 @@ func _apply_deckbuilder_scrollbar_style(scroll: ScrollContainer, force_visible: 
 		_update_deck_scroll_nav_buttons()
 	)
 
+func _apply_hover_to_all_buttons(node: Control) -> void:
+	if node is Button:
+		var normal = node.get_theme_stylebox("normal")
+		if normal and normal is StyleBoxFlat:
+			var hover = normal.duplicate()
+			# Darken by 20%
+			hover.bg_color = normal.bg_color * Color(0.8, 0.8, 0.8, 1)
+			node.add_theme_stylebox_override("hover", hover)
+	# Recursively apply to children
+	for child in node.get_children():
+		if child is Control:
+			_apply_hover_to_all_buttons(child)
+
 # ── init ───────────────────────────────────────────────────────────
 func _ready() -> void:
+	add_to_group(UIHoverSfxScript.SUPPRESS_ALL_GROUP)
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_deck_id_rng.randomize()
 	resized.connect(_queue_responsive_layout_refresh)
 	_all_cards = _make_all_cards()
 	_rebuild_filtered_cards_cache()
@@ -169,27 +234,64 @@ func _ready() -> void:
 	_ensure_local_profile_store()
 	_load_profile_decks()
 	_apply_default_collection_mode()
-	_refresh_grid()
 	_queue_collection_layout_refresh()
+	# The rebuild_collection pass below builds the grid once, after decks are
+	# loaded (the god-filter exclusion depends on the selected god).
 	_refresh_deck_panel(true, false)
+	_mark_current_deck_saved()
 
-func configure_profile_store(profile_store, profile_id: String, player_name: String = "") -> void:
+func configure_profile_store(profile_store, profile_id: String, player_name: String = "") -> bool:
+	# Account-deck responses repeatedly configure the open builder. Reload only
+	# when the profile changes, and report whether an update was applied.
+	var clean_id := profile_id.strip_edges()
+	var clean_name := player_name.strip_edges()
+	if clean_name.is_empty():
+		clean_name = "Player"
+	if _profile_configured and _local_profile_store == profile_store \
+			and _active_profile_id == clean_id:
+		if _active_player_name == clean_name:
+			return false
+		# Display-name only change: refresh labels, keep decks loaded.
+		_active_player_name = clean_name
+		if is_inside_tree():
+			_refresh_profile_labels()
+		return false
+	_profile_configured = true
 	_local_profile_store = profile_store
-	_active_profile_id = profile_id.strip_edges()
-	_active_player_name = player_name.strip_edges()
-	if _active_player_name.is_empty():
-		_active_player_name = "Player"
+	_active_profile_id = clean_id
+	_active_player_name = clean_name
 	if is_inside_tree():
 		_ensure_local_profile_store()
 		_load_profile_decks()
 		_apply_default_collection_mode()
 		_refresh_collection_grid_and_layout()
 		_refresh_profile_labels()
+	return true
 
 func configure_online_sync(lobby_client) -> void:
 	_online_lobby_client = lobby_client
+	if _online_lobby_client != null and _online_lobby_client.has_signal("bot_proposal_result") \
+			and not _online_lobby_client.bot_proposal_result.is_connected(_on_bot_proposal_result):
+		_online_lobby_client.bot_proposal_result.connect(_on_bot_proposal_result)
+	if _online_lobby_client != null and _online_lobby_client.has_signal("bot_deck_submission_result") \
+			and not _online_lobby_client.bot_deck_submission_result.is_connected(_on_bot_deck_submission_result):
+		_online_lobby_client.bot_deck_submission_result.connect(_on_bot_deck_submission_result)
 
-func configure_account_decks(decks: Array, use_remote: bool = false, preferred_deck_id: String = "") -> void:
+func configure_account_decks(decks: Array, use_remote: bool = false, preferred_deck_id: String = "") -> bool:
+	# Change-detection gate: identical account_deck_list responses (the common
+	# case while connected) must not reload decks and rebuild the grid.
+	var remote_key := JSON.stringify(decks)
+	if remote_key.is_empty() and not decks.is_empty():
+		# Stringify failed; treat the payload as always-changed rather than
+		# wrongly skipping a real update.
+		remote_key = "unserializable-%d" % Time.get_ticks_usec()
+	var clean_preferred := preferred_deck_id.strip_edges()
+	if _account_decks_configured and _remote_account_decks_key == remote_key \
+			and _use_remote_account_decks == use_remote and _remote_preferred_deck_id == clean_preferred:
+		return false
+	var reset_collection_mode := not _account_decks_configured or _use_remote_account_decks != use_remote
+	_account_decks_configured = true
+	_remote_account_decks_key = remote_key
 	_remote_account_decks_cache.clear()
 	var visible_decks: Array[Dictionary] = []
 	for entry in decks:
@@ -198,19 +300,18 @@ func configure_account_decks(decks: Array, use_remote: bool = false, preferred_d
 	visible_decks = DeckCatalogUtilsScript.dedupe_exact_copies(
 		visible_decks,
 		preferred_deck_id,
-		_pending_remote_saved_deck_id if not _pending_remote_saved_deck_id.is_empty() else _selected_saved_deck_id
+		_selected_saved_deck_id
 	)
 	for entry in visible_decks:
 		_remote_account_decks_cache.append(entry.duplicate(true))
 	_use_remote_account_decks = use_remote
-	if not _use_remote_account_decks:
-		_pending_remote_saved_deck_id = ""
-	_remote_preferred_deck_id = preferred_deck_id.strip_edges()
+	_remote_preferred_deck_id = clean_preferred
 	if is_inside_tree():
 		_load_profile_decks()
-		_apply_default_collection_mode()
-		_refresh_collection_grid_and_layout()
-		_refresh_profile_labels()
+		if reset_collection_mode:
+			_apply_default_collection_mode()
+			_refresh_collection_grid_and_layout()
+	return true
 
 func configure_friends(friend_usernames: PackedStringArray) -> void:
 	_friend_usernames = PackedStringArray()
@@ -218,7 +319,9 @@ func configure_friends(friend_usernames: PackedStringArray) -> void:
 		_friend_usernames.append(str(username))
 
 func _make_all_cards() -> Array:
-	return CardCatalogScript.make_all_cards()
+	# Shared read-only templates: skips the 225x duplicate(true) that
+	# make_all_cards() pays for fresh per-match UIDs the builder never uses.
+	return CardCatalogScript.get_cached_card_templates()
 
 # ── UI construction ────────────────────────────────────────────────
 func _build_ui() -> void:
@@ -258,8 +361,10 @@ func _build_ui() -> void:
 	_build_collection_panel(body)
 	_build_deck_panel(body)
 	_build_delete_confirm_dialog()
+	_build_exit_confirm_dialog()
 	_build_import_deck_dialog()
 	_build_send_friend_dialog()
+	_apply_hover_to_all_buttons(self)
 
 func _build_top_bar(parent: Control) -> void:
 	var bar := PanelContainer.new()
@@ -312,10 +417,17 @@ func _build_top_bar(parent: Control) -> void:
 	gap.custom_minimum_size.x = 16
 	inner.add_child(gap)
 
+	_submit_bot_button = Button.new()
+	_submit_bot_button.text = "Submit a Bot"
+	_submit_bot_button.tooltip_text = "Send this deck and a strategy for a future bot."
+	_submit_bot_button.custom_minimum_size.y = 32
+	_submit_bot_button.pressed.connect(_open_bot_submission)
+	inner.add_child(_submit_bot_button)
+
 	var back_btn := Button.new()
 	back_btn.text = "← Menu"
 	back_btn.custom_minimum_size = Vector2(90, 32)
-	back_btn.pressed.connect(func() -> void: back_pressed.emit())
+	back_btn.pressed.connect(request_exit)
 	inner.add_child(back_btn)
 
 	var pad_r := Control.new()
@@ -371,6 +483,7 @@ func _add_card_view_controls(parent: Control) -> void:
 		parent.add_child(btn)
 
 	var overlay_toggle := CheckBox.new()
+	_card_overlays_toggle = overlay_toggle
 	overlay_toggle.text = "Always Show Overlays"
 	overlay_toggle.button_pressed = _show_collection_card_overlays
 	overlay_toggle.custom_minimum_size = Vector2(164, 28)
@@ -537,6 +650,7 @@ func _build_collection_panel(parent: Control) -> void:
 	page_bar.add_child(card_view_bar)
 
 	var view_lbl := Label.new()
+	_card_view_label = view_lbl
 	view_lbl.text = "Card View:"
 	view_lbl.add_theme_font_size_override("font_size", 11)
 	view_lbl.modulate = Color(0.7, 0.7, 0.7)
@@ -675,6 +789,18 @@ func _build_deck_panel(parent: Control) -> void:
 	_deck_name_edit.custom_minimum_size.y = 28
 	deck_name_row.add_child(_deck_name_edit)
 
+	_reinforcements_mode_btn = Button.new()
+	_reinforcements_mode_btn.text = "Adding: Main"
+	_reinforcements_mode_btn.tooltip_text = "Toggle whether collection cards are added to the main deck or Reinforcements."
+	_reinforcements_mode_btn.pressed.connect(_toggle_reinforcements_edit_mode)
+	deck_name_row.add_child(_reinforcements_mode_btn)
+
+	_visual_deck_view_btn = Button.new()
+	_visual_deck_view_btn.text = "Visual View"
+	_visual_deck_view_btn.tooltip_text = "Toggle a visual Main Deck + Reinforcements deck view."
+	_visual_deck_view_btn.pressed.connect(_toggle_visual_deck_view)
+	deck_name_row.add_child(_visual_deck_view_btn)
+
 	_saved_decks_option = OptionButton.new()
 	_saved_decks_option.visible = false
 	_saved_decks_option.item_selected.connect(_on_saved_deck_selected)
@@ -755,13 +881,26 @@ func _build_deck_panel(parent: Control) -> void:
 
 
 	# ── validation status ────────────────────────────────
+	_deck_status_box = VBoxContainer.new()
+	_deck_status_box.add_theme_constant_override("separation", 0)
+	panel.add_child(_deck_status_box)
+
 	_validation_lbl = Label.new()
-	_validation_lbl.text = ""
+	_validation_lbl.text = " \n "
 	_validation_lbl.add_theme_font_size_override("font_size", 12)
 	_validation_lbl.autowrap_mode = TextServer.AUTOWRAP_OFF
 	_validation_lbl.clip_text = true
 	_validation_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	panel.add_child(_validation_lbl)
+	_status_flash_lbl = _validation_lbl.duplicate() as Label
+	_status_flash_lbl.text = " "
+	_deck_status_box.add_child(_status_flash_lbl)
+	_deck_status_box.add_child(_validation_lbl)
+
+	_status_flash_timer = Timer.new()
+	_status_flash_timer.one_shot = true
+	_status_flash_timer.wait_time = 2.0
+	_status_flash_timer.timeout.connect(_set_status_flash.bind(""))
+	add_child(_status_flash_timer)
 
 	# ── action buttons ───────────────────────────────────
 	var btns := HFlowContainer.new()
@@ -770,6 +909,7 @@ func _build_deck_panel(parent: Control) -> void:
 	panel.add_child(btns)
 
 	var autofill_btn := Button.new()
+	_autofill_deck_btn = autofill_btn
 	autofill_btn.text = "Auto Fill"
 	autofill_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	autofill_btn.pressed.connect(_autofill_deck_to_minimum)
@@ -801,6 +941,41 @@ func _build_delete_confirm_dialog() -> void:
 	dialog.confirmed.connect(_confirm_delete_saved_deck)
 	add_child(dialog)
 	_delete_confirm_dialog = dialog
+
+func _build_exit_confirm_dialog() -> void:
+	if _exit_confirm_dialog != null and is_instance_valid(_exit_confirm_dialog):
+		return
+	var dialog := ConfirmationDialog.new()
+	dialog.title = "Save Deck Before Exiting?"
+	dialog.dialog_text = "This deck has unsaved changes. Save them before returning to the menu?"
+	dialog.initial_position = Window.WINDOW_INITIAL_POSITION_CENTER_PRIMARY_SCREEN
+	dialog.exclusive = true
+	dialog.get_ok_button().text = "Save and Exit"
+	dialog.add_button("Discard", true, "discard")
+	dialog.confirmed.connect(_save_and_exit)
+	dialog.custom_action.connect(func(action: StringName) -> void:
+		if action == &"discard":
+			dialog.hide()
+			back_pressed.emit()
+	)
+	add_child(dialog)
+	_exit_confirm_dialog = dialog
+
+func request_exit() -> void:
+	if _close_bot_submission():
+		return
+	if not _has_unsaved_deck_changes():
+		back_pressed.emit()
+		return
+	_build_exit_confirm_dialog()
+	_exit_confirm_dialog.popup_centered()
+
+func _save_and_exit() -> void:
+	if _deck.is_empty():
+		_set_status_flash("Nothing to save. Discard the empty deck or keep editing.")
+		return
+	if _save_profile_deck():
+		back_pressed.emit()
 
 func _build_import_deck_dialog() -> void:
 	if _import_deck_dialog != null and is_instance_valid(_import_deck_dialog):
@@ -875,9 +1050,22 @@ func _build_send_friend_dialog() -> void:
 
 # ── collection grid ────────────────────────────────────────────────
 func _refresh_grid() -> void:
+	# Account updates and layout changes can request several refreshes in one
+	# frame. Build only the final state once those changes have been applied.
+	if _grid_refresh_queued:
+		return
+	_grid_refresh_queued = true
+	call_deferred("_rebuild_grid")
+
+func _rebuild_grid() -> void:
+	# Settle the tile dimensions before building; any layout-triggered rebuild
+	# request is already covered by this pending refresh.
+	_update_collection_layout()
+	_grid_refresh_queued = false
 	_count_badges.clear()
 	_collection_card_roots.clear()
 	for child in _grid.get_children():
+		_grid.remove_child(child)
 		child.queue_free()
 
 	var total_items := _current_grid_total()
@@ -904,6 +1092,8 @@ func _refresh_grid() -> void:
 		_update_count_badges()
 
 func _matches_filter(card: Card) -> bool:
+	if card.is_single_player_card:
+		return false
 	if card is ActiveGodCard:
 		if _filter != "Active Gods":
 			return false
@@ -988,7 +1178,7 @@ func _get_card_stat_summary_parts(card: Card, include_level: bool = true, includ
 		stat_parts.append("SPD:%d" % card.speed)
 
 	if include_cost and card.has_listed_play_costs():
-		stat_parts.append("Cost: " + BaseCard.apply_mana_cost_symbols(card.get_cost_shorthand(), 14))
+		stat_parts.append("Cost: " + BaseCard.apply_cost_symbols(card.get_cost_shorthand(), 14))
 
 	return stat_parts
 
@@ -1232,8 +1422,9 @@ func _make_card_item(card: Card) -> Control:
 	card_body.add_child(bg)
 
 	# Art
-	if card.art_path != "":
-		var tex := _get_card_art_texture(card.art_path)
+	var selected_art_path := _get_selected_art_path(card)
+	if selected_art_path != "":
+		var tex := _get_card_art_texture(selected_art_path)
 		if tex:
 			var art := TextureRect.new()
 			art.texture      = tex
@@ -1245,14 +1436,18 @@ func _make_card_item(card: Card) -> Control:
 
 	# Name bar (bottom 22%)
 	var name_bg := ColorRect.new()
+	name_bg.name = "NameBar"
 	name_bg.color = Color(0.0, 0.0, 0.0, 0.80)
 	name_bg.anchor_left = 0; name_bg.anchor_right = 1
 	name_bg.anchor_top  = 1; name_bg.anchor_bottom = 1
 	name_bg.offset_top  = -42; name_bg.offset_bottom = 0
 	name_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	name_bg.visible = not card.is_god
+	name_bg.set_meta("hover_only", card.is_god)
 
 	var name_lbl := Label.new()
-	name_lbl.add_theme_font_size_override("font_size", 13)
+	name_lbl.name = "NameLabel"
+	name_lbl.add_theme_font_size_override("font_size", 15 if card.is_god else 13)
 	name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	name_lbl.vertical_alignment   = VERTICAL_ALIGNMENT_CENTER
 	name_lbl.autowrap_mode        = TextServer.AUTOWRAP_WORD_SMART
@@ -1261,6 +1456,8 @@ func _make_card_item(card: Card) -> Control:
 	name_lbl.offset_top   = -42; name_lbl.offset_bottom = 0
 	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	name_lbl.text = card.get_display_name_for_control(name_lbl)
+	name_lbl.visible = not card.is_god
+	name_lbl.set_meta("hover_only", card.is_god)
 	card_body.add_child(name_bg)
 	card_body.add_child(name_lbl)
 
@@ -1288,18 +1485,21 @@ func _make_card_item(card: Card) -> Control:
 		card_body.add_child(hover_stats_strip)
 
 	# Count badge (bottom-right, overlaid on name bar)
-	var count_lbl := Label.new()
-	count_lbl.text = ""
-	count_lbl.add_theme_font_size_override("font_size", 14)
-	count_lbl.add_theme_color_override("font_color", Color(1.0, 0.9, 0.3))
-	count_lbl.anchor_right  = 1; count_lbl.anchor_left  = 1
-	count_lbl.anchor_bottom = 1; count_lbl.anchor_top   = 1
-	count_lbl.offset_left   = -24; count_lbl.offset_right  = -4
-	count_lbl.offset_top    = -38; count_lbl.offset_bottom = -2
-	count_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	count_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	card_body.add_child(count_lbl)
-	_count_badges[card.card_name] = count_lbl
+	if not card.is_god:
+		var count_lbl := Label.new()
+		count_lbl.text = ""
+		count_lbl.add_theme_font_size_override("font_size", 14)
+		count_lbl.add_theme_color_override("font_color", Color(1.0, 0.9, 0.3))
+		count_lbl.anchor_right  = 1; count_lbl.anchor_left  = 1
+		count_lbl.anchor_bottom = 1; count_lbl.anchor_top   = 1
+		count_lbl.offset_left   = -72; count_lbl.offset_right  = -4
+		count_lbl.offset_top    = -36; count_lbl.offset_bottom = -4
+		count_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		count_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		count_lbl.clip_text = true
+		count_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		card_body.add_child(count_lbl)
+		_count_badges[card.card_name] = count_lbl
 
 	# Dim overlay (filled when at max copies)
 	var dim := ColorRect.new()
@@ -1342,6 +1542,32 @@ func _make_card_item(card: Card) -> Control:
 	glow_style.corner_radius_bottom_right = 5
 	selection_glow.add_theme_stylebox_override("panel", glow_style)
 	card_body.add_child(selection_glow)
+
+	var art_variants := card.get_art_variant_paths()
+	if art_variants.size() > 1:
+		var art_variant_index := clampi(
+			int(_art_variant_selections.get(card.card_name, 0)),
+			0,
+			art_variants.size() - 1
+		)
+		var art_btn := Button.new()
+		art_btn.name = "ArtVariantButton"
+		art_btn.text = "🖌"
+		art_btn.tooltip_text = "Switch art (%d/%d)" % [art_variant_index + 1, art_variants.size()]
+		art_btn.anchor_left = 1
+		art_btn.anchor_right = 1
+		art_btn.anchor_top = 1
+		art_btn.anchor_bottom = 1
+		art_btn.offset_left = -34
+		art_btn.offset_right = -6
+		art_btn.offset_top = -COLLECTION_ADD_FOOTER_HEIGHT - 34
+		art_btn.offset_bottom = -COLLECTION_ADD_FOOTER_HEIGHT - 6
+		art_btn.custom_minimum_size = Vector2(28, 28)
+		art_btn.add_theme_font_size_override("font_size", 15)
+		art_btn.pressed.connect(func() -> void:
+			_cycle_card_art(card)
+		)
+		root.add_child(art_btn)
 
 	var unavailable_mark := Label.new()
 	unavailable_mark.name = "UnavailableMark"
@@ -1446,7 +1672,10 @@ func _make_card_item(card: Card) -> Control:
 	minus_btn.offset_bottom = -4
 	minus_btn.custom_minimum_size = Vector2(36, 24)
 	minus_btn.pressed.connect(func() -> void:
-		_remove_from_deck(card.card_name)
+		if _editing_reinforcements:
+			_remove_from_reinforcements(card.card_name)
+		else:
+			_remove_from_deck(card.card_name)
 		_update_collection_selection_visuals()
 	)
 	root.add_child(minus_btn)
@@ -1511,7 +1740,10 @@ func _make_card_item(card: Card) -> Control:
 				_handle_collection_card_primary_press(card, ev.global_position)
 				get_viewport().set_input_as_handled()
 			elif ev.button_index == MOUSE_BUTTON_RIGHT:
-				_remove_from_deck(card.card_name)
+				if _editing_reinforcements:
+					_remove_from_reinforcements(card.card_name)
+				else:
+					_remove_from_deck(card.card_name)
 				get_viewport().set_input_as_handled()
 	)
 	root.mouse_entered.connect(func() -> void:
@@ -1533,6 +1765,8 @@ func _make_collection_cost_badge(card: Card) -> PanelContainer:
 		badge_width += 25
 	for part in cost_parts:
 		badge_width += 6 + part.length() * 6
+		if part.ends_with("S"):
+			badge_width += 9
 	badge_width = maxi(22, badge_width)
 
 	var badge := PanelContainer.new()
@@ -1559,9 +1793,13 @@ func _make_collection_cost_badge(card: Card) -> PanelContainer:
 
 	if card.mana_cost > 0:
 		row.add_child(_make_collection_cost_label(str(card.mana_cost)))
-		row.add_child(_make_collection_mana_icon(14.0))
+		row.add_child(_make_collection_cost_icon(MANA_ORB_TEXTURE, 14.0))
 	for part in cost_parts:
-		row.add_child(_make_collection_cost_label(part))
+		if part.ends_with("S"):
+			row.add_child(_make_collection_cost_label(part.trim_suffix("S")))
+			row.add_child(_make_collection_cost_icon(BaseCard.SACRIFICE_COST_ICON_TEXTURE, 14.0))
+		else:
+			row.add_child(_make_collection_cost_label(part))
 	return badge
 
 func _make_collection_cost_label(text: String) -> Label:
@@ -1574,9 +1812,9 @@ func _make_collection_cost_label(text: String) -> Label:
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return label
 
-func _make_collection_mana_icon(icon_size: float) -> TextureRect:
+func _make_collection_cost_icon(texture: Texture2D, icon_size: float) -> TextureRect:
 	var icon := TextureRect.new()
-	icon.texture = MANA_ORB_TEXTURE
+	icon.texture = texture
 	icon.custom_minimum_size = Vector2(icon_size, icon_size)
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
@@ -1644,7 +1882,11 @@ func _finish_collection_card_drag(mouse_global_position: Vector2) -> void:
 		return
 	if was_dragging:
 		if _is_point_in_decklist(mouse_global_position):
-			_handle_collection_card_add(card)
+			var drop_zone := _get_decklist_drop_zone(mouse_global_position)
+			if drop_zone == "reinforcements":
+				_add_to_reinforcements(card)
+			else:
+				_add_to_deck(card)
 			_update_collection_selection_visuals()
 		return
 	if was_selected:
@@ -1663,7 +1905,7 @@ func _ensure_collection_card_drag_ghost(mouse_global_position: Vector2) -> void:
 	var ghost := Control.new()
 	ghost.name = "CollectionCardDragGhost"
 	ghost.top_level = true
-	ghost.z_index = 10000
+	ghost.z_index = DRAG_GHOST_Z_INDEX
 	ghost.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	ghost.custom_minimum_size = _card_size
 	ghost.size = _card_size
@@ -1731,6 +1973,14 @@ func _is_point_in_decklist(mouse_global_position: Vector2) -> bool:
 		return true
 	return false
 
+func _get_decklist_drop_zone(mouse_global_position: Vector2) -> String:
+	if not _is_point_in_decklist(mouse_global_position):
+		return ""
+	if is_instance_valid(_reinforcement_section_header) \
+			and mouse_global_position.y >= _reinforcement_section_header.global_position.y:
+		return "reinforcements"
+	return "main"
+
 func _update_collection_selection_visuals() -> void:
 	for card_name: String in _collection_card_roots:
 		var root := _collection_card_roots[card_name] as Control
@@ -1746,8 +1996,10 @@ func _update_collection_card_selection_visual(root: Control, card: Card) -> void
 	var selected := _selected_collection_card_name == card.card_name
 	var has_selection := not _selected_collection_card_name.is_empty()
 	var is_clickable := _get_card_unavailable_reason(card).is_empty()
-	var deck_count := int(_deck.get(card.card_name, 0))
-	var at_max := deck_count >= _max_copies(card)
+	var active_bucket := _reinforcements if _editing_reinforcements else _deck
+	var deck_count := int(active_bucket.get(card.card_name, 0))
+	var combined_count := int(_deck.get(card.card_name, 0)) + int(_reinforcements.get(card.card_name, 0))
+	var at_max := combined_count >= _max_copies(card)
 	var can_remove := selected and deck_count > 0
 	root.z_index = COLLECTION_SELECTED_CARD_Z_INDEX if selected else 0
 	var card_body := root.get_node_or_null("CardBody")
@@ -1802,6 +2054,14 @@ func _set_collection_card_overlay_state(root: Control, hovered: bool) -> void:
 	var hover_stats_strip := root.find_child("HoverStatsStrip", true, false)
 	if hover_stats_strip is Control:
 		(hover_stats_strip as Control).visible = overlays_visible
+	var name_bar := root.find_child("NameBar", true, false)
+	if name_bar is Control:
+		var hover_only := bool((name_bar as Control).get_meta("hover_only", false))
+		(name_bar as Control).visible = hovered if hover_only else true
+	var name_label := root.find_child("NameLabel", true, false)
+	if name_label is Control:
+		var hover_only := bool((name_label as Control).get_meta("hover_only", false))
+		(name_label as Control).visible = hovered if hover_only else true
 
 func _set_show_collection_card_overlays(enabled: bool) -> void:
 	if _show_collection_card_overlays == enabled:
@@ -1814,16 +2074,42 @@ func _set_show_collection_card_overlays(enabled: bool) -> void:
 			_set_collection_card_overlay_state(control_root, hovered)
 
 func _refresh_deck_panel(rebuild_collection: bool = false, refresh_layout: bool = false) -> void:
-	for child in _deck_list.get_children():
-		child.queue_free()
+	_submit_bot_button.disabled = _deck.is_empty()
+	var reuse_visual_board := _visual_deck_view_enabled and is_instance_valid(_deck_visual_board)
+	if not reuse_visual_board:
+		for child in _deck_list.get_children():
+			_deck_list.remove_child(child)
+			child.queue_free()
+		_deck_visual_board = null
+		_main_deck_section_header = null
+		_reinforcement_section_header = null
 
 	var total := 0
 	for card_name in _deck:
 		var card := _find_template(card_name)
 		if card != null:
 			total += int(_deck[card_name])
+	var reinforcement_total := _count_cards_in_dictionary(_reinforcements)
 	if _deck_count_lbl != null:
-		_deck_count_lbl.text = "%d cards" % total
+		_deck_count_lbl.text = "%d main + %d Reinforcements" % [total, reinforcement_total]
+	if _visual_deck_view_enabled:
+		if reuse_visual_board:
+			_main_deck_section_header.text = _get_visual_main_header_text()
+			_reinforcement_section_header.text = _get_visual_reinforcement_header_text()
+			_populate_visual_deck_tiles()
+		else:
+			_build_visual_deck_panel_contents()
+		_refresh_tiamat_panel()
+		_update_validation()
+		if rebuild_collection:
+			_rebuild_filtered_cards_cache()
+			_refresh_grid()
+		_update_count_badges()
+		if refresh_layout:
+			_queue_responsive_layout_refresh()
+		call_deferred("_update_deck_scroll_nav_buttons")
+		call_deferred("_layout_visual_deck_view")
+		return
 
 	# Sort: gods → creatures → spells → structures → hexes, then alphabetical
 	var in_deck_filter := func(c: Card) -> bool:
@@ -1839,6 +2125,12 @@ func _refresh_deck_panel(rebuild_collection: bool = false, refresh_layout: bool 
 		return _alphabetical_card_less(a, b)
 	in_deck.sort_custom(in_deck_sort)
 
+	var main_header := Label.new()
+	_main_deck_section_header = main_header
+	main_header.text = "MAIN DECK"
+	main_header.add_theme_font_size_override("font_size", 12)
+	main_header.add_theme_color_override("font_color", Color(0.95, 0.82, 0.38))
+	_deck_list.add_child(main_header)
 	var last_section := ""
 	for card: Card in in_deck:
 		var sec := _section_name(card)
@@ -1849,7 +2141,35 @@ func _refresh_deck_panel(rebuild_collection: bool = false, refresh_layout: bool 
 			sep_lbl.add_theme_font_size_override("font_size", 11)
 			sep_lbl.add_theme_color_override("font_color", _get_type_color(card).lerp(Color.WHITE, 0.3))
 			_deck_list.add_child(sep_lbl)
-		_deck_list.add_child(_make_deck_row(card))
+		_deck_list.add_child(_make_deck_row(card, false))
+
+	var reinforcement_header := Label.new()
+	_reinforcement_section_header = reinforcement_header
+	reinforcement_header.text = "REINFORCEMENTS"
+	reinforcement_header.add_theme_font_size_override("font_size", 12)
+	reinforcement_header.add_theme_color_override("font_color", Color(0.48, 0.78, 1.0))
+	_deck_list.add_child(reinforcement_header)
+	var reinforcement_cards: Array = _all_cards.filter(func(card: Card) -> bool:
+		return int(_reinforcements.get(card.card_name, 0)) > 0
+	)
+	reinforcement_cards.sort_custom(in_deck_sort)
+	if reinforcement_cards.is_empty():
+		var empty_label := Label.new()
+		empty_label.text = "None"
+		empty_label.modulate = Color(0.65, 0.68, 0.74)
+		_deck_list.add_child(empty_label)
+	else:
+		last_section = ""
+		for card: Card in reinforcement_cards:
+			var sec := _section_name(card)
+			if sec != last_section:
+				last_section = sec
+				var sep_lbl := Label.new()
+				sep_lbl.text = sec
+				sep_lbl.add_theme_font_size_override("font_size", 11)
+				sep_lbl.add_theme_color_override("font_color", _get_type_color(card).lerp(Color.WHITE, 0.3))
+				_deck_list.add_child(sep_lbl)
+			_deck_list.add_child(_make_deck_row(card, true))
 
 	_refresh_tiamat_panel()
 	_update_validation()
@@ -1861,6 +2181,341 @@ func _refresh_deck_panel(rebuild_collection: bool = false, refresh_layout: bool 
 		_queue_responsive_layout_refresh()
 	call_deferred("_update_deck_scroll_nav_buttons")
 
+func _build_visual_deck_panel_contents() -> void:
+	_deck_visual_board = null
+	_deck_visual_main_grid = null
+	_deck_visual_side_list = null
+	_deck_visual_main_scroll = null
+	_deck_visual_side_scroll = null
+	_deck_visual_main_drop_area = null
+	_deck_visual_side_drop_area = null
+
+	var board := HBoxContainer.new()
+	_deck_visual_board = board
+	board.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	board.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	board.custom_minimum_size.y = 520.0
+	board.add_theme_constant_override("separation", 16)
+	_deck_list.add_child(board)
+
+	_deck_visual_main_drop_area = ReinforcementDropAreaScript.new()
+	_deck_visual_main_drop_area.setup("main")
+	_deck_visual_main_drop_area.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_deck_visual_main_drop_area.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_deck_visual_main_drop_area.card_dropped.connect(_on_visual_deck_card_dropped)
+	_deck_visual_main_drop_area.resized.connect(_queue_visual_deck_layout_refresh)
+	board.add_child(_deck_visual_main_drop_area)
+
+	var main_box := VBoxContainer.new()
+	main_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	main_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	main_box.add_theme_constant_override("separation", 8)
+	_deck_visual_main_drop_area.add_child(main_box)
+
+	var main_header := Label.new()
+	_main_deck_section_header = main_header
+	main_header.text = _get_visual_main_header_text()
+	main_header.add_theme_font_size_override("font_size", 22)
+	main_header.add_theme_color_override("font_color", Color(0.95, 0.82, 0.38))
+	main_box.add_child(main_header)
+
+	var main_scroll := ScrollContainer.new()
+	_deck_visual_main_scroll = main_scroll
+	main_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	main_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	main_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	main_scroll.resized.connect(_queue_visual_deck_layout_refresh)
+	main_box.add_child(main_scroll)
+
+	_deck_visual_main_grid = GridContainer.new()
+	_deck_visual_main_grid.columns = 5
+	_deck_visual_main_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_deck_visual_main_grid.add_theme_constant_override("h_separation", 10)
+	_deck_visual_main_grid.add_theme_constant_override("v_separation", 12)
+	main_scroll.add_child(_deck_visual_main_grid)
+
+	_deck_visual_side_drop_area = ReinforcementDropAreaScript.new()
+	_deck_visual_side_drop_area.setup("side")
+	_deck_visual_side_drop_area.custom_minimum_size = Vector2(315, 0)
+	_deck_visual_side_drop_area.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_deck_visual_side_drop_area.card_dropped.connect(_on_visual_deck_card_dropped)
+	_deck_visual_side_drop_area.resized.connect(_queue_visual_deck_layout_refresh)
+	board.add_child(_deck_visual_side_drop_area)
+
+	var side_box := VBoxContainer.new()
+	side_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	side_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	side_box.add_theme_constant_override("separation", 8)
+	_deck_visual_side_drop_area.add_child(side_box)
+
+	var side_header := Label.new()
+	_reinforcement_section_header = side_header
+	side_header.text = _get_visual_reinforcement_header_text()
+	side_header.add_theme_font_size_override("font_size", 22)
+	side_header.add_theme_color_override("font_color", Color(0.48, 0.78, 1.0))
+	side_box.add_child(side_header)
+
+	var side_scroll := ScrollContainer.new()
+	_deck_visual_side_scroll = side_scroll
+	side_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	side_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	side_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	side_box.add_child(side_scroll)
+
+	_deck_visual_side_list = VBoxContainer.new()
+	_deck_visual_side_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_deck_visual_side_list.add_theme_constant_override("separation", 8)
+	side_scroll.add_child(_deck_visual_side_list)
+
+	_populate_visual_deck_tiles()
+	_queue_visual_deck_layout_refresh()
+
+func _queue_visual_deck_layout_refresh() -> void:
+	call_deferred("_layout_visual_deck_view")
+
+func _get_visual_main_header_text() -> String:
+	return "Main Deck  %d / %d regular" % [
+		_count_regular_cards_in_current_deck(),
+		MIN_REGULAR_CARDS,
+	]
+
+func _get_visual_reinforcement_header_text() -> String:
+	var regular_count := _count_regular_cards_in_current_deck()
+	var power_count := _count_powers_in_current_deck()
+	return "Reinforcements  %d / %d" % [
+		_count_cards_in_dictionary(_reinforcements),
+		DeckValidatorScript.get_reinforcement_limit(regular_count, power_count),
+	]
+
+func _populate_visual_deck_tiles() -> void:
+	if _deck_visual_main_grid == null or _deck_visual_side_list == null:
+		return
+	for child in _deck_visual_main_grid.get_children():
+		_deck_visual_main_grid.remove_child(child)
+		child.queue_free()
+	for child in _deck_visual_side_list.get_children():
+		_deck_visual_side_list.remove_child(child)
+		child.queue_free()
+	for card in _get_sorted_cards_in_bucket(_deck):
+		var card_name := str(card.card_name)
+		var tile = ReinforcementCardTileScript.new()
+		tile.custom_drag_signal_enabled = true
+		tile.adjust_moves_between_zones = false
+		var can_add_to_main := 1 if _can_add_copy_to_visual_deck_zone(card, "main") else 0
+		tile.setup(card, int(_deck.get(card_name, 0)), "main", false, can_add_to_main)
+		tile.card_dropped.connect(_on_visual_deck_card_dropped)
+		tile.card_adjust_requested.connect(_on_visual_deck_card_adjust_requested)
+		tile.card_drag_started.connect(_on_visual_deck_card_drag_started)
+		tile.mouse_entered.connect(func() -> void: _show_preview(card))
+		_deck_visual_main_grid.add_child(tile)
+	for card in _get_sorted_cards_in_bucket(_reinforcements):
+		var card_name := str(card.card_name)
+		var tile = ReinforcementCardTileScript.new()
+		tile.custom_drag_signal_enabled = true
+		tile.adjust_moves_between_zones = false
+		var can_add_to_reinforcements := 1 if _can_add_copy_to_visual_deck_zone(card, "side") else 0
+		tile.setup(card, int(_reinforcements.get(card_name, 0)), "side", true, can_add_to_reinforcements)
+		tile.card_dropped.connect(_on_visual_deck_card_dropped)
+		tile.card_adjust_requested.connect(_on_visual_deck_card_adjust_requested)
+		tile.card_drag_started.connect(_on_visual_deck_card_drag_started)
+		tile.mouse_entered.connect(func() -> void: _show_preview(card))
+		_deck_visual_side_list.add_child(tile)
+
+func _get_sorted_cards_in_bucket(bucket: Dictionary) -> Array:
+	var cards: Array = _all_cards.filter(func(card: Card) -> bool:
+		return int(bucket.get(card.card_name, 0)) > 0
+	)
+	cards.sort_custom(func(a: Card, b: Card) -> bool:
+		var oa := _type_order(a)
+		var ob := _type_order(b)
+		if oa != ob:
+			return oa < ob
+		return _alphabetical_card_less(a, b)
+	)
+	return cards
+
+func _can_add_copy_to_visual_deck_zone(card: Card, zone: String) -> bool:
+	if card == null:
+		return false
+	if zone == "side" and card.is_god:
+		return false
+	var combined_count := int(_deck.get(card.card_name, 0)) + int(_reinforcements.get(card.card_name, 0))
+	if combined_count >= _max_copies(card):
+		return false
+	var god := _get_selected_god_template() as GodCard
+	if card is ActiveGodCard:
+		return god != null and god.get_active_god_deck_role(card as ActiveGodCard) == GodCard.ACTIVE_GOD_DECK_ROLE_ALLOWED
+	if god != null and not card.is_god and not _is_card_compatible_with_selected_god(card, god):
+		return false
+	if zone == "main":
+		if card.is_god:
+			return _can_add_god_to_current_deck(card)
+		if card.is_power:
+			return _can_add_power_to_current_deck(card)
+	return true
+
+func _on_visual_deck_card_dropped(card_name: String, from_zone: String, to_zone: String) -> void:
+	card_name = card_name.strip_edges()
+	if card_name.is_empty() or from_zone == to_zone:
+		return
+	var card := _find_template(card_name)
+	if card == null:
+		return
+	_move_one_card_between_deck_sections(card, from_zone == "side", to_zone == "side")
+
+func _on_visual_deck_card_adjust_requested(card_name: String, source_zone: String, direction: int) -> void:
+	var card := _find_template(card_name)
+	if direction < 0:
+		if source_zone == "side":
+			_remove_from_reinforcements(card_name)
+		else:
+			_remove_from_deck(card_name)
+		return
+	if card == null:
+		return
+	if source_zone == "side":
+		_add_to_reinforcements(card)
+	else:
+		_add_to_deck(card)
+
+func _on_visual_deck_card_drag_started(card_name: String, source_zone: String, mouse_global_position: Vector2) -> void:
+	var card := _find_template(card_name)
+	if card == null:
+		return
+	_visual_deck_drag_card = card
+	_visual_deck_drag_source_zone = source_zone
+	_visual_deck_drag_start_pos = mouse_global_position
+	_visual_deck_drag_active = false
+	_visual_deck_drag_offset = Vector2(86, 118) if source_zone == "main" else Vector2(125, 31)
+
+func _try_handle_visual_deck_card_drag_input(event: InputEvent) -> bool:
+	if _visual_deck_drag_card == null:
+		return false
+	if event is InputEventMouseMotion:
+		var motion := event as InputEventMouseMotion
+		if motion.global_position.distance_to(_visual_deck_drag_start_pos) >= COLLECTION_DRAG_THRESHOLD:
+			_visual_deck_drag_active = true
+		if _visual_deck_drag_active:
+			_ensure_visual_deck_drag_ghost(motion.global_position)
+			return true
+		return false
+	if event is InputEventMouseButton:
+		var mouse_event := event as InputEventMouseButton
+		if mouse_event.button_index == MOUSE_BUTTON_LEFT and not mouse_event.pressed:
+			_finish_visual_deck_card_drag(mouse_event.global_position)
+			return true
+	return false
+
+func _finish_visual_deck_card_drag(mouse_global_position: Vector2) -> void:
+	var card := _visual_deck_drag_card
+	var source_zone := _visual_deck_drag_source_zone
+	var was_dragging := _visual_deck_drag_active
+	_visual_deck_drag_card = null
+	_visual_deck_drag_source_zone = ""
+	_visual_deck_drag_active = false
+	_cleanup_visual_deck_drag_ghost()
+	if card == null or not was_dragging:
+		return
+	var target_zone := _get_visual_deck_drop_zone(mouse_global_position)
+	if target_zone.is_empty() or target_zone == source_zone:
+		return
+	_on_visual_deck_card_dropped(card.card_name, source_zone, target_zone)
+
+func _get_visual_deck_drop_zone(mouse_global_position: Vector2) -> String:
+	if _deck_visual_main_drop_area != null \
+			and is_instance_valid(_deck_visual_main_drop_area) \
+			and (_deck_visual_main_drop_area as Control).get_global_rect().has_point(mouse_global_position):
+		return "main"
+	if _deck_visual_side_drop_area != null \
+			and is_instance_valid(_deck_visual_side_drop_area) \
+			and (_deck_visual_side_drop_area as Control).get_global_rect().has_point(mouse_global_position):
+		return "side"
+	return ""
+
+func _ensure_visual_deck_drag_ghost(mouse_global_position: Vector2) -> void:
+	if _visual_deck_drag_card == null:
+		return
+	if is_instance_valid(_visual_deck_drag_ghost):
+		_update_visual_deck_drag_ghost_position(mouse_global_position)
+		return
+	var compact := _visual_deck_drag_source_zone == "side"
+	var ghost := PanelContainer.new()
+	ghost.name = "VisualDeckCardDragGhost"
+	ghost.top_level = true
+	ghost.z_index = DRAG_GHOST_Z_INDEX
+	ghost.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ghost.modulate = Color(1.0, 1.0, 1.0, 0.88)
+	ghost.custom_minimum_size = Vector2(172, 236) if not compact else Vector2(250, 62)
+	ghost.size = ghost.custom_minimum_size
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.055, 0.065, 0.08, 0.96)
+	style.border_color = Color(0.38, 0.58, 0.82, 1.0) if not compact else Color(0.78, 0.62, 0.30, 1.0)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side as Side, 2)
+	ghost.add_theme_stylebox_override("panel", style)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 4)
+	ghost.add_child(box)
+	var title := Label.new()
+	title.text = _visual_deck_drag_card.get_display_name_for_control(title)
+	title.clip_text = true
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(title)
+	var art := TextureRect.new()
+	art.custom_minimum_size = Vector2(154, 172) if not compact else Vector2(220, 38)
+	art.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	var art_path := _get_selected_art_path(_visual_deck_drag_card)
+	if not art_path.is_empty():
+		art.texture = _get_card_art_texture(art_path)
+	box.add_child(art)
+	add_child(ghost)
+	_visual_deck_drag_ghost = ghost
+	_update_visual_deck_drag_ghost_position(mouse_global_position)
+
+func _update_visual_deck_drag_ghost_position(mouse_global_position: Vector2) -> void:
+	if not is_instance_valid(_visual_deck_drag_ghost):
+		return
+	_visual_deck_drag_ghost.global_position = mouse_global_position - _visual_deck_drag_offset
+
+func _cleanup_visual_deck_drag_ghost() -> void:
+	if is_instance_valid(_visual_deck_drag_ghost):
+		_visual_deck_drag_ghost.queue_free()
+	_visual_deck_drag_ghost = null
+
+func _layout_visual_deck_view() -> void:
+	if not is_instance_valid(_deck_visual_board):
+		return
+	var available_height := 520.0
+	if is_instance_valid(_deck_scroll) and _deck_scroll.size.y > 0.0:
+		available_height = maxf(360.0, _deck_scroll.size.y - 28.0)
+	if _deck_visual_board != null and is_instance_valid(_deck_visual_board):
+		_deck_visual_board.custom_minimum_size.y = available_height
+	if _deck_visual_main_drop_area != null and is_instance_valid(_deck_visual_main_drop_area):
+		(_deck_visual_main_drop_area as Control).custom_minimum_size.y = available_height
+	if _deck_visual_side_drop_area != null and is_instance_valid(_deck_visual_side_drop_area):
+		(_deck_visual_side_drop_area as Control).custom_minimum_size.y = available_height
+	if _deck_visual_main_scroll != null and is_instance_valid(_deck_visual_main_scroll):
+		_deck_visual_main_scroll.custom_minimum_size.y = maxf(260.0, available_height - 54.0)
+	if _deck_visual_side_scroll != null and is_instance_valid(_deck_visual_side_scroll):
+		_deck_visual_side_scroll.custom_minimum_size.y = maxf(260.0, available_height - 54.0)
+	var available_width := 0.0
+	if _deck_visual_main_scroll != null and is_instance_valid(_deck_visual_main_scroll):
+		available_width = _deck_visual_main_scroll.size.x
+	if available_width <= 0.0 and _deck_visual_main_drop_area != null and is_instance_valid(_deck_visual_main_drop_area):
+		available_width = _deck_visual_main_drop_area.size.x
+	if available_width <= 0.0 and is_instance_valid(_deck_scroll):
+		var side_width := 315.0
+		if _deck_visual_side_drop_area != null and is_instance_valid(_deck_visual_side_drop_area):
+			side_width = maxf(side_width, (_deck_visual_side_drop_area as Control).get_combined_minimum_size().x)
+		available_width = maxf(0.0, _deck_scroll.size.x - side_width - 32.0)
+	if available_width <= 0.0:
+		return
+	var tile_width := 182.0
+	var desired_columns := clampi(int(floor((available_width + 10.0) / tile_width)), 2, 12)
+	_deck_visual_main_grid.columns = desired_columns
+
 func _refresh_tiamat_panel() -> void:
 	if _tiamat_panel == null or _tiamat_rows == null or _tiamat_hint_lbl == null:
 		return
@@ -1870,6 +2525,7 @@ func _refresh_tiamat_panel() -> void:
 		return
 
 	for child in _tiamat_rows.get_children():
+		_tiamat_rows.remove_child(child)
 		child.queue_free()
 
 	if _deck_uses_tiamat():
@@ -1951,16 +2607,22 @@ func _refresh_tiamat_panel() -> void:
 			)
 			entry.add_child(remove_btn)
 
-func _make_deck_row(card: Card) -> Control:
+func _make_deck_row(card: Card, is_reinforcement: bool = false) -> Control:
+	var card_bucket := _reinforcements if is_reinforcement else _deck
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
 	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.custom_minimum_size.y = 34.0
+	row.mouse_filter = Control.MOUSE_FILTER_STOP
+	row.gui_input.connect(func(event: InputEvent) -> void:
+		_on_deck_row_gui_input(event, card, is_reinforcement, row)
+	)
 
 	var dot := ColorRect.new()
 	dot.custom_minimum_size = Vector2(11, 11)
 	dot.color = _get_type_color(card)
 	dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(dot)
 
 	var name_lbl := Label.new()
@@ -1968,6 +2630,7 @@ func _make_deck_row(card: Card) -> Control:
 	name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_lbl.clip_text = true
 	name_lbl.text = card.get_display_name_for_control(name_lbl)
+	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(name_lbl)
 
 	var legendary_lbl := Label.new()
@@ -1976,31 +2639,147 @@ func _make_deck_row(card: Card) -> Control:
 	legendary_lbl.add_theme_color_override("font_color", Color(0.95, 0.82, 0.28))
 	legendary_lbl.custom_minimum_size.x = 18
 	legendary_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	legendary_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(legendary_lbl)
 
 	var cnt_lbl := Label.new()
-	cnt_lbl.text = "×%d" % _deck[card.card_name]
+	cnt_lbl.text = "×%d" % int(card_bucket.get(card.card_name, 0))
 	cnt_lbl.add_theme_font_size_override("font_size", 14)
 	cnt_lbl.add_theme_color_override("font_color", Color(0.9, 0.9, 0.4))
 	cnt_lbl.custom_minimum_size.x = 42
 	cnt_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	cnt_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(cnt_lbl)
 
 	var minus := Button.new()
 	minus.text = "−"
 	minus.custom_minimum_size = Vector2(32, 28)
-	minus.pressed.connect(func() -> void: _remove_from_deck(card.card_name))
+	minus.pressed.connect(func() -> void:
+		if is_reinforcement:
+			_remove_from_reinforcements(card.card_name)
+		else:
+			_remove_from_deck(card.card_name)
+	)
 	row.add_child(minus)
 
 	var plus := Button.new()
 	plus.text = "+"
 	plus.custom_minimum_size = Vector2(32, 28)
-	plus.pressed.connect(func() -> void: _add_to_deck(card))
+	plus.pressed.connect(func() -> void:
+		if is_reinforcement:
+			_add_to_reinforcements(card)
+		else:
+			_add_to_deck(card)
+	)
 	row.add_child(plus)
 
 	row.mouse_entered.connect(func() -> void: _show_preview(card))
 
 	return row
+
+func _on_deck_row_gui_input(event: InputEvent, card: Card, is_reinforcement: bool, row: Control) -> void:
+	if card == null:
+		return
+	var mouse_event := event as InputEventMouseButton
+	if mouse_event != null and mouse_event.button_index == MOUSE_BUTTON_LEFT:
+		if mouse_event.pressed:
+			_begin_deck_row_drag(card, is_reinforcement, mouse_event.global_position, row)
+			accept_event()
+		else:
+			_finish_deck_row_drag(mouse_event.global_position)
+			accept_event()
+
+func _begin_deck_row_drag(card: Card, from_reinforcements: bool, mouse_global_position: Vector2, row: Control) -> void:
+	_deck_row_drag_card = card
+	_deck_row_drag_from_reinforcements = from_reinforcements
+	_deck_row_drag_start_pos = mouse_global_position
+	_deck_row_drag_active = false
+	_deck_row_drag_offset = mouse_global_position - row.global_position if is_instance_valid(row) else Vector2(16, 16)
+
+func _finish_deck_row_drag(mouse_global_position: Vector2) -> void:
+	var card := _deck_row_drag_card
+	var was_dragging := _deck_row_drag_active
+	var from_reinforcements := _deck_row_drag_from_reinforcements
+	_deck_row_drag_card = null
+	_deck_row_drag_active = false
+	_deck_row_drag_from_reinforcements = false
+	_cleanup_deck_row_drag_ghost()
+	if card == null or not was_dragging:
+		return
+	var drop_zone := _get_decklist_drop_zone(mouse_global_position)
+	if drop_zone == "":
+		return
+	var to_reinforcements := drop_zone == "reinforcements"
+	if to_reinforcements == from_reinforcements:
+		return
+	_move_one_card_between_deck_sections(card, from_reinforcements, to_reinforcements)
+
+func _move_one_card_between_deck_sections(card: Card, from_reinforcements: bool, to_reinforcements: bool) -> void:
+	if card == null or from_reinforcements == to_reinforcements:
+		return
+	if to_reinforcements:
+		if card.is_god:
+			_set_status_flash("Gods cannot be moved to Reinforcements.")
+			return
+		if int(_deck.get(card.card_name, 0)) <= 0:
+			return
+		_push_current_deck_undo_state()
+		_deck[card.card_name] = int(_deck.get(card.card_name, 0)) - 1
+		if int(_deck[card.card_name]) <= 0:
+			_deck.erase(card.card_name)
+		_reinforcements[card.card_name] = int(_reinforcements.get(card.card_name, 0)) + 1
+		if not _deck_uses_tiamat():
+			_clear_tiamat_slots()
+		_refresh_deck_panel(_deck_change_needs_collection_rebuild(card), false)
+		return
+	if int(_reinforcements.get(card.card_name, 0)) <= 0:
+		return
+	_push_current_deck_undo_state()
+	_reinforcements[card.card_name] = int(_reinforcements.get(card.card_name, 0)) - 1
+	if int(_reinforcements[card.card_name]) <= 0:
+		_reinforcements.erase(card.card_name)
+	_deck[card.card_name] = int(_deck.get(card.card_name, 0)) + 1
+	_refresh_deck_panel(_deck_change_needs_collection_rebuild(card), false)
+
+func _ensure_deck_row_drag_ghost(mouse_global_position: Vector2) -> void:
+	if _deck_row_drag_card == null:
+		return
+	if is_instance_valid(_deck_row_drag_ghost):
+		_update_deck_row_drag_ghost_position(mouse_global_position)
+		return
+	var ghost := PanelContainer.new()
+	ghost.name = "DeckRowDragGhost"
+	ghost.top_level = true
+	ghost.z_index = DRAG_GHOST_Z_INDEX
+	ghost.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ghost.modulate = Color(1.0, 1.0, 1.0, 0.88)
+	ghost.custom_minimum_size = Vector2(260, 36)
+	ghost.size = Vector2(260, 36)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.08, 0.10, 0.14, 0.94)
+	style.border_color = Color(0.48, 0.78, 1.0, 1.0) if _deck_row_drag_from_reinforcements else Color(0.95, 0.82, 0.38, 1.0)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side as Side, 2)
+	ghost.add_theme_stylebox_override("panel", style)
+	var label := Label.new()
+	label.text = _deck_row_drag_card.get_display_name_for_control(label)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.clip_text = true
+	ghost.add_child(label)
+	add_child(ghost)
+	_deck_row_drag_ghost = ghost
+	_update_deck_row_drag_ghost_position(mouse_global_position)
+
+func _update_deck_row_drag_ghost_position(mouse_global_position: Vector2) -> void:
+	if not is_instance_valid(_deck_row_drag_ghost):
+		return
+	_deck_row_drag_ghost.global_position = mouse_global_position - _deck_row_drag_offset
+
+func _cleanup_deck_row_drag_ghost() -> void:
+	if is_instance_valid(_deck_row_drag_ghost):
+		_deck_row_drag_ghost.queue_free()
+	_deck_row_drag_ghost = null
 
 func _get_scroll_container_max_scroll(scroll: ScrollContainer) -> float:
 	if not is_instance_valid(scroll):
@@ -2076,7 +2855,31 @@ func _update_deck_scroll_nav_buttons() -> void:
 func _handle_collection_card_add(card: Card) -> void:
 	if _try_assign_card_to_tiamat_slot(card):
 		return
-	_add_to_deck(card)
+	if _editing_reinforcements:
+		_add_to_reinforcements(card)
+	else:
+		_add_to_deck(card)
+
+func _toggle_reinforcements_edit_mode() -> void:
+	_editing_reinforcements = not _editing_reinforcements
+	if _reinforcements_mode_btn != null:
+		_reinforcements_mode_btn.text = "Adding: Reinforcements" if _editing_reinforcements else "Adding: Main"
+		_reinforcements_mode_btn.modulate = Color(0.68, 0.88, 1.0) if _editing_reinforcements else Color.WHITE
+	_update_collection_selection_visuals()
+	_set_status_flash("Collection cards now add to %s." % ("Reinforcements" if _editing_reinforcements else "the main deck"))
+
+func _toggle_visual_deck_view() -> void:
+	_visual_deck_view_enabled = not _visual_deck_view_enabled
+	if _visual_deck_view_btn != null:
+		_visual_deck_view_btn.text = "List View" if _visual_deck_view_enabled else "Visual View"
+		_visual_deck_view_btn.modulate = Color(0.68, 0.88, 1.0) if _visual_deck_view_enabled else Color.WHITE
+	if _visual_deck_view_enabled:
+		_clear_selected_collection_card()
+		_set_status_flash("Visual deck view enabled. Drag or use +/- between Main Deck and Reinforcements.")
+	else:
+		_set_status_flash("List deck view enabled.")
+	_body_scroll.scroll_vertical = 0
+	_refresh_deck_panel(false, true)
 
 func _deck_uses_tiamat() -> bool:
 	return TiamatScript.is_tiamat_god(_get_selected_god_template())
@@ -2087,8 +2890,8 @@ func _has_any_tiamat_slot_cards() -> bool:
 			return true
 	return false
 
-func _get_tiamat_special_setup() -> Dictionary:
-	return TiamatScript.build_special_setup(_tiamat_slots)
+func _get_deck_special_setup() -> Dictionary:
+	return CardArtVariantsScript.build_special_setup(_tiamat_slots, _art_variant_selections)
 
 func _clear_tiamat_slots() -> void:
 	_tiamat_slots = [[], [], []]
@@ -2166,20 +2969,37 @@ func _remove_tiamat_slot_card(slot_index: int, card_name: String) -> void:
 func _make_deck_undo_state() -> Dictionary:
 	return {
 		"deck": _deck.duplicate(true),
+		"reinforcements": _reinforcements.duplicate(true),
 		"tiamat_slots": _tiamat_slots.duplicate(true),
+		"art_variant_selections": _art_variant_selections.duplicate(true),
 		"deck_name": _deck_name_edit.text if _deck_name_edit != null else "",
 		"selected_saved_deck_id": _selected_saved_deck_id,
-		"pending_remote_saved_deck_id": _pending_remote_saved_deck_id,
 	}
 
 func _deck_undo_states_equal(a: Dictionary, b: Dictionary) -> bool:
 	return (
 		a.get("deck", {}) == b.get("deck", {})
+		and a.get("reinforcements", {}) == b.get("reinforcements", {})
 		and a.get("tiamat_slots", []) == b.get("tiamat_slots", [])
+		and a.get("art_variant_selections", {}) == b.get("art_variant_selections", {})
 		and str(a.get("deck_name", "")) == str(b.get("deck_name", ""))
 		and str(a.get("selected_saved_deck_id", "")) == str(b.get("selected_saved_deck_id", ""))
-		and str(a.get("pending_remote_saved_deck_id", "")) == str(b.get("pending_remote_saved_deck_id", ""))
 	)
+
+func _make_saved_deck_state() -> Dictionary:
+	return {
+		"deck": _deck.duplicate(true),
+		"reinforcements": _reinforcements.duplicate(true),
+		"tiamat_slots": _tiamat_slots.duplicate(true),
+		"art_variant_selections": _art_variant_selections.duplicate(true),
+		"deck_name": _deck_name_edit.text if _deck_name_edit != null else "",
+	}
+
+func _mark_current_deck_saved() -> void:
+	_saved_deck_state = _make_saved_deck_state()
+
+func _has_unsaved_deck_changes() -> bool:
+	return _saved_deck_state != _make_saved_deck_state()
 
 func _push_current_deck_undo_state() -> void:
 	var snapshot := _make_deck_undo_state()
@@ -2193,9 +3013,10 @@ func _push_current_deck_undo_state() -> void:
 
 func _restore_deck_undo_state(state: Dictionary) -> void:
 	_deck = (state.get("deck", {}) as Dictionary).duplicate(true)
+	_reinforcements = (state.get("reinforcements", {}) as Dictionary).duplicate(true)
 	_tiamat_slots = (state.get("tiamat_slots", []) as Array).duplicate(true)
+	_art_variant_selections = (state.get("art_variant_selections", {}) as Dictionary).duplicate(true)
 	_selected_saved_deck_id = str(state.get("selected_saved_deck_id", "")).strip_edges()
-	_pending_remote_saved_deck_id = str(state.get("pending_remote_saved_deck_id", "")).strip_edges()
 	if _deck_name_edit != null:
 		_deck_name_edit.text = str(state.get("deck_name", LocalProfileStoreScript.DEFAULT_DECK_NAME))
 	_select_saved_deck(_selected_saved_deck_id)
@@ -2230,7 +3051,7 @@ func _get_active_god_form(god: Card) -> ActiveGodCard:
 # ── deck mutation ──────────────────────────────────────────────────
 func _add_to_deck(card: Card) -> void:
 	var current: int = _deck.get(card.card_name, 0)
-	if current >= _max_copies(card):
+	if current + int(_reinforcements.get(card.card_name, 0)) >= _max_copies(card):
 		return
 	var unavailable_reason := _get_card_unavailable_reason(card)
 	if not unavailable_reason.is_empty():
@@ -2262,6 +3083,33 @@ func _add_to_deck(card: Card) -> void:
 	if card.is_god:
 		_focus_power_selection()
 
+func _add_to_reinforcements(card: Card) -> void:
+	if card == null:
+		return
+	if card.is_god:
+		_set_status_flash("Gods cannot be added to Reinforcements.")
+		return
+	var combined_count := int(_deck.get(card.card_name, 0)) + int(_reinforcements.get(card.card_name, 0))
+	if combined_count >= _max_copies(card):
+		_set_status_flash("%s has reached its combined copy limit." % card.get_display_name_for_control())
+		return
+	var unavailable_reason := _get_card_unavailable_reason(card)
+	if not unavailable_reason.is_empty():
+		_set_status_flash(unavailable_reason)
+		return
+	_push_current_deck_undo_state()
+	_reinforcements[card.card_name] = int(_reinforcements.get(card.card_name, 0)) + 1
+	_refresh_deck_panel(false, false)
+
+func _remove_from_reinforcements(card_name: String) -> void:
+	if int(_reinforcements.get(card_name, 0)) <= 0:
+		return
+	_push_current_deck_undo_state()
+	_reinforcements[card_name] = int(_reinforcements[card_name]) - 1
+	if int(_reinforcements[card_name]) <= 0:
+		_reinforcements.erase(card_name)
+	_refresh_deck_panel(false, false)
+
 func _remove_from_deck(card_name: String) -> void:
 	if not _deck.has(card_name) or _deck[card_name] <= 0:
 		return
@@ -2285,11 +3133,13 @@ func _deck_change_needs_collection_rebuild(card: Card) -> bool:
 	return false
 
 func _clear_deck() -> void:
-	if _deck.is_empty() and not _has_any_tiamat_slot_cards():
+	if _deck.is_empty() and _reinforcements.is_empty() and not _has_any_tiamat_slot_cards():
 		return
 	_push_current_deck_undo_state()
 	_deck.clear()
+	_reinforcements.clear()
 	_clear_tiamat_slots()
+	_art_variant_selections.clear()
 	_refresh_deck_panel(true, false)
 
 func _autofill_deck_to_minimum() -> void:
@@ -2371,7 +3221,7 @@ func _get_autofill_regular_copy_count(card: Card) -> int:
 	var remaining_copies := maxi(0, _max_copies(card) - current_count)
 	if remaining_copies <= 0:
 		return 0
-	if card.card_name == "Hyena Pack":
+	if card.card_name == "Hyena Pack" or card.card_name == "Pictish Beast":
 		return remaining_copies
 	return 1
 
@@ -2395,63 +3245,204 @@ func _save_deck() -> void:
 		file.store_string(JSON.stringify(_deck, "\t"))
 		file.close()
 		print("DeckBuilder: saved to user://saved_deck.json")
-		# Flash save button text feedback
-		_validation_lbl.text = "✓ Deck saved!\n" + _validation_lbl.text
-		get_tree().create_timer(2.0).timeout.connect(Callable(self, "_update_validation_if_ready"))
+		_set_status_flash("✓ Deck saved!")
 	else:
 		print("DeckBuilder: save failed.")
 
 # ── validation ─────────────────────────────────────────────────────
-func _save_profile_deck() -> void:
+func _save_profile_deck() -> bool:
 	if _deck.is_empty():
 		_set_status_flash("Nothing to save.")
-		return
+		return false
 	var deck_name := _deck_name_edit.text if _deck_name_edit != null else ""
-	if _uses_remote_account_decks():
-		if not _can_sync_account_decks():
-			_set_status_flash("Connect to the lobby to save account decks.")
-			return
-		var resolved_name := deck_name.strip_edges()
-		if resolved_name.is_empty():
-			resolved_name = LocalProfileStoreScript.DEFAULT_DECK_NAME
-		if _deck_name_edit != null:
-			_deck_name_edit.text = resolved_name
-		if _selected_saved_deck_id.is_empty():
-			_selected_saved_deck_id = _generate_saved_deck_id()
-		_pending_remote_saved_deck_id = _selected_saved_deck_id
-		_online_lobby_client.save_account_deck(
-			resolved_name,
-			_deck,
-			_selected_saved_deck_id,
-			_get_tiamat_special_setup()
-		)
-		_set_status_flash("Saving deck for %s..." % _active_player_name)
-		return
 	_ensure_local_profile_store()
-	if _local_profile_store == null:
-		print("DeckBuilder: local profile store unavailable.")
-		return
 	var saved_deck: Dictionary = _local_profile_store.save_deck(
 		_active_profile_id,
 		deck_name,
 		_deck,
 		_selected_saved_deck_id,
-		_get_tiamat_special_setup()
+		_get_deck_special_setup(),
+		_reinforcements
 	)
-	_pending_remote_saved_deck_id = ""
+	if saved_deck.is_empty():
+		_set_status_flash("Could not save the deck on this device.")
+		return false
 	_selected_saved_deck_id = str(saved_deck.get("deck_id", _selected_saved_deck_id)).strip_edges()
 	if _deck_name_edit != null:
 		_deck_name_edit.text = str(saved_deck.get("name", _deck_name_edit.text))
+	_mark_current_deck_saved()
+	_finish_local_deck_save(saved_deck, "Deck saved for %s." % _active_player_name)
+	return true
+
+func _finish_local_deck_save(saved_deck: Dictionary, message: String) -> void:
+	if bool(saved_deck.get("pending_account_sync", false)):
+		if not _can_sync_account_decks():
+			message += " It will sync when you reconnect."
+		account_deck_saved_locally.emit(_active_profile_id, saved_deck)
 	_load_profile_decks()
-	_set_status_flash("Deck saved for %s." % _active_player_name)
+	_set_status_flash(message)
 
 func _export_current_deck() -> void:
 	if _deck.is_empty():
 		_set_status_flash("Nothing to export.")
 		return
 	var deck_name := _deck_name_edit.text if _deck_name_edit != null else ""
-	var shareable_deck := _make_shareable_deck(deck_name, _deck, _get_tiamat_special_setup())
+	var shareable_deck := _make_shareable_deck(deck_name, _deck, _get_deck_special_setup(), _reinforcements)
 	_copy_deck_share_code(shareable_deck, "Deck share code copied.")
+
+func _open_bot_submission() -> void:
+	if _deck.is_empty() or is_instance_valid(_bot_submission_overlay):
+		return
+	var deck := _make_shareable_deck(_deck_name_edit.text, _deck, _get_deck_special_setup(), _reinforcements)
+	var deck_list := _format_bot_submission_deck(deck)
+	var overlay := ColorRect.new()
+	overlay.color = Color(0.01, 0.02, 0.05, 0.86)
+	overlay.z_index = 2250
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(overlay)
+	_bot_submission_overlay = overlay
+
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.add_child(center)
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size.x = minf(640.0, get_viewport_rect().size.x - 32.0)
+	center.add_child(panel)
+	var margin := MarginContainer.new()
+	for side in ["left", "right", "top", "bottom"]:
+		margin.add_theme_constant_override("margin_" + side, 16)
+	panel.add_child(margin)
+	var content := VBoxContainer.new()
+	content.add_theme_constant_override("separation", 8)
+	margin.add_child(content)
+
+	var title := Label.new()
+	title.text = "Submit a Bot"
+	title.add_theme_font_size_override("font_size", 22)
+	content.add_child(title)
+	var instructions := Label.new()
+	instructions.text = "Submit this created bot directly to the community bot pool. Strategy suggestions are a separate report and do not submit the bot."
+	instructions.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	content.add_child(instructions)
+	var preview := TextEdit.new()
+	preview.text = deck_list
+	preview.editable = false
+	preview.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
+	preview.custom_minimum_size.y = 132
+	content.add_child(preview)
+	var strategy := TextEdit.new()
+	strategy.placeholder_text = "Describe the game plan, key combos, and when the bot should use them."
+	strategy.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
+	strategy.custom_minimum_size.y = 132
+	strategy.hide()
+	content.add_child(strategy)
+
+	_bot_submission_status = Label.new()
+	_bot_submission_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_bot_submission_status.hide()
+	content.add_child(_bot_submission_status)
+	var actions := HBoxContainer.new()
+	actions.alignment = BoxContainer.ALIGNMENT_END
+	content.add_child(actions)
+	var close_button := Button.new()
+	close_button.text = "Close"
+	close_button.pressed.connect(_close_bot_submission)
+	actions.add_child(close_button)
+	_bot_submission_button = Button.new()
+	_bot_submission_button.text = "Submit Bot to Pool"
+	_bot_submission_button.pressed.connect(func() -> void:
+		if _online_lobby_client == null or not _online_lobby_client.is_authenticated():
+			_set_bot_submission_status("Connect to the lobby and sign in before submitting a bot.")
+			return
+		_bot_submission_button.disabled = true
+		_bot_submission_button.text = "Submitting..."
+		_set_bot_submission_status("Submitting bot...")
+		_online_lobby_client.submit_bot_deck(deck)
+	)
+	actions.add_child(_bot_submission_button)
+	_bot_strategy_report_button = Button.new()
+	_bot_strategy_report_button.text = "Report Bot Strategy"
+	_bot_strategy_report_button.pressed.connect(func() -> void:
+		strategy.show()
+		_bot_strategy_report_button.hide()
+		_bot_submission_button.hide()
+		_set_bot_submission_status("Send the team a separate strategy report for this deck.")
+		strategy.grab_focus()
+	)
+	actions.add_child(_bot_strategy_report_button)
+	var send_report_button := Button.new()
+	send_report_button.text = "Send Strategy Report"
+	send_report_button.hide()
+	send_report_button.pressed.connect(func() -> void:
+		if _online_lobby_client == null or not _online_lobby_client.is_authenticated():
+			_set_bot_submission_status("Connect to the lobby and sign in before sending a strategy report.")
+			return
+		if strategy.text.strip_edges().is_empty():
+			_set_bot_submission_status("Describe the strategy before sending the report.")
+			return
+		send_report_button.disabled = true
+		send_report_button.text = "Sending..."
+		_online_lobby_client.submit_bot_proposal(strategy.text.strip_edges(), deck_list, _encode_deck_share_code(deck))
+	)
+	actions.add_child(send_report_button)
+	_bot_strategy_report_button.pressed.connect(func() -> void: send_report_button.show())
+	_apply_hover_to_all_buttons(overlay)
+	_bot_submission_button.grab_focus()
+
+func _close_bot_submission() -> bool:
+	if not is_instance_valid(_bot_submission_overlay):
+		return false
+	_bot_submission_overlay.hide()
+	_bot_submission_overlay.queue_free()
+	_bot_submission_overlay = null
+	_submit_bot_button.grab_focus()
+	return true
+
+func _set_bot_submission_status(message: String) -> void:
+	if not is_instance_valid(_bot_submission_status):
+		return
+	_bot_submission_status.text = message
+	_bot_submission_status.show()
+
+func _on_bot_proposal_result(_success: bool, message: String) -> void:
+	_set_bot_submission_status(message)
+
+func _on_bot_deck_submission_result(success: bool, message: String, _bot: Dictionary) -> void:
+	_set_bot_submission_status(message)
+	if is_instance_valid(_bot_submission_button):
+		_bot_submission_button.disabled = success
+		_bot_submission_button.text = "Bot Submitted" if success else "Submit Bot to Pool"
+
+func _format_bot_submission_deck(deck: Dictionary) -> String:
+	var lines := PackedStringArray([str(deck["name"])])
+	var templates_by_name := {}
+	for card in _all_cards:
+		templates_by_name[str(card.card_name)] = card
+	for section in ["cards", "reinforcements"]:
+		var cards: Dictionary = deck[section]
+		if cards.is_empty():
+			continue
+		lines.append_array(["", "Main Deck" if section == "cards" else "Reinforcements"])
+		var card_names := cards.keys()
+		card_names.sort_custom(func(a: String, b: String) -> bool:
+			var template_a: Card = templates_by_name.get(a, null)
+			var template_b: Card = templates_by_name.get(b, null)
+			var order_a := 8 if template_a == null else _type_order(template_a)
+			var order_b := 8 if template_b == null else _type_order(template_b)
+			if order_a != order_b:
+				return order_a < order_b
+			return a.to_lower() < b.to_lower()
+		)
+		for card_name in card_names:
+			lines.append("%d x %s" % [cards[card_name], card_name])
+	# Saved Matriarch slots only apply to Tiamat decks, so skip them otherwise.
+	if (deck["cards"] as Dictionary).has(TiamatScript.TIAMAT_CARD_NAME):
+		var matriarch_slots := TiamatScript.get_slot_card_names_from_setup(deck["special_setup"])
+		for slot_index in range(matriarch_slots.size()):
+			var slot_cards: Array = matriarch_slots[slot_index]
+			if not slot_cards.is_empty():
+				lines.append("Matriarch slot %d: %s" % [slot_index + 1, ", ".join(slot_cards)])
+	return "\n".join(lines)
 
 func _show_send_friend_dialog() -> void:
 	if _deck.is_empty():
@@ -2478,7 +3469,7 @@ func _confirm_send_deck_to_friend() -> void:
 		_set_status_flash("Choose a friend first.")
 		return
 	var deck_name := _deck_name_edit.text if _deck_name_edit != null else ""
-	var shareable_deck := _make_shareable_deck(deck_name, _deck, _get_tiamat_special_setup())
+	var shareable_deck := _make_shareable_deck(deck_name, _deck, _get_deck_special_setup(), _reinforcements)
 	send_deck_to_friend_requested.emit(friend_username, shareable_deck)
 	_set_status_flash("Sending deck to %s..." % friend_username)
 
@@ -2490,7 +3481,8 @@ func _export_saved_deck(deck_id: String) -> void:
 	var shareable_deck := _make_shareable_deck(
 		str(saved_deck.get("name", LocalProfileStoreScript.DEFAULT_DECK_NAME)),
 		saved_deck.get("cards", {}),
-		saved_deck.get("special_setup", {})
+		saved_deck.get("special_setup", {}),
+		saved_deck.get("reinforcements", {})
 	)
 	_copy_deck_share_code(shareable_deck, "Saved deck share code copied.")
 
@@ -2516,7 +3508,7 @@ func _confirm_import_shared_deck() -> void:
 		return
 	_import_shared_deck(imported_deck as Dictionary)
 
-func _make_shareable_deck(deck_name: String, cards, special_setup) -> Dictionary:
+func _make_shareable_deck(deck_name: String, cards, special_setup, reinforcements = {}) -> Dictionary:
 	var resolved_name := deck_name.strip_edges()
 	if resolved_name.is_empty():
 		resolved_name = LocalProfileStoreScript.DEFAULT_DECK_NAME
@@ -2526,14 +3518,17 @@ func _make_shareable_deck(deck_name: String, cards, special_setup) -> Dictionary
 		"app_version": str(ProjectSettings.get_setting("application/config/version", "")),
 		"name": resolved_name,
 		"cards": _sanitize_export_cards(cards),
+		"reinforcements": _sanitize_export_cards(reinforcements),
 		"special_setup": _sanitize_export_special_setup(special_setup),
 	}
 	return payload
 
-func _copy_deck_share_code(shareable_deck: Dictionary, status_message: String) -> void:
+func _encode_deck_share_code(shareable_deck: Dictionary) -> String:
 	var json_text := JSON.stringify(shareable_deck)
-	var share_code := DECK_SHARE_PREFIX + Marshalls.raw_to_base64(json_text.to_utf8_buffer())
-	DisplayServer.clipboard_set(share_code)
+	return DECK_SHARE_PREFIX + Marshalls.raw_to_base64(json_text.to_utf8_buffer())
+
+func _copy_deck_share_code(shareable_deck: Dictionary, status_message: String) -> void:
+	DisplayServer.clipboard_set(_encode_deck_share_code(shareable_deck))
 	_set_status_flash(status_message)
 
 func _decode_shared_deck_text(raw_text: String) -> Dictionary:
@@ -2568,6 +3563,12 @@ func _decode_shared_deck_text(raw_text: String) -> Dictionary:
 	var special_result := _sanitize_imported_special_setup(parsed_deck.get("special_setup", {}))
 	if not bool(special_result.get("is_valid", false)):
 		return special_result
+	var reinforcements_result := _sanitize_imported_share_cards(
+		parsed_deck.get("reinforcements", {}),
+		true
+	)
+	if not bool(reinforcements_result.get("is_valid", false)):
+		return reinforcements_result
 
 	var imported_name := str(parsed_deck.get("name", "Imported Deck")).strip_edges()
 	if imported_name.is_empty():
@@ -2577,6 +3578,7 @@ func _decode_shared_deck_text(raw_text: String) -> Dictionary:
 		"deck": {
 			"name": imported_name,
 			"cards": cards_result.get("cards", {}),
+			"reinforcements": reinforcements_result.get("cards", {}),
 			"special_setup": special_result.get("special_setup", {}),
 		}
 	}
@@ -2594,13 +3596,9 @@ func _sanitize_export_cards(cards) -> Dictionary:
 	return sanitized
 
 func _sanitize_export_special_setup(special_setup) -> Dictionary:
-	if not (special_setup is Dictionary):
-		return {}
-	return TiamatScript.build_special_setup(
-		TiamatScript.get_slot_card_names_from_setup(special_setup)
-	)
+	return CardArtVariantsScript.sanitize_special_setup(special_setup)
 
-func _sanitize_imported_share_cards(cards) -> Dictionary:
+func _sanitize_imported_share_cards(cards, allow_empty: bool = false) -> Dictionary:
 	if not (cards is Dictionary):
 		return _share_import_error("The deck code is missing its card list.")
 	var sanitized: Dictionary = {}
@@ -2617,7 +3615,7 @@ func _sanitize_imported_share_cards(cards) -> Dictionary:
 		if next_count > max_count:
 			return _share_import_error("%s exceeds the copy limit (%d)." % [card.card_name, max_count])
 		sanitized[card.card_name] = next_count
-	if sanitized.is_empty():
+	if sanitized.is_empty() and not allow_empty:
 		return _share_import_error("The deck code has no cards.")
 	return {
 		"is_valid": true,
@@ -2652,7 +3650,10 @@ func _sanitize_imported_special_setup(special_setup) -> Dictionary:
 			sanitized_slots[slot_index].append(card.card_name)
 	return {
 		"is_valid": true,
-		"special_setup": TiamatScript.build_special_setup(sanitized_slots),
+		"special_setup": CardArtVariantsScript.build_special_setup(
+			sanitized_slots,
+			CardArtVariantsScript.get_selections_from_setup(special_setup)
+		),
 	}
 
 func _share_import_error(message: String) -> Dictionary:
@@ -2676,54 +3677,26 @@ func _resolve_card_template_for_share(card_name: String) -> Card:
 	return null
 
 func _import_shared_deck(shared_deck: Dictionary) -> void:
-	var imported_deck := shared_deck.duplicate(true)
-	imported_deck["deck_id"] = _generate_saved_deck_id()
-	var deck_name := str(imported_deck.get("name", "Imported Deck")).strip_edges()
+	var deck_name := str(shared_deck.get("name", "Imported Deck")).strip_edges()
 	if deck_name.is_empty():
 		deck_name = "Imported Deck"
-	imported_deck["name"] = deck_name
 	_push_current_deck_undo_state()
 
-	if _uses_remote_account_decks():
-		_selected_saved_deck_id = str(imported_deck.get("deck_id", "")).strip_edges()
-		if _can_sync_account_decks():
-			_pending_remote_saved_deck_id = _selected_saved_deck_id
-			_remote_account_decks_cache.append(imported_deck.duplicate(true))
-			_online_lobby_client.save_account_deck(
-				deck_name,
-				imported_deck.get("cards", {}),
-				_selected_saved_deck_id,
-				imported_deck.get("special_setup", {})
-			)
-			_apply_saved_deck(imported_deck)
-			_pending_remote_saved_deck_id = _selected_saved_deck_id
-			_set_collection_mode(COLLECTION_MODE_SAVED_DECKS, false)
-			_set_status_flash("Imported %s and started saving it." % deck_name)
-			return
-		_pending_remote_saved_deck_id = ""
-		_apply_saved_deck(imported_deck)
-		_set_collection_mode(COLLECTION_MODE_CARDS, false)
-		_set_status_flash("Imported %s. Connect to the lobby to save it to your account." % deck_name)
-		return
-
 	_ensure_local_profile_store()
-	if _local_profile_store == null:
-		_apply_saved_deck(imported_deck)
-		_set_status_flash("Imported %s." % deck_name)
-		return
 	var saved_deck: Dictionary = _local_profile_store.save_deck(
 		_active_profile_id,
 		deck_name,
-		imported_deck.get("cards", {}),
-		str(imported_deck.get("deck_id", "")),
-		imported_deck.get("special_setup", {})
+		shared_deck.get("cards", {}),
+		"",
+		shared_deck.get("special_setup", {}),
+		shared_deck.get("reinforcements", {})
 	)
-	_selected_saved_deck_id = str(saved_deck.get("deck_id", "")).strip_edges()
-	_pending_remote_saved_deck_id = ""
-	_load_profile_decks()
+	if saved_deck.is_empty():
+		_set_status_flash("Could not save the imported deck on this device.")
+		return
 	_apply_saved_deck(saved_deck)
+	_finish_local_deck_save(saved_deck, "Imported %s." % str(saved_deck.get("name", deck_name)))
 	_set_collection_mode(COLLECTION_MODE_SAVED_DECKS, false)
-	_set_status_flash("Imported %s." % deck_name)
 
 func _load_selected_deck() -> void:
 	if _selected_saved_deck_id.is_empty():
@@ -2763,8 +3736,6 @@ func _delete_saved_deck(deck_id: String) -> void:
 	if deleted_deck_id.is_empty():
 		return
 	var deleted_selected_deck := deleted_deck_id == _selected_saved_deck_id
-	if deleted_deck_id == _pending_remote_saved_deck_id:
-		_pending_remote_saved_deck_id = ""
 	if _uses_remote_account_decks():
 		var should_request_remote_delete := _is_synced_account_deck_id(deleted_deck_id)
 		if should_request_remote_delete and not _can_sync_account_decks():
@@ -2800,36 +3771,20 @@ func _copy_saved_deck(deck_id: String) -> void:
 	if source_deck.is_empty():
 		return
 	var copied_deck_name := _make_copied_deck_name(str(source_deck.get("name", LocalProfileStoreScript.DEFAULT_DECK_NAME)))
-	var copied_deck_id := _generate_saved_deck_id()
-	if _uses_remote_account_decks():
-		if not _can_sync_account_decks():
-			_set_status_flash("Connect to the lobby to copy account decks.")
-			return
-		_selected_saved_deck_id = copied_deck_id
-		_pending_remote_saved_deck_id = copied_deck_id
-		_online_lobby_client.save_account_deck(
-			copied_deck_name,
-			source_deck.get("cards", {}),
-			copied_deck_id,
-			source_deck.get("special_setup", {})
-		)
-		_set_status_flash("Copying saved deck...")
-		return
 	_ensure_local_profile_store()
-	if _local_profile_store == null:
-		return
 	var copied_deck: Dictionary = _local_profile_store.save_deck(
 		_active_profile_id,
 		copied_deck_name,
 		source_deck.get("cards", {}),
-		copied_deck_id,
-		source_deck.get("special_setup", {})
+		"",
+		source_deck.get("special_setup", {}),
+		source_deck.get("reinforcements", {})
 	)
-	_selected_saved_deck_id = str(copied_deck.get("deck_id", copied_deck_id)).strip_edges()
-	_pending_remote_saved_deck_id = ""
-	_load_profile_decks()
+	if copied_deck.is_empty():
+		_set_status_flash("Could not save the copy on this device.")
+		return
 	_apply_saved_deck(copied_deck)
-	_set_status_flash("Saved deck copied.")
+	_finish_local_deck_save(copied_deck, "Saved deck copied.")
 
 func _make_copied_deck_name(source_name: String) -> String:
 	var resolved_name := source_name.strip_edges()
@@ -2898,10 +3853,11 @@ func _remove_remote_account_deck_from_cache(deck_id: String) -> void:
 
 func _new_deck() -> void:
 	_push_current_deck_undo_state()
-	_pending_remote_saved_deck_id = ""
 	_selected_saved_deck_id = ""
 	_deck.clear()
+	_reinforcements.clear()
 	_clear_tiamat_slots()
+	_art_variant_selections.clear()
 	if _deck_name_edit != null:
 		_deck_name_edit.text = LocalProfileStoreScript.DEFAULT_DECK_NAME
 		_deck_name_edit.grab_focus()
@@ -2961,9 +3917,6 @@ func _get_saved_deck_by_id(deck_id: String) -> Dictionary:
 
 func _get_last_selected_saved_deck_id() -> String:
 	if _uses_remote_account_decks():
-		var pending_deck_id := _pending_remote_saved_deck_id.strip_edges()
-		if not pending_deck_id.is_empty():
-			return pending_deck_id
 		var resolved_selected_deck_id := _selected_saved_deck_id.strip_edges()
 		if not resolved_selected_deck_id.is_empty():
 			for saved_deck in _remote_account_decks_cache:
@@ -3006,22 +3959,21 @@ func _load_profile_decks() -> void:
 	_saved_decks_option.add_item("Saved Decks")
 	_saved_decks_option.set_item_metadata(0, "")
 	var decks: Array[Dictionary] = _get_saved_decks()
-	if not _pending_remote_saved_deck_id.is_empty():
-		for deck in decks:
-			if str(deck.get("deck_id", "")).strip_edges() == _pending_remote_saved_deck_id:
-				_pending_remote_saved_deck_id = ""
-				break
 	for deck in decks:
 		var saved_deck_name := str(deck.get("name", "Deck"))
 		_saved_decks_option.add_item(saved_deck_name)
 		_saved_decks_option.set_item_metadata(_saved_decks_option.get_item_count() - 1, str(deck.get("deck_id", "")))
 
-	var preferred_deck_id := _get_last_selected_saved_deck_id()
-	if preferred_deck_id.is_empty() and not decks.is_empty():
-		preferred_deck_id = str(decks[0].get("deck_id", "")).strip_edges()
+	# A catalog refresh during reconnect must keep the open deck's identity.
+	var preferred_deck_id := _selected_saved_deck_id
+	var should_load_deck := _deck.is_empty() and (_saved_deck_state.is_empty() or not _has_unsaved_deck_changes())
+	if should_load_deck:
+		preferred_deck_id = _get_last_selected_saved_deck_id()
+		if preferred_deck_id.is_empty() and not decks.is_empty():
+			preferred_deck_id = str(decks[0].get("deck_id", "")).strip_edges()
 	_select_saved_deck(preferred_deck_id)
 	_refresh_saved_deck_gallery(decks)
-	if not preferred_deck_id.is_empty() and _deck.is_empty():
+	if not preferred_deck_id.is_empty() and should_load_deck:
 		var saved_deck: Dictionary = _get_saved_deck_by_id(preferred_deck_id)
 		if not saved_deck.is_empty():
 			_apply_saved_deck(saved_deck)
@@ -3057,23 +4009,32 @@ func _select_saved_deck(deck_id: String) -> void:
 
 func _apply_saved_deck(saved_deck: Dictionary) -> void:
 	_selected_saved_deck_id = str(saved_deck.get("deck_id", _selected_saved_deck_id)).strip_edges()
-	_pending_remote_saved_deck_id = ""
 	if _deck_name_edit != null:
 		_deck_name_edit.text = str(saved_deck.get("name", LocalProfileStoreScript.DEFAULT_DECK_NAME))
 	_deck = {}
+	_reinforcements = {}
 	var cards = saved_deck.get("cards", {})
 	if cards is Dictionary:
 		for raw_card_name in (cards as Dictionary).keys():
 			var count := int((cards as Dictionary)[raw_card_name])
 			if count > 0:
 				_deck[str(raw_card_name)] = count
-	_tiamat_slots = TiamatScript.get_slot_card_names_from_setup(saved_deck.get("special_setup", {}))
+	var reinforcements = saved_deck.get("reinforcements", {})
+	if reinforcements is Dictionary:
+		for raw_card_name in (reinforcements as Dictionary).keys():
+			var count := int((reinforcements as Dictionary)[raw_card_name])
+			if count > 0:
+				_reinforcements[str(raw_card_name)] = count
+	var special_setup = saved_deck.get("special_setup", {})
+	_tiamat_slots = TiamatScript.get_slot_card_names_from_setup(special_setup)
+	_art_variant_selections = CardArtVariantsScript.get_selections_from_setup(special_setup)
 	if not _deck_uses_tiamat():
 		_clear_tiamat_slots()
 	_remember_selected_saved_deck(_selected_saved_deck_id)
 	_select_saved_deck(_selected_saved_deck_id)
 	_refresh_saved_deck_gallery(_get_saved_decks())
 	_refresh_deck_panel(true, false)
+	_mark_current_deck_saved()
 
 func _refresh_saved_deck_gallery(decks: Array[Dictionary]) -> void:
 	_saved_decks_cache.clear()
@@ -3087,7 +4048,7 @@ func _make_saved_deck_cover(saved_deck: Dictionary) -> Control:
 	var saved_deck_name := str(saved_deck.get("name", "Deck")).strip_edges()
 	if saved_deck_name.is_empty():
 		saved_deck_name = "Deck"
-	var glow_margin := 12
+	var glow_margin := SAVED_DECK_COVER_MARGIN
 	var wrapper := MarginContainer.new()
 	wrapper.add_theme_constant_override("margin_left", glow_margin)
 	wrapper.add_theme_constant_override("margin_top", glow_margin)
@@ -3256,7 +4217,7 @@ func _make_saved_deck_cover(saved_deck: Dictionary) -> Control:
 	return wrapper
 
 func _make_new_deck_cover() -> Control:
-	var glow_margin := 12
+	var glow_margin := SAVED_DECK_COVER_MARGIN
 	var wrapper := MarginContainer.new()
 	wrapper.add_theme_constant_override("margin_left", glow_margin)
 	wrapper.add_theme_constant_override("margin_top", glow_margin)
@@ -3363,7 +4324,7 @@ func _on_saved_deck_cover_pressed(deck_id: String) -> void:
 	_load_selected_deck()
 
 func _queue_saved_deck_actions_visibility_update(cover: Control, actions: Control) -> void:
-	if cover == null or actions == null:
+	if cover == null or actions == null or not cover.is_inside_tree() or cover.is_queued_for_deletion():
 		return
 	if not is_instance_valid(cover) or not is_instance_valid(actions):
 		return
@@ -3372,7 +4333,8 @@ func _queue_saved_deck_actions_visibility_update(cover: Control, actions: Contro
 func _update_saved_deck_actions_visibility(cover_id: int, actions_id: int) -> void:
 	var cover := instance_from_id(cover_id) as Control
 	var actions := instance_from_id(actions_id) as Control
-	if cover == null or actions == null:
+	# A grid rebuild can detach the cover before the deferred call runs.
+	if cover == null or actions == null or cover.get_viewport() == null:
 		return
 	var mouse_position := cover.get_global_mouse_position()
 	var cover_rect := Rect2(cover.global_position, cover.size)
@@ -3436,41 +4398,35 @@ func _can_sync_account_decks() -> bool:
 	return _online_lobby_client.is_authenticated()
 
 func _set_status_flash(message: String) -> void:
-	if _validation_lbl == null:
+	if _status_flash_lbl == null:
 		return
-	_validation_lbl.text = "%s\n%s" % [message, _validation_lbl.text]
-	get_tree().create_timer(2.0).timeout.connect(Callable(self, "_update_validation_if_ready"))
-
-func _update_validation_if_ready() -> void:
-	if is_instance_valid(_validation_lbl):
-		_update_validation()
+	_status_flash_lbl.text = " " if message.is_empty() else message
+	if not message.is_empty():
+		_status_flash_timer.start()
 
 func _update_validation() -> void:
-	var regular_count_summary := 0
-	var legendary_count_summary := 0
-	var selected_god_template := _get_selected_god_template() as GodCard
-
-	for card_name: String in _deck:
-		var cnt: int = _deck[card_name]
-		var card := _find_template(card_name)
-		if card == null or card.is_god or card.is_power:
-			continue
-		if _is_illegal_active_god_for_god(card, selected_god_template):
-			continue
-		regular_count_summary += cnt
-		if card.is_legendary:
-			legendary_count_summary += cnt
-
-	var max_legends_summary := int(regular_count_summary / 10.0)
-	var summary_ok := regular_count_summary >= MIN_REGULAR_CARDS and legendary_count_summary <= max_legends_summary
-	_validation_lbl.text = "Card Count: %d / %d      Legendaries: %d / %d" % [
-		regular_count_summary,
+	var validation := DeckValidatorScript.new().validate_deck(
+		_deck,
+		_get_deck_special_setup(),
+		_reinforcements
+	)
+	var regular_count := int(validation.get("regular_count", _count_regular_cards_in_current_deck()))
+	var power_count := int(validation.get("power_count", _count_powers_in_current_deck()))
+	var reinforcement_count := _count_cards_in_dictionary(_reinforcements)
+	var reinforcement_limit := DeckValidatorScript.get_reinforcement_limit(regular_count, power_count)
+	var summary := "Main: %d / %d regular      Reinforcements: %d / %d" % [
+		regular_count,
 		MIN_REGULAR_CARDS,
-		legendary_count_summary,
-		max_legends_summary
+		reinforcement_count,
+		reinforcement_limit
 	]
-	_validation_lbl.modulate = Color(0.5, 1.0, 0.55) if summary_ok else Color(1.0, 0.85, 0.45)
-	_validation_lbl.tooltip_text = ""
+	var is_valid := bool(validation.get("is_valid", false))
+	var error := str(validation.get("error", "")).strip_edges()
+	# Keep the status and validation area the same height as messages change.
+	var error_line := " " if error.is_empty() else error
+	_validation_lbl.text = "%s\n%s" % [summary, error_line]
+	_validation_lbl.modulate = Color(0.5, 1.0, 0.55) if is_valid else Color(1.0, 0.72, 0.42)
+	_validation_lbl.tooltip_text = error
 
 func _legacy_validation_details() -> void:
 	var total := 0
@@ -3603,8 +4559,18 @@ func _update_count_badges() -> void:
 		var lbl: Label = _count_badges[card_name]
 		if not is_instance_valid(lbl):
 			continue
-		var count: int = _deck.get(card_name, 0)
-		lbl.text = "×%d" % count if count > 0 else ""
+		var main_count := int(_deck.get(card_name, 0))
+		var reinforcement_count := int(_reinforcements.get(card_name, 0))
+		var count := main_count + reinforcement_count
+		if main_count > 0 and reinforcement_count > 0:
+			lbl.text = "×%d +%dR" % [main_count, reinforcement_count]
+			lbl.add_theme_font_size_override("font_size", 12)
+		elif reinforcement_count > 0:
+			lbl.text = "×%dR" % reinforcement_count
+			lbl.add_theme_font_size_override("font_size", 14)
+		else:
+			lbl.text = "×%d" % main_count if main_count > 0 else ""
+			lbl.add_theme_font_size_override("font_size", 14)
 
 		# Dim card when at max copies
 		var card := _find_template(card_name)
@@ -3621,8 +4587,10 @@ func _update_count_badges() -> void:
 func _show_preview(card: Card, force: bool = false) -> void:
 	if not force and not _selected_collection_card_name.is_empty() and card != null and card.card_name != _selected_collection_card_name:
 		return
-	if card.art_path != "":
-		_prev_art.texture = _get_card_art_texture(card.art_path)
+	_preview_card_name = card.card_name
+	var preview_art_path := _get_selected_art_path(card)
+	if preview_art_path != "":
+		_prev_art.texture = _get_card_art_texture(preview_art_path)
 	else:
 		_prev_art.texture = null
 	_refresh_preview_level_badge(card)
@@ -3632,8 +4600,9 @@ func _show_preview(card: Card, force: bool = false) -> void:
 	var type_parts: PackedStringArray = [_get_type_label(card)]
 	if card.culture != "":
 		type_parts.append(card.culture)
-	if card.card_types.size() > 0:
-		type_parts.append(" / ".join(Array(card.card_types)))
+	var subtypes := card.card_types
+	if not subtypes.is_empty():
+		type_parts.append(" / ".join(subtypes))
 	_prev_type.text = " · ".join(type_parts)
 	_prev_type.tooltip_text = _prev_type.text
 	_prev_type.add_theme_color_override("font_color", _get_type_color(card))
@@ -3641,22 +4610,56 @@ func _show_preview(card: Card, force: bool = false) -> void:
 	var stat_parts := _get_card_stat_summary_parts(card, false, true)
 	_prev_stats.text = "  ".join(stat_parts)
 
-	var preview_body := ""
+	var preview_sections: Array[String] = []
+	if card.has_type("Shapeshifter"):
+		var hover_detail_lines := card.get_hover_detail_lines()
+		if hover_detail_lines.size() > 0:
+			preview_sections.append("\n".join(hover_detail_lines))
+
 	if card.ability_text != "":
-		preview_body = BaseCard.apply_keyword_hints(BaseCard.apply_action_cost_symbols(card.ability_text, card))
+		preview_sections.append(
+			BaseCard.apply_keyword_hints(BaseCard.apply_action_cost_symbols(card.ability_text, card))
+		)
 	if card.should_show_flavor_text_in_hover():
 		var escaped_flavor := _escape_preview_bbcode_text(card.flavor_text)
-		if not preview_body.is_empty():
-			preview_body += "\n\n[color=#7f7f89][i]%s[/i][/color]" % escaped_flavor
-		else:
-			preview_body = "[color=#7f7f89][i]%s[/i][/color]" % escaped_flavor
+		preview_sections.append("[color=#7f7f89][i]%s[/i][/color]" % escaped_flavor)
+	var preview_body := "\n\n".join(preview_sections)
 	_prev_ability.text = preview_body
 	_prev_ability.custom_minimum_size.y = 64 if not preview_body.is_empty() else 0
 	_prev_flavor.text = ""
 
+func _get_selected_art_path(card: Card) -> String:
+	if card == null:
+		return ""
+	var variants := card.get_art_variant_paths()
+	var variant_index := int(_art_variant_selections.get(card.card_name, 0))
+	if variant_index >= 0 and variant_index < variants.size():
+		return variants[variant_index]
+	return card.art_path
+
+func _cycle_card_art(card: Card) -> void:
+	var variants := card.get_art_variant_paths()
+	if variants.size() <= 1:
+		return
+	_push_current_deck_undo_state()
+	var next_index := (int(_art_variant_selections.get(card.card_name, 0)) + 1) % variants.size()
+	if next_index == 0:
+		_art_variant_selections.erase(card.card_name)
+	else:
+		_art_variant_selections[card.card_name] = next_index
+	_refresh_grid()
+	if _preview_card_name == card.card_name:
+		_show_preview(card, true)
+
 # ── filter ─────────────────────────────────────────────────────────
 func _input(event: InputEvent) -> void:
-	if not visible:
+	if not visible or is_instance_valid(_bot_submission_overlay):
+		return
+	if _try_handle_visual_deck_card_drag_input(event):
+		get_viewport().set_input_as_handled()
+		return
+	if _try_handle_deck_row_drag_input(event):
+		get_viewport().set_input_as_handled()
 		return
 	if _try_handle_collection_card_drag_input(event):
 		get_viewport().set_input_as_handled()
@@ -3685,7 +4688,7 @@ func _input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 
 func _unhandled_input(event: InputEvent) -> void:
-	if not visible:
+	if not visible or is_instance_valid(_bot_submission_overlay):
 		return
 	if event is InputEventMouseButton:
 		var mouse_event := event as InputEventMouseButton
@@ -3723,6 +4726,24 @@ func _try_handle_collection_card_drag_input(event: InputEvent) -> bool:
 		var mouse_event := event as InputEventMouseButton
 		if mouse_event.button_index == MOUSE_BUTTON_LEFT and not mouse_event.pressed:
 			_finish_collection_card_drag(mouse_event.global_position)
+			return true
+	return false
+
+func _try_handle_deck_row_drag_input(event: InputEvent) -> bool:
+	if _deck_row_drag_card == null:
+		return false
+	if event is InputEventMouseMotion:
+		var motion := event as InputEventMouseMotion
+		if motion.global_position.distance_to(_deck_row_drag_start_pos) >= COLLECTION_DRAG_THRESHOLD:
+			_deck_row_drag_active = true
+		if _deck_row_drag_active:
+			_ensure_deck_row_drag_ghost(motion.global_position)
+			return true
+		return false
+	if event is InputEventMouseButton:
+		var mouse_event := event as InputEventMouseButton
+		if mouse_event.button_index == MOUSE_BUTTON_LEFT and not mouse_event.pressed:
+			_finish_deck_row_drag(mouse_event.global_position)
 			return true
 	return false
 
@@ -3838,7 +4859,14 @@ func _try_handle_deck_undo_shortcut(key_event: InputEventKey) -> bool:
 	return _undo_last_deck_change()
 
 func _queue_collection_layout_refresh() -> void:
-	call_deferred("_update_collection_layout")
+	if _collection_layout_refresh_queued:
+		return
+	_collection_layout_refresh_queued = true
+	call_deferred("_flush_collection_layout_refresh")
+
+func _flush_collection_layout_refresh() -> void:
+	_collection_layout_refresh_queued = false
+	_update_collection_layout()
 
 func _queue_responsive_layout_refresh() -> void:
 	call_deferred("_update_responsive_layout")
@@ -3853,6 +4881,7 @@ func _update_responsive_layout() -> void:
 		return
 
 	var use_stacked_layout := viewport_width < STACKED_LAYOUT_WIDTH_THRESHOLD
+	var use_visual_deck_layout := _visual_deck_view_enabled
 	var body_available_height := 0.0
 	if is_instance_valid(_body_scroll) and _body_scroll.size.y > 0.0:
 		body_available_height = _body_scroll.size.y
@@ -3863,16 +4892,20 @@ func _update_responsive_layout() -> void:
 	var column_available_height := body_available_height
 	if not use_stacked_layout:
 		column_available_height = maxf(0.0, body_available_height - DESKTOP_LAYOUT_BOTTOM_CLEARANCE)
-	_body_grid.columns = 1 if use_stacked_layout else 2
+	if use_visual_deck_layout:
+		column_available_height = body_available_height
+	_body_grid.columns = 1 if use_stacked_layout or use_visual_deck_layout else 2
 	_body_grid.custom_minimum_size.x = maxf(0.0, viewport_width - 16.0)
-	_body_grid.custom_minimum_size.y = column_available_height * (2.0 if use_stacked_layout else 1.0)
+	_body_grid.custom_minimum_size.y = column_available_height * (2.0 if use_stacked_layout and not use_visual_deck_layout else 1.0)
+	_body_grid.size_flags_vertical = Control.SIZE_EXPAND_FILL if use_visual_deck_layout else Control.SIZE_SHRINK_BEGIN
 	if is_instance_valid(_body_scroll):
 		_body_scroll.custom_minimum_size.y = 0.0
 		_body_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-		_body_scroll.scroll_vertical = 0
 
 	var target_panel_width := clampf(floor(viewport_width * 0.34), MIN_DECK_PANEL_WIDTH, MAX_DECK_PANEL_WIDTH)
-	if use_stacked_layout:
+	if use_visual_deck_layout:
+		target_panel_width = max(MIN_DECK_PANEL_WIDTH, viewport_width - 24.0)
+	elif use_stacked_layout:
 		target_panel_width = max(MIN_DECK_PANEL_WIDTH, viewport_width - 24.0)
 	else:
 		if viewport_width < 1100.0:
@@ -3882,17 +4915,28 @@ func _update_responsive_layout() -> void:
 
 	_deck_panel.custom_minimum_size.x = target_panel_width
 	_deck_panel.custom_minimum_size.y = column_available_height
-	_deck_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL if use_stacked_layout else Control.SIZE_FILL
+	_deck_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL if use_stacked_layout or use_visual_deck_layout else Control.SIZE_FILL
 	_deck_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	if is_instance_valid(_collection_panel):
+		_collection_panel.visible = not use_visual_deck_layout
 		_collection_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		_collection_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		_collection_panel.custom_minimum_size.y = column_available_height
+	if is_instance_valid(_preview_outer):
+		_preview_outer.visible = not use_visual_deck_layout
 	if is_instance_valid(_collection_host):
 		_collection_host.custom_minimum_size.y = maxf(196.0, column_available_height - 84.0)
+	if is_instance_valid(_deck_scroll_nav_bar):
+		_deck_scroll_nav_bar.visible = not use_visual_deck_layout
+	if is_instance_valid(_deck_footer_buttons):
+		_deck_footer_buttons.visible = not use_visual_deck_layout
+	if is_instance_valid(_autofill_deck_btn):
+		_autofill_deck_btn.visible = not use_visual_deck_layout
+	if is_instance_valid(_deck_status_box):
+		_deck_status_box.visible = not use_visual_deck_layout
 
 	var preview_height := 252.0
-	if is_instance_valid(_preview_outer):
+	if is_instance_valid(_preview_outer) and _preview_outer.visible:
 		if target_panel_width <= COMPACT_PREVIEW_WIDTH_THRESHOLD:
 			preview_height = 212.0
 		if viewport_height < 1200.0:
@@ -3934,8 +4978,11 @@ func _update_responsive_layout() -> void:
 		var deck_panel_separation := float(_deck_panel.get_theme_constant("separation"))
 		fixed_deck_panel_height += maxf(0.0, float(visible_child_count - 1)) * deck_panel_separation
 		var deck_scroll_height := maxf(72.0, column_available_height - fixed_deck_panel_height)
+		if use_visual_deck_layout:
+			deck_scroll_height = maxf(420.0, column_available_height - fixed_deck_panel_height)
 		_deck_scroll.custom_minimum_size.y = deck_scroll_height
 		call_deferred("_update_deck_scroll_nav_buttons")
+		call_deferred("_layout_visual_deck_view")
 
 	if is_instance_valid(_prev_page_btn):
 		var page_button_width := 96.0 if viewport_width < 1100.0 else 120.0
@@ -3953,68 +5000,41 @@ func _update_collection_layout() -> void:
 	if available.x <= 0.0 or available.y <= 0.0:
 		return
 
-	var total_items := _current_grid_total()
 	var aspect: float = CARD_W / float(CARD_H)
 	var previous_page_grid_columns := _page_grid_columns
 	var previous_page_visible_rows := _page_visible_collection_rows
 	var columns := 1
 	var next_size := Vector2(CARD_W, CARD_H)
 	var visible_rows := 1
-	var max_card_height := 1.0
-	var width_limited := 1.0
-	var estimated_width := 1.0
-	var height_from_width := 1.0
 
-	if _collection_mode == COLLECTION_MODE_SAVED_DECKS and total_items > 0:
-		if total_items <= 2:
-			columns = 1
-		elif total_items <= 4:
-			columns = 2
-		else:
-			columns = 3
+	# Size and paginate using the full tile footprint, including the saved
+	# deck's glow margins. _card_size itself is the inner cover size.
+	var cover_padding := float(SAVED_DECK_COVER_MARGIN * 2) if _collection_mode == COLLECTION_MODE_SAVED_DECKS else 0.0
+	var footer_height := COLLECTION_ADD_FOOTER_HEIGHT if _collection_mode == COLLECTION_MODE_CARDS else 0.0
+	var base_max_card_height = floor((available.y - COLLECTION_GAP * float(_collection_rows - 1)) / float(_collection_rows))
+	base_max_card_height = max(base_max_card_height, cover_padding + footer_height + 1.0)
+	var base_visual_height = maxf(1.0, base_max_card_height - cover_padding - footer_height)
+	var base_estimated_width = floor(base_visual_height * aspect) + cover_padding
+	var base_columns = max(1, int(floor((available.x + COLLECTION_GAP) / max(1.0, base_estimated_width + COLLECTION_GAP))))
+	var base_width_limited = floor((available.x - COLLECTION_GAP * float(base_columns - 1)) / float(base_columns))
+	var base_height_from_width = floor(maxf(1.0, base_width_limited - cover_padding) / aspect) + footer_height + cover_padding
 
-		var target_rows := maxi(1, int(ceil(total_items / float(columns))))
-		max_card_height = floor((available.y - COLLECTION_GAP * float(target_rows - 1)) / float(target_rows))
-		max_card_height = max(max_card_height, 1.0)
-		width_limited = floor((available.x - COLLECTION_GAP * float(columns - 1)) / float(columns))
-		estimated_width = floor(max_card_height * aspect)
-		height_from_width = floor(width_limited / aspect)
-
-		if height_from_width < max_card_height:
-			max_card_height = height_from_width
-			estimated_width = width_limited
-		else:
-			estimated_width = floor(max_card_height * aspect)
-
-		next_size = Vector2(max(1.0, estimated_width), max(1.0, max_card_height))
-		visible_rows = target_rows
-		_page_grid_columns = columns
-		_page_visible_collection_rows = visible_rows
+	if base_height_from_width < base_max_card_height:
+		base_max_card_height = base_height_from_width
+		base_estimated_width = base_width_limited
 	else:
-		var footer_height := COLLECTION_ADD_FOOTER_HEIGHT
-		var base_max_card_height = floor((available.y - COLLECTION_GAP * float(_collection_rows - 1)) / float(_collection_rows))
-		base_max_card_height = max(base_max_card_height, footer_height + 1.0)
-		var base_visual_height = maxf(1.0, base_max_card_height - footer_height)
-		var base_estimated_width = floor(base_visual_height * aspect)
-		var base_columns = max(1, int(floor((available.x + COLLECTION_GAP) / max(1.0, base_estimated_width + COLLECTION_GAP))))
-		var base_width_limited = floor((available.x - COLLECTION_GAP * float(base_columns - 1)) / float(base_columns))
-		var base_height_from_width = floor(base_width_limited / aspect) + footer_height
+		base_estimated_width = floor(maxf(1.0, base_max_card_height - cover_padding - footer_height) * aspect) + cover_padding
 
-		if base_height_from_width < base_max_card_height:
-			base_max_card_height = base_height_from_width
-			base_estimated_width = base_width_limited
-		else:
-			base_estimated_width = floor(maxf(1.0, base_max_card_height - footer_height) * aspect)
+	var base_card_size := Vector2(max(1.0, base_estimated_width - cover_padding), max(1.0, base_max_card_height - cover_padding))
+	var tile_height: float = base_card_size.y + cover_padding
+	var base_visible_rows := maxi(1, mini(_collection_rows, int(floor((available.y + COLLECTION_GAP) / max(1.0, tile_height + COLLECTION_GAP)))))
+	next_size = base_card_size
+	columns = base_columns
+	visible_rows = base_visible_rows
+	_page_grid_columns = columns
+	_page_visible_collection_rows = visible_rows
 
-		var base_card_size := Vector2(max(1.0, base_estimated_width), max(1.0, base_max_card_height))
-		var base_visible_rows := maxi(1, mini(_collection_rows, int(floor((available.y + COLLECTION_GAP) / max(1.0, base_card_size.y + COLLECTION_GAP)))))
-		next_size = base_card_size
-		columns = base_columns
-		visible_rows = base_visible_rows
-		_page_grid_columns = columns
-		_page_visible_collection_rows = visible_rows
-
-	_grid.custom_minimum_size.y = visible_rows * next_size.y + COLLECTION_GAP * float(visible_rows - 1)
+	_grid.custom_minimum_size.y = visible_rows * tile_height + COLLECTION_GAP * float(visible_rows - 1)
 
 	if columns != _grid_columns \
 			or next_size != _card_size \
@@ -4112,26 +5132,12 @@ func _set_collection_mode(mode: String, reset_page: bool = true) -> void:
 func _refresh_saved_decks_view_button() -> void:
 	if _saved_decks_view_btn == null:
 		return
-	_saved_decks_view_btn.text = "Back to Cards" if _collection_mode == COLLECTION_MODE_SAVED_DECKS else "Saved Decks"
-	if _card_view_controls_bar != null:
-		_card_view_controls_bar.visible = (_collection_mode == COLLECTION_MODE_CARDS)
-
-func _generate_saved_deck_id() -> String:
-	var existing_deck_ids: Dictionary = {}
-	for saved_deck in _get_saved_decks():
-		var deck_id := str(saved_deck.get("deck_id", "")).strip_edges()
-		if not deck_id.is_empty():
-			existing_deck_ids[deck_id] = true
-	if not _pending_remote_saved_deck_id.is_empty():
-		existing_deck_ids[_pending_remote_saved_deck_id] = true
-	for _attempt in range(32):
-		var candidate := "deck_%d%06d" % [
-			int(Time.get_unix_time_from_system()),
-			_deck_id_rng.randi_range(0, 999999),
-		]
-		if not existing_deck_ids.has(candidate):
-			return candidate
-	return "deck_%d" % int(Time.get_ticks_usec())
+	var saved_decks_mode := _collection_mode == COLLECTION_MODE_SAVED_DECKS
+	_saved_decks_view_btn.text = "Back to Cards" if saved_decks_mode else "Saved Decks"
+	if _card_view_label != null:
+		_card_view_label.text = "Deck Size:" if saved_decks_mode else "Card View:"
+	if _card_overlays_toggle != null:
+		_card_overlays_toggle.visible = not saved_decks_mode
 
 func _max_copies(card: Card) -> int:
 	if card.is_god:       return 1
@@ -4155,9 +5161,9 @@ func _get_preferred_autofill_regular_candidates() -> Array[Card]:
 	if god == null:
 		return candidates
 	for card: Card in _all_cards:
-		if not _is_regular_card(card):
+		if not _is_regular_card(card) or card.is_single_player_card:
 			continue
-		if int(_deck.get(card.card_name, 0)) >= _max_copies(card):
+		if int(_deck.get(card.card_name, 0)) + int(_reinforcements.get(card.card_name, 0)) >= _max_copies(card):
 			continue
 		if not _is_card_compatible_with_selected_god(card, god):
 			continue
@@ -4170,7 +5176,7 @@ func _is_preferred_autofill_card_for_god(card: Card, god: GodCard) -> bool:
 		return false
 	match god.card_name:
 		"Thor", "Freyja":
-			return card.has_type("Warrior") and (card.has_type("Norse Creature") or card.culture == "Norse")
+			return card.has_type("Warrior") and card.culture == "Norse"
 		"Tezcatlipoca, the Smoking Mirror":
 			return card.has_type("Shapeshifter")
 		_:
@@ -4222,22 +5228,22 @@ func _is_regular_card(card: Card) -> bool:
 	return card != null and not card.is_god and not card.is_power
 
 func _can_autofill_regular_card(card: Card, god: GodCard, legendary_only: bool) -> bool:
-	if not _is_regular_card(card):
+	if not _is_regular_card(card) or card.is_single_player_card:
 		return false
 	if legendary_only and not card.is_legendary:
 		return false
 	if not legendary_only and card.is_legendary:
 		return false
-	if int(_deck.get(card.card_name, 0)) >= _max_copies(card):
+	if int(_deck.get(card.card_name, 0)) + int(_reinforcements.get(card.card_name, 0)) >= _max_copies(card):
 		return false
 	if god == null:
 		return card is not ActiveGodCard
 	return _is_card_compatible_with_selected_god(card, god)
 
 func _can_autofill_power_card(card: Card, god: GodCard) -> bool:
-	if card == null or not card.is_power or card.is_god:
+	if card == null or not card.is_power or card.is_god or card.is_single_player_card:
 		return false
-	if int(_deck.get(card.card_name, 0)) >= _max_copies(card):
+	if int(_deck.get(card.card_name, 0)) + int(_reinforcements.get(card.card_name, 0)) >= _max_copies(card):
 		return false
 	if god == null:
 		return str(card.culture).strip_edges() == "Neutral"
@@ -4279,6 +5285,8 @@ func _get_card_unavailable_badge_text(card: Card) -> String:
 func _get_card_unavailable_reason(card: Card) -> String:
 	if card == null:
 		return ""
+	if _editing_reinforcements and card.is_god:
+		return "Unavailable: Gods cannot be added to Reinforcements."
 	var god := _get_selected_god_template() as GodCard
 	if card is ActiveGodCard:
 		if god == null:
@@ -4352,9 +5360,12 @@ func _can_add_god_to_current_deck(god: Card) -> bool:
 	var god_card := god as GodCard
 	if god_card == null or not god.is_god:
 		return false
-	for card_name: String in _deck:
+	var combined_cards := _deck.duplicate(true)
+	for reinforcement_name in _reinforcements.keys():
+		combined_cards[reinforcement_name] = int(combined_cards.get(reinforcement_name, 0)) + int(_reinforcements[reinforcement_name])
+	for card_name: String in combined_cards:
 		var card := _find_template(card_name)
-		if card == null or card.is_god or _deck.get(card_name, 0) <= 0:
+		if card == null or card.is_god or int(combined_cards.get(card_name, 0)) <= 0:
 			continue
 		if not _is_card_compatible_with_selected_god(card, god_card):
 			return false

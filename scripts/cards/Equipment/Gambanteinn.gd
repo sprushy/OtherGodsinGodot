@@ -17,7 +17,7 @@ func _init() -> void:
 	speed = 1
 	level = 1
 	targets = true
-	ability_text = "Pay 2 mana. If equipped to a Mage, put a creature to [b]Sleep[/b] until end of turn. If equipped to a Shaman, it may instead switch a defensive creature to aggressive stance until end of turn. Only Mages and Shamans can equip this card."
+	ability_text = "Pay %d mana. If equipped to a Mage, put a creature to [b]Sleep[/b] until end of turn. If equipped to a Shaman, it may instead switch a defensive creature to aggressive stance until end of turn. Only Mages and Shamans can equip Gambanteinn." % ACTIVATION_COST
 	flavor_text = ""
 	artist = "Lorinda Tomko"
 	art_path = "res://images/card_art/equipment/gambanteinn_ai_edit.png"
@@ -68,6 +68,8 @@ func get_valid_targets(game_manager: GameManager) -> Array[Card]:
 				if card == null or card.card_type != Card.CardType.CREATURE:
 					continue
 				if can_sleep:
+					if card.is_immune_to_sleep():
+						continue
 					valid_targets.append(card)
 					continue
 				if can_force_aggressive and card.creature_mode != Card.CreatureMode.AGGRESSIVE:
@@ -153,7 +155,8 @@ func _resolve_mode_for_target(bearer: Card, target: Card) -> String:
 
 func _track_pending_effect(game_manager: GameManager, target: Card, mode: String) -> void:
 	_pending_end_turn_effects = _pending_end_turn_effects.filter(func(entry: Dictionary) -> bool:
-		return entry.get("target") != target
+		# Changing stance must not discard an existing sleep's end-of-turn cleanup.
+		return entry.get("target") != target or entry.get("mode") != mode
 	)
 	_pending_end_turn_effects.append({
 		"target": target,

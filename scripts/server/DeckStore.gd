@@ -2,10 +2,16 @@ extends RefCounted
 class_name DeckStore
 
 const ServerPathsScript = preload("res://scripts/server/ServerPaths.gd")
+const LobbyProtocolScript = preload("res://scripts/network/LobbyProtocol.gd")
 const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
 const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
 const TiamatScript = preload("res://scripts/cards/Gods/TiamatThePrimordial.gd")
+const CardArtVariantsScript = preload("res://scripts/core/CardArtVariants.gd")
 const DEFAULT_DECK_NAME := "Default Deck"
+const MAX_DECKS_PER_ACCOUNT := 64
+const MAX_DECK_NAME_LENGTH := LobbyProtocolScript.ACCOUNT_DECK_NAME_MAX_LENGTH
+const MAX_CARD_ENTRIES_PER_DECK := 128
+const MAX_TOTAL_CARD_COPIES_PER_DECK := 250
 
 var _decks_by_account_id: Dictionary = {}
 var _loaded: bool = false
@@ -47,7 +53,8 @@ func save_deck(
 	deck_name: String,
 	cards: Dictionary,
 	deck_id: String = "",
-	special_setup: Dictionary = {}
+	special_setup: Dictionary = {},
+	reinforcements: Dictionary = {}
 ) -> Dictionary:
 	_ensure_loaded()
 	var resolved_account_id: String = account_id.strip_edges()
@@ -56,15 +63,32 @@ func save_deck(
 	var sanitized_cards: Dictionary = _sanitize_cards(cards)
 	if sanitized_cards.is_empty():
 		return {"success": false, "message": "Deck did not contain any valid cards.", "deck": {}}
+	if sanitized_cards.size() > MAX_CARD_ENTRIES_PER_DECK \
+			or _total_card_copies(sanitized_cards) > MAX_TOTAL_CARD_COPIES_PER_DECK:
+		return {"success": false, "message": "Deck is too large to save.", "deck": {}}
 
 	var deck_bucket: Dictionary = _get_deck_bucket(resolved_account_id)
 	var resolved_deck_id: String = deck_id.strip_edges()
 	if resolved_deck_id.is_empty():
+		if deck_bucket.size() >= MAX_DECKS_PER_ACCOUNT:
+			return {
+				"success": false,
+				"message": "You can save up to %d decks on this account." % MAX_DECKS_PER_ACCOUNT,
+				"deck": {},
+			}
 		resolved_deck_id = _generate_id("deck_", 12)
+	elif not deck_bucket.has(resolved_deck_id) and deck_bucket.size() >= MAX_DECKS_PER_ACCOUNT:
+		return {
+			"success": false,
+			"message": "You can save up to %d decks on this account." % MAX_DECKS_PER_ACCOUNT,
+			"deck": {},
+		}
 
 	var clean_name: String = deck_name.strip_edges()
 	if clean_name.is_empty():
 		clean_name = DEFAULT_DECK_NAME
+	if clean_name.length() > MAX_DECK_NAME_LENGTH:
+		clean_name = clean_name.left(MAX_DECK_NAME_LENGTH)
 
 	var previous_decks_by_account_id := _decks_by_account_id.duplicate(true)
 	var now_unix := int(Time.get_unix_time_from_system())
@@ -75,6 +99,7 @@ func save_deck(
 	deck_entry["deck_id"] = resolved_deck_id
 	deck_entry["name"] = clean_name
 	deck_entry["cards"] = sanitized_cards
+	deck_entry["reinforcements"] = _sanitize_cards(reinforcements)
 	deck_entry["special_setup"] = _sanitize_special_setup(special_setup)
 	if not deck_entry.has("created_unix"):
 		deck_entry["created_unix"] = now_unix
@@ -102,6 +127,40 @@ func delete_deck(account_id: String, deck_id: String) -> Dictionary:
 		_decks_by_account_id = previous_decks_by_account_id
 		return {"success": false, "message": "Could not save deck storage.", "deck_id": resolved_deck_id}
 	return {"success": true, "message": "", "deck_id": resolved_deck_id}
+
+func merge_account_decks(source_account_id: String, target_account_id: String) -> Dictionary:
+	_ensure_loaded()
+	var source_id := source_account_id.strip_edges()
+	var target_id := target_account_id.strip_edges()
+	if source_id.is_empty() or target_id.is_empty() or source_id == target_id:
+		return {"success": true, "message": "", "moved_count": 0}
+	var source_bucket := _get_deck_bucket(source_id)
+	if source_bucket.is_empty():
+		return {"success": true, "message": "", "moved_count": 0}
+	var target_bucket := _get_deck_bucket(target_id)
+	var previous_decks_by_account_id := _decks_by_account_id.duplicate(true)
+	var moved_count := 0
+	for raw_deck_id in source_bucket.keys():
+		var deck = source_bucket.get(raw_deck_id, {})
+		if not (deck is Dictionary):
+			continue
+		if target_bucket.size() >= MAX_DECKS_PER_ACCOUNT:
+			break
+		var deck_entry := (deck as Dictionary).duplicate(true)
+		var deck_id := str(deck_entry.get("deck_id", raw_deck_id)).strip_edges()
+		if deck_id.is_empty():
+			deck_id = _generate_id("deck_", 12)
+		while target_bucket.has(deck_id):
+			deck_id = _generate_id("deck_", 12)
+		deck_entry["deck_id"] = deck_id
+		target_bucket[deck_id] = deck_entry
+		moved_count += 1
+	_decks_by_account_id[target_id] = target_bucket
+	_decks_by_account_id.erase(source_id)
+	if not _save():
+		_decks_by_account_id = previous_decks_by_account_id
+		return {"success": false, "message": "Could not merge account deck storage.", "moved_count": 0}
+	return {"success": true, "message": "", "moved_count": moved_count}
 
 func _ensure_loaded() -> void:
 	if _loaded:
@@ -137,12 +196,16 @@ func _sanitize_cards(cards: Dictionary) -> Dictionary:
 		sanitized[str(template.card_name)] = count
 	return sanitized
 
+func _total_card_copies(cards: Dictionary) -> int:
+	var total := 0
+	for card_name in cards.keys():
+		total += maxi(0, int(cards[card_name]))
+	return total
+
 func _sanitize_special_setup(special_setup: Dictionary) -> Dictionary:
 	if special_setup == null or special_setup.is_empty():
 		return {}
-	return TiamatScript.build_special_setup(
-		TiamatScript.get_slot_card_names_from_setup(special_setup)
-	)
+	return CardArtVariantsScript.sanitize_special_setup(special_setup)
 
 func _get_deck_bucket(account_id: String) -> Dictionary:
 	var deck_bucket = _decks_by_account_id.get(account_id, {})

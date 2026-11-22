@@ -1,0 +1,41 @@
+shader_type canvas_item;
+
+// Use on a full-screen ColorRect inside a top CanvasLayer.
+// Feed intensity from SnowstormController.gd.
+
+uniform sampler2D snow_light : filter_linear, repeat_enable;
+uniform sampler2D snow_medium : filter_linear, repeat_enable;
+uniform sampler2D whiteout_veil : filter_linear, repeat_enable;
+uniform sampler2D frost_edges : filter_linear;
+uniform float intensity : hint_range(0.0, 1.0) = 0.35;
+uniform float wind_strength = 0.45;
+uniform vec2 wind_direction = vec2(-1.0, 0.22);
+uniform float near_speed = 0.35;
+uniform float far_speed = 0.12;
+uniform vec4 snow_tint : source_color = vec4(0.82, 0.92, 1.0, 1.0);
+
+void fragment() {
+    vec2 uv = UV;
+    float t = TIME;
+    vec2 wind = normalize(wind_direction + vec2(0.001, 0.001));
+
+    // Multiple parallax layers create the "AAA" depth cue.
+    vec2 far_uv = uv * 1.6 - wind * t * wind_strength * 0.040 + vec2(0.0, t * far_speed);
+    vec2 mid_uv = uv * 2.5 - wind * t * wind_strength * 0.080 + vec2(0.0, t * near_speed);
+    vec2 veil_uv = uv * 0.85 - wind * t * wind_strength * 0.018 + vec2(0.0, t * 0.025);
+
+    vec4 far_snow = texture(snow_light, far_uv);
+    vec4 mid_snow = texture(snow_medium, mid_uv);
+    vec4 veil = texture(whiteout_veil, veil_uv);
+    vec4 frost = texture(frost_edges, uv);
+
+    float heavy = smoothstep(0.55, 1.0, intensity);
+    vec3 col = snow_tint.rgb;
+    float alpha =
+        far_snow.a * mix(0.18, 0.45, intensity) +
+        mid_snow.a * mix(0.04, 0.62, intensity) +
+        veil.a * heavy * 0.95 +
+        frost.a * mix(0.0, 0.72, intensity);
+
+    COLOR = vec4(col, clamp(alpha, 0.0, 0.92));
+}

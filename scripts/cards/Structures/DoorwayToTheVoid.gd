@@ -15,7 +15,7 @@ func _init() -> void:
 	artist = "Ricardo Zoppello"
 	name_at_bottom = true
 	art_path = "res://images/card_art/structures/Doorway to the Void(web).jpg"
-	ability_text = "Gateway ([b]Passive[/b]): If a creature from either side of the field would be sent to the graveyard, you may send it to the void instead."
+	ability_text = "Gateway ([b]Passive[/b]): If a creature from either side of the field would be sent to the grave, you may send it to the void instead."
 
 func replaces_graveyard_send(card: Card, _game_manager: GameManager) -> bool:
 	if abilities_suppressed():

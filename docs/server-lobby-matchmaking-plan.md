@@ -51,6 +51,12 @@ Recommended later deployment:
 - multiple concurrent headless match processes
 - automatic port allocation
 
+### Account auth transport guard
+
+The lobby and dedicated matches support verified TLS WebSocket endpoints on public TCP 443 alongside ENet. See [restrictive network setup](restrictive-network-websocket.md) for the domain, proxy, and client configuration. ENet itself is not encrypted in this high-level `ENetMultiplayerPeer` path. The current public alpha build sets `application/config/allow_insecure_account_auth=true` for legacy UDP password auth; verified WSS password auth works without that flag. Disable it after deploying the TLS endpoint if password auth should require encryption.
+
+Account email recovery is available from the login screen's **Forgot password?** button. Public recovery requires WSS and server-side email provider configuration; see [password recovery setup and checks](password-recovery.md).
+
 ### Client flow
 
 1. Client connects to the lobby server.
@@ -338,6 +344,35 @@ Server to client:
 - match remains paused or forfeit-timed depending on rules
 - reconnect restores same player index and hidden-hand perspective
 
+### Connection robustness (flaky-link behavior)
+
+Client retry policy is deliberately bounded by the server's own patience
+windows, so a client never stops trying earlier than the seat is actually held
+and never hammers past it:
+
+- ENet peer timeouts are raised on every transport (limit 4s, min 15s,
+  max 45s) so multi-second packet-loss bursts ride through instead of
+  dropping the connection; per-side only, so mixed client/server versions
+  stay compatible.
+- Initial match joins retry with backoff for ~60s (the match server waits
+  120s for both players). A join request that gets no reply within 10s is
+  treated as a failed attempt instead of hanging.
+- Post-authentication match reconnects retry with growing backoff until the
+  server's reconnect window (`reconnect_window_seconds`, default 90s, minus a
+  small safety margin) expires. Server denial (bad token, stale match id) is
+  terminal and never retried.
+- A dropped authenticated lobby session retries automatically with the saved
+  reconnect token (6 attempts, growing backoff ~1-12s) before the client
+  reports the lobby as lost; the server keeps room membership for 5 minutes.
+- If the match connection is unrecoverable from inside the game, the client
+  returns to the lobby, restores its session with the reconnect token, and
+  the existing active-match rejoin offer takes over while the seat lasts.
+
+Fair-play guardrails are unchanged: match joins still require per-player
+tokens, gameplay commands stay frozen while a player is disconnected (only
+forfeits are accepted), the server still abandons matches when the reconnect
+window expires, and ranked results are only recorded on a real game end.
+
 ## Rollout Plan
 
 ### Phase 1: Stabilize match authority boundary
@@ -451,3 +486,161 @@ Implement Phase 1 only:
 
 That is the smallest slice that unlocks the full lobby architecture without
 forcing a full rewrite all at once.
+
+## Bot self-play
+
+While the lobby has no human matches, it runs up to two concurrent bot
+self-play matches (`min(bot_self_play_limit, 2, cores - 1)`; one worker per
+lobby maintenance tick). Set `OTHERGODS_BOT_SELF_PLAY_LIMIT` or pass
+`bot_self_play_limit=0..10` on the dedicated lobby command line to lower the
+cap. Zero keeps the standing bot challenges and disables background matches.
+Starting a human match abandons all background matches immediately ("Yielded
+capacity to a human match") and waits 30 seconds before refilling.
+
+Self-play pairings prefer bots whose leagues are the same or adjacent; when the
+band has no pair, the closest available gap is used. Underplayed lists keep
+their extra selection weight inside the chosen range.
+
+The scheduler reserves a logical CPU slot for the lobby and yields all worker
+slots when a human match is present. It checks physical memory headroom,
+lobby frame time, free disk space, and spare match ports, and reports any
+blocker at warning level in the lobby log at most once per minute per reason,
+so an idle lobby with zero bot matches is never silent. It sheds background
+workers under pressure and waits before refilling. Workers run at 30 FPS. A
+match stops and records a diagnostic after 45 seconds without advancing a turn
+or 20 minutes overall.
+
+## Human match capacity
+
+Supervisor-hosted human matches (dedicated subprocess or in-process host) are
+capped at one concurrent match per logical core with one core reserved for the
+lobby; `OTHERGODS_MAX_HUMAN_MATCHES` overrides the limit. The production
+deployment (`scripts/server/lightsail/start_server.ps1`) sets it to `6` on the
+2 GB / 2 vCPU Lightsail box, sizing ~150 MB per match process with a 512 MB
+reserve. When the cap is reached, `MatchSupervisor.create_match` declines the
+new match instead of launching it, and both players receive "The server is full
+at the moment — sorry! Please try again in a few minutes." The room stays open
+so they can retry. Player-hosted matches never count against the cap (they run
+on the host's machine), and bot self-play is excluded because the scheduler
+sheds it to make room for humans.
+
+### Client-side server-bot challenges (local bot matches)
+
+Server-bot challenge matches (ranked and unranked human vs. lobby bot) do not
+count against the cap because they never run as server subprocesses: the lobby
+assigns them to the challenger's own client with in-process authority, the same
+topology practice matches use. The lobby (`LobbyServer._assign_local_bot_match`)
+sends `LOCAL_BOT_MATCH_ASSIGNED` with both decks and identities; the human runs
+as player index 0 and the bot as player 1. The game client reports the outcome
+via `LOCAL_BOT_MATCH_RESULT`, and the lobby records it through the normal
+`MatchHistoryStore` pipeline (so ranked progression and bot deck stars still
+advance). Results are client-authoritative for now — a deliberate tradeoff to
+free server capacity for human-vs-human matches. Local matches are Bo1 only
+and have no ranked turn clock. A match that never reports
+a result holds its room until `LOCAL_BOT_MATCH_RESULT_TIMEOUT_SECONDS` (3
+hours) expires it; forfeits through the in-game menu still end the game and are
+recorded, while abandoning mid-match frees the room with no result.
+
+### Direct-connect spectating for client-hosted matches
+
+Spectator streams never relay through the lobby server. The spectator connects
+straight to the hosting client's ENet port, and the host's existing
+`GameEventBroadcaster`/`GameState` machinery already sends spectators a masked,
+personalized `full_state` (hand privacy follows the friend card-visibility
+preference; the bot's hand is always visible).
+
+- **Local bot challenges**: the challenger's client binds a random ephemeral
+  UDP port (`spectate_listen` in the match info, handled by
+  `HeadlessMatchHost.setup_transport`) and advertises how it can be reached,
+  in order of preference:
+  1. **Same-machine/lobby-host shortcut**: the client that spawned a local
+     lobby skips probing entirely and advertises its LAN address directly; its
+     spectators sit on the same machine or network, where the router's external
+     IP would be unreachable anyway (`_get_lan_spectate_ip` in `MainMenu.gd`).
+  2. **UPnP**: a worker probe (`HostReachabilityProbe`) tries to create and
+     verify a mapping for the bound port and reports the external endpoint via
+     `LOCAL_BOT_MATCH_SPECTATE_INFO`.
+  3. **NAT hole punching**: when UPnP fails, the host bounces the lobby's
+     punch reflector (see below) from the exact ENet socket the spectate
+     server listens on and re-reports via `LOCAL_BOT_MATCH_SPECTATE_INFO` with
+     `via_punch: true`; the lobby reads the reflector's recorded bounce and
+     stores that public endpoint for the room. Bounces continue every 10 s as
+     a NAT keepalive while the challenge runs.
+  Watchable rooms are flagged `spectatable` in the room list and render as
+  "Click to Watch" in the seek list. If no endpoint exists at all the room is
+  flagged `local_bot_match` without `spectatable` and the seek row shows "Not
+  watchable" instead of a clickable observe hint; the lobby also rejects
+  `OBSERVE_ROOM` for it, so stale rows cannot dead-end a spectator in the
+  loading overlay.
+- **Player-hosted matches**: the same watch flow now works; previously the
+  host's rebuilt `MatchSession` never learned spectator tokens, so spectators
+  were always denied. The lobby now pushes `MATCH_SPECTATOR_APPROVED` (token +
+  friend-based visibility) to the host client and waits for
+  `MATCH_SPECTATOR_ACK` before handing the spectator their match info — a
+  spectator join with an unregistered token is denied without retry.
+- Credentials live on the host client's `MatchSession`
+  (`apply_match_spectator` in `CombatMockGame.gd`), applied either immediately
+  or from `_pending_spectator_approvals` after the match finishes launching.
+- Server cost is a handful of one-time rendezvous messages per spectator; host
+  upload bandwidth scales with spectator count. UPnP mappings are released
+  when returning to the menu from the match.
+
+#### NAT hole punching (PunchReflector)
+
+UPnP and LAN shortcuts cover most hosts, but the remaining case is a challenger
+behind a router without UPnP. Punching still uses the match ENet server as the
+only transport — the lobby runs a tiny stateless UDP reflector
+(`scripts/network/PunchReflector.gd`, port `PUNCH_REFLECTOR_PORT` 22346 with a
+short fallback scan, started/stopped with the lobby). It records the public
+ip:port each marker packet arrives from and hands that record to lobby
+signaling; it never relays match traffic.
+
+**Deployment requirement:** the public server must allow inbound UDP 22346
+(bind-conflict fallback scans through 22355) in both the Lightsail Networking
+tab and Windows Firewall. The lobby starts and reports healthy without it, but
+punch bounces then never arrive, every `via_punch` spectate submission is
+silently ignored, and all remote-hosted bot challenges stay "Not watchable" —
+a failure the lobby cannot detect locally, since the reflector binds fine
+behind a closed cloud firewall. `start_server.ps1` logs the reflector listener
+during startup to surface this; verify from an external network after opening
+the port.
+
+- **Discovery** is done from the sockets that actually carry the match, using
+  `ENetConnection.socket_send`:
+  - The host sends marker packets (kind `host`, tagged with the match id) from
+    its spectate ENet socket every second until the lobby confirms, then every
+    10 s as a keepalive. Because the socket is the one bound by
+    `spectate_listen`, the recorded endpoint is exactly what spectators must
+    dial, for any NAT that keeps endpoint-independent UDP mappings.
+  - An assigned spectator sends marker packets (kind `client`, tagged with the
+    match id and its observer session id) from the same local UDP port that
+    ENet will use. It reports readiness via `LOCAL_BOT_MATCH_PUNCH_READY`
+    and briefly waits for a punch from the host before starting ENet.
+- **Signaling** stays on the reliable lobby connection:
+  - Punch-mode spectate reports (`via_punch`) are merged only when a fresh
+    host bounce is on record; the resulting endpoint flows into the room list
+    and `MATCH_ASSIGNED` (`spectate_via_punch`, `punch_reflector_port`), so
+    rows flip to "Click to Watch" once discovery lands.
+  - After the spectator is assigned, the lobby relays its recorded bounce to
+    the host as `MATCH_SPECTATOR_PUNCH` (rate-limited to 1/s), and the host
+    punches that endpoint from its ENet socket for ~60 s (re-punched on every
+    spectator reconnect report). The lobby confirms when it first forwards
+    the spectator's endpoint.
+- **Dial**: the spectator connects as a normal ENet client to the advertised
+  public endpoint or uses a different port if the host proves it owns that
+  route with the observer's match credential. If the punch is delayed, the
+  client still starts ENet after a short wait. Retries keep the same local
+  port when available, bounce the reflector again, and report readiness from
+  the active socket.
+- Punching is best-effort: symmetric/port-preserving NATs on either side can
+  still deny it, in which case the room stays unwatchable and the UPnP/LAN
+  paths remain the reliable options. The reflector prunes old bounces and the
+  health of the whole path degrades to today's behavior if it is unavailable.
+
+Completed battles are recorded in `server_data/match_history_results`. Each
+record stores both bot outcomes, starting ranks, turns, and final follower
+counts. Use **View Bot Matches** to observe live games or page through results.
+Review files under `server_data/bot_self_play` link to worker logs and record
+crashes, stalls, command failures, cards seen in hand, cards played, and cards
+that went unused. A single unplayed card is one observation. Compare its
+appearance and play counts across matches when assessing bot behavior.

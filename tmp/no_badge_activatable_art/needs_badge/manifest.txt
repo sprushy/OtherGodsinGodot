@@ -1,0 +1,32 @@
+Allfathers Sacrifice - Copy|
+Alu - Copy|
+Alu|images/card_art/creatures/alu.jpg
+Ancient Pyre - Copy|
+Anointing Statue - Copy|
+Berserker|images/card_art/creatures/Berserker's Steele(web).jpg
+Beyla|images/card_art/creatures/beyla_clean_art.png
+Breidablik|images/card_art/powers/breidablik.jpg
+Clay-Eaters|images/card_art/creatures/Clay-eaters(web).jpg
+E2-abzu|images/card_art/structures/E2-abzu(web).jpg
+En-hedu-anna|images/card_art/creatures/EnHeduAnnaAIEdit.png
+Erlqueens Nightingale|images/card_art/creatures/ErlQueenNightengaleAIEdit.png
+Gawain|images/card_art/creatures/gawain.png
+Guan Yu Active God|images/card_art/gods/guan_yu.png
+Gudu Priest|images/card_art/creatures/gudu_priest.jpg
+Harii Shaman|images/card_art/creatures/HariiShamanEdit.png
+Isimud|images/card_art/creatures/Isimud(web).jpg
+Jiaolong|images/card_art/creatures/Jiaolong.jpg
+Kur-Jara|images/card_art/creatures/Kur-jara(print).jpg
+Lamashatu|images/card_art/creatures/LamashatuEdit.png
+Lindwyrm|images/card_art/creatures/LindwyrmArtEdit.png
+Mopsus|images/card_art/creatures/Mopsus.png
+Nagual|images/card_art/creatures/NagualEdit.png
+Nimue|images/card_art/creatures/NimueEdit.png
+Odin the Allfather|images/card_art/gods/Odin.jpg
+Robotic Footsoldier|images/card_art/creatures/Robot_Soldier_V2.jpg
+Seventh Sage Utuabzu|images/card_art/creatures/seventh_sage_utuabzu.png
+Tezcatlipoca Active God|images/card_art/gods/TezArt.png
+Tezcatlipoca Blasphemer|images/card_art/creatures/TezBlasphemerEdit.png
+The White Serpent|images/card_art/creatures/TheWhiteSerpentEdit.png
+Thiazi|images/card_art/creatures/ThiaziEdit.png
+Winged Lion|images/card_art/creatures/WingedLionEdit.png

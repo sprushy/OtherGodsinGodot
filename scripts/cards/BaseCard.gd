@@ -2,6 +2,9 @@
 extends Card
 class_name BaseCard
 
+const SACRIFICE_COST_ICON_PATH := "res://images/ui/cursors/BloodySacrificeCursor.png"
+const SACRIFICE_COST_ICON_TEXTURE := preload(SACRIFICE_COST_ICON_PATH)
+
 var uid: String = ""
 
 static var _uid_counter: int = 0
@@ -15,8 +18,13 @@ func _generate_uid() -> String:
 	# For now, we'll use a prefix to distinguish local IDs.
 	return "card_" + str(Time.get_ticks_msec()) + "_" + str(_uid_counter)
 
+func assign_fresh_uid() -> void:
+	uid = _generate_uid()
+
 # Keyword definitions - displayed as hover tooltips in ability text.
 const KEYWORD_HINTS = {
+	"Allied": "Other cards you control. The card with this ability is excluded.",
+	"Friendly": "Cards you control, including the card with this ability if it qualifies.",
 	"Void": "Send this card to the Abyss - removed from the game.",
 	"Immortal": "This card cannot be destroyed.",
 	"Sleep": "This creature cannot take any actions while asleep and is put into defensive stance.",
@@ -25,7 +33,8 @@ const KEYWORD_HINTS = {
 	"Convert": "Move followers from the opponent to you - they switch sides.",
 	"Enslave": "Take control of an opposing creature. It cannot use its abilities, but it can still attack and intercept.",
 	"Mill": "Put a card from the top of a deck into the graveyard.",
-	"Reach": "This creature can intercept for targets one row further forward than normal.",
+	"Engage": "Enter combat with another card, usually by attacking it or intercepting its attack.",
+	"Reach": "Can intercept regardless of position.",
 	"Passive": "This effect is always active while this card remains in play.",
 	"Impact": "This effect triggers when this card enters the field from your hand, unless it has Universal Impact.",
 	"Universal Impact": "This Impact also triggers when this card enters the field from zones other than your hand.",
@@ -35,44 +44,73 @@ const KEYWORD_HINTS = {
 	"Fatality": "This effect triggers when this creature is destroyed in combat.",
 	"Unlock": "This card must be unlocked before its unlocked ability can be used.",
 	"Activate": "Use this card's activated ability.",
+	"Ascend": "Raise a level 7 creature to replace your God.",
 	"Relock": "Turn an unlocked power face-down again.",
 	"Resurrect": "Return a destroyed card from the graveyard to the field.",
 	"Wake": "Remove Sleep from a creature.",
 	"Leech": "Steal the listed stats from each affected target, reducing them and increasing this card by the same amount.",
 	"Returns": "This card enters the field from the Abyss.",
 	"Search": "Look through your deck for a card, then shuffle.",
+	"Acquire": "Add a card from your deck to your hand.",
 	"Dodge": "This creature cannot be attacked by creatures with lower speed.",
 	"Shuffle": "Return this card to its owner's deck, then shuffle that deck.",
 	"Prime": "Put a card on top of your deck.",
-	"Perish": "This effect triggers when this card is destroyed and sent to the graveyard.",
+	"Perish": "This effect triggers when this card is sent from the field to the graveyard.",
 	"Silence": "Remove this card's abilities.",
 	"Frontlined": "This effect applies while this card is in the frontline.",
 	"Upkeep": "This effect happens during upkeep at the beginning of your turn.",
 	"Harbor": "Place a qualifying card under this card. Harbored cards are not on the field until returned.",
 	"Shift": "Switch this card between its listed forms.",
-	"Incorporeal": "Can only be engaged by Spirits or faster Mages. Can only engage Spirits or slower Mages.",
+	"Incorporeal": "Can only be engaged by Spirits or Mages. Can only engage Spirits or Mages. Sleep Immunity.",
 	"Slay": "This effect triggers when this card destroys another creature in combat.",
-	"Slain": "This card was destroyed in combat.",
+	"Slain": "This card was destroyed in combat and sent to the graveyard.",
 	"Trollskap": "If this card is destroyed by an effect, return it to your hand instead.",
-	"Champion's Call": "Summon this god's matching Active God. You may Shelve cards from your hand to pay 4 mana each toward its summon cost.",
+	"Champion's Call": "Summon this god's matching Active God. You may Shelve cards from your hand to pay 4 mana each toward its summon cost. Halve the Follower damage dealt by the Active God summoned this way.",
 	"Brood Slots": "Instead of powers, these slots can hold face-up Ancient Demons or Dragons up to the listed total level.",
 	"Stone Infant": "Token creature with 17 STR, 17 RES, 1 SPD, and the types Token, Human, Stone, and Golem.",
-	"Stone Skin": "This creature cannot be destroyed in combat.",
+	"Stone Skin": "This creature cannot be sent to the graveyard by combat destruction.",
 	"Terror": "When this card enters the field, return a lower-level opposing creature to its owner's hand.",
-	"God Death": "If you control no face-up, awake God on the field, you gain 1 less upkeep mana, cannot use powers, and lose 7 followers at upkeep.",
+	"God Death": "After you have had a God in play, if you control no face-up, awake God on the field, you gain 1 less upkeep mana, cannot use powers, and lose 7 followers at upkeep.",
+	"Paralyze": "This creature cannot move, switch stance, attack, or intercept.",
+	"Poison": "This creature loses 5 Res at the start of each of its owner's turns. If this brings its Res to 0 or below, it dies.",	"Fractions": "When an ability asks for a fraction of a value, such as half, Other Gods rounds down unless the card specifically says otherwise.",
 }
+
+static var _fractional_terms_regex: RegEx
+static var _relationship_terms_regex: RegEx
 
 static func _escape_hint_text(text: String) -> String:
 	return text.replace("\"", "&quot;")
 
+static func ability_text_uses_fractions(text: String) -> bool:
+	if _fractional_terms_regex == null:
+		_fractional_terms_regex = RegEx.create_from_string("(?i)\\b(halve|halved|halves|half|divided by|fractions?|fractional)\\b")
+	return _fractional_terms_regex.search(text) != null
+
+static func mark_relationship_keywords(text: String) -> String:
+	if _relationship_terms_regex == null:
+		_relationship_terms_regex = RegEx.create_from_string("(?i)(?<!\\[b\\])\\b(?:allied|friendly)\\b")
+	return _relationship_terms_regex.sub(text, "[b]$0[/b]", true)
+
 # Wraps bold keywords in [hint=...] BBCode so RichTextLabel shows tooltips.
 static func apply_keyword_hints(text: String) -> String:
-	var result := text
+	var result := mark_relationship_keywords(text)
 	for keyword in KEYWORD_HINTS:
 		var hint_text := _escape_hint_text(KEYWORD_HINTS[keyword])
 		result = result.replace("[b]" + keyword + "[/b]",
 			"[hint=\"" + hint_text + "\"][b]" + keyword + "[/b][/hint]")
+		if keyword in ["Allied", "Friendly"]:
+			var lowercase: String = keyword.to_lower()
+			result = result.replace("[b]" + lowercase + "[/b]",
+				"[hint=\"" + hint_text + "\"][b]" + lowercase + "[/b][/hint]")
 	return result
+
+# True when this card's printed abilities carry an Impact-style trigger marker
+# ("(Impact)" or "(Universal Impact)", bold tags and case ignored). Those
+# triggers only resolve when the card enters the field face-up from the hand,
+# so a stealth summon forfeits them outright.
+func declares_impact_trigger() -> bool:
+	var plain := ability_text.replace("[b]", "").replace("[/b]", "").to_lower()
+	return "(impact)" in plain or "(universal impact)" in plain
 
 static func apply_action_cost_symbols(text: String, card = null) -> String:
 	if text.strip_edges() == "":
@@ -88,13 +126,20 @@ static func apply_action_cost_symbols(text: String, card = null) -> String:
 		decorated.append(line)
 	return "\n".join(decorated)
 
+static func apply_cost_symbols(text: String, icon_size: int = 14) -> String:
+	var decorated := apply_mana_cost_symbols(text, icon_size)
+	var sacrifice_shorthand := RegEx.create_from_string("\\b([1-9][0-9]*)S\\b")
+	var sacrifice_icon := "[img=%dx%d]%s[/img]" % [icon_size, icon_size, SACRIFICE_COST_ICON_PATH]
+	return sacrifice_shorthand.sub(decorated, "$1 " + sacrifice_icon, true)
+
 static func apply_mana_cost_symbols(text: String, icon_size: int = 14) -> String:
 	if text.strip_edges() == "":
 		return text
-	var decorated := _replace_mana_shorthand_symbols(text, icon_size)
+	var decorated := _replace_labeled_mana_costs(text, icon_size)
+	decorated = _replace_mana_shorthand_symbols(decorated, icon_size)
 	decorated = _replace_pay_mana_phrases(decorated, icon_size)
 	decorated = _replace_pay_variable_mana_phrases(decorated, icon_size)
-	decorated = _replace_labeled_mana_costs(decorated, icon_size)
+	decorated = _replace_numeric_mana_phrases(decorated, icon_size)
 	return decorated
 
 static func get_mana_symbol_bbcode(size: int = 14) -> String:
@@ -157,7 +202,7 @@ static func _replace_pay_variable_mana_phrases(text: String, icon_size: int) -> 
 
 static func _replace_labeled_mana_costs(text: String, icon_size: int) -> String:
 	var regex := RegEx.new()
-	if regex.compile("(?i)(\\b(?:mana|activation cost|unlock cost):\\s*)([0-9]+)\\b") != OK:
+	if regex.compile("(?i)(\\b(?:mana|activation cost|unlock cost):\\s*)([0-9]+)(?:M\\b|\\b)") != OK:
 		return text
 	var matches := regex.search_all(text)
 	if matches.is_empty():
@@ -171,6 +216,24 @@ static func _replace_labeled_mana_costs(text: String, icon_size: int) -> String:
 			result += match_result.get_string(1) + match_result.get_string(2) + " " + get_mana_symbol_bbcode(icon_size)
 		else:
 			result += match_result.get_string(0)
+		cursor = match_result.get_end()
+	result += text.substr(cursor)
+	return result
+
+static func _replace_numeric_mana_phrases(text: String, icon_size: int) -> String:
+	var regex := RegEx.new()
+	if regex.compile("(?i)(\\b[0-9]+|\\bX)(\\s+(?:additional\\s+|graveyard\\s+)?)(mana\\b)") != OK:
+		return text
+	var matches := regex.search_all(text)
+	if matches.is_empty():
+		return text
+	var result := ""
+	var cursor := 0
+	for match_result in matches:
+		result += text.substr(cursor, match_result.get_start() - cursor)
+		result += match_result.get_string(1) \
+			+ match_result.get_string(2) \
+			+ get_mana_symbol_bbcode(icon_size)
 		cursor = match_result.get_end()
 	result += text.substr(cursor)
 	return result
@@ -206,6 +269,21 @@ static func _get_action_symbol_bbcode(action_cost_kind: String, size: int = 18) 
 		return ""
 	return "[img=%dx%d]%s[/img] " % [size, size, path]
 
+static func format_shapeshifter_form_summary(active_form_types: Array[String], inactive_form_types: Array[String]) -> String:
+	return "[b]Shapeshifter[/b]: [color=#66ff66]%s[/color] / [color=#8a8a8a]%s[/color]" % [
+		_format_shapeshifter_form_types(active_form_types),
+		_format_shapeshifter_form_types(inactive_form_types)
+	]
+
+static func _format_shapeshifter_form_types(form_types: Array[String]) -> String:
+	var visible_types: Array[String] = []
+	for raw_type in form_types:
+		var type_name := str(raw_type)
+		if type_name == "" or type_name == "Shapeshifter" or type_name.ends_with(" Creature"):
+			continue
+		visible_types.append(type_name)
+	return ", ".join(visible_types)
+
 # Common hooks all cards can use
 func on_play(_game_manager: GameManager, _target = null) -> void:
 	pass
@@ -223,13 +301,13 @@ func get_play_failure_reason(_game_manager: GameManager, player: Player) -> Stri
 	if player == null:
 		return "No acting player was provided."
 	if _game_manager == null:
-		return "" if can_pay_costs(player) else "Not enough mana."
+		return "" if can_pay_costs(player) else get_cost_payment_failure_reason(player, mana_cost)
 	var mana_required := mana_cost
 	var prepared := is_prepared and current_zone != null and current_zone.is_board_zone()
 	if _game_manager.has_method("get_card_play_mana_cost"):
 		mana_required = _game_manager.get_card_play_mana_cost(player, self, prepared)
 	if not can_pay_costs_with_mana_cost(player, mana_required):
-		return "Not enough mana."
+		return get_cost_payment_failure_reason(player, mana_required)
 	return ""
 
 func on_enter_zone(_zone: Zone) -> void:

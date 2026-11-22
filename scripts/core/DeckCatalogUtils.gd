@@ -5,6 +5,7 @@ static func semantic_signature(deck: Dictionary) -> String:
 	var normalized := {
 		"name": str(deck.get("name", "")).strip_edges().to_lower(),
 		"cards": _normalize_variant(deck.get("cards", {})),
+		"reinforcements": _normalize_variant(deck.get("reinforcements", {})),
 		"special_setup": _normalize_variant(deck.get("special_setup", {})),
 	}
 	return JSON.stringify(normalized)

@@ -1,0 +1,1 @@
+﻿Once per turn, look at the top 3 cards of either deck, choose one to [b]Prime[/b], then [b]Shelve[/b] the rest.

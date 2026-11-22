@@ -3,6 +3,7 @@ class_name Gawain
 
 const ART_PATH := "res://images/card_art/creatures/gawain.png"
 const SUN_BLESSING_SOURCE := "Gawain Sun Blessing"
+const HEALING_HANDS_COST := 2
 
 # Status names that are internal/friendly buffs and should not be removable.
 const _NON_REMOVABLE_STATUSES: Array[String] = [
@@ -16,7 +17,7 @@ const _NON_REMOVABLE_STATUSES: Array[String] = [
 func _init() -> void:
 	super._init()
 	card_name = "Gawain"
-	card_types = ["Human", "Warrior", "Knight", "Triskelion Creature"]
+	card_types = ["Human", "Warrior", "Knight"]
 	level = 5
 	mana_cost = 3
 	sacrifice_cost = 0
@@ -24,7 +25,7 @@ func _init() -> void:
 	resilience = 7
 	strength = 10
 	targets = true
-	ability_text = "Sun Blessing ([b]Passive[/b]): During your turn, this creature's base STR and RES are tripled until your first attack resolves or your turn ends.\nHealing Hands (2 mana): Remove a negative effect from a friendly creature."
+	ability_text = "Sun Blessing ([b]Passive[/b]): During your turn, Gawain's base STR and RES are tripled until your first attack resolves or your turn ends.\nHealing Hands (%d mana): Remove a negative effect from a friendly creature." % HEALING_HANDS_COST
 	flavor_text = ""
 	culture = "Triskelion"
 	artist = "Riccardo Zoppello"
@@ -96,7 +97,7 @@ func can_activate(game_manager: GameManager) -> bool:
 	if is_sleeping:
 		return false
 	var controller := get_controller()
-	if controller == null or controller.mana < 2:
+	if controller == null or controller.mana < HEALING_HANDS_COST:
 		return false
 	return not get_valid_targets(game_manager).is_empty()
 
@@ -151,16 +152,12 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 		return
 
 	var controller := get_controller()
-	if controller == null or not controller.spend_mana(2):
+	if controller == null or not controller.spend_mana(HEALING_HANDS_COST):
 		if game_manager != null:
 			game_manager.note_player_feedback("%s: not enough mana for Healing Hands." % card_name)
 		return
 
-	if removable.size() == 1:
-		_resolve_healing_hands(game_manager, target, removable[0])
-		return
-
-	# Multiple effects — ask the UI to let the player choose.
+	# Always ask the player to confirm which effect to remove.
 	game_manager.decision_requested.emit(get_controller(), "gawain_healing_hands", {
 		"source_uid": uid,
 		"target_uid": target.uid,

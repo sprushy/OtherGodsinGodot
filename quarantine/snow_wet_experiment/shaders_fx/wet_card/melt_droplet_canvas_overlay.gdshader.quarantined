@@ -1,0 +1,17 @@
+shader_type canvas_item;
+
+uniform sampler2D droplet_atlas : source_color;
+uniform float wet_strength : hint_range(0.0, 1.0) = 0.65;
+uniform float trail_speed : hint_range(0.0, 2.0) = 0.20;
+uniform vec2 atlas_grid = vec2(4.0, 2.0);
+
+void fragment() {
+    vec2 uv = UV;
+    float row = floor(fract(TIME * 0.17) * atlas_grid.y);
+    float col = floor(fract(TIME * 0.11 + UV.x * 0.25) * atlas_grid.x);
+    vec2 cell = vec2(col, row);
+    vec2 cell_uv = fract(uv * vec2(1.0, 1.0) + vec2(0.0, TIME * trail_speed));
+    vec2 atlas_uv = (cell + cell_uv) / atlas_grid;
+    vec4 d = texture(droplet_atlas, atlas_uv);
+    COLOR = vec4(d.rgb, d.a * wet_strength);
+}

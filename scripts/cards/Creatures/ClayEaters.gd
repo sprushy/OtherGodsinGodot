@@ -1,14 +1,14 @@
 extends CreatureCard
 class_name ClayEaters
 
-const GEOPHAGIA_COST := 2
+const GEOPHAGIA_COST := 1
 
 var pending_geophagia_targets: Array[Card] = []
 
 func _init() -> void:
 	super._init()
 	card_name = "Clay-Eaters"
-	card_types = ["Undead", "Horde", "Ancient Creature"]
+	card_types = ["Undead", "Horde"]
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
 	level = 2
@@ -17,7 +17,7 @@ func _init() -> void:
 	speed = 1
 	resilience = 15
 	strength = 15
-	ability_text = "Geophagia ([b]Activate[/b], Cost 2): Choose a structure or Stone creature. At the end of your turn, destroy it if this card is still on the field."
+	ability_text = "Geophagia ([b]Activate[/b], Cost %d): Choose a structure or Stone creature. At the end of your turn, destroy it if Clay-Eaters are still on the field." % GEOPHAGIA_COST
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricardo Zoppello"
@@ -95,7 +95,7 @@ func on_turn_end(game_manager: GameManager) -> void:
 			game_manager.note_player_feedback("%s survives Geophagia because it is immune to creature abilities." % target.card_name)
 			continue
 		game_manager.note_player_feedback("%s devoured %s at end of turn." % [card_name, target.card_name])
-		game_manager._send_to_graveyard_with_hook(target, false, true)
+		game_manager._send_to_graveyard_with_hook(target, false, true, self)
 
 func on_removed(_game_manager: GameManager) -> void:
 	pending_geophagia_targets.clear()

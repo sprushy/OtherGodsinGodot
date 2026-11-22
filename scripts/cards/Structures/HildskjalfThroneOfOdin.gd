@@ -18,7 +18,7 @@ func _init() -> void:
 	strength = 0
 	sacrifice_cost = 0
 	targets = true
-	ability_text = "Once per turn, look at the top 3 cards of either deck, choose one to [b]Prime[/b], then [b]Shelve[/b] the rest."
+	ability_text = "Once per turn, look at the top 3 cards of either deck. [b]Prime[/b] one to that deck and [b]Shelve[/b] the rest."
 	flavor_text = ""
 	culture = "Norse"
 	artist = "Lorinda Tomko"
@@ -96,11 +96,8 @@ func activate(game_manager: GameManager, target = null) -> void:
 	var deck_owner := _parse_deck_owner(game_manager, target)
 	var valid_targets := get_top_cards_for_deck_owner(game_manager, deck_owner) if deck_owner != null else get_valid_targets(game_manager)
 	if chosen_card == null:
-		if valid_targets.size() == 1:
-			chosen_card = valid_targets[0]
-		else:
-			game_manager.note_player_feedback("%s fizzles: choose a card from the selected deck." % card_name)
-			return
+		game_manager.note_player_feedback("%s fizzles: choose a card from the selected deck." % card_name)
+		return
 	elif chosen_card not in valid_targets:
 		game_manager.note_player_feedback("%s fizzles: that card is no longer a valid choice." % card_name)
 		return
@@ -121,16 +118,11 @@ func resolve_high_seat_choice(game_manager: GameManager, chosen_card: Card) -> S
 	if chosen_card not in top_cards:
 		return "%s fizzles: %s is no longer among the top cards." % [card_name, chosen_card.card_name]
 
-	var shelved_cards: Array[Card] = []
-	for card in top_cards:
-		deck_owner.deck_zone.cards.erase(card)
-		if card == chosen_card:
-			continue
-		shelved_cards.append(card)
-
-	deck_owner.deck_zone.cards.insert(0, chosen_card)
+	var shelved_cards := top_cards
+	shelved_cards.erase(chosen_card)
+	deck_owner.deck_zone.prime_card(chosen_card)
 	for card in shelved_cards:
-		deck_owner.deck_zone.cards.append(card)
+		deck_owner.deck_zone.shelve_deck_card(card)
 
 	uses_this_turn += 1
 
@@ -152,6 +144,15 @@ func resolve_high_seat_choice(game_manager: GameManager, chosen_card: Card) -> S
 
 func on_turn_upkeep(_game_manager: GameManager) -> void:
 	uses_this_turn = 0
+
+func get_serialized_state() -> Dictionary:
+	var state := super.get_serialized_state()
+	state["uses_this_turn"] = uses_this_turn
+	return state
+
+func apply_serialized_state(state: Dictionary) -> void:
+	super.apply_serialized_state(state)
+	uses_this_turn = int(state.get("uses_this_turn", 0))
 
 func _parse_target(game_manager: GameManager, target) -> Card:
 	if target is Card:

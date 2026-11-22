@@ -6,7 +6,7 @@ const TOKEN_ART_PATH := "res://images/card_art/creatures/AIMechToken.png"
 func _init() -> void:
 	super._init()
 	card_name = "Combat Mech"
-	card_types = ["Token", "Machine", "Mech", "Atlanitan Creature"]
+	card_types = ["Token", "Machine", "Mech"]
 	is_token = true
 	can_be_used_for_creature_sacrifice = false
 	level = 2

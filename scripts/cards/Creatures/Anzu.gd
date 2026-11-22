@@ -5,7 +5,7 @@ func _init() -> void:
 	super._init()  # Must call this first to initialize Card properties
 
 	card_name = "Anzû"
-	card_types = ["Divine Manifestation", "Demon", "Animal", "Avian", "Aerial", "Ancient Creature"]
+	card_types = ["Divine Manifestation", "Demon", "Animal", "Avian", "Aerial"]
 	level = 4
 	mana_cost = 2
 	sacrifice_cost = 0

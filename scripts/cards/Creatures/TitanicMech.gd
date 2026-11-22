@@ -4,7 +4,7 @@ class_name TitanicMech
 func _init() -> void:
 	super._init()
 	card_name = "Titanic Mech"
-	card_types = ["Machine", "Mech", "Atlanitan Creature"]
+	card_types = ["Machine", "Mech"]
 	level = 5
 	mana_cost = 7
 	sacrifice_cost = 0

@@ -4,14 +4,14 @@ class_name Edimmu
 func _init() -> void:
 	super._init()
 	card_name = "Edimmu"
-	card_types = ["Spirit", "Ghost", "Ancient Creature"]
+	card_types = ["Spirit", "Ghost"]
 	level = 1
 	mana_cost = 0
 	speed = 1
 	resilience = 5
 	strength = 11
 	sacrifice_cost = 0
-	ability_text = "[b]Incorporeal[/b] ([b]Passive[/b]): Can only be Engaged by Spirits or faster Mages. Can only Engage Spirits or slower Mages."
+	ability_text = "[b]Incorporeal[/b] ([b]Passive[/b]): Only Spirits or Mages can [b]Engage[/b] Edimmu. Edimmu can only [b]Engage[/b] Spirits or Mages. Sleep Immunity."
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricarrdo Zoppello"

@@ -9,14 +9,14 @@ var _maturation_ready: bool = false
 func _init() -> void:
 	super._init()
 	card_name = "Wolf Adolescent"
-	card_types = ["Animal", "Lupine", "Norse Creature"]
+	card_types = ["Animal", "Lupine"]
 	level = 3
 	mana_cost = 0
 	sacrifice_cost = 0
 	speed = 2
 	resilience = 7
 	strength = 20
-	ability_text = "[b]Maturation[/b] ([b]Upkeep[/b]): If this creature destroyed another creature in combat since your last turn began, you may send it to the graveyard to summon a level 5 or lower Lupine from your deck to the field."
+	ability_text = "[b]Maturation[/b] ([b]Upkeep[/b], after [b]Slay[/b]): You may send Wolf Adolescent to the Graveyard to summon a level 5 or lower Lupine from your deck for free in Wolf Adolescent's slot."
 	flavor_text = ""
 	culture = "Norse"
 	artist = "Ricardo Zoppello"

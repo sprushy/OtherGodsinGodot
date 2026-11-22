@@ -1,0 +1,2 @@
+﻿[b]Entomb[/b] ([b]Major Action[/b]): Pay mana equal to a creature's Lvl to [b]Shelve[/b] it.
+[b]Present[/b] ([b]Major Action[/b]): Put an Equipment card from your graveyard onto the field.

@@ -6,6 +6,7 @@ const SHAPESHIFT_LOCK_STATUS := "tonal_extraction_no_shift"
 const ART_PATH := "res://images/card_art/powers/TonalExtractionEdit.png"
 
 var _pending_unlock_resolution: bool = false
+var _pending_unlock_target_uid: String = ""
 var _bound_shapeshifter: Card = null
 var _spirit_token: Card = null
 var _is_cleaning_up: bool = false
@@ -20,13 +21,13 @@ func _init() -> void:
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
 	targets = true
-	ability_text = "[b]Unlock[/b] (5): Choose a friendly [b]Shapeshifter[/b]. It loses shapeshift. Summon a [b]Spirit[/b] token with its alternate form's stats and classes. That Spirit cannot be sacrificed. When that Spirit leaves the field, [b]Relock[/b] this card."
+	ability_text = "[b]Unlock[/b] (5): Choose a friendly [b]Shapeshifter[/b]. It loses shapeshift. Summon a [b]Spirit[/b] token with its alternate form's stats and classes. That Spirit cannot be sacrificed. When that Spirit leaves the field, [b]Relock[/b] Tonal Extraction."
 	artist = "Trent Nguyen"
 	art_path = ART_PATH
 
 func can_unlock(game_manager: GameManager) -> bool:
 	return super.can_unlock(game_manager) \
-		and _find_open_summon_zone() != null \
+		and get_open_summon_zone() != null \
 		and not get_valid_targets(game_manager).is_empty()
 
 func get_unlock_failure_reason(game_manager: GameManager) -> String:
@@ -40,7 +41,7 @@ func get_unlock_failure_reason(game_manager: GameManager) -> String:
 		return card_name + " cannot be unlocked this turn."
 	if card_owner != game_manager.current_player:
 		return "It is not " + card_name + "'s turn to unlock."
-	if _find_open_summon_zone() == null:
+	if get_open_summon_zone() == null:
 		return card_name + " needs an open zone for the Spirit."
 	if get_valid_targets(game_manager).is_empty():
 		return card_name + " needs a friendly Shapeshifter on the field."
@@ -57,6 +58,14 @@ func on_unlock(game_manager: GameManager) -> void:
 		return
 	if card_owner == null:
 		return
+	var queued_target := _consume_pending_unlock_target(valid_targets)
+	if queued_target != null:
+		game_manager.run_with_effect_source(
+			self,
+			func() -> void:
+				activate(game_manager, queued_target)
+		)
+		return
 	var target_uids: Array[String] = []
 	for target in valid_targets:
 		if target != null:
@@ -66,18 +75,21 @@ func on_unlock(game_manager: GameManager) -> void:
 		"target_uids": target_uids,
 	})
 
+func set_pending_unlock_target_uid(target_uid: String) -> void:
+	_pending_unlock_target_uid = target_uid.strip_edges()
+
 func can_activate(game_manager: GameManager) -> bool:
 	return super.can_activate(game_manager) \
 		and _pending_unlock_resolution \
 		and _bound_shapeshifter == null \
 		and _spirit_token == null \
-		and _find_open_summon_zone() != null \
+		and get_open_summon_zone() != null \
 		and not get_valid_targets(game_manager).is_empty()
 
 func get_activation_failure_reason(game_manager: GameManager) -> String:
 	if not _pending_unlock_resolution:
 		return card_name + " has no extraction choice pending."
-	if _find_open_summon_zone() == null:
+	if get_open_summon_zone() == null:
 		return card_name + " needs an open zone for the Spirit."
 	if get_valid_targets(game_manager).is_empty():
 		return card_name + " found no friendly Shapeshifter to extract."
@@ -101,7 +113,7 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 	if target == null or target not in get_valid_targets(game_manager):
 		game_manager.note_player_feedback(card_name + " fizzles: choose a friendly Shapeshifter.")
 		return
-	var summon_zone := _find_open_summon_zone()
+	var summon_zone := get_open_summon_zone()
 	if summon_zone == null:
 		game_manager.note_player_feedback(card_name + " needs an open zone for the Spirit.")
 		return
@@ -217,7 +229,17 @@ func _build_spirit_profile(target: Card) -> Dictionary:
 	profile["card_types"] = types
 	return profile
 
-func _find_open_summon_zone() -> Zone:
+func _consume_pending_unlock_target(valid_targets: Array[Card]) -> Card:
+	var target_uid := _pending_unlock_target_uid
+	_pending_unlock_target_uid = ""
+	if target_uid.is_empty():
+		return null
+	for target in valid_targets:
+		if target != null and target.uid == target_uid:
+			return target
+	return null
+
+func get_open_summon_zone() -> Zone:
 	if card_owner == null:
 		return null
 	for zone in card_owner.frontline_zones:

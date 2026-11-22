@@ -8,7 +8,7 @@ const IMPACT_USED_TURN_META := "utuabzu_last_impact_activation_turn"
 func _init() -> void:
 	super._init()
 	card_name = "Seventh Sage Utuabzu"
-	card_types = ["Mer", "Mage", "Priest", "Sage", "Ancient Creature", "Targeting"]
+	card_types = ["Mer", "Mage", "Priest", "Sage", "Targeting"]
 	level = 4
 	mana_cost = 2
 	sacrifice_cost = 0
@@ -16,7 +16,7 @@ func _init() -> void:
 	resilience = 27
 	strength = 14
 	targets = true
-	ability_text = "[b]Channel Ally[/b] ([b]Impact[/b]): Choose another allied Ancient Sage on the field or in the [b]Void[/b] and activate its impact effect.\n[b]Imbue Ally[/b] ([b]Activate[/b], 2 Mana): Choose another allied Ancient Sage on the field and activate its impact effect if it hasn't activated this turn."
+	ability_text = "[b]Channel Ally[/b] ([b]Impact[/b]): Choose another allied Ancient Sage on the field or in the [b]Void[/b] and activate its impact effect.\n[b]Imbue Ally[/b] ([b]Activate[/b], %d Mana): Choose another allied Ancient Sage on the field and activate its impact effect if it hasn't activated this turn." % IMBUE_ALLY_COST
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricardo Tamoo"
@@ -30,9 +30,21 @@ func on_impact(game_manager: GameManager) -> void:
 			game_manager.note_player_feedback("%s found no allied Ancient Sage to channel." % card_name)
 		return
 
-	var feedback := resolve_channel_ally_impact(game_manager, valid_targets[0])
-	if game_manager != null and feedback != "":
-		game_manager.note_player_feedback(feedback)
+	var controller := get_controller()
+	if game_manager == null or controller == null:
+		if game_manager != null:
+			game_manager.note_player_feedback("%s could not request a Channel Ally choice." % card_name)
+		return
+	var target_uids: Array[String] = []
+	for target in valid_targets:
+		if target != null:
+			target_uids.append(target.uid)
+	game_manager.decision_requested.emit(controller, "seventh_sage_utuabzu_impact", {
+		"source_uid": uid,
+		"target_uids": target_uids,
+		"queue_with_priority": true,
+		"event_name": "seventh_sage_utuabzu_impact",
+	})
 
 func get_activation_label() -> String:
 	return "Imbue Ally"
@@ -150,7 +162,7 @@ func _is_valid_allied_sage_target(card: Card) -> bool:
 		return false
 	if card.card_type != Card.CardType.CREATURE:
 		return false
-	if not card.has_type("Ancient Creature"):
+	if card.culture != "Ancient":
 		return false
 	if not card.has_type("Sage"):
 		return false
