@@ -21,7 +21,7 @@ func _init() -> void:
 	resilience = 26
 	strength = 23
 	targets = true
-	ability_text = "[b]Suckle[/b] ([b]Activate[/b]): Once per turn, choose another friendly Demon or Animal. It gains +1 Lvl, +1 Spd, +5 Str, and +5 Res."
+	ability_text = "[b]Suckle[/b] ([b]Activate[/b], once per turn): Give another friendly Demon or Animal +1 LVL, +5 STR, +5 RES, and +1 SPD."
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricardo Zoppello"

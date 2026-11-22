@@ -263,6 +263,7 @@ func load_hermes_dodge_test_scenario() -> void:
 
 	_place_test_board_card(player1, player1.frontline_zones[0], HariiWarrior.new(), Card.CreatureMode.AGGRESSIVE)
 	_place_test_board_card(player1, player1.frontline_zones[1], Asaruludu.new())
+	_place_test_board_card(player1, player1.frontline_zones[2], Enkidu.new())
 	_place_test_board_card(player2, player2.frontline_zones[0], Gullinbursti.new(), Card.CreatureMode.DEFENSIVE)
 	_place_test_hidden_creature(player1, player1.reserve_zones[2], BrownBear.new())
 	_place_test_hidden_creature(player2, player2.reserve_zones[2], MinotaurFootsoldier.new())
@@ -317,7 +318,7 @@ func load_hermes_dodge_test_scenario() -> void:
 		+ "Reveal a reserve creature to see it gain the chosen typing. Cast Occult Singularity to remove the Aura. "
 		+ "Aspect Shift is locked in P1's first power slot: unlock for 4 to become Hermes Psychopompus, then use Call of the Crossing on a Ghost/Spirit in deck or Wings of the Departed with the Ghost/Spirit cards in your grave. Return to Form shifts back for 4. "
 		+ "You can also use Hermes's Deceptive Speed to test Dodge against Gullinbursti. "
-		+ "On P1's next turn, attack P2's Followers with Asaruludu to test P2's prepared Smite."
+		+ "On P1's next turn, attack P2's Followers with Enkidu to test Guardian. Then attack with Asaruludu to test Smite against Asaruludu himself."
 	)
 	update_ui()
 

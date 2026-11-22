@@ -12,7 +12,7 @@ func _init() -> void:
 	mana_cost = 0
 	speed = 1
 	flavor_text = ""
-	ability_text = "[b]Shelve[/b] cards off the top of your deck until you draw a magical card, prepare that card revealed."
+	ability_text = "[b]Shelve[/b] cards from the top of your deck until you find a magical card. If you find one, prepare it revealed."
 	artist = "CC0"
 	art_path = ART_PATH
 	targets = false

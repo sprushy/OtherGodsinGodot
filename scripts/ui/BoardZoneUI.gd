@@ -29,6 +29,7 @@ const FREYJA_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/Freyj
 const BANE_OF_THE_SVARTALFAR_BADGE_TEXTURE := preload("res://images/card_art/spells/BaneofSvart.png")
 const GUAN_YU_TACTICAL_BREAK_BADGE_TEXTURE := preload("res://images/ability_badges/GuanYuTacticalBreakBadge.png")
 const HERMES_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/HermesBadge.png")
+const HERMES_CALL_OF_THE_CROSSING_BADGE_TEXTURE := preload("res://images/ability_badges/HermesCallOfTheCrossingBadge.png")
 const MANNAN_MAC_LIR_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/MannanBadge.png")
 const MUMMU_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/MummuBadge.png")
 const NUSKU_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/NuskuBadge.png")
@@ -136,6 +137,7 @@ const RAISED_BOARD_Z_INDEX := 2
 const GOD_INDICATOR_Z_INDEX := 3
 const PRIORITY_RESPONSE_GLOW_COLOR := Color(0.28, 0.92, 0.50, 0.95)
 const AVAILABLE_ABILITY_BADGE_GLOW_COLOR := Color(0.28, 0.92, 0.50, 0.58)
+const LEGAL_ABILITY_ZONE_TINT := Color(0.31, 1.0, 0.70)
 # Keep hovered board cards above the hand fan overlay, but below the larger
 # transient previews and modal UI promoted by CombatMockGame.
 const HOVER_BOARD_Z_INDEX := 2260
@@ -554,6 +556,7 @@ signal card_clicked(card: Card)
 signal equipment_target_action_clicked(card: Card, action: String)
 signal champions_call_clicked(card: GodCard)
 signal god_ability_badge_clicked(card: Card)
+signal god_ability_option_badge_clicked(card: Card, ability: String)
 signal tez_necoc_yaotl_badge_clicked(card: Card)
 signal creature_stance_switch_clicked(card: Card, target_mode: Card.CreatureMode)
 signal creature_ability_badge_clicked(card: Card)
@@ -808,6 +811,10 @@ func _on_badge_gui_input(event: InputEvent) -> void:
 			_emit_champions_call_clicked_for_uid(card_uid)
 		"god_ability":
 			_emit_god_ability_badge_clicked_for_uid(card_uid)
+		"god_ability_option":
+			var god := _find_zone_card_by_uid(card_uid)
+			if god != null:
+				god_ability_option_badge_clicked.emit(god, str(extra_value))
 		"tez_necoc_yaotl":
 			_emit_tez_necoc_yaotl_badge_clicked_for_uid(card_uid)
 		"e2_abzu":
@@ -2137,7 +2144,7 @@ func _get_god_custom_ability_badge_texture(card: Card) -> Texture2D:
 		return FENRIS_DEVOUR_BADGE_TEXTURE
 	if card.card_name == "Pai Long":
 		return PAI_LONG_BADGE_TEXTURE
-	if card.card_name == "Hermes" or card is HermesPsychopompus:
+	if card.card_name == "Hermes":
 		return HERMES_ABILITY_BADGE_TEXTURE
 	if card.card_name == "Odin, the Allfather":
 		return ODIN_RUNIC_KNOWLEDGE_BADGE_TEXTURE
@@ -2541,6 +2548,9 @@ func _has_pending_aphrodite_badge_offer(card: Card) -> bool:
 func _add_god_custom_ability_badge(overlay: Control, card: Card) -> void:
 	if overlay == null or card == null or not card.is_god:
 		return
+	if card is HermesPsychopompus:
+		_add_psychopompus_ability_badges(overlay, card)
+		return
 	var texture := _get_god_custom_ability_badge_texture(card)
 	if texture == null:
 		return
@@ -2587,6 +2597,34 @@ func _add_god_custom_ability_badge(overlay: Control, card: Card) -> void:
 		0.0,
 		Color(0.82, 0.82, 0.86, 0.9),
 		_get_god_ability_badge_glow_color(card)
+	)
+
+func _add_psychopompus_ability_badges(overlay: Control, god: HermesPsychopompus) -> void:
+	var clickable := not _is_enemy and god.get_controller() == _get_viewer_player()
+	var badge_top := _get_badge_row_top() + GOD_ABILITY_BADGE_TOP_OFFSET
+	var badge_size := minf(ABILITY_BADGE_SIZE, (get_zone_extent() - badge_top - BADGE_ROW_GAP - 18.0) * 0.5)
+	_add_psychopompus_ability_badge(
+		overlay, god, HermesPsychopompus.CALL_OF_THE_CROSSING, HERMES_CALL_OF_THE_CROSSING_BADGE_TEXTURE,
+		badge_top, badge_size, god.ability_text.get_slice("\n", 0),
+		clickable, clickable and god.can_summon_ghost(game_manager)
+	)
+	_add_psychopompus_ability_badge(
+		overlay, god, HermesPsychopompus.WINGS_OF_THE_DEPARTED, HERMES_ABILITY_BADGE_TEXTURE,
+		badge_top + badge_size + BADGE_ROW_GAP, badge_size, god.ability_text.get_slice("\n", 1),
+		clickable, clickable and god.can_boost_speed(game_manager)
+	)
+
+func _add_psychopompus_ability_badge(
+	overlay: Control, god: HermesPsychopompus, ability: String, texture: Texture2D,
+	badge_top: float, badge_size: float, ability_text: String, clickable: bool, badge_ready: bool
+) -> void:
+	if not _should_show_ability_badge_control(god, badge_ready, clickable):
+		return
+	var hover_text := BaseCardScript.apply_keyword_hints(BaseCardScript.apply_action_cost_symbols(ability_text, god))
+	_build_ability_badge(
+		overlay, god, ability, texture, -6.0 - badge_size, badge_top, -6.0,
+		badge_top + badge_size, badge_ready, clickable, hover_text, "god_ability_option",
+		BoardZoneUI.get_action_point_card_uid(god), ability
 	)
 
 func _get_tez_valid_sacrifices(card: Card) -> Array:
@@ -3139,12 +3177,13 @@ func _add_stack_target_indicator(overlay: Control) -> void:
 	_fade_card_option_visual(marker)
 	overlay.add_child(marker)
 
-func _add_target_aura(overlay: Control) -> void:
+func _add_target_aura(overlay: Control, tint: Color = Color.WHITE) -> void:
 	if overlay == null:
 		return
 
 	var aura := TargetAura.new()
 	aura.z_index = 3
+	aura.modulate = tint
 	aura.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_fade_card_option_visual(aura)
 	overlay.add_child(aura)
@@ -5252,6 +5291,11 @@ func _refresh_display() -> void:
 	_sync_visual_state_card(card)
 	_refresh_mouse_cursor_shape(card)
 
+	var targeting_scene := _get_targeting_scene_root()
+	if targeting_scene != null and targeting_scene.has_method("_is_legal_ability_zone_target") \
+			and targeting_scene.call("_is_legal_ability_zone_target", zone) == true:
+		_add_target_aura(self, LEGAL_ABILITY_ZONE_TINT)
+
 	var style := StyleBoxFlat.new()
 	style.corner_radius_top_left    = 4
 	style.corner_radius_top_right   = 4
@@ -5435,8 +5479,7 @@ func _refresh_display() -> void:
 				or _is_card_pending_attack_target(card)
 			var show_god_followers_target_aura := _is_god_targeted_by_followers_attack(card) \
 				or _is_god_pending_followers_attack(card) \
-				or _is_god_attack_candidate(card) \
-				or is_pyre_convert_target
+				or _is_god_attack_candidate(card)
 
 			style.bg_color     = Color(0.35, 0.28, 0.04, 0.9)
 			style.border_color = Color(0.9, 0.75, 0.2)
@@ -5451,6 +5494,7 @@ func _refresh_display() -> void:
 				or show_god_priority_aura
 				or show_god_target_aura
 				or show_god_followers_target_aura
+				or is_pyre_convert_target
 				or glow_champions_call_badge
 			) else BASE_BOARD_Z_INDEX
 			var tex: Texture2D = UITextureCacheScript.get_texture(card.art_path)

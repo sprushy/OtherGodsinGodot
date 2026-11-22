@@ -424,6 +424,9 @@ func _apply_community_metadata(deck: Dictionary, submission: Dictionary) -> void
 	deck["is_community_bot"] = true
 	deck["owner_name"] = str(submission.get("owner_name", submission.get("account_id", ""))).strip_edges()
 	deck["deck_name"] = str(submission["deck_name"])
+	# A submitter can quarantine their own bot. Unlike the system's weak-bot
+	# quarantine, this bot must never be paired — not even in forced matchmaking.
+	deck["excluded_from_matchmaking"] = bool(submission.get("quarantined", false))
 	_assigned_names_by_list_id[deck["list_id"]] = deck["deck_name"]
 
 func finalize_league(god_names: Array[String]) -> Dictionary:
@@ -707,6 +710,7 @@ func _summarize_list(list: Dictionary) -> Dictionary:
 		"wins": list["wins"],
 		"losses": list["losses"],
 		"draws": list["draws"],
+		"matchmaking_excluded": bool(list.get("excluded_from_matchmaking", false)),
 	}
 
 func get_deck_details(list_id: String, quarantined_only: bool = false) -> Dictionary:
@@ -757,7 +761,8 @@ func select_deck(busy_list_ids: Dictionary, rng: RandomNumberGenerator, target_s
 		if not challenger.is_empty():
 			lists.append(challenger)
 		for list: Dictionary in lists:
-			if _is_quarantined_list(pool, list["list_id"]) or busy_list_ids.has(list["list_id"]):
+			if _is_quarantined_list(pool, list["list_id"]) or bool(list.get("excluded_from_matchmaking", false)) \
+					or busy_list_ids.has(list["list_id"]):
 				continue
 			var gap := absi(_league_for_stars(int(list["stars"])) - target_league)
 			if gap <= MATCHMAKING_LEAGUE_TIER_WINDOW:
@@ -780,7 +785,7 @@ func _select_quarantined_deck(busy_list_ids: Dictionary, rng: RandomNumberGenera
 	for pool: Dictionary in _by_god.values():
 		for list: Dictionary in pool.get("quarantined_lists", []):
 			var list_id := str(list.get("list_id", ""))
-			if busy_list_ids.has(list_id):
+			if bool(list.get("excluded_from_matchmaking", false)) or busy_list_ids.has(list_id):
 				continue
 			var gap := absi(_league_for_stars(int(list["stars"])) - target_league)
 			if gap <= MATCHMAKING_LEAGUE_TIER_WINDOW:
@@ -822,7 +827,9 @@ func select_self_play_pair(busy_list_ids: Dictionary, rng: RandomNumberGenerator
 		if not pool["challenger"].is_empty():
 			lists.append(pool["challenger"])
 		for list: Dictionary in lists:
-			if not _is_quarantined_list(pool, list["list_id"]) and not busy_list_ids.has(list["list_id"]):
+			if not _is_quarantined_list(pool, list["list_id"]) \
+					and not bool(list.get("excluded_from_matchmaking", false)) \
+					and not busy_list_ids.has(list["list_id"]):
 				available.append(list)
 				if first_list_ids.has(list["list_id"]):
 					eligible_first.append(list)

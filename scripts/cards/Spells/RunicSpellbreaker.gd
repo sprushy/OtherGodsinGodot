@@ -18,7 +18,7 @@ func _init() -> void:
 	flavor_text = ""
 	artist = "Lorinda Tomko"
 	art_path = ART_PATH
-	ability_text = "Destroy one face-up or revealed magical card and send any copies of it from your opponent's deck to the grave."
+	ability_text = "Destroy a face-up or revealed magical card. Send all copies of that card from your opponent's deck to their Graveyard."
 
 func get_valid_targets(game_manager: GameManager) -> Array[Card]:
 	var valid_targets: Array[Card] = []

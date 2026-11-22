@@ -21,7 +21,7 @@ func _init() -> void:
 	resilience = 11
 	strength = 16
 	targets = true
-	ability_text = "[b]Devour[/b] ([b]Major Action[/b]): Destroy a creature at least 2 levels lower than Lindwyrm. If you do, Lindwyrm gains +1 Lvl, +1 Spd, +5 Res, and +5 Str."
+	ability_text = "[b]Devour[/b] ([b]Major Action[/b]): Destroy a creature at least 2 levels below Lindwyrm. If you do, Lindwyrm gains +1 LVL, +5 STR, +5 RES, and +1 SPD."
 	culture = "Norse"
 	artist = "Daniel Decena"
 	art_path = ART_PATH

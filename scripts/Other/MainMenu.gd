@@ -3269,7 +3269,10 @@ func _on_my_bots_received(bots: Array) -> void:
 		_my_bot_dialog.confirmed.connect(_start_selected_bot_match)
 	_my_bot_option.clear()
 	for bot: Dictionary in _my_bot_entries:
-		_my_bot_option.add_item("%s · %s" % [str(bot.get("deck_name", "Bot")), str(bot.get("god_name", ""))])
+		var bot_label := "%s · %s" % [str(bot.get("deck_name", "Bot")), str(bot.get("god_name", ""))]
+		if bool(bot.get("quarantined", false)):
+			bot_label += " (quarantined)"
+		_my_bot_option.add_item(bot_label)
 	_my_bot_dialog.popup_centered()
 
 func _on_bot_deleted(success: bool, message: String, _bot_id: String) -> void:
@@ -3283,6 +3286,20 @@ func _on_bot_ladder_delete_requested(list_id: String) -> void:
 	if lobby_client == null or not lobby_client.is_authenticated():
 		return
 	lobby_client.delete_bot(list_id)
+
+func _on_bot_ladder_quarantine_requested(list_id: String, quarantined: bool) -> void:
+	if lobby_client == null or not lobby_client.is_authenticated():
+		return
+	lobby_client.set_bot_quarantined(list_id, quarantined)
+
+func _on_bot_quarantined(success: bool, message: String, _bot_id: String, _quarantined: bool) -> void:
+	status_label.text = message
+	if success:
+		lobby_client.request_my_bots()
+		if is_instance_valid(_bot_ladder_view):
+			# The detail panel caches the old flag; return to the refreshed list.
+			_bot_ladder_view.close_deck()
+			_request_bot_ladder()
 
 func _on_bot_ladder_add_deck_requested(deck: Dictionary) -> void:
 	if _local_profile_store == null:
@@ -11982,10 +11999,13 @@ func _open_bot_ladder(quarantined_only: bool = false) -> void:
 	_bot_ladder_view.refresh_requested.connect(_request_bot_ladder)
 	if not lobby_client.bot_deleted.is_connected(_on_bot_deleted):
 		lobby_client.bot_deleted.connect(_on_bot_deleted)
+	if not lobby_client.bot_quarantined.is_connected(_on_bot_quarantined):
+		lobby_client.bot_quarantined.connect(_on_bot_quarantined)
 	_bot_ladder_view.page_requested.connect(_request_bot_ladder)
 	_bot_ladder_view.search_requested.connect(_on_bot_ladder_search_requested)
 	_bot_ladder_view.deck_requested.connect(_request_bot_deck)
 	_bot_ladder_view.delete_requested.connect(_on_bot_ladder_delete_requested)
+	_bot_ladder_view.quarantine_requested.connect(_on_bot_ladder_quarantine_requested)
 	_bot_ladder_view.add_deck_requested.connect(_on_bot_ladder_add_deck_requested)
 	add_child(_bot_ladder_view)
 	_refresh_ladder_profile_summary()
@@ -14491,7 +14511,7 @@ func _run_practice_thor_fuzz_smoke() -> void:
 	var ranked_decks := bool(_smoke_config.get("ranked_bot_decks", false))
 	var base_seed := int(_smoke_config.get("seed", 1337))
 	var stall_frames := maxi(60, int(_smoke_config.get("stall_frames", 360)))
-	var match_frames := maxi(stall_frames + 60, int(_smoke_config.get("match_frames", 2400)))
+	var match_frames := maxi(stall_frames + 60, int(_smoke_config.get("match_frames", 12000)))
 	var player_wins := 0
 	var thor_wins := 0
 	for game_index in range(total_games):
@@ -15312,7 +15332,7 @@ func _parse_smoke_config(args: Array) -> Dictionary:
 		"ranked_bot_decks": str(config.get("smoke_ranked_bot_decks", "0")) == "1",
 		"seed": int(str(config.get("smoke_seed", "1337")).to_int()),
 		"stall_frames": int(str(config.get("smoke_stall_frames", "360")).to_int()),
-		"match_frames": int(str(config.get("smoke_match_frames", "2400")).to_int()),
+		"match_frames": int(str(config.get("smoke_match_frames", "12000")).to_int()),
 		"hunting_tactics_log_file": str(config.get("smoke_hunting_tactics_log_file", "")),
 	}
 

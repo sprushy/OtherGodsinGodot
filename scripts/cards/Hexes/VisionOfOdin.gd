@@ -17,7 +17,7 @@ func _init() -> void:
 	card_types = ["Hex", "Battle Modifier"]
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
-	ability_text = "Choose a creature. It gets -7 Str and -1 Spd until end of turn; if it is a Norse creature, it gets +7 Str and +1 Spd instead."
+	ability_text = "Choose a creature. Until end of turn, it gets +7 STR and +1 SPD if it's Norse, or -7 STR and -1 SPD otherwise."
 	flavor_text = ""
 	artist = "Lorinda Tomko"
 	art_path = ART_PATH

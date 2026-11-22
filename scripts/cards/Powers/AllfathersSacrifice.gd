@@ -11,7 +11,7 @@ func _init() -> void:
 	mana_cost = UNLOCK_COST
 	card_types = ["Searching", "Spells"]
 	culture = "Norse"
-	ability_text = "[b]Unlock[/b] (5): Searching - Spells - Lose 12 followers. [b]Search[/b] a spell. [b]Prime[/b] it."
+	ability_text = "[b]Unlock[/b] (5)\n[b]Activate[/b]: Lose 12 Followers. [b]Prime[/b] a Spell."
 	art_path = ART_PATH
 
 func can_activate(game_manager: GameManager) -> bool:

@@ -253,7 +253,12 @@ static func build_command(bot, type: String, data: Dictionary) -> Dictionary:
 		"aphrodite_enslave":
 			command.merge({"type": "aphrodite_enslave_choice", "confirm": false})
 		"habrok_breakout":
-			command.merge({"type": "habrok_breakout_choice", "do_breakout": true})
+			var target_uids: Array = data.get("target_uids", [])
+			command.merge({
+				"type": "habrok_breakout_choice",
+				"do_breakout": true,
+				"target_uid": str(target_uids[0]) if not target_uids.is_empty() else "",
+			})
 		"hati_moon_hunt":
 			command.merge(bot._plan_moon_hunt(source as Hati))
 		"en_hedu_anna_exaltation":

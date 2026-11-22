@@ -55,6 +55,7 @@ const SUBMIT_BOT_PROPOSAL := "submit_bot_proposal"
 const SUBMIT_BOT_DECK := "submit_bot_deck"
 const REQUEST_MY_BOTS := "request_my_bots"
 const DELETE_BOT := "delete_bot"
+const QUARANTINE_BOT := "quarantine_bot"
 const SEED_BOT_LEAGUE := "seed_bot_league"
 const FINALIZE_BOT_LEAGUE := "finalize_bot_league"
 const REQUEST_BOT_LEAGUE_STATUS := "request_bot_league_status"
@@ -106,6 +107,7 @@ const BOT_PROPOSAL_RESULT := "bot_proposal_result"
 const BOT_DECK_SUBMISSION_RESULT := "bot_deck_submission_result"
 const MY_BOTS := "my_bots"
 const BOT_DELETED := "bot_deleted"
+const BOT_QUARANTINED := "bot_quarantined"
 ## Debug-only roster of every account signed in to the lobby. The server only
 ## answers on debug/editor builds, so release builds never expose this list.
 const REQUEST_PLAYERS_ONLINE := "request_players_online"
@@ -320,6 +322,12 @@ static func validate_request(message: Dictionary) -> String:
 			var bot_id = payload.get("bot_id", "")
 			if not bot_id is String or bot_id.is_empty() or bot_id.length() > 80:
 				return "Invalid community bot id."
+		QUARANTINE_BOT:
+			var bot_id = payload.get("bot_id", "")
+			if not bot_id is String or bot_id.is_empty() or bot_id.length() > 80:
+				return "Invalid community bot id."
+			if payload.has("quarantined") and not payload.get("quarantined") is bool:
+				return "Invalid quarantine state."
 		SUBMIT_BOT_DECK:
 			var deck = payload.get("deck", {})
 			if not deck is Dictionary or JSON.stringify(deck).length() > 30000:

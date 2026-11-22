@@ -63,6 +63,7 @@ signal bot_proposal_result(success: bool, message: String)
 signal bot_deck_submission_result(success: bool, message: String, bot: Dictionary)
 signal my_bots_received(bots: Array)
 signal bot_deleted(success: bool, message: String, bot_id: String)
+signal bot_quarantined(success: bool, message: String, bot_id: String, quarantined: bool)
 signal players_online_received(players: Array)
 signal bot_league_result_received(result: Dictionary)
 signal bot_league_status_received(status: Dictionary)
@@ -682,6 +683,13 @@ func delete_bot(bot_id: String) -> void:
 	if is_authenticated():
 		_send_request(LobbyProtocolScript.DELETE_BOT, {"bot_id": bot_id})
 
+func set_bot_quarantined(bot_id: String, quarantined: bool) -> void:
+	if is_authenticated():
+		_send_request(LobbyProtocolScript.QUARANTINE_BOT, {
+			"bot_id": bot_id,
+			"quarantined": quarantined,
+		})
+
 func request_friends() -> void:
 	_send_request(LobbyProtocolScript.REQUEST_FRIENDS)
 
@@ -950,6 +958,13 @@ func lobby_event(message: Dictionary) -> void:
 			my_bots_received.emit(payload.get("bots", []))
 		LobbyProtocolScript.BOT_DELETED:
 			bot_deleted.emit(bool(payload.get("success", false)), str(payload.get("message", "")), str(payload.get("bot_id", "")))
+		LobbyProtocolScript.BOT_QUARANTINED:
+			bot_quarantined.emit(
+				bool(payload.get("success", false)),
+				str(payload.get("message", "")),
+				str(payload.get("bot_id", "")),
+				bool(payload.get("quarantined", false))
+			)
 		LobbyProtocolScript.PLAYERS_ONLINE:
 			if is_authenticated():
 				var players = payload.get("players", [])

@@ -11,7 +11,7 @@ func _init() -> void:
 	speed = 1
 	resilience = 3
 	strength = 5
-	ability_text = "Sacrifice: If this creature is sacrificed for another creature's summon cost, gain 2 mana and return it from your grave to your hand."
+	ability_text = "Sacrifice: If Capricorn is sacrificed for another creature's summon cost, gain 2 mana and return it from your grave to your hand."
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Riccardo Zoppello"

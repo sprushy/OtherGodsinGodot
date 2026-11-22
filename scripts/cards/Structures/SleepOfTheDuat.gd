@@ -15,7 +15,7 @@ func _init() -> void:
 	speed = 0
 	strength = 0
 	sacrifice_cost = 0
-	ability_text = "As an additional cost to play Sleep of the Duat, choose and discard a card from your hand.\nFrom the end of their first turn on the field, creatures sleep unless there is a Divine Manifestation on the field. (A Divine Manifestation on either side of the field wakes all creatures.)"
+	ability_text = "At the end of each turn, if neither side has a face-up Divine Manifestation, give all face-up creatures [b]Sleep[/b]. When a face-up Divine Manifestation is summoned or Sleep of the Duat leaves the field, [b]Wake[/b] the creatures it put to sleep."
 	culture = "Ancient"
 	artist = "User provided art"
 	art_path = ART_PATH

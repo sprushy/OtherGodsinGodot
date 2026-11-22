@@ -21,9 +21,11 @@ const GuanYuCursorSource = preload("res://images/ui/cursors/GuanYuCursor.png")
 const GoodFortuneCursorSource = preload("res://images/ui/cursors/Mermaid Tail Cursor.png")
 const GawainAbilityBadgeCursorSource = preload("res://images/ability_badges/GawainHealingHandsBadge.png")
 const GuduPriestAbilityBadgeCursorSource = preload("res://images/ability_badges/GuduPriestBadge.png")
+const GuanYuManeuverAbilityBadgeCursorSource = preload("res://images/ability_badges/GuanYuManeuverBadge.png")
 const HariiShamanAbilityBadgeCursorSource = preload("res://images/ability_badges/HariiShamanBadge.png")
 const LamashatuAbilityBadgeCursorSource = preload("res://images/ability_badges/LamashatuSuckleBadge.png")
 const NimuePresentAbilityBadgeCursorSource = preload("res://images/ability_badges/NimuePresentBadge.png")
+const PaiLongStormcloudAbilityBadgeCursorSource = preload("res://images/ability_badges/PaiLongStormcloudBadge.png")
 const ASKELLADEN_FIGHT_BADGE := preload("res://images/ability_badges/AskelladenFightBadge.png")
 const ASKELLADEN_RETREAT_BADGE := preload("res://images/ability_badges/AskelladenRetreatBadge.png")
 const AncientPyreCursorSource = preload("res://images/ui/cursors/PyreCursor.png")
@@ -52,6 +54,7 @@ const GRINDYLOW_DROWN_CURSOR_IMAGE_PATH := "res://images/ui/cursors/DrownCursor.
 const SEVENTH_SAGE_CURSOR_IMAGE_PATH := "res://images/ui/cursors/SeventhSageCursor.png"
 const GEOPHAGIA_CURSOR_IMAGE_PATH := "res://images/ui/cursors/GeophagiaCursor.png"
 const ENTROPY_CURSOR_IMAGE_PATH := "res://images/ui/cursors/EntropyCursor.png"
+const BINDING_CURSOR_IMAGE_PATH := "res://images/ui/cursors/MetallicChainCursor.png"
 const CardBackTexture = preload("res://images/cardbackAI.png")
 const CardDrawAnimationScript = preload("res://scripts/ui/CardDrawAnimation.gd")
 const CardShelveAnimationScript = preload("res://scripts/ui/CardShelveAnimation.gd")
@@ -847,6 +850,7 @@ var _grindylow_drown_cursor_texture: Texture2D = null
 var _seventh_sage_cursor_texture: Texture2D = null
 var _geophagia_cursor_texture: Texture2D = null
 var _entropy_cursor_texture: Texture2D = null
+var _binding_cursor_texture: Texture2D = null
 var _entropy_cursor_layer: CanvasLayer = null
 var _entropy_cursor_sprite: TextureRect = null
 var _active_selection_cursor_mode: String = ""
@@ -890,6 +894,7 @@ var _grindylow_drown_cursor_target_height: int = 0
 var _seventh_sage_cursor_target_height: int = 0
 var _geophagia_cursor_target_height: int = 0
 var _entropy_cursor_target_height: int = 0
+var _binding_cursor_target_height: int = 0
 var _devour_cancel_prompt: Control = null
 var _tez_titlacauan_cursor_overlay: Control = null
 var _tez_titlacauan_cursor_budget_label: Label = null
@@ -1091,6 +1096,8 @@ const GEOPHAGIA_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.58)
 const ENTROPY_CURSOR_TARGET_HEIGHT := 128
 const ENTROPY_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.50)
 const ENTROPY_CURSOR_ROTATION_SPEED := 0.55
+const BINDING_CURSOR_TARGET_HEIGHT := 108
+const BINDING_CURSOR_HOTSPOT_RATIO := Vector2(0.97, 0.64)
 const SACRIFICE_CURSOR_SHAPES := [
 	Input.CURSOR_ARROW,
 	Input.CURSOR_POINTING_HAND,
@@ -2937,6 +2944,8 @@ func _get_ability_badge_cursor_mode_for_source(card: Card) -> String:
 		return "ability_badge_gawain"
 	if card is GududPriest:
 		return "ability_badge_gudu_priest"
+	if card is GuanYuActive:
+		return "ability_badge_guan_yu_maneuver"
 	if card is HariiShamanScript:
 		return "ability_badge_harii_shaman"
 	if card is Lamashatu:
@@ -3010,14 +3019,27 @@ func _get_selection_cursor_mode_for_source(card: Card) -> String:
 		return "geophagia"
 	if card is Mummu:
 		return "entropy"
-	if card is WingedLionScript:
+	if card is WingedLionScript or card is HermesPsychopompus:
 		return "hermes"
+	if card is WalkOfTheSage:
+		return "void"
+	if card is Apotheosis \
+		or card is FairyBlast \
+		or card is SirensSong \
+		or card is TabletOfLife \
+		or card is Hringhorni \
+		or card is HuntingTactics \
+		or card is FoolishOptimism \
+		or card is TheChangelingExchange:
+		return "divine_lightning"
 	if _uses_good_fortune_cursor_fallback(card):
 		return "good_fortune"
 	if _is_hostile_selection_cursor_source(card):
 		return "silence"
 	if _is_silence_or_mute_targeting_source(card):
 		return "silence"
+	if "Binding" in card.card_types:
+		return "binding"
 	return ""
 
 func _hide_devour_cancel_prompt() -> void:
@@ -3185,6 +3207,10 @@ func _get_selection_cursor_mode() -> String:
 	var hand_drag_cursor_mode := _get_hand_drag_selection_cursor_mode()
 	if not hand_drag_cursor_mode.is_empty():
 		return hand_drag_cursor_mode
+	if _has_overlay_selection_cursor_mode("pai_long_autumn_king_weather"):
+		return "ability_badge_pai_long_stormcloud"
+	if _overlay_selection_cursor_mode.begins_with(ABILITY_BADGE_CURSOR_MODE_PREFIX):
+		return _overlay_selection_cursor_mode
 	if _has_overlay_selection_cursor_mode("e2_abzu"):
 		return "e2_abzu"
 	if _has_overlay_selection_cursor_mode("terror"):
@@ -3336,6 +3362,8 @@ func _get_cursor_mode_target_height(cursor_mode: String) -> int:
 			return UIArtScalerScript.get_board_cursor_target_height(GEOPHAGIA_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"entropy":
 			return UIArtScalerScript.get_board_cursor_target_height(ENTROPY_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+		"binding":
+			return UIArtScalerScript.get_board_cursor_target_height(BINDING_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 	return 0
 
 func _apply_sacrifice_cursor() -> bool:
@@ -3568,12 +3596,16 @@ func _get_ability_badge_cursor_source(cursor_mode: String) -> Texture2D:
 			return GawainAbilityBadgeCursorSource
 		"ability_badge_gudu_priest":
 			return GuduPriestAbilityBadgeCursorSource
+		"ability_badge_guan_yu_maneuver":
+			return GuanYuManeuverAbilityBadgeCursorSource
 		"ability_badge_harii_shaman":
 			return HariiShamanAbilityBadgeCursorSource
 		"ability_badge_lamashatu":
 			return LamashatuAbilityBadgeCursorSource
 		"ability_badge_nimue_present":
 			return NimuePresentAbilityBadgeCursorSource
+		"ability_badge_pai_long_stormcloud":
+			return PaiLongStormcloudAbilityBadgeCursorSource
 	return null
 
 func _apply_ability_badge_cursor(cursor_mode: String) -> bool:
@@ -3845,6 +3877,19 @@ func _apply_geophagia_cursor() -> bool:
 	var hotspot := UIArtScalerScript.get_cursor_hotspot(_geophagia_cursor_texture, GEOPHAGIA_CURSOR_HOTSPOT_RATIO)
 	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
 		Input.set_custom_mouse_cursor(_geophagia_cursor_texture, cursor_shape, hotspot)
+	return true
+
+func _apply_binding_cursor() -> bool:
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(BINDING_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	if _binding_cursor_texture == null or _binding_cursor_target_height != target_height:
+		_binding_cursor_texture = _load_cursor_texture_from_image_path(BINDING_CURSOR_IMAGE_PATH, target_height)
+		_binding_cursor_target_height = target_height
+	if _binding_cursor_texture == null:
+		return false
+
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(_binding_cursor_texture, BINDING_CURSOR_HOTSPOT_RATIO)
+	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
+		Input.set_custom_mouse_cursor(_binding_cursor_texture, cursor_shape, hotspot)
 	return true
 
 func _ensure_entropy_cursor_overlay() -> bool:
@@ -4273,6 +4318,14 @@ func _sync_sacrifice_cursor() -> void:
 	if cursor_mode == "geophagia":
 		if _apply_geophagia_cursor():
 			_active_selection_cursor_mode = "geophagia"
+			_active_selection_cursor_target_height = target_height
+		else:
+			_restore_default_selection_cursor()
+		return
+
+	if cursor_mode == "binding":
+		if _apply_binding_cursor():
+			_active_selection_cursor_mode = "binding"
 			_active_selection_cursor_target_height = target_height
 		else:
 			_restore_default_selection_cursor()
@@ -12574,6 +12627,7 @@ func _make_god_cluster(zone: Zone, player: Player, is_enemy: bool) -> Control:
 		_player_god_zone_ui.card_clicked.connect(_on_god_card_pressed)
 		_player_god_zone_ui.champions_call_clicked.connect(_on_champions_call_badge_pressed)
 		_player_god_zone_ui.god_ability_badge_clicked.connect(_on_god_ability_badge_clicked)
+		_player_god_zone_ui.god_ability_option_badge_clicked.connect(_on_psychopompus_ability_requested)
 		_player_god_zone_ui.tez_necoc_yaotl_badge_clicked.connect(_on_tez_necoc_yaotl_badge_pressed)
 		_player_god_zone_ui.god_right_clicked.connect(_on_god_right_clicked)
 
@@ -13304,7 +13358,7 @@ func _on_power_pressed(power: PowerCard) -> void:
 				ananke.get_cards_in_deck(),
 				on_choose_ananke_card,
 				Callable(),
-				"",
+				"binding",
 				"",
 				false,
 				true,
@@ -13806,7 +13860,9 @@ func _show_e2_abzu_prompt(structure: E2Abzu) -> void:
 		_show_card_selection_overlay(
 			"Choose a Mer Mage in your Void",
 			void_targets,
-			on_choose_void_return
+			on_choose_void_return,
+			Callable(),
+			"e2_abzu"
 		)
 	)
 	vbox.add_child(return_btn)
@@ -17531,6 +17587,8 @@ func _on_aggressive_stance_pressed() -> void:
 	if _pending_drop_zone != null:
 		_on_empty_zone_pressed(_pending_drop_zone)
 		_pending_drop_zone = null
+	elif _pending_champions_call_god != null or _pending_raven_storm_priority_card != null:
+		update_ui()
 
 func _on_defensive_stance_pressed() -> void:
 	if _is_turn_choice_pending():
@@ -17544,6 +17602,8 @@ func _on_defensive_stance_pressed() -> void:
 	if _pending_drop_zone != null:
 		_on_empty_zone_pressed(_pending_drop_zone)
 		_pending_drop_zone = null
+	elif _pending_champions_call_god != null or _pending_raven_storm_priority_card != null:
+		update_ui()
 
 func _on_stealth_mode_pressed() -> void:
 	if _is_turn_choice_pending():
@@ -17609,6 +17669,30 @@ func _on_enemy_god_zone_pressed(zone: Zone) -> void:
 	if _has_pending_target_selection():
 		_on_empty_zone_pressed(zone)
 
+func _is_legal_ability_zone_target(zone: Zone) -> bool:
+	if zone == null or game_manager == null or _game_finished or _is_observer_mode:
+		return false
+	if zone.zone_type == Zone.ZoneType.GOD_SLOT:
+		return _is_pyre_convert_target(zone.zone_owner)
+	if not zone.is_board_zone():
+		return false
+	if _pending_champions_call_god != null:
+		return placement_mode in ["aggressive", "defensive"] \
+			and zone in _pending_champions_call_god.get_champions_call_open_zones()
+	if _pending_skoll_summon != null and not _awaiting_creature_sacrifice and not _awaiting_altar_void_payment:
+		return zone.zone_owner == game_manager.current_player and zone.cards.is_empty()
+	if _pending_hati_summon != null:
+		return _pending_hati_sacrifice != null \
+			and _pending_hati_summon.is_valid_moon_hunt_destination(zone, _pending_hati_sacrifice)
+	if _pending_raven_storm_priority_card != null:
+		return placement_mode in ["aggressive", "defensive"] \
+			and zone.zone_owner == _pending_raven_storm_priority_card.card_owner and zone.cards.is_empty()
+	if _pending_wolf_master_summon != null:
+		return zone.zone_owner == game_manager.current_player and zone.cards.is_empty()
+	return _has_pending_click_selection() \
+		and zone in match_manager.pending_click_selection_valid_targets \
+		and match_manager.pending_click_selection_validator.call(zone)
+
 func _on_empty_zone_pressed(zone: Zone) -> void:
 	if _game_finished:
 		return
@@ -17666,6 +17750,10 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 		_resolve_wolf_master_summon(zone)
 		return
 	if _has_pending_target_selection():
+		if _pending_click_selection_source is HermesPsychopompus \
+				and _get_pending_target_selection_name() == HermesPsychopompus.CALL_OF_THE_CROSSING:
+			match_manager.confirm_click_selection(zone)
+			return
 		if _is_devour_cursor_mode_active():
 			_show_devour_cancel_prompt()
 			return
@@ -18069,7 +18157,8 @@ func _on_e2_abzu_badge_clicked(card: Card, mode: String) -> void:
 			"Choose a Mer Mage in your Void",
 			void_targets,
 			on_choose_void_return,
-			on_cancel_void_return
+			on_cancel_void_return,
+			"e2_abzu"
 		)
 		return
 
@@ -18394,66 +18483,68 @@ func _add_psychopompus_ability_buttons(menu: VBoxContainer, god: HermesPsychopom
 	var summon_button := Button.new()
 	summon_button.text = HermesPsychopompus.CALL_OF_THE_CROSSING
 	summon_button.disabled = not god.can_summon_ghost(game_manager)
-	summon_button.pressed.connect(func() -> void:
-		_close_context_menu()
-		_show_card_selection_overlay(
-			"Choose a Ghost to summon (2 mana per level)",
-			god.get_summonable_ghosts(),
-			_show_psychopompus_summon_lanes.bind(god.uid)
-		)
-	)
+	summon_button.pressed.connect(_on_psychopompus_ability_requested.bind(god, HermesPsychopompus.CALL_OF_THE_CROSSING))
 	menu.add_child(summon_button)
 
 	var speed_button := Button.new()
 	speed_button.text = HermesPsychopompus.WINGS_OF_THE_DEPARTED
 	speed_button.disabled = not god.can_boost_speed(game_manager)
-	speed_button.pressed.connect(func() -> void:
-		_close_context_menu()
-		_prompt_card_target_selection(
-			god, god.get_speed_targets(game_manager), _show_psychopompus_speed_payment.bind(god),
-			Callable(), "Choose a creature for Wings of the Departed"
-		)
-	)
+	speed_button.pressed.connect(_on_psychopompus_ability_requested.bind(god, HermesPsychopompus.WINGS_OF_THE_DEPARTED))
 	menu.add_child(speed_button)
 
-func _show_psychopompus_summon_lanes(ghost: Card, god_uid: String) -> void:
+func _on_psychopompus_ability_requested(god: HermesPsychopompus, ability: String) -> void:
+	if _game_finished or game_manager == null:
+		return
+	_close_context_menu()
+	if _has_pending_target_selection():
+		_show_target_cancel_prompt()
+		return
+	if _reject_badge_click_while_locked(god, _replay_card_action(_on_psychopompus_ability_requested, god, [ability])):
+		return
+	if _is_turn_choice_pending():
+		_reject_pre_turn_action()
+		return
+	match ability:
+		HermesPsychopompus.CALL_OF_THE_CROSSING:
+			if god.can_summon_ghost(game_manager):
+				_show_card_selection_overlay(
+					"Choose a Ghost to summon (2 mana per level)", god.get_summonable_ghosts(),
+					_begin_psychopompus_summon_lane_selection.bind(god.uid), Callable(),
+					_get_selection_cursor_mode_for_source(god)
+				)
+				return
+		HermesPsychopompus.WINGS_OF_THE_DEPARTED:
+			if god.can_boost_speed(game_manager):
+				_prompt_card_target_selection(
+					god, god.get_speed_targets(game_manager), _show_psychopompus_speed_payment.bind(god),
+					Callable(), "Choose a creature for Wings of the Departed"
+				)
+				return
+	_set_action_label_text(ability + " cannot be used right now.")
+	update_ui()
+
+func _begin_psychopompus_summon_lane_selection(ghost: Card, god_uid: String) -> void:
 	var god := game_manager.get_card_by_uid(god_uid) as HermesPsychopompus
 	var live_ghost := game_manager.get_card_by_uid(ghost.uid)
-	if god == null or not god.can_use_god_power(game_manager) or live_ghost not in god.get_summonable_ghosts():
+	if god == null or not god.can_summon_ghost(game_manager) or live_ghost not in god.get_summonable_ghosts():
 		_set_action_label_text("Call of the Crossing is no longer available for that Ghost.")
 		update_ui()
 		return
-	var content := _create_psychopompus_prompt()
-	var label := Label.new()
-	label.text = "Choose an empty lane for %s in aggressive stance." % live_ghost.card_name
-	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	content.add_child(label)
 
-	var frontline := HBoxContainer.new()
-	frontline.alignment = BoxContainer.ALIGNMENT_CENTER
-	content.add_child(frontline)
-	var reserve := HBoxContainer.new()
-	reserve.alignment = BoxContainer.ALIGNMENT_CENTER
-	content.add_child(reserve)
-	for lane in god.get_open_ghost_lanes():
-		var button := Button.new()
-		button.text = _get_divine_caprice_zone_title(lane)
-		var command := {
-			type = "god_ability", god_uid = god.uid,
+	var validate_lane := func(target: Variant) -> bool:
+		return target is Zone and target in god.get_open_ghost_lanes()
+	var confirm_lane := func(lane: Zone) -> void:
+		game_input.submit_action({
+			type = "god_ability", god_uid = god_uid,
 			ability = HermesPsychopompus.CALL_OF_THE_CROSSING, ghost_uid = live_ghost.uid,
 			zone_type = lane.zone_type, zone_index = lane.zone_index
-		}
-		button.pressed.connect(func() -> void:
-			_dismiss_zone_overlay()
-			game_input.submit_action(command)
-		)
-		var row := frontline if lane.zone_type == Zone.ZoneType.FRONTLINE else reserve
-		row.add_child(button)
-	var cancel := Button.new()
-	cancel.text = "Cancel"
-	cancel.pressed.connect(_dismiss_zone_overlay)
-	content.add_child(cancel)
+		})
+	_begin_pending_click_selection(
+		HermesPsychopompus.CALL_OF_THE_CROSSING, god, validate_lane, confirm_lane,
+		Callable(), true, god.get_open_ghost_lanes()
+	)
+	_set_action_label_text("Click an empty friendly lane to summon %s in aggressive stance." % live_ghost.card_name)
+	update_ui()
 
 func _create_psychopompus_prompt() -> VBoxContainer:
 	_dismiss_zone_overlay()
@@ -24916,7 +25007,7 @@ func _is_askelladen_retreat_candidate(ask_card: Askelladen, other_card: Card) ->
 		and other_card != null \
 		and not ask_card.is_face_down \
 		and not ask_card.abilities_suppressed() \
-		and not game_manager.is_immune_to_source(other_card, ask_card) \
+		and not game_manager.is_immune_to_source(other_card, ask_card, false) \
 		and other_card.get_effective_speed() <= ask_card.get_effective_speed()
 
 func _can_askelladen_retreat(ask_card: Askelladen, other_card: Card) -> bool:
@@ -26995,7 +27086,7 @@ func _hide_blessed_knights_prompt() -> void:
 		panel.queue_free()
 	_pending_blessed_knights = null
 
-func _show_habrok_breakout_prompt(card: HabrokParagonOfHawks, prompt_text: String) -> void:
+func _show_habrok_breakout_prompt(card: HabrokParagonOfHawks, prompt_text: String, target_uids: Array) -> void:
 	_hide_habrok_breakout_prompt()
 	_pending_habrok_breakout = card
 
@@ -27029,7 +27120,7 @@ func _show_habrok_breakout_prompt(card: HabrokParagonOfHawks, prompt_text: Strin
 
 	var breakout_btn := Button.new()
 	breakout_btn.text = "Breakout"
-	breakout_btn.pressed.connect(_resolve_habrok_breakout_prompt.bind(true))
+	breakout_btn.pressed.connect(_begin_habrok_breakout_selection.bind(card, target_uids))
 	buttons.add_child(breakout_btn)
 
 	var decline_btn := Button.new()
@@ -27054,7 +27145,29 @@ func _hide_habrok_breakout_prompt() -> void:
 	_habrok_breakout_prompt_panel = null
 	_pending_habrok_breakout = null
 
-func _resolve_habrok_breakout_prompt(do_breakout: bool) -> void:
+func _begin_habrok_breakout_selection(card: HabrokParagonOfHawks, target_uids: Array) -> void:
+	if target_uids.size() <= 1:
+		_resolve_habrok_breakout_prompt(true, str(target_uids[0]) if not target_uids.is_empty() else "")
+		return
+	var targets: Array[Card] = []
+	for target_uid in target_uids:
+		var target := game_manager.get_card_by_uid(str(target_uid))
+		if target != null:
+			targets.append(target)
+	_hide_habrok_breakout_prompt()
+	_pending_habrok_breakout = card
+	var validate_target := func(clicked_card: Card) -> bool:
+		return _is_in_play_selection_target(clicked_card, targets)
+	var confirm_target := func(clicked_card: Card) -> void:
+		_resolve_habrok_breakout_prompt(true, str(clicked_card.uid))
+	_begin_pending_click_selection(
+		"Breakout", card, validate_target, confirm_target,
+		_resolve_habrok_breakout_prompt.bind(false), true, targets
+	)
+	_set_action_label_text("Breakout: click a creature tied for lowest STR.")
+	update_ui()
+
+func _resolve_habrok_breakout_prompt(do_breakout: bool, target_uid: String = "") -> void:
 	var card: HabrokParagonOfHawks = _pending_habrok_breakout
 	if card == null:
 		return
@@ -27062,6 +27175,7 @@ func _resolve_habrok_breakout_prompt(do_breakout: bool) -> void:
 		"type": "habrok_breakout_choice",
 		"source_uid": card.uid,
 		"do_breakout": do_breakout,
+		"target_uid": target_uid,
 	}) and _pending_habrok_breakout == card:
 		_hide_habrok_breakout_prompt()
 	update_ui()
@@ -28634,7 +28748,7 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 		"habrok_breakout":
 			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as HabrokParagonOfHawks
 			if card != null:
-				_show_habrok_breakout_prompt(card, str(data.get("prompt_text", "")))
+				_show_habrok_breakout_prompt(card, str(data.get("prompt_text", "")), data.get("target_uids", []))
 		"hati_moon_hunt":
 			_show_hati_prompt(game_manager.get_card_by_uid(data.get("source_uid", "")) as Hati)
 		"aphrodite_enslave":
@@ -30818,7 +30932,7 @@ func _apply_ui_interaction(event_data: Dictionary) -> void:
 		"habrok_breakout":
 			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as HabrokParagonOfHawks
 			if card != null:
-				_show_habrok_breakout_prompt(card, str(payload.get("prompt_text", "")))
+				_show_habrok_breakout_prompt(card, str(payload.get("prompt_text", "")), payload.get("target_uids", []))
 		"hati_moon_hunt":
 			_show_hati_prompt(game_manager.get_card_by_uid(payload.get("source_uid", "")) as Hati)
 		"aphrodite_enslave":
@@ -32883,7 +32997,7 @@ func _activate_pai_long_weather_draw(card: Card) -> void:
 		deck_cards,
 		on_choose_drawn,
 		Callable(),
-		"",
+		"ability_badge_pai_long_stormcloud",
 		"",
 		false,
 		true,

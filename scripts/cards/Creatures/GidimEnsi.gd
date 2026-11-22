@@ -15,7 +15,7 @@ func _init() -> void:
 	resilience = 22
 	strength = 18
 	incorporeal = true
-	ability_text = "[b]Incorporeal[/b] ([b]Passive[/b]): Only Spirits or Mages can [b]Engage[/b] Gidim Ensi. Gidim Ensi can only [b]Engage[/b] Spirits or Mages. Sleep Immunity.\nGuardian ([b]Passive[/b]): Creatures that attack your followers sleep until the end of their controller's next turn. Gidim Ensi cannot attack."
+	ability_text = "[b]Incorporeal[/b] ([b]Passive[/b])\nGuardian ([b]Passive[/b]): Creatures that attack your Followers [b]Sleep[/b] until the end of their controller's next turn. Gidim Ensi can't attack."
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricarrdo Zoppello"

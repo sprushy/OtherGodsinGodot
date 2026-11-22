@@ -1004,13 +1004,6 @@ static func target_score(bot, card: Card, target: Card, action: CardAction = nul
 			if not enemy:
 				return BAD
 			return stat_gain(bot, card, target, action)
-		"ObsidianReflection":
-			if not enemy or not visible(bot, target):
-				return BAD
-			var reversed_damage := target.get_effective_strength()
-			if bot.has_method("_get_direct_follower_damage"):
-				reversed_damage = bot._get_direct_follower_damage(target)
-			return maxi(1000, reversed_damage * 100)
 		"FairyBlast":
 			if not enemy or not visible(bot, target):
 				return BAD
@@ -1717,7 +1710,7 @@ static func equipment_score(bot, equipment: Card, bearer: Card) -> int:
 		@warning_ignore("integer_division")
 		var sharur_base := maxi(gain + 2000 - CARD_VALUE / 2, 600)
 		return sharur_base - mana_penalty(bot, activation_cost(bot, equipment))
-	if key(equipment) == "BeardedAxe" and bearer.culture == "Norse" and bearer.has_type("Warrior"):
+	if key(equipment) == "BeardedAxe":
 		# Score the conditional axe bonus only against defensive creatures.
 		for defender in bot._get_board_creatures(bot.opponent):
 			if not visible(bot, defender) or defender.creature_mode != Card.CreatureMode.DEFENSIVE or bearer not in bot._get_attack_ready_creatures() or not bot._can_attack_creature(bearer, defender):
@@ -1747,7 +1740,7 @@ static func equipment_pickup_score(bot, equipment: EquipmentCard, bearer: Card) 
 		# the legendary out of enemy steal reach, so value the pickup above the
 		# generic unequipped-gear baseline.
 		return 3200 + gain
-	if key(equipment) == "BeardedAxe" and bearer.culture == "Norse" and bearer.has_type("Warrior"):
+	if key(equipment) == "BeardedAxe":
 		for defender in bot._get_board_creatures(bot.opponent):
 			if not visible(bot, defender) or defender.creature_mode != Card.CreatureMode.DEFENSIVE or bearer not in bot._get_attack_ready_creatures() or not bot._can_attack_creature(bearer, defender):
 				continue
@@ -1938,10 +1931,9 @@ static func preparation_score(bot, card: Card) -> int:
 			if not visible(bot, attacker) or attacker.current_zone not in bot.opponent.frontline_zones \
 					or attacker.is_petrified() or bot._status_persists_to_next_turn(attacker, "sleep") \
 					or bot._status_persists_to_next_turn(attacker, "cannot_attack") \
-					or not card.can_activate(attacker, null) or bot.game_manager.is_immune_to_source(attacker, card):
+					or not card.can_activate(attacker, null) or bot.game_manager._is_hex_immune(attacker, card):
 				continue
-			if bot._get_direct_follower_damage(attacker) > 0:
-				score = maxi(score, target_score(bot, card, attacker))
+			score = maxi(score, int(bot._get_direct_follower_damage(attacker)) * FOLLOWER_VALUE)
 		return score
 	if card is ShroudOfTheAncients:
 		@warning_ignore("integer_division")
@@ -1954,7 +1946,9 @@ static func preparation_score(bot, card: Card) -> int:
 		return score
 	if id == "NamburbiApotropaeon":
 		return namburbi_preparation_score(bot, card as NamburbiApotropaeon)
-	if id in ["Banishment", "SpellDemolition", "Sap", "SepLemutti", "Smite", "VoidShield", "Exorcism", "Hringhorni", "HeroicStand"]:
+	if id in ["Banishment", "SpellDemolition", "Sap", "SepLemutti", "Smite", "VoidShield"]:
+		return 1700
+	if id in ["Exorcism", "Hringhorni", "HeroicStand"]:
 		return 1700 if bot._board_creature_count(bot.opponent) > 0 or bot._board_creature_count(bot.bot_player) > 0 else 0
 	if id in ["TheInferno", "TheDeluge", "Dromi", "Gleipnir"]:
 		var gain := 0
@@ -1964,8 +1958,10 @@ static func preparation_score(bot, card: Card) -> int:
 		else:
 			for target in bot._get_board_creatures(bot.opponent):
 				gain = maxi(gain, target_score(bot, card, target))
-		return gain - CARD_VALUE - mana_penalty(bot, activation_cost(bot, card))
-	if id in ["FifaTheMagicalArrow", "GungnirTheSpearOfOdin", "SapStrength", "VisionOfTartarus"]:
+		return maxi(750, gain - CARD_VALUE - mana_penalty(bot, bot._get_play_cost(card, true)))
+	if id in ["SapStrength", "VisionOfTartarus"]:
+		return 1500
+	if id in ["FifaTheMagicalArrow", "GungnirTheSpearOfOdin"]:
 		return 1500 if bot._board_creature_count(bot.bot_player) > 0 and bot._board_creature_count(bot.opponent) > 0 else 0
 	return 0
 

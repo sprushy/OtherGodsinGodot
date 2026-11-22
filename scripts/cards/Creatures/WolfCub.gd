@@ -16,7 +16,7 @@ func _init() -> void:
 	speed = 1
 	resilience = 3
 	strength = 10
-	ability_text = "[b]Maturation[/b] ([b]Upkeep[/b]): You may send this creature to the grave to summon a level 4 or lower Lupine from your deck to the field."
+	ability_text = "[b]Maturation[/b] ([b]Upkeep[/b]): You may send Wolf Cub to the Graveyard to summon a level 4 or lower Lupine from your deck for free in Wolf Cub's slot."
 	flavor_text = ""
 	culture = "Norse"
 	artist = "Lorinda Tomko"

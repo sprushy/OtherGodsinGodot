@@ -6,6 +6,7 @@ signal page_requested(page: int)
 signal search_requested(query: String)
 signal deck_requested(list_id: String)
 signal delete_requested(list_id: String)
+signal quarantine_requested(list_id: String, quarantined: bool)
 signal add_deck_requested(deck: Dictionary)
 
 const TITLE_FONT = preload("res://fonts/custom_ui/Norsebold.otf")
@@ -50,6 +51,8 @@ var _back_button: Button
 var _view_deck_button: Button
 var _delete_button: Button
 var _delete_confirm: ConfirmationDialog
+var _quarantine_button: Button
+var _quarantine_confirm: ConfirmationDialog
 var _add_deck_button: Button
 var _loaded_deck: Dictionary = {}
 var _deck_contents: RichTextLabel
@@ -122,6 +125,8 @@ func _ready() -> void:
 	_view_deck_button.hide()
 	_delete_button = _add_button(header, "Delete bot", _confirm_delete_selected)
 	_delete_button.hide()
+	_quarantine_button = _add_button(header, "Quarantine bot", _confirm_quarantine_selected)
+	_quarantine_button.hide()
 	_add_deck_button = _add_button(header, "Add to my decks", _request_add_loaded_deck)
 	_add_deck_button.hide()
 	_delete_confirm = ConfirmationDialog.new()
@@ -129,6 +134,11 @@ func _ready() -> void:
 	_delete_confirm.ok_button_text = "Delete"
 	_delete_confirm.confirmed.connect(_request_delete_selected)
 	add_child(_delete_confirm)
+	_quarantine_confirm = ConfirmationDialog.new()
+	_quarantine_confirm.dialog_text = "Quarantine this bot? It stays in the community pool but will not be paired into matches. You can release it later."
+	_quarantine_confirm.ok_button_text = "Quarantine"
+	_quarantine_confirm.confirmed.connect(_request_quarantine_selected)
+	add_child(_quarantine_confirm)
 	_close_button = _add_button(header, "Close", close_requested.emit)
 	_status = Label.new()
 	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -333,6 +343,9 @@ func _render_ladder_rows() -> void:
 		row.set_text(5, rank_name)
 		if quarantined_only:
 			row.set_text(6, str(entry.get("quarantine_status", "")))
+		elif is_bot and bool(entry.get("matchmaking_excluded", false)):
+			row.set_text(6, "Bot · quarantined")
+			row.set_tooltip_text(6, "This bot was quarantined by its creator and is not paired into matches.")
 		else:
 			row.set_text(6, "Bot" if is_bot else "Player")
 		visible_count += 1
@@ -418,6 +431,9 @@ func _open_selected_entry() -> void:
 	_back_button.show()
 	_view_deck_button.visible = not _selected_list_id.is_empty()
 	_delete_button.visible = not _selected_list_id.is_empty() and bool(_selected_entry.get("can_delete", false))
+	var is_quarantined := bool(_selected_entry.get("matchmaking_excluded", false))
+	_quarantine_button.text = "Release bot" if is_quarantined else "Quarantine bot"
+	_quarantine_button.visible = not _selected_list_id.is_empty() and bool(_selected_entry.get("can_quarantine", false))
 	_table.hide()
 	_filter_bar.hide()
 	_status.hide()
@@ -429,6 +445,8 @@ func _open_selected_entry() -> void:
 		focus_order.append(_view_deck_button)
 	if _delete_button.visible:
 		focus_order.append(_delete_button)
+	if _quarantine_button.visible:
+		focus_order.append(_quarantine_button)
 	focus_order.append_array([_close_button, _deck_contents])
 	_set_focus_order(focus_order)
 	_back_button.grab_focus()
@@ -460,6 +478,8 @@ func _render_selected_entry() -> void:
 	var owner_name := str(_selected_entry.get("owner_name", "")).strip_edges()
 	if not owner_name.is_empty():
 		_deck_contents.add_text("Created by: %s\n" % owner_name)
+	if bool(_selected_entry.get("matchmaking_excluded", false)):
+		_deck_contents.add_text("Status: quarantined by its creator — not paired into matches\n")
 	var main_gods: Array = _selected_entry.get("main_gods", [])
 	if not main_gods.is_empty():
 		var god_names := PackedStringArray()
@@ -566,6 +586,7 @@ func _request_selected_deck() -> void:
 	_deck_contents.text = "Loading %s…" % str(_selected_entry.get("name", "bot deck"))
 	_view_deck_button.hide()
 	_delete_button.hide()
+	_quarantine_button.hide()
 	_add_deck_button.hide()
 	_deck_timeout.start()
 	deck_requested.emit(_selected_list_id)
@@ -578,6 +599,21 @@ func _request_delete_selected() -> void:
 	if _selected_list_id.is_empty():
 		return
 	delete_requested.emit(_selected_list_id)
+
+func _confirm_quarantine_selected() -> void:
+	if _quarantine_confirm == null or _selected_list_id.is_empty():
+		return
+	var is_quarantined := bool(_selected_entry.get("matchmaking_excluded", false))
+	_quarantine_confirm.dialog_text = "Release this bot from quarantine? It will be paired into matches again." if is_quarantined \
+		else "Quarantine this bot? It stays in the community pool but will not be paired into matches. You can release it later."
+	_quarantine_confirm.ok_button_text = "Release" if is_quarantined else "Quarantine"
+	_quarantine_confirm.popup_centered()
+
+func _request_quarantine_selected() -> void:
+	if _selected_list_id.is_empty():
+		return
+	var should_quarantine := not bool(_selected_entry.get("matchmaking_excluded", false))
+	quarantine_requested.emit(_selected_list_id, should_quarantine)
 
 func _request_add_loaded_deck() -> void:
 	if _loaded_deck.is_empty():
@@ -597,6 +633,7 @@ func show_deck(list_id: String, deck: Dictionary) -> void:
 	_deck_contents.clear()
 	_view_deck_button.hide()
 	_delete_button.hide()
+	_quarantine_button.hide()
 	_add_deck_button.visible = not quarantined_only
 	_deck_contents.push_color(GOLD)
 	_deck_contents.add_text(str(deck["name"]) + "\n\n")
@@ -726,6 +763,7 @@ func close_deck() -> bool:
 	_back_button.hide()
 	_view_deck_button.hide()
 	_delete_button.hide()
+	_quarantine_button.hide()
 	_add_deck_button.hide()
 	_status.visible = not _status.text.is_empty()
 	_refresh_button.show()

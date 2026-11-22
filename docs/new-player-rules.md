@@ -447,7 +447,7 @@ Some decks use the Graveyard as a resource with resurrect or return effects. Oth
 Cards explain their own rules text, and keyword hints appear in card detail views. Learn these common words first:
 
 - Friendly means cards you control, including the card with the ability if it qualifies.
-- Allied means other cards you control. For example, Asaruludu's Guardian protects your other Ancient creatures from targeting on your turn or during combat.
+- Allied means other cards you control. For example, Asaruludu's Guardian protects your other Ancient creatures from opposing targeted effects on your turn or during combat.
 - Void: send a card to the Abyss.
 - Immortal: cannot be destroyed.
 - Sleep: the Creature cannot take actions or intercept.

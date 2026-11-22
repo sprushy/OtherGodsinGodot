@@ -29,6 +29,7 @@ var attack_restriction_turns: int = 0
 var card_collection: Array[Card] = []
 var current_deck: Array[Card] = []
 var starting_creature_typings: Dictionary[String, Array] = {}
+var starting_deck_has_heroic_stand: bool = false
 var game_manager: GameManager = null
 var reserved_active_god: ActiveGodCard = null
 

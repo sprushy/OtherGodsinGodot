@@ -126,7 +126,7 @@ static func build_visual_hover_body(card: Card, viewer: Player, config: Dictiona
 	if card.should_show_flavor_text_in_hover():
 		vbox.add_child(_make_label(card.flavor_text, 14, Color(0.6, 0.6, 0.6), true))
 
-	var hover_details := card.get_hover_detail_lines(viewer)
+	var hover_details := _get_hover_detail_lines(card, viewer)
 	if hover_details.size() > 0:
 		vbox.add_child(_make_separator(Color(0.22, 0.45, 0.4)))
 		var detail_lbl := _make_rich_text(
@@ -663,7 +663,7 @@ static func build_board_popup_body(card: Card, viewer: Player, config: Dictionar
 	if power_cost_lines.size() > 0 and not is_hidden_card:
 		vbox.add_child(_make_rich_text(BaseCard.apply_cost_symbols("\n".join(power_cost_lines), 12), 12, Color(1.0, 0.84, 0.62)))
 
-	var hover_detail_lines := card.get_hover_detail_lines(viewer)
+	var hover_detail_lines := _get_hover_detail_lines(card, viewer)
 	if hover_detail_lines.size() > 0 and not is_hidden_card:
 		vbox.add_child(_make_rich_text("\n".join(hover_detail_lines), 13, Color(0.66, 0.97, 0.93)))
 
@@ -675,6 +675,12 @@ static func build_board_popup_body(card: Card, viewer: Player, config: Dictionar
 		vbox.add_child(_make_label(card.flavor_text, 13, Color(0.55, 0.55, 0.55), true))
 
 	return vbox
+
+static func _get_hover_detail_lines(card: Card, viewer: Player) -> Array[String]:
+	var lines := card.get_hover_detail_lines(viewer)
+	if viewer != null and viewer.starting_deck_has_heroic_stand and card.is_creature_card() and card.get_controller() == viewer:
+		lines.append("Combats this game: %d" % card.combats_this_game)
+	return lines
 
 static func _get_hidden_card_hover_label(card: Card) -> String:
 	if card != null and card.is_prepared and card.is_magical_card():

@@ -53,13 +53,17 @@ func run() -> bool:
 	_check_harii_shaman_culture(failures)
 	_check_metamorphosis(failures)
 	_check_deck_validator(failures)
+	_check_anankes_binding_timing(failures)
 	_check_match_command_registry_coverage(failures)
 	_check_command_authority(failures)
 	_check_combat_rounding(failures)
+	_check_heroic_stand_combat_count(failures)
 	_check_reveal_before_tactical_retreat(failures)
 	_check_united_front_doorway(failures)
 	_check_guan_yu_manoeuvre_and_slay(failures)
 	_check_class_rend_ability_destruction(failures)
+	_check_guardian_targeting(failures)
+	_check_habrok_breakout_ties(failures)
 	_check_ragnarok_doorway(failures)
 	_check_freyja_doorway(failures)
 	_check_card_interception_exceptions(failures)
@@ -75,6 +79,7 @@ func run() -> bool:
 	_check_dedicated_ranked_history(failures)
 	_check_ranked_bot_pool(failures)
 	_check_community_bot_rank_badge(failures)
+	_check_community_bot_quarantine(failures)
 	_check_community_bot_replay_identity(failures)
 	_check_ranked_bot_deck_generation(failures)
 	_check_ranked_bot_manifestations(failures)
@@ -82,6 +87,7 @@ func run() -> bool:
 	_check_bot_follower_valuation(failures)
 	_check_bot_summon_and_intercept(failures)
 	_check_bot_interception_forecasts(failures)
+	_check_bot_prepare_and_reflect(failures)
 	_check_bot_namburbi_combat_ward(failures)
 	_check_bot_speed_one_stealth(failures)
 	_check_bot_reserve_summon_threat(failures)
@@ -403,6 +409,43 @@ func _check_metamorphosis(failures: PackedStringArray) -> void:
 	player.move_card(spell, player.graveyard_zone)
 	if entrant.has_type("Porcine") or not entrant.has_type("Ursine") or not face_down_creature.has_type("Ursine"):
 		failures.append("Metamorphosis did not restore underlying subtypes when the final Aura left play")
+
+func _check_anankes_binding_timing(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.setup_game()
+	var binding := AnankesBinding.new()
+	var chosen := BrownBear.new()
+	var later := Enkidu.new()
+	binding.card_owner = player
+	binding.is_face_down = false
+	chosen.card_owner = player
+	later.card_owner = player
+	player.power_zones[0].add_card(binding)
+	player.deck_zone.add_card(chosen)
+	player.deck_zone.add_card(later)
+	player.mana = 2 * AnankesBinding.ACTIVATION_COST
+	binding.activate(game, chosen)
+	game._notify_controller_turn_end(player)
+	game.current_player = opponent
+	game._notify_controller_turn_end(opponent)
+	if chosen not in binding.stored_cards or chosen in player.deck_zone.cards:
+		failures.append("Ananke's Binding primed a card before the owner's next turn ended")
+	game.current_player = player
+	binding.activate(game, later)
+	var stored_entries: Array = binding.get_serialized_state()["stored_cards"]
+	if stored_entries.size() != 2 or stored_entries[0]["turns_until_return"] != 1 or stored_entries[1]["turns_until_return"] != 2:
+		failures.append("Ananke's Binding did not preserve individual countdowns in match snapshots")
+	game._notify_controller_turn_end(player)
+	if chosen in binding.stored_cards or player.deck_zone.cards.front() != chosen:
+		failures.append("Ananke's Binding did not prime the chosen card at the end of the owner's next turn")
+	if later not in binding.stored_cards or later in player.deck_zone.cards:
+		failures.append("Ananke's Binding primed the second card with the first card")
+	game._notify_controller_turn_end(player)
+	if later in binding.stored_cards or player.deck_zone.cards.front() != later:
+		failures.append("Ananke's Binding did not prime the second card on its own countdown")
 
 func _check_deck_validator(failures: PackedStringArray) -> void:
 	var validator = DeckValidatorScript.new()
@@ -1432,6 +1475,45 @@ func _check_bot_power_followthrough(failures: PackedStringArray) -> void:
 		failures.append("Bot unlocked Palisade with no enemy attack pressure")
 	bot.detach()
 
+func _check_heroic_stand_combat_count(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	var charm := HeroicStand.new()
+	var attacker := BrownBear.new()
+	var defender := Enkidu.new()
+	charm.card_owner = player
+	attacker.card_owner = player
+	defender.card_owner = opponent
+	player.deck_zone.add_card(charm)
+	game.players.assign([player, opponent])
+	game.setup_game()
+	player.move_card(charm, player.hand_zone)
+	player.frontline_zones[0].add_card(attacker)
+	opponent.frontline_zones[0].add_card(defender)
+	for turn in [2, 3]:
+		game.turn_number = turn
+		game._record_combat_participation(attacker, defender)
+	if charm.can_activate_from_hand(game):
+		failures.append("Heroic Stand activated before three combats")
+	game.turn_number = 4
+	game._record_combat_participation(attacker, defender)
+	if not charm.can_activate_from_hand(game):
+		failures.append("Heroic Stand did not count combats across turns")
+	var mana_before := player.mana
+	charm.resolve(game)
+	if player.mana != mana_before + HeroicStand.MANA_GAIN:
+		failures.append("Heroic Stand did not grant mana after three combats")
+	var private_snapshot := GameState.serialize(game, 0)
+	var opponent_snapshot := GameState.serialize(game, 1)
+	if not bool(private_snapshot.players[0].get("starting_deck_has_heroic_stand", false)) \
+			or opponent_snapshot.players[0].has("starting_deck_has_heroic_stand") \
+			or "Combats this game: 3" not in CardDetailContentBuilder._get_hover_detail_lines(attacker, player) \
+			or "Combats this game: 3" in CardDetailContentBuilder._get_hover_detail_lines(attacker, opponent):
+		failures.append("Heroic Stand's hover count did not respect starting deck privacy")
+	if BeardedAxe.new().get_bonus_strength_vs_defense(attacker) != 8:
+		failures.append("Bearded Axe did not grant its Defensive-stance bonus to a non-Norse Warrior")
+
 func _check_combat_rounding(failures: PackedStringArray) -> void:
 	var game := _new_fixture_game()
 	var player := _new_fixture_player()
@@ -1792,6 +1874,100 @@ func _check_bot_interception_forecasts(failures: PackedStringArray) -> void:
 	if giant in replies:
 		failures.append("Bot expected Giant's Disdain to bypass an attacking Giant's speed")
 	bot.detach()
+
+func _check_bot_prepare_and_reflect(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	player.mana = 0
+	player.followers = 100
+	opponent.followers = 100
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var mirror := ObsidianReflection.new()
+	mirror.card_owner = player
+	player.hand_zone.add_card(mirror)
+	if not bot._take_main_phase_action() or mirror.current_zone not in player.reserve_zones or not mirror.is_prepared:
+		failures.append("Bot did not prepare Obsidian Reflection on an empty board")
+		return
+	for zone in player.reserve_zones:
+		if zone.cards.is_empty():
+			var equipment := EquipmentCard.new()
+			equipment.card_owner = player
+			zone.add_card(equipment)
+	var trap := SpellDemolition.new()
+	trap.card_owner = player
+	player.hand_zone.add_card(trap)
+	if not bot._try_prepare_strategy_card() or trap.current_zone not in player.frontline_zones or player.mana != 0:
+		failures.append("Bot did not prepare a future Hex for free in an available frontline lane")
+	var attacker := RoboticFootsoldier.new()
+	attacker.card_owner = opponent
+	attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
+	attacker.strength = 20
+	attacker.speed = 3
+	opponent.frontline_zones[0].add_card(attacker)
+	var defender := RoboticFootsoldier.new()
+	defender.card_owner = player
+	defender.creature_mode = Card.CreatureMode.DEFENSIVE
+	defender.resilience = 5
+	defender.strength = 5
+	player.frontline_zones[0].add_card(defender)
+	game.current_player = opponent
+	game.other_player = player
+	game.turn_number += 1
+	game._upkeep_resolved_turn = game.turn_number
+	game.priority_player = player
+	var attack := CardAction.new()
+	attack.type = CardAction.Type.ATTACK
+	attack.source_player = opponent
+	attack.attacker = attacker
+	attack.target = defender
+	game.action_stack.append(attack)
+	if bot._choose_priority_response() == mirror:
+		failures.append("Bot spent Obsidian Reflection on combat with no follower loss")
+	attack.target = player
+	if bot._choose_priority_response() != mirror:
+		failures.append("Bot missed Obsidian Reflection on a direct follower attack")
+	attack.target = defender
+	defender.creature_mode = Card.CreatureMode.AGGRESSIVE
+	opponent.guard = 4
+	if bot._choose_priority_response() != mirror or not bot._submit_priority_response(mirror):
+		failures.append("Bot did not submit Obsidian Reflection in a losing creature fight")
+		return
+	for _step in range(8):
+		manager.advance_priority()
+	if mirror.current_zone != player.graveyard_zone or defender.current_zone != player.graveyard_zone \
+			or player.followers != 100 or opponent.followers != 89 or opponent.guard != 0:
+		failures.append("Obsidian Reflection did not redirect combat damage through the attacker's Guard")
+	for united_front in [false, true]:
+		var next_defender := RoboticFootsoldier.new()
+		next_defender.card_owner = player
+		next_defender.creature_mode = Card.CreatureMode.AGGRESSIVE
+		next_defender.strength = 5
+		player.frontline_zones[1].add_card(next_defender)
+		opponent.followers = 100
+		game.set_temporary_combat_follower_damage_reversed(true)
+		var expected_followers := 85
+		if united_front:
+			var partner := RoboticFootsoldier.new()
+			partner.card_owner = opponent
+			partner.creature_mode = Card.CreatureMode.AGGRESSIVE
+			partner.strength = 10
+			opponent.frontline_zones[1].add_card(partner)
+			game.resolve_united_front_combat(attacker, partner, next_defender)
+			expected_followers = 75
+		else:
+			game.capture_committed_combat_snapshot(attacker, next_defender)
+			game.resolve_combat_with_continuation(attacker, next_defender, Callable())
+		if player.followers != 100 or opponent.followers != expected_followers \
+				or game._temporary_combat_follower_damage_reversed:
+			failures.append("Obsidian Reflection did not apply and clear after %s combat" % ("United Front" if united_front else "committed"))
 
 func _check_bot_namburbi_combat_ward(failures: PackedStringArray) -> void:
 	var game := _new_fixture_game()
@@ -3965,6 +4141,112 @@ func _check_class_rend_ability_destruction(failures: PackedStringArray) -> void:
 			or weapon.current_zone != opponent.abyss_zone or victim not in game.destroyed_this_turn:
 		failures.append("Class Rend did not Void a Demon ability's victim and its Equipment")
 
+func _check_guardian_targeting(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.setup_game()
+	game.turn_number = 2
+	var manager := _new_fixture_match(game)
+	var asaruludu := Asaruludu.new()
+	var enkidu := Enkidu.new()
+	var smite := Smite.new()
+	asaruludu.card_owner = player
+	enkidu.card_owner = player
+	smite.card_owner = opponent
+	player.frontline_zones[0].add_card(asaruludu)
+	player.frontline_zones[1].add_card(enkidu)
+	opponent.reserve_zones[0].add_card(smite)
+
+	var attack := CardAction.new()
+	attack.type = CardAction.Type.ATTACK
+	attack.source_player = player
+	attack.target = opponent
+	attack.attacker = enkidu
+	if not game.get_attack_hex_targets(attack, smite).is_empty():
+		failures.append("Guardian allowed Smite to target another Ancient creature")
+	attack.attacker = asaruludu
+	if game.get_attack_hex_targets(attack, smite) != [asaruludu]:
+		failures.append("Asaruludu's Guardian protected himself")
+	if game.is_guardian_protected(enkidu, Famine.new()):
+		failures.append("Guardian blocked an untargeted effect")
+
+	var gungnir := GungnirTheSpearOfOdin.new()
+	var warrior := HariiWarrior.new()
+	gungnir.card_owner = opponent
+	warrior.card_owner = opponent
+	opponent.frontline_zones[0].add_card(warrior)
+	var opposing_attack := CardAction.new()
+	opposing_attack.type = CardAction.Type.ATTACK
+	opposing_attack.attacker = warrior
+	opposing_attack.target = enkidu
+	if not gungnir.get_priority_targets(game, opposing_attack).is_empty():
+		failures.append("Gungnir ignored Guardian on its implicit target")
+
+	var response := CardAction.new()
+	response.type = CardAction.Type.ABILITY
+	response.card = smite
+	response.attacker = enkidu
+	response.target = opponent
+	manager._resolve_ability(response)
+	if enkidu.current_zone != player.frontline_zones[1] or smite.current_zone != opponent.graveyard_zone:
+		failures.append("Smite bypassed Guardian during resolution")
+
+	var spell := BitMeseri.new()
+	spell.card_owner = opponent
+	opponent.hand_zone.add_card(spell)
+	var spell_action := CardAction.new()
+	spell_action.card = spell
+	spell_action.source_player = opponent
+	spell_action.target = enkidu
+	spell_action.resolve_callback = func() -> void:
+		game.banish_card_with_hook(enkidu)
+	manager._resolve_spell(spell_action)
+	if enkidu.current_zone != player.frontline_zones[1] or spell.current_zone != opponent.graveyard_zone:
+		failures.append("A spell's queued target bypassed Guardian during resolution")
+
+	if "Allied" not in CardDetailContentBuilder.extract_card_keywords(asaruludu) \
+			or "Friendly" not in CardDetailContentBuilder.extract_card_keywords(FifaTheMagicalArrow.new()) \
+			or not BaseCard.apply_keyword_hints("Choose a friendly Warrior.").contains("[hint="):
+		failures.append("Allied and Friendly did not appear as card keywords")
+
+func _check_habrok_breakout_ties(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([opponent, player])
+	game.setup_game()
+	game.turn_number = 2
+	var manager := _new_fixture_match(game)
+	var habrok := HabrokParagonOfHawks.new()
+	var first := BrownBear.new()
+	var second := BrownBear.new()
+	var stronger := BrownBear.new()
+	habrok.card_owner = player
+	player.frontline_zones[0].add_card(habrok)
+	for creature: Card in [first, second, stronger]:
+		creature.card_owner = opponent
+	stronger.strength += 1
+	second.resilience += 1
+	opponent.frontline_zones[0].add_card(first)
+	opponent.frontline_zones[1].add_card(second)
+	opponent.frontline_zones[2].add_card(stronger)
+	if habrok.get_breakout_targets(game) != [first, second]:
+		failures.append("Breakout did not offer all creatures tied for lowest STR")
+	if not manager._offer_habrok_breakout(opponent):
+		failures.append("Breakout did not offer a prompt at opponent turn end")
+		return
+	var command := {"type": "habrok_breakout_choice", "source_uid": habrok.uid, "do_breakout": true}
+	if manager.process_command(command, {"player_index": 1}):
+		failures.append("Breakout accepted a tie without a target choice")
+		return
+	command["target_uid"] = second.uid
+	if not manager.process_command(command, {"player_index": 1}) \
+			or second.current_zone != opponent.graveyard_zone or first.current_zone != opponent.frontline_zones[0] \
+			or habrok.current_zone != player.hand_zone:
+		failures.append("Breakout failed to destroy the chosen tied creature and return Habrok")
+
 func _check_ragnarok_doorway(failures: PackedStringArray) -> void:
 	var manager := _new_doorway_match()
 	var game := manager.game_manager
@@ -5507,6 +5789,70 @@ func _check_community_bot_rank_badge(failures: PackedStringArray) -> void:
 		DirAccess.remove_absolute(fixture_path + ".tmp")
 	lobby.free()
 
+## A submitter quarantine is distinct from the Iron V weak-bot quarantine: it
+## keeps the submission on disk but removes it from every matchmaking path.
+func _check_community_bot_quarantine(failures: PackedStringArray) -> void:
+	var owner_id := "quarantine_owner_%d" % OS.get_process_id()
+	var bot_id := "quarantinebot_%d" % OS.get_process_id()
+	var bot_dir := ServerPathsScript.get_server_data_file_path("community_bot_pool")
+	var bot_path := bot_dir.path_join("%s.json" % bot_id)
+	var fixture := {
+		"bot_id": bot_id,
+		"account_id": owner_id,
+		"owner_name": "Quarantine Owner",
+		"bot_name": "Quarantine Probe",
+		"deck_name": "Thor: Quarantine Probe",
+		"god_name": "Thor",
+		"cards": {"Thor": 1, "Berserker": 3},
+		"special_setup": {},
+		"reinforcements": {},
+		"quarantined": true,
+	}
+	if not JsonStoreScript.save_json(bot_path, fixture, "preflight_probe"):
+		failures.append("Could not write the quarantined community bot fixture")
+		return
+	var lobby := LobbyServerScript.new()
+	lobby.match_history_store = MatchHistoryStoreScript.new("preflight_quarantine_%d.json" % OS.get_process_id(), true)
+	lobby.session_id_by_peer[2] = "quarantine_owner_session"
+	lobby.sessions_by_id["quarantine_owner_session"] = {"account_id": owner_id}
+	lobby.session_id_by_peer[3] = "quarantine_other_session"
+	lobby.sessions_by_id["quarantine_other_session"] = {"account_id": "not_the_owner"}
+	# Another account cannot release somebody else's quarantined bot.
+	lobby._handle_quarantine_bot(3, {"bot_id": bot_id, "quarantined": false})
+	var after_other := JsonStoreScript.load_dictionary(bot_path, {}, "preflight_probe")
+	if not bool(after_other.get("quarantined", false)):
+		failures.append("A non-owner changed another account's bot quarantine")
+	# Isolated pool assertions avoid depending on any other submissions on disk.
+	var results: Array[Dictionary] = [_bot_pool_result("quarantine_probe", bot_id, fixture["cards"], "win", true)]
+	var submission := fixture.duplicate(true)
+	submission["deck_name"] = str(fixture["deck_name"])
+	var held := RankedBotDeckPoolScript.new()
+	held.sync_community_bots({bot_id: submission})
+	held.refresh(results)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 7
+	if not held.select_deck({}, rng, 0).is_empty() \
+			or not held.select_deck({}, rng, 0, true).is_empty() \
+			or not held.select_self_play_pair({}, rng).is_empty():
+		failures.append("A quarantined community bot was still available to matchmaking")
+	# The owner can release it; the submission remains on disk and pairs again.
+	lobby._handle_quarantine_bot(2, {"bot_id": bot_id, "quarantined": false})
+	var released := JsonStoreScript.load_dictionary(bot_path, {}, "preflight_probe")
+	if released.is_empty() or bool(released.get("quarantined", false)):
+		failures.append("Releasing a quarantined bot deleted it or left the flag set")
+	var restored := RankedBotDeckPoolScript.new()
+	var released_submission := released.duplicate(true)
+	released_submission["deck_name"] = str(released.get("bot_name", "Quarantine Probe"))
+	restored.sync_community_bots({bot_id: released_submission})
+	restored.refresh(results)
+	if restored.select_deck({}, rng, 0).is_empty():
+		failures.append("A released community bot did not return to matchmaking")
+	for fixture_path in [bot_path]:
+		DirAccess.remove_absolute(fixture_path)
+		DirAccess.remove_absolute(fixture_path + ".bak")
+		DirAccess.remove_absolute(fixture_path + ".tmp")
+	lobby.free()
+
 func _check_community_bot_replay_identity(failures: PackedStringArray) -> void:
 	var old_id := "0123456789ab_ABCDEFGHJKLM"
 	var current_id := "0123456789ab_NPQRSTUVWXYZ"
@@ -5651,6 +5997,7 @@ func _get_result_path() -> String:
 	return ""
 
 func _check_gugalanna_celestial_charge(failures: PackedStringArray) -> void:
+	_check_bot_gugalanna_celestial_charge(failures)
 	var game := _new_fixture_game()
 	var player := _new_fixture_player()
 	var opponent := _new_fixture_player()
@@ -5690,3 +6037,51 @@ func _check_gugalanna_celestial_charge(failures: PackedStringArray) -> void:
 	var attack_targets := game.get_attack_hex_targets(normal_attack, hex)
 	if attack_targets.is_empty() or attack_targets[0] != gugalanna:
 		failures.append("get_attack_hex_targets failed for normal attack")
+
+func _check_bot_gugalanna_celestial_charge(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 10
+	game._upkeep_resolved_turn = game.turn_number
+	game.has_resolved_attack_this_turn = true
+	player.mana = 3
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var gugalanna := GugalannaBullOfHeaven.new()
+	gugalanna.card_owner = player
+	player.hand_zone.add_card(gugalanna)
+	var recruit := CreatureCard.new()
+	recruit.card_owner = player
+	recruit.mana_cost = 3
+	recruit.strength = 35
+	recruit.resilience = 25
+	recruit.speed = 3
+	player.hand_zone.add_card(recruit)
+	var lesser_target := CreatureCard.new()
+	lesser_target.card_owner = opponent
+	lesser_target.speed = 1
+	lesser_target.resilience = 30
+	lesser_target.creature_mode = Card.CreatureMode.DEFENSIVE
+	opponent.frontline_zones[0].add_card(lesser_target)
+	var thor := ThorActive.new()
+	thor.card_owner = opponent
+	thor.creature_mode = Card.CreatureMode.DEFENSIVE
+	opponent.frontline_zones[1].add_card(thor)
+	var plan := bot._plan_creature_summon(bot._forecast_incoming_follower_loss())
+	if plan.get("command", {}).get("card_uid") != gugalanna.uid:
+		failures.append("Bot did not plan Gugalanna as removal for an opposing Active Thor")
+	elif not bot._submit_strategy_plan(plan):
+		failures.append("Bot could not summon Gugalanna for Celestial Charge")
+	else:
+		for _step in range(8):
+			manager.advance_priority()
+		if thor.current_zone != opponent.graveyard_zone or gugalanna.current_zone != player.hand_zone:
+			failures.append("Bot's Celestial Charge did not destroy Active Thor and return Gugalanna to hand")
+		if lesser_target.current_zone != opponent.frontline_zones[0]:
+			failures.append("Bot's Celestial Charge chose the weaker target over Active Thor")
+	bot.detach()

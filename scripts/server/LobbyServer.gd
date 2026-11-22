@@ -487,6 +487,8 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 			_handle_request_my_bots(peer_id)
 		LobbyProtocolScript.DELETE_BOT:
 			_handle_delete_bot(peer_id, payload)
+		LobbyProtocolScript.QUARANTINE_BOT:
+			_handle_quarantine_bot(peer_id, payload)
 		LobbyProtocolScript.REPORT_BOT_WORK_STARTED:
 			_handle_report_bot_work_started(peer_id, payload)
 		LobbyProtocolScript.CANCEL_BOT_WORK:
@@ -1257,6 +1259,12 @@ func _handle_request_bot_work(peer_id: int, payload: Dictionary = {}) -> void:
 				"job_id": "", "success": false, "message": "That submitted bot is unavailable.",
 			})
 			return
+		if bool(owned_bot.get("quarantined", false)):
+			_send_to_peer(peer_id, LobbyProtocolScript.BOT_WORK_RESULT, {
+				"job_id": "", "success": false,
+				"message": "That bot is quarantined and cannot be paired into a match. Release it from quarantine first.",
+			})
+			return
 		deck_a = owned_bot
 		var available := _ranked_bot_deck_pool.select_deck(busy, _bot_deck_rng, 0)
 		deck_b = _validate_server_bot_deck(available) if not available.is_empty() else _build_fresh_bot_deck_submission()
@@ -1545,6 +1553,7 @@ func _public_bot_entry(bot: Dictionary) -> Dictionary:
 		"deck_name": _community_bot_display_name(bot),
 		"god_name": str(bot.get("god_name", "")),
 		"submitted_unix": int(bot.get("submitted_unix", 0)),
+		"quarantined": bool(bot.get("quarantined", false)),
 	}
 
 func _handle_submit_issue_report(peer_id: int, payload: Dictionary) -> void:
@@ -1821,6 +1830,45 @@ func _handle_delete_bot(peer_id: int, payload: Dictionary) -> void:
 	_refresh_ranked_bot_deck_pool()
 	_send_to_peer(peer_id, LobbyProtocolScript.BOT_DELETED, {
 		"success": true, "message": "Bot deleted from the community pool.", "bot_id": bot_id,
+	})
+
+## Quarantine is a reversible flag on the submitter's own bot: the submission
+## stays on disk (and in the ladder) but the ranked pool stops pairing it into
+## matches. Only the account that submitted the bot may change this flag.
+func _handle_quarantine_bot(peer_id: int, payload: Dictionary) -> void:
+	var session := _get_session_for_peer(peer_id)
+	var account_id := str(session.get("account_id", ""))
+	var bot_id := str(payload.get("bot_id", "")).strip_edges()
+	var quarantined := bool(payload.get("quarantined", true))
+	if account_id.is_empty() or bot_id.is_empty() or bot_id.contains("/") or bot_id.contains("\\"):
+		_send_to_peer(peer_id, LobbyProtocolScript.BOT_QUARANTINED, {
+			"success": false, "message": "Could not update that bot.", "bot_id": bot_id, "quarantined": quarantined,
+		})
+		return
+	var bot_dir := ServerPathsScript.get_server_data_file_path("community_bot_pool")
+	var bot_path := bot_dir.path_join("%s.json" % bot_id)
+	var bot := JsonStoreScript.load_dictionary(bot_path, {}, "CommunityBotPool")
+	if bot.is_empty() or str(bot.get("account_id", "")) != account_id:
+		_send_to_peer(peer_id, LobbyProtocolScript.BOT_QUARANTINED, {
+			"success": false, "message": "That bot does not exist or is not yours.", "bot_id": bot_id, "quarantined": quarantined,
+		})
+		return
+	bot["quarantined"] = quarantined
+	bot["quarantined_unix"] = int(Time.get_unix_time_from_system()) if quarantined else 0
+	if not JsonStoreScript.save_json(bot_path, bot, "CommunityBotPool"):
+		_send_to_peer(peer_id, LobbyProtocolScript.BOT_QUARANTINED, {
+			"success": false, "message": "The server could not update that bot.", "bot_id": bot_id, "quarantined": quarantined,
+		})
+		return
+	_ladder_cache.clear()
+	_invalidate_ladder_cache()
+	_refresh_ranked_bot_deck_pool()
+	_send_to_peer(peer_id, LobbyProtocolScript.BOT_QUARANTINED, {
+		"success": true,
+		"message": "Bot quarantined. It stays in the pool but will not be paired into matches." if quarantined \
+			else "Bot released from quarantine and returned to matchmaking.",
+		"bot_id": bot_id,
+		"quarantined": quarantined,
 	})
 
 func _handle_report_bot_work_started(peer_id: int, payload: Dictionary) -> void:
@@ -2133,8 +2181,9 @@ func _get_top_50_bot_list_ids() -> Dictionary:
 		if not bool(row.get("is_bot", false)):
 			continue
 		var list_id := str(row.get("list_id", ""))
-		if not list_id.is_empty():
-			list_ids[list_id] = true
+		if list_id.is_empty() or bool(row.get("matchmaking_excluded", false)):
+			continue
+		list_ids[list_id] = true
 		if list_ids.size() == TOP_BOT_HOSTING_LIMIT:
 			break
 	return list_ids
@@ -2160,7 +2209,9 @@ func _build_ladder_page(request: Dictionary, current_username: String = "") -> D
 	var trimmed_username := current_username.strip_edges()
 	for row in ladder:
 		var bot_owner := str(row.get("owner_name", "")).strip_edges()
-		row["can_delete"] = not quarantined_only and not bot_owner.is_empty() and bot_owner == trimmed_username
+		var owns_bot := not bot_owner.is_empty() and bot_owner == trimmed_username
+		row["can_delete"] = not quarantined_only and owns_bot
+		row["can_quarantine"] = not quarantined_only and owns_bot
 	var player_type := LobbyProtocolScript.LADDER_FILTER_BOTS if quarantined_only \
 		else str(request.get("player_type", LobbyProtocolScript.LADDER_FILTER_EVERYONE))
 	if player_type == LobbyProtocolScript.LADDER_FILTER_PLAYERS or player_type == LobbyProtocolScript.LADDER_FILTER_BOTS:
@@ -2263,6 +2314,8 @@ func _build_bot_ladder_row(bot: Dictionary, god_name: String) -> Dictionary:
 		"is_bot": true,
 		"owner_name": str(bot.get("owner_name", "")).strip_edges(),
 		"can_delete": false,
+		"can_quarantine": false,
+		"matchmaking_excluded": bool(bot.get("matchmaking_excluded", false)),
 		"wins": int(bot.get("wins", 0)),
 		"losses": int(bot.get("losses", 0)),
 		"draws": int(bot.get("draws", 0)),

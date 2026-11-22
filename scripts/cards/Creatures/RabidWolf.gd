@@ -15,7 +15,7 @@ func _init() -> void:
 	speed = 2
 	resilience = 8
 	strength = 19
-	ability_text = "[b]Disease[/b] ([b]Passive[/b]): Creatures that survive combat with this creature lose Str equal to this creature's Str. If this reduces a creature's Str below 0, destroy that creature."
+	ability_text = "[b]Disease[/b] ([b]Passive[/b]): Creatures that survive combat with Rabid Wolf lose Str equal to Rabid Wolf's Str. If this reduces a creature's Str below 0, destroy that creature."
 	flavor_text = ""
 	culture = "Norse"
 	artist = "Daniel Dee"

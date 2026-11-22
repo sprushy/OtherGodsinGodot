@@ -25,7 +25,7 @@ func _init() -> void:
 	resilience = 7
 	strength = 10
 	targets = true
-	ability_text = "Sun Blessing ([b]Passive[/b]): During your turn, this creature's base STR and RES are tripled until your first attack resolves or your turn ends.\nHealing Hands (%d mana): Remove a negative effect from a friendly creature." % HEALING_HANDS_COST
+	ability_text = "Sun Blessing ([b]Passive[/b]): During your turn, Gawain's base STR and RES are tripled until your first attack resolves or your turn ends.\nHealing Hands (%d mana): Remove a negative effect from a friendly creature." % HEALING_HANDS_COST
 	flavor_text = ""
 	culture = "Triskelion"
 	artist = "Riccardo Zoppello"

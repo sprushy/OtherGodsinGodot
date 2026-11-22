@@ -368,6 +368,7 @@ var is_stealth: bool = false
 var has_acted_this_turn: bool = false
 var has_moved_this_turn: bool = false
 var has_attacked_this_turn: bool = false
+var combats_this_game: int = 0
 var creature_major_action_used: bool = false
 var creature_minor_actions_used: int = 0
 var creature_shift_used_this_turn: bool = false

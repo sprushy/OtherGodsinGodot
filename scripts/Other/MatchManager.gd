@@ -305,6 +305,20 @@ func confirm_click_selection(target) -> void:
 	if confirm_callback.is_valid():
 		confirm_callback.call(resolved_target)
 
+# The UI opens a click selection when it receives a target-prompt signal. A bot
+# can answer the same prompt through game_input before anyone clicks, leaving
+# the click selection open with no prompt behind it. Clear it once the matching
+# command succeeds so targeting cannot stay stuck for the rest of the match.
+func _clear_click_selection_for_command(command: Dictionary) -> void:
+	if not pending_click_selection_confirm.is_valid() or pending_click_selection_source == null:
+		return
+	var source_uid := str(command.get("source_uid", "")).strip_edges()
+	if source_uid == "":
+		return
+	if str(pending_click_selection_source.uid).strip_edges() != source_uid:
+		return
+	_clear_targeting_state()
+
 func get_targeting_name() -> String:
 	if pending_click_selection_confirm.is_valid():
 		return pending_click_selection_name
@@ -1290,9 +1304,10 @@ func _execute_queued_priority_choice_command(command: Dictionary, action: CardAc
 	_resolving_priority_choice_command = true
 	_active_command_type = str(resolution_command.get("type", "")).strip_edges()
 	_active_command_pending_prompt_id = -1
-	var resolved := _process_command_impl(resolution_command)
+	var guardian_reason := _get_guardian_target_block_reason(action.card, action.target)
+	var resolved := guardian_reason.is_empty() and _process_command_impl(resolution_command)
 	if not resolved:
-		var feedback := last_move_failed_reason.strip_edges()
+		var feedback := guardian_reason if not guardian_reason.is_empty() else last_move_failed_reason.strip_edges()
 		if feedback == "":
 			feedback = "%s could not resolve." % _active_command_type
 		game_manager.note_player_feedback(feedback)
@@ -1528,6 +1543,7 @@ func _finalize_resolved_action(action: CardAction) -> void:
 		# complete, releasing the callback breaks that reference cycle.
 		action.resolve_callback = Callable()
 	if game_manager != null and action != null and action.type == CardAction.Type.ATTACK:
+		game_manager.set_temporary_combat_follower_damage_reversed(false)
 		game_manager.note_attack_resolved()
 	_remove_resolved_action(action)
 	if game_manager != null and action != null:
@@ -2135,15 +2151,16 @@ func _remove_resolved_action(action: CardAction) -> void:
 func _resolve_ability(action: CardAction) -> void:
 	if action.card is HexCard:
 		var hex := action.card as HexCard
-		var general_immune_target: Card = action.target if action.target is Card else null
-		if general_immune_target == null:
-			general_immune_target = action.interceptor if action.interceptor is Card else null
-		if general_immune_target != null and game_manager._is_hex_immune(general_immune_target, hex):
-			hex.on_immune_activate(game_manager, action.attacker, general_immune_target)
-			last_resolution_text = "Hex fizzled: " + hex.card_name + " was immune to hexes."
-			_remove_resolved_action(action)
-			return
 		if hex.has_method("on_activate_action"):
+			var target: Card = action.target if action.target is Card else null
+			if target == null:
+				target = action.interceptor
+			if target != null and game_manager._is_hex_immune(target, hex):
+				hex.on_immune_activate(game_manager, action.attacker, target)
+				var guardian_reason := _get_guardian_target_block_reason(hex, target)
+				last_resolution_text = guardian_reason if guardian_reason != "" else hex.card_name + " fizzled against a target immune to Hexes."
+				_remove_resolved_action(action)
+				return
 			hex.on_activate_action(game_manager, action)
 			last_resolution_text = action.resolution_text if action.resolution_text != "" else hex.card_name + " resolved!"
 		else:
@@ -2155,6 +2172,10 @@ func _resolve_ability(action: CardAction) -> void:
 			else:
 				last_resolution_text = hex.card_name + " triggered!"
 	elif action.resolve_callback.is_valid():
+		var guardian_reason := _get_guardian_target_block_reason(action.card, action.target)
+		if guardian_reason != "":
+			last_resolution_text = guardian_reason
+			return
 		action.resolve_callback.call()
 		var feedback := game_manager.consume_player_feedback() if game_manager != null else ""
 		if feedback.strip_edges() != "" and action.card != null:
@@ -2165,6 +2186,15 @@ func _resolve_ability(action: CardAction) -> void:
 		last_resolution_text = feedback if feedback.strip_edges() != "" else (action.resolution_text if action.resolution_text != "" else action.card.card_name + " resolved!")
 
 func _resolve_spell(action: CardAction) -> void:
+	var guardian_reason := _get_guardian_target_block_reason(action.card, action.target)
+	if guardian_reason != "":
+		if action.card is SpellCard:
+			game_manager.notify_spell_played(action.source_player, action.card)
+		var owner := action.card.card_owner
+		if owner != null and action.card.current_zone != owner.graveyard_zone:
+			owner.move_card(action.card, owner.graveyard_zone)
+		last_resolution_text = guardian_reason
+		return
 	if action.resolve_callback.is_valid():
 		action.resolve_callback.call()
 		var feedback := game_manager.consume_player_feedback() if game_manager != null else ""
@@ -2557,7 +2587,7 @@ func _get_guardian_blocked_retreat_candidate_uids(attacker: Card, defender: Card
 		var ask := card as Askelladen
 		if ask.is_face_down or ask.abilities_suppressed():
 			continue
-		if game_manager.is_immune_to_source(other, ask):
+		if game_manager.is_immune_to_source(other, ask, false):
 			continue
 		if other.get_effective_speed() > ask.get_effective_speed():
 			continue
@@ -3316,12 +3346,12 @@ func _validate_priority_response_target(card: Card, top: CardAction, target: Car
 
 # Shared authoritative check for Guardian (Asaruludu's passive). Returns a
 # player-facing failure reason when the source may not target this card.
-func _get_guardian_target_block_reason(source: Card, target: Card) -> String:
-	if game_manager == null or target == null:
+func _get_guardian_target_block_reason(source: Card, target) -> String:
+	if game_manager == null or source == null or not (target is Card):
 		return ""
 	if not game_manager.is_guardian_protected(target, source):
 		return ""
-	return "%s is protected by Guardian." % target.card_name
+	return "%s is protected by Guardian." % target.get_target_log_display_name(game_manager.get_feedback_viewer())
 
 func _build_priority_response_options(responses: Array) -> Array:
 	var response_options: Array = []
@@ -4779,6 +4809,7 @@ func process_command(command: Dictionary, sender_info: Dictionary = {}) -> bool:
 		_active_command_pending_prompt_id,
 	])
 	if result:
+		_clear_click_selection_for_command(command)
 		_complete_simple_deferred_prompt_action_for_command(command)
 		if not _consume_active_command_prompt_for_completion(_active_command_type):
 			_consume_matching_pending_ui_interaction_for_command(command)
@@ -5607,6 +5638,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var charm_target_uid: String = command.get("target_uid", "")
 			if charm_target_uid != "":
 				charm_target = game_manager.get_card_by_uid(charm_target_uid)
+			var guardian_reason := _get_guardian_target_block_reason(charm_card, charm_target)
+			if guardian_reason != "":
+				move_failed.emit(guardian_reason)
+				return false
 			var charm_ward_block_reason := game_manager.get_turn_destruction_ward_activation_block_reason(charm_card, charm_target)
 			if charm_ward_block_reason != "":
 				move_failed.emit(charm_ward_block_reason)
@@ -6810,16 +6845,30 @@ func _process_command_impl(command: Dictionary) -> bool:
 				move_failed.emit("habrok_breakout_choice: Breakout is no longer available")
 				return false
 			var do_breakout := bool(command.get("do_breakout", false))
+			var target: Card = null
+			if do_breakout:
+				var valid_targets := habrok.get_breakout_targets(game_manager)
+				var target_uid := str(command.get("target_uid", ""))
+				if target_uid != "":
+					target = game_manager.get_card_by_uid(target_uid)
+					if target == null or target not in valid_targets:
+						move_failed.emit("Breakout: choose a valid creature with the lowest STR.")
+						return false
+				elif valid_targets.size() > 1:
+					move_failed.emit("Breakout: choose a creature tied for lowest STR.")
+					return false
+				elif valid_targets.size() == 1:
+					target = valid_targets[0]
 			if do_breakout and _defer_board_leaving_activation(
 				habrok,
 				"%s activates Breakout." % habrok.card_name,
 				func() -> void:
-					habrok.resolve_breakout_choice(game_manager, true)
+					habrok.resolve_breakout_choice(game_manager, true, target)
 					call_deferred("_resume_authoritative_flow_after_prompt_command")
 			):
 				move_validated.emit(command)
 				return true
-			habrok.resolve_breakout_choice(game_manager, do_breakout)
+			habrok.resolve_breakout_choice(game_manager, do_breakout, target)
 			move_validated.emit(command)
 			return true
 		"wolf_adolescent_maturation_choice":
@@ -7523,8 +7572,12 @@ func _offer_habrok_breakout(ending_player: Player) -> bool:
 			var habrok := card as HabrokParagonOfHawks
 			if habrok == null or not habrok.can_trigger_breakout(game_manager, ending_player):
 				continue
+			var target_uids: Array[String] = []
+			for target in habrok.get_breakout_targets(game_manager):
+				target_uids.append(str(target.uid))
 			_emit_ui_interaction_for_player(opponent, "habrok_breakout", {
 				"source_uid": habrok.uid,
+				"target_uids": target_uids,
 				"prompt_text": habrok.get_breakout_prompt_text(game_manager, opponent),
 			})
 			return true

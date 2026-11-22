@@ -12,7 +12,7 @@ func _init() -> void:
 	mana_cost = 1
 	speed = 2
 	flavor_text = ""
-	ability_text = "This turn, your creatures cannot be destroyed in combat or by your opponent's card effects, and you do not lose followers from combat."
+	ability_text = "This turn, combat and opposing card effects can't destroy your creatures. You lose no Followers from combat this turn."
 	artist = "Lorinda Tomko"
 	art_path = ART_PATH
 

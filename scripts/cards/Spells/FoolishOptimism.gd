@@ -42,6 +42,10 @@ func resolve_with_choices(game_manager: GameManager, attacker: Card, defender: C
 	if not _can_force_attack(game_manager, attacker, defender):
 		return "%s fizzles: %s cannot legally attack %s." % [card_name, attacker.card_name, defender.card_name]
 
+	# A declared attack requires an aggressive attacker, so force the compelled
+	# creature into aggressive stance before putting the attack on the stack.
+	attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
+
 	var feedback := "%s compels %s to attack %s." % [card_name, attacker.card_name, defender.card_name]
 	print(feedback)
 	var action := CardAction.new()

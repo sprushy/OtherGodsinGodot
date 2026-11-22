@@ -724,6 +724,13 @@ func _score_priority_card(card: Card, action: CardAction, danger: int) -> Dictio
 				dodge_best = {"score": score, "target": target}
 		return dodge_best
 	var targets := CardStrategy.targets(self, card, action)
+	if card is ObsidianReflection:
+		if targets.is_empty():
+			return {"score": CardStrategy.BAD, "target": null}
+		# MatchManager uses the only legal target, or the lead attacker when
+		# the response has multiple automatic candidates.
+		var reflected_attacker: Card = targets[0] if targets.size() == 1 else action.attacker
+		return {"score": _score_obsidian_reflection(card, action, reflected_attacker), "target": reflected_attacker}
 	if targets.is_empty():
 		targets = [null]
 	var followups: Array = game_manager.get_priority_responses(bot_player) if action in game_manager.action_stack else []
@@ -774,6 +781,20 @@ func _score_priority_card(card: Card, action: CardAction, danger: int) -> Dictio
 		if score > int(best["score"]):
 			best = {"score": score, "target": target}
 	return best
+
+func _score_obsidian_reflection(card: ObsidianReflection, action: CardAction, target: Card) -> int:
+	if action.type != CardAction.Type.ATTACK or not CardStrategy.combat_visible(self, action) \
+			or game_manager._temporary_combat_follower_damage_reversed or game_manager._is_hex_immune(target, card):
+		return CardStrategy.BAD
+	var partner := action.united_front_partner
+	if partner != null and not CardStrategy.visible(self, partner):
+		return CardStrategy.BAD
+	var normal := _estimate_projected_attack_economy(action, {})
+	var reversed := _estimate_projected_attack_economy(action, {}, true, -1, false, true)
+	@warning_ignore("integer_division")
+	var hold_value := ECON_CARD_VALUE / 2
+	return _score_attack_economy(reversed) - _score_attack_economy(normal) - hold_value \
+		- CardStrategy.mana_penalty(self, CardStrategy.activation_cost(self, card))
 
 func _score_e2_abzu_dodge(source: E2Abzu, target: Card, action: CardAction) -> int:
 	if source == null or target == null or action == null or action.source_player != opponent:
@@ -2058,6 +2079,7 @@ func _plan_creature_summon(danger: int = -1, attacks: Array[Dictionary] = [], ba
 					"defensive": projected_defensive, "mana_left": bot_player.mana + brew - mana_spent,
 				}
 				var devour := {}
+				var charge := {}
 				var stats := {}
 				var block_after_impact := face_up_block_value
 				var projected := attacks if projected_defensive else aggressive_attacks
@@ -2079,10 +2101,26 @@ func _plan_creature_summon(danger: int = -1, attacks: Array[Dictionary] = [], ba
 						block_after_impact = _estimate_defensive_summon_value(creature, summon_zone, false, stats, removed) / 2
 					else:
 						projected = attacks + _get_summon_attack_candidates(creature, summon_zone, available_mana, stats, removed_before_summon, removed_by_setup)
-				var line := _plan_combat(projected, removed, committed, mana_spent, summon_zone, bot_player.mana + brew, [], creature)
+				elif creature is GugalannaBullOfHeaven and not default_stealth \
+						and game_manager._should_trigger_summon_impact(creature, creature.current_zone, summon_source) \
+						and not CardStrategy.summon_impact_silenced_by_storm(self, creature, removed):
+					var targets: Array[Card] = creature.get_valid_impact_targets(game_manager).filter(
+						func(target: Card) -> bool: return CardStrategy.visible(self, target)
+					)
+					charge = _forecast_celestial_charge(creature, targets, danger, change)
+					if not charge.is_empty():
+						change = charge["change"]
+						removed = change["removed"]
+				var returns_to_hand := bool(charge.get("returns_to_hand", false))
+				var recruit := null if returns_to_hand else creature
+				var occupied_zone := null if returns_to_hand else summon_zone
+				if returns_to_hand:
+					projected = attacks
+					block_after_impact = 0
+				var line := _plan_combat(projected, removed, committed, mana_spent, occupied_zone, bot_player.mana + brew, [], recruit)
 				var combat_score := int(line.get("score", 0))
 				var attack_value := combat_score - baseline_score
-				if prefer_stealth and not projected_defensive and not summon_attacks.is_empty():
+				if prefer_stealth and not returns_to_hand and not projected_defensive and not summon_attacks.is_empty():
 					var boosted := _plan_hermes_summon_attack(creature, summon_zone, attacks, removed, mana_spent, available_mana, committed, removed_before_summon, summon_source)
 					var boosted_score := int(boosted.get("score", 0))
 					if boosted_score - Hermes.ACTIVATION_COST * _mana_rate() > combat_score:
@@ -2096,24 +2134,27 @@ func _plan_creature_summon(danger: int = -1, attacks: Array[Dictionary] = [], ba
 					var candidate_combat := combat_score
 					var defensive_value := stealth_block_value if stealth and (reveal_defender or prefer_stealth) else block_after_impact
 					var candidate := score + (defensive_value if projected_defensive and removed_by_setup.is_empty() else 0) + attack_value
-					candidate += int(devour.get("value", 0))
+					candidate += int(devour.get("value", 0)) + int(charge.get("value", 0))
+					if returns_to_hand:
+						candidate -= _score_projected_card(creature)
 					if defensive and stealth and reveal_defender:
 						candidate += reveal_value
 					if not stealth:
 						candidate += search_value
-						if prefer_stealth:
+						if prefer_stealth and not returns_to_hand:
 							candidate += _estimate_face_up_summon_value(creature, summon_zone, projected_defensive, bot_player.mana + brew - mana_spent, removed)
 					candidate += prior_payment_penalty - int(command.get("payment_penalty", 0))
 					change["stealth"] = stealth
 					# The combat score already credits ordinary damage prevention. Only
 					# fold the clears into safety when survival is at stake.
-					change["removed"] = removed + cleared if uses_recruit and danger >= bot_player.followers else removed
+					var impact_opens_combat := not charge.is_empty() and combat_score > baseline_score
+					change["removed"] = removed + cleared if (uses_recruit or impact_opens_combat) and danger >= bot_player.followers else removed
 					var safety := _follower_safety_gain(danger, change) if devour.is_empty() or summon_first else int(devour["safety"])
 					if not stealth and danger > 0 and fenrir == null:
-						safety = _score_summon_removal(creature, danger, change, safety)
+						safety = _score_summon_terror(creature, danger, change, safety)
 					candidate += safety
 					var casualty_cost := 0
-					if not lethal:
+					if not lethal and not returns_to_hand:
 						casualty_cost = _estimate_projected_summon_casualty_cost(
 							creature, summon_zone, projected_defensive, removed + cleared, stats, stealth,
 							bot_player.mana + brew - mana_spent, reserved_cards
@@ -2130,10 +2171,12 @@ func _plan_creature_summon(danger: int = -1, attacks: Array[Dictionary] = [], ba
 						var victims: Array = reply["victims"]
 						var recruit_survives := creature not in victims
 						var after_entry: Array = removed_on_entry + victims + [reply["hex"]]
-						var remaining_attacks := projected if recruit_survives and fenrir == null else attacks
+						var remaining_attacks := attacks
+						if recruit_survives and fenrir == null and not projected_defensive:
+							remaining_attacks = aggressive_attacks
 						var occupied := summon_zone if recruit_survives else null
-						var recruit := creature if recruit_survives else null
-						var reply_line := _plan_combat(remaining_attacks, after_entry, committed, mana_spent, occupied, bot_player.mana + brew, [], recruit)
+						var surviving_recruit := creature if recruit_survives else null
+						var reply_line := _plan_combat(remaining_attacks, after_entry, committed, mana_spent, occupied, bot_player.mana + brew, [], surviving_recruit)
 						var reply_combat := int(reply_line.get("score", 0))
 						var mana_left := bot_player.mana + brew - mana_spent
 						var reply_score := _score_known_entry_trade(reply, mana_left, removed_on_entry + [creature] + reserved_cards)
@@ -2169,6 +2212,7 @@ func _plan_creature_summon(danger: int = -1, attacks: Array[Dictionary] = [], ba
 							"block": defensive_value if projected_defensive and removed_by_setup.is_empty() else 0,
 							"attack": attack_value,
 							"devour": int(devour.get("value", 0)),
+							"charge": int(charge.get("value", 0)),
 							"safety": safety,
 							"casualty": casualty_cost,
 							"entry": entry_penalty,
@@ -2183,7 +2227,7 @@ func _plan_creature_summon(danger: int = -1, attacks: Array[Dictionary] = [], ba
 					var best_is_stealth := bool(best_command.get("stealth", false)) or str(best_command.get("mode", "")) == "stealth"
 					var prefers_hidden_tie: bool = candidate > 0 and candidate == best_score and prefer_stealth and stealth \
 						and best_uid == creature.uid and not best_is_stealth
-					var improves_combat := uses_recruit and (lethal or (candidate > 0 and candidate_combat > baseline_score))
+					var improves_combat := (uses_recruit or impact_opens_combat) and (lethal or (candidate > 0 and candidate_combat > baseline_score))
 					var best_setup_wins := bool(best_attack_setup.get("lethal", false))
 					var preferred_setup := improves_combat and (
 						(lethal and not best_setup_wins)
@@ -2254,9 +2298,9 @@ func _log_summon_plans(danger: int, plan_log: Array[Dictionary], best: Dictionar
 				else ("R" if int(entry["zone_type"]) == Zone.ZoneType.RESERVE else "?")
 		var mode_label := "AGG" if int(entry["mode"]) == Card.CreatureMode.AGGRESSIVE else "DEF"
 		var marker := " <== chosen" if str(entry["key"]) == best_key else ""
-		print("  %d) %s z=%s%d mode=%s stealth=%s | base=%d blk=%d atk=%d dev=%d saf=%d cas=%d entry=%d pay=%d rev=%d srch=%d lethal=%s => %d%s" % [
+		print("  %d) %s z=%s%d mode=%s stealth=%s | base=%d blk=%d atk=%d dev=%d charge=%d saf=%d cas=%d entry=%d pay=%d rev=%d srch=%d lethal=%s => %d%s" % [
 			i + 1, entry["name"], zone_label, entry["zone_index"], mode_label, str(entry["stealth"]),
-			entry["base"], entry["block"], entry["attack"], entry["devour"], entry["safety"],
+			entry["base"], entry["block"], entry["attack"], entry["devour"], entry["charge"], entry["safety"],
 			entry["casualty"], entry["entry"], entry["pay"], entry["reveal"], entry["search"],
 			str(entry["lethal"]), entry["candidate"], marker,
 		])
@@ -2719,29 +2763,20 @@ func _can_advance_from_reserve_next_turn(attacker: Card, mana: int, removed: Arr
 		reachable = next_zones
 	return false
 
-func _score_summon_removal(creature: Card, danger: int, change: Dictionary, baseline: int) -> int:
-	var options: Array[Dictionary] = []
-	if creature is GugalannaBullOfHeaven:
-		options.append({"source": creature, "targets": creature.get_valid_impact_targets(game_manager)})
-	if creature.has_type("Demon") and not creature.abilities_suppressed_by_effects():
-		for power in _get_player_powers():
-			if power is Terror and power.is_effectively_active():
-				options.append({"source": power, "targets": power.get_valid_terror_targets(game_manager, creature)})
-	if options.is_empty():
+func _score_summon_terror(creature: Card, danger: int, change: Dictionary, baseline: int) -> int:
+	if not creature.has_type("Demon") or creature.abilities_suppressed_by_effects():
 		return baseline
 	var best := baseline
-	for option in options:
-		var source := option["source"] as Card
-		for target: Card in option["targets"]:
-			if target in change["removed"] or CardStrategy.removal_targets(self, source, target).is_empty():
-				continue
-			if source is Terror and (not game_manager.can_player_add_to_hand_now(target.card_owner) \
-					or (CardStrategy.visible(self, target) and game_manager.is_immune_to_source(target, creature))):
+	for power in _get_player_powers():
+		if not power is Terror or not power.is_effectively_active():
+			continue
+		for target: Card in power.get_valid_terror_targets(game_manager, creature):
+			if target in change["removed"] or CardStrategy.removal_targets(self, power, target).is_empty() \
+					or not game_manager.can_player_add_to_hand_now(target.card_owner) \
+					or (CardStrategy.visible(self, target) and game_manager.is_immune_to_source(target, creature)):
 				continue
 			var projected := change.duplicate()
 			projected["removed"] = change["removed"] + [target]
-			if source is GugalannaBullOfHeaven and game_manager.can_player_add_to_hand_now(bot_player):
-				projected.erase("summon")
 			var score := _follower_safety_gain(danger, projected)
 			best = maxi(best, score)
 	return best
@@ -4105,7 +4140,7 @@ func _plan_sacrifice_spell(spell: SpellCard, danger: int = -1) -> Dictionary:
 	return best
 
 func _try_prepare_strategy_card() -> bool:
-	var zone := _get_first_open_reserve_zone(bot_player)
+	var zone := _get_prepare_zone()
 	if zone == null:
 		return false
 	var prepared_types: Array[String] = []
@@ -4132,7 +4167,17 @@ func _try_prepare_strategy_card() -> bool:
 				score = CardStrategy.effect_score(self, card, target)
 			else:
 				score = CardStrategy.preparation_score(self, card)
-			score -= CardStrategy.mana_penalty(self, _get_play_cost(card, true))
+			var activation_cost := _get_play_cost(card, true)
+			if card is HexCard:
+				# Setting a Hex is free. If it needs another upkeep to be
+				# usable, favor a trap that can answer the very next turn.
+				if activation_cost > bot_player.mana:
+					if activation_cost > CardStrategy.projected_upkeep_mana(self, 1):
+						continue
+					@warning_ignore("integer_division")
+					score /= 2
+			else:
+				score -= CardStrategy.mana_penalty(self, activation_cost)
 		if score <= best_score:
 			continue
 		score -= CardStrategy.preparation_removal_penalty(self, card)
@@ -4262,7 +4307,7 @@ func _try_cast_fall_of_the_mighty() -> bool:
 	})
 
 func _try_prepare_wheel_of_fire() -> bool:
-	var zone := _get_first_open_reserve_zone(bot_player)
+	var zone := _get_prepare_zone()
 	if zone == null:
 		return false
 	# One unbound Wheel is enough until it finds a target. Keep reserve space
@@ -4294,7 +4339,7 @@ func _try_prepare_vision_of_odin() -> bool:
 	var vision := _find_hand_unprepared_vision_of_odin()
 	if vision == null:
 		return false
-	var zone := _get_first_open_reserve_zone(bot_player)
+	var zone := _get_prepare_zone()
 	if zone == null:
 		return false
 	return _submit_prepare_card(vision, zone)
@@ -4303,7 +4348,7 @@ func _try_prepare_mead_of_poetry() -> bool:
 	var mead := _find_hand_unprepared_mead()
 	if mead == null:
 		return false
-	var zone := _get_first_open_reserve_zone(bot_player)
+	var zone := _get_prepare_zone()
 	if zone == null:
 		return false
 	return _submit_prepare_card(mead, zone)
@@ -6080,7 +6125,9 @@ func _combat_outcome_with_remaining_guard(outcome: Dictionary, line: Dictionary)
 		result[side + "_guard_spent"] = absorbed
 		var damage := int(raw_damage) - absorbed
 		var source := outcome.get(side + "_loss_source") as Card
-		if source != null and CardStrategy.visible(self, source) and game_manager._source_converts_combat_follower_damage(source):
+		var recipient := opponent if side == "opponent" else bot_player
+		if source != null and source.get_controller() != recipient and CardStrategy.visible(self, source) \
+				and game_manager._source_converts_combat_follower_damage(source):
 			damage = game_manager._get_combat_follower_conversion_amount(source, damage, remaining)
 			result["bot_followers_gained" if side == "opponent" else "opponent_followers_gained"] = damage
 		result[loss_key] = mini(remaining, damage)
@@ -6090,6 +6137,8 @@ func _combat_outcome_with_remaining_guard(outcome: Dictionary, line: Dictionary)
 		# candidate's outcome was priced with the full guard, so redo the
 		# transfer with the recomputed loss instead of the stale gain.
 		var winner := conversion_defender.get_controller() as Player
+		if result.get("reverse_follower_damage", false):
+			winner = game_manager.get_opponent(winner)
 		if winner != null and winner.followers_enabled:
 			var loser_loss_key := "opponent_followers_lost" if winner == bot_player else "bot_followers_lost"
 			result["bot_followers_gained" if winner == bot_player else "opponent_followers_gained"] = int(result[loser_loss_key])
@@ -8311,6 +8360,14 @@ func _get_first_open_reserve_zone(player: Player) -> Zone:
 		return null
 	return _get_central_open_zone(player.reserve_zones)
 
+func _get_prepare_zone() -> Zone:
+	var reserve := _get_first_open_reserve_zone(bot_player)
+	if reserve != null:
+		return reserve
+	# Keep at least one frontline slot available for a creature.
+	var frontline := _get_center_out_open_zones(bot_player.frontline_zones)
+	return frontline[0] if frontline.size() > 1 else null
+
 func _get_central_open_zone(zones: Array[Zone], occupied_zone: Zone = null) -> Zone:
 	# Prefer the middle lane, then work outward; equal distances keep row order.
 	var center := float(zones.size() - 1) / 2.0
@@ -8687,7 +8744,7 @@ func _estimate_attack_economy(action: CardAction, modified_card: Card, str_delta
 	var stats := {} if modified_card == null else {modified_card: Vector3i(str_delta, res_delta, speed_delta)}
 	return _estimate_projected_attack_economy(action, stats, include_retreat, projected_defender_mode, projected_defender_stealth)
 
-func _estimate_projected_attack_economy(action: CardAction, stats: Dictionary, include_retreat: bool = true, projected_defender_mode: int = -1, projected_defender_stealth: bool = false) -> Dictionary:
+func _estimate_projected_attack_economy(action: CardAction, stats: Dictionary, include_retreat: bool = true, projected_defender_mode: int = -1, projected_defender_stealth: bool = false, reverse_follower_damage: bool = false) -> Dictionary:
 	var result := _estimate_raw_attack_economy(action, stats, projected_defender_mode)
 	var attack_halvings := 0
 	var defense_halvings := 0
@@ -8709,9 +8766,15 @@ func _estimate_projected_attack_economy(action: CardAction, stats: Dictionary, i
 			or (result.get("defensive_conversion_defender") == defender and player == action.attacker.get_controller()))
 		var halvings := defense_halvings if damage_from_defender else attack_halvings
 		var amount := GameManager.apply_follower_damage_halvings(int(result[loss_key]), halvings)
-		if not player.followers_enabled or game_manager.has_turn_follower_loss_prevention(player):
+		var recipient: Player = game_manager.get_opponent(player) if reverse_follower_damage else player
+		if not recipient.followers_enabled or game_manager.has_turn_follower_loss_prevention(recipient):
 			amount = 0
-		result["bot_damage_before_guard" if player == bot_player else "opponent_damage_before_guard"] = amount
+		result["bot_damage_before_guard" if recipient == bot_player else "opponent_damage_before_guard"] = amount
+	if reverse_follower_damage:
+		var bot_loss_source: Card = result.get("bot_loss_source")
+		result["bot_loss_source"] = result.get("opponent_loss_source")
+		result["opponent_loss_source"] = bot_loss_source
+		result["reverse_follower_damage"] = true
 	result = _combat_outcome_with_remaining_guard(result, {
 		"bot_followers": bot_player.followers, "opponent_followers": opponent.followers,
 		"bot_guard": bot_player.guard, "opponent_guard": opponent.guard,
@@ -8878,6 +8941,11 @@ func _choose_impact_removal_target(source: Card, target_uids: Array, demon: Card
 		var devour := _forecast_fenrir_devour(source, danger, {}, target_uids)
 		var prey := devour.get("target") as Card
 		return prey.uid if prey != null else ""
+	if source is GugalannaBullOfHeaven:
+		var targets := target_uids.map(func(uid) -> Card: return game_manager.get_card_by_uid(str(uid)))
+		var charge := _forecast_celestial_charge(source, targets, danger, {})
+		var victim := charge.get("target") as Card
+		return victim.uid if victim != null else ""
 	var best_uid := ""
 	var best_score := 0
 	for uid in target_uids:
@@ -8888,8 +8956,6 @@ func _choose_impact_removal_target(source: Card, target_uids: Array, demon: Card
 		if source is Terror and (demon == null or not game_manager.can_player_add_to_hand_now(target.card_owner) \
 				or (CardStrategy.visible(self, target) and game_manager.is_immune_to_source(target, demon))):
 			continue
-		if source is GugalannaBullOfHeaven and game_manager.can_player_add_to_hand_now(bot_player):
-			removed.append(source)
 		var own := target.get_controller() == bot_player
 		var value := CardStrategy.value(self, target)
 		var score := (-value if own else value) + _reveal_removal_mana_value(source, target)
@@ -8898,6 +8964,41 @@ func _choose_impact_removal_target(source: Card, target_uids: Array, demon: Card
 			best_score = score
 			best_uid = str(uid)
 	return best_uid
+
+func _forecast_celestial_charge(source: GugalannaBullOfHeaven, targets: Array, danger: int, change: Dictionary) -> Dictionary:
+	if targets.is_empty() or source.abilities_suppressed_by_effects():
+		return {}
+	var removed: Array = change.get("removed", [])
+	var returns_to_hand := game_manager.can_player_add_to_hand_now(source.card_owner)
+	var best := {}
+	var best_score := _follower_safety_gain(danger, change) if not change.is_empty() else 0
+	var projected := change.duplicate()
+	var exposed_body_loss := 0
+	if returns_to_hand:
+		projected.erase("summon")
+		projected.erase("stance")
+		# Keeping Gugalanna is worth less if the opponent can immediately kill it.
+		if danger >= 0:
+			var zone := change.get("zone", source.current_zone) as Zone
+			var defensive := bool(change.get("defensive", source.creature_mode == Card.CreatureMode.DEFENSIVE))
+			exposed_body_loss = _estimate_projected_summon_casualty_cost(
+				source, zone, defensive, removed, {}, false, int(change.get("mana_left", bot_player.mana))
+			)
+			exposed_body_loss = mini(exposed_body_loss, _get_card_economic_value(source))
+	for target: Card in targets:
+		if target in removed or CardStrategy.removal_targets(self, source, target).is_empty():
+			continue
+		projected["removed"] = removed + [target, source] if returns_to_hand else removed + [target]
+		var value := CardStrategy.value(self, target)
+		if target.get_controller() == bot_player:
+			value = -value
+		var score := value + _follower_safety_gain(danger, projected)
+		if returns_to_hand and target.get_controller() == opponent:
+			score += exposed_body_loss
+		if score > best_score:
+			best_score = score
+			best = {"target": target, "value": value, "change": projected.duplicate(), "returns_to_hand": returns_to_hand}
+	return best
 
 func _reveal_removal_mana_value(source: Card, target: Card) -> int:
 	if source is MasmassuPriest and CardStrategy.visible(self, target) \

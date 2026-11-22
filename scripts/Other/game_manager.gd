@@ -958,6 +958,7 @@ func setup_game() -> void:
 	for player in players:
 		player.game_manager = self
 		var starting_cards := player.current_deck if not player.current_deck.is_empty() else player.deck_zone.cards
+		player.starting_deck_has_heroic_stand = starting_cards.any(func(card: Card) -> bool: return card is HeroicStand)
 		player.record_starting_creature_typings(starting_cards)
 		if not player.card_moved.is_connected(_on_player_card_moved):
 			player.card_moved.connect(_on_player_card_moved)
@@ -1143,12 +1144,12 @@ func _has_gala_tura_graveward(target: Card, source: Card) -> bool:
 		return true
 	return false
 
-func is_immune_to_source(target: Card, source: Card) -> bool:
+func is_immune_to_source(target: Card, source: Card, include_guardian: bool = true) -> bool:
 	if target == null or source == null:
 		return false
 	# Guardian is a targeting restriction, so route it through the same
 	# immunity check most card target lists already use.
-	if is_targeting_source(source) and is_guardian_protected(target, source):
+	if include_guardian and is_guardian_protected(target, source):
 		return true
 	if _has_gala_tura_graveward(target, source):
 		return true
@@ -1198,6 +1199,11 @@ func activate_hex(hex: HexCard, attacker: Card, defender: Card) -> bool:
 		return false
 	prepared_hexes.erase(hex)
 	for affected_card in hex.get_affected_cards(attacker, defender):
+		if is_guardian_protected(affected_card, hex):
+			var target_name := affected_card.get_target_log_display_name(get_feedback_viewer())
+			last_hex_resolution_text = "%s triggered, but Guardian protected %s." % [hex.card_name, target_name]
+			hex.on_immune_activate(self, attacker, defender)
+			return true
 		if _is_hex_immune(affected_card, hex):
 			print(hex.card_name + " fizzles against " + affected_card.card_name + " due to hex immunity.")
 			last_hex_resolution_text = "%s triggered, but %s was immune to hexes." % [hex.card_name, affected_card.card_name]
@@ -2517,6 +2523,7 @@ func resolve_combat(attacker: Card, defender: Card, continue_callback: Callable 
 		if continue_callback.is_valid():
 			continue_callback.call()
 		return false
+	_record_combat_participation(attacker, defender)
 	_begin_declared_combat(attacker, defender)
 	var attacker_controller := attacker.get_controller()
 	var defender_controller := defender.get_controller()
@@ -2672,14 +2679,18 @@ func resolve_united_front_combat(
 		if continue_callback.is_valid():
 			continue_callback.call()
 		return
+	_record_combat_participation(primary, defender, support)
 	_begin_declared_combat(primary, defender)
 	_begin_declared_combat(support, defender)
 	var attacker_controller := primary.get_controller()
 	var defender_controller := defender.get_controller()
+	var attack_damage_recipient := attacker_controller if _temporary_combat_follower_damage_reversed else defender_controller
+	var defense_damage_recipient := defender_controller if _temporary_combat_follower_damage_reversed else attacker_controller
 	var finish := func() -> void:
 		_notify_after_united_front_combat(attacker, partner, defender)
 		_destroy_tokens_after_combat([primary, support, defender])
 		_clear_combat_engagement_state(defender)
+		_temporary_combat_follower_damage_reversed = false
 		if continue_callback.is_valid():
 			continue_callback.call()
 	for combatant in active_attackers:
@@ -2704,10 +2715,10 @@ func resolve_united_front_combat(
 	if defender.is_god:
 		var converting_attacker := _get_combat_follower_conversion_source(active_attackers)
 		var god_damage := _apply_combat_follower_damage(
-			converting_attacker, defender_controller, combined_strength,
+			converting_attacker, attack_damage_recipient, combined_strength,
 			combat_follower_damage_halving_sources(primary, defender, support), combined_strength_text, active_attackers
 		)
-		print("%s and %s attack %s's followers for %d!" % [primary.card_name, support.card_name, defender_controller.player_name, god_damage])
+		print("%s and %s deal %d damage to %s's followers!" % [primary.card_name, support.card_name, god_damage, attack_damage_recipient.player_name])
 		finish.call()
 		return
 
@@ -2739,7 +2750,7 @@ func resolve_united_front_combat(
 			if combined_strength > defender_str_real:
 				var converting_attacker := _get_combat_follower_conversion_source(active_attackers)
 				var diff := _apply_combat_follower_damage(
-					converting_attacker, defender_controller, combined_strength - defender_str_for_damage,
+					converting_attacker, attack_damage_recipient, combined_strength - defender_str_for_damage,
 					combat_follower_damage_halving_sources(primary, defender, support),
 					"(%s) − %s" % [
 						combined_strength_text,
@@ -2747,19 +2758,19 @@ func resolve_united_front_combat(
 					],
 					active_attackers
 				)
-				print("	%s destroyed! %s loses %d followers" % [defender.card_name, defender_controller.player_name, diff])
+				print("	%s destroyed! %s loses %d followers" % [defender.card_name, attack_damage_recipient.player_name, diff])
 				_combat_kill_deferred(primary, defender, finish)
 				return
 			elif defender_str_real > combined_strength:
 				var diff := _apply_combat_follower_damage(
-					defender, attacker_controller, defender_str_real - combined_strength_for_damage,
+					defender, defense_damage_recipient, defender_str_real - combined_strength_for_damage,
 					combat_follower_damage_halving_sources(primary, defender, support, true),
 					"%s − (%s)" % [
 						_format_follower_damage_stat(defender_str_real, "STR", defender_label),
 						combined_strength_for_damage_text,
 					]
 				)
-				print("	United Front loses! %s loses %d followers" % [attacker_controller.player_name, diff])
+				print("	United Front loses! %s loses %d followers" % [defense_damage_recipient.player_name, diff])
 				if is_warded_from_combat_destruction(primary, defender) or is_warded_from_combat_destruction(support, defender):
 					note_player_feedback("United Front loses the clash.")
 				else:
@@ -2796,14 +2807,14 @@ func resolve_united_front_combat(
 				return
 			elif attacker_str_vs_res < defender_res_real:
 				var diff_damage: int = _convert_combat_follower_damage(
-					attacker_controller,
-					defender_controller,
+					defense_damage_recipient,
+					attack_damage_recipient,
 					maxi(0, defender_res_real - attacker_str_for_conversion),
 					combat_follower_damage_halving_sources(primary, defender, support, true),
 					"%s − (%s)" % [_format_follower_damage_stat(defender_res_real, "RES", defender_label), conversion_strength_text],
 					defender
 				)
-				print("	%d followers convert to %s" % [diff_damage, defender_controller.player_name])
+				print("	%d followers convert to %s" % [diff_damage, attack_damage_recipient.player_name])
 				if _ferocious_defence_triggers(defender, attacker_str_vs_res):
 					print("	Ferocious Defence! United Front attackers destroyed!")
 					both_attackers_defeated = true
@@ -2864,6 +2875,7 @@ func resolve_combat_with_continuation(
 			if continue_callback.is_valid():
 				continue_callback.call()
 			return false
+	_record_combat_participation(attacker, defender)
 	_begin_declared_combat(attacker, defender)
 	var attacker_controller := attacker.get_controller()
 	var defender_controller := defender.get_controller()
@@ -2887,6 +2899,8 @@ func resolve_combat_with_continuation(
 		finish.call()
 		return true
 	var continue_resolution := func() -> bool:
+		var attack_damage_recipient := attacker_controller if _temporary_combat_follower_damage_reversed else defender_controller
+		var defense_damage_recipient := defender_controller if _temporary_combat_follower_damage_reversed else attacker_controller
 		if defender.has_method("on_defend") and not defender.abilities_suppressed():
 			defender.on_defend(self, attacker)
 		var attacker_str := attacker.get_effective_strength()
@@ -2910,25 +2924,25 @@ func resolve_combat_with_continuation(
 				print("	STR vs STR: " + str(attacker_str) + " vs " + str(defender_str_real))
 				if attacker_str > defender_str_real:
 					var diff := _apply_combat_follower_damage(
-						attacker, defender_controller, attacker_str - defender_str_for_damage,
+						attacker, attack_damage_recipient, attacker_str - defender_str_for_damage,
 						combat_follower_damage_halving_sources(attacker, defender),
 						"%s − %s" % [
 							_format_follower_damage_stat(attacker_str, "STR", attacker_label),
 							_format_strength_for_damage(defender_str_for_damage, defender_str_real, defender_label),
 						]
 					)
-					print("	" + defender.card_name + " destroyed! " + defender_controller.player_name + " loses " + str(diff) + " followers")
+					print("	" + defender.card_name + " destroyed! " + attack_damage_recipient.player_name + " loses " + str(diff) + " followers")
 					return _combat_kill_deferred(attacker, defender, finish)
 				if defender_str_real > attacker_str:
 					var diff := _apply_combat_follower_damage(
-						defender, attacker_controller, defender_str_real - attacker_str_for_damage,
+						defender, defense_damage_recipient, defender_str_real - attacker_str_for_damage,
 						combat_follower_damage_halving_sources(attacker, defender, null, true),
 						"%s − %s" % [
 							_format_follower_damage_stat(defender_str_real, "STR", defender_label),
 							_format_strength_for_damage(attacker_str_for_damage, attacker_str, attacker_label),
 						]
 					)
-					print("	" + attacker.card_name + " destroyed! " + attacker_controller.player_name + " loses " + str(diff) + " followers")
+					print("	" + attacker.card_name + " destroyed! " + defense_damage_recipient.player_name + " loses " + str(diff) + " followers")
 					return _combat_kill_deferred(defender, attacker, finish)
 				print("	Tie! Both creatures destroyed")
 				var simultaneous_casualties := _get_simultaneous_combat_casualties(attacker, defender)
@@ -2949,8 +2963,8 @@ func resolve_combat_with_continuation(
 				return _combat_kill_deferred(attacker, defender, finish)
 			if attacker_str_vs_res < defender_res_real:
 				var diff_damage: int = _convert_combat_follower_damage(
-					attacker_controller,
-					defender_controller,
+					defense_damage_recipient,
+					attack_damage_recipient,
 					maxi(0, defender_res_real - attacker_str_for_conversion),
 					combat_follower_damage_halving_sources(attacker, defender, null, true),
 					"%s − %s" % [
@@ -2959,7 +2973,7 @@ func resolve_combat_with_continuation(
 					],
 					defender
 				)
-				print("	" + str(diff_damage) + " followers convert to " + defender_controller.player_name)
+				print("	" + str(diff_damage) + " followers convert to " + attack_damage_recipient.player_name)
 				if _ferocious_defence_triggers(defender, attacker_str_vs_res):
 					print("	Ferocious Defence! " + attacker.card_name + " destroyed!")
 					return _combat_kill_deferred(defender, attacker, finish)
@@ -2982,6 +2996,7 @@ func capture_committed_combat_snapshot(attacker: Card, defender: Card) -> void:
 	var snapshot_key := _get_committed_combat_snapshot_key(attacker, defender)
 	if _committed_combat_snapshots.has(snapshot_key):
 		return
+	_record_combat_participation(attacker, defender)
 	_begin_declared_combat(attacker, defender)
 	_notify_attack_declared(attacker, defender)
 	if defender.has_method("on_defend") and not defender.abilities_suppressed():
@@ -3037,6 +3052,8 @@ func _resolve_committed_combat_snapshot(
 		return false
 	var attacker_controller: Player = snapshot.get("attacker_controller", null)
 	var defender_controller: Player = snapshot.get("defender_controller", null)
+	var attack_damage_recipient := attacker_controller if _temporary_combat_follower_damage_reversed else defender_controller
+	var defense_damage_recipient := defender_controller if _temporary_combat_follower_damage_reversed else attacker_controller
 	var attacker_label: String = snapshot["attacker_stat_label"]
 	var defender_label: String = snapshot["defender_stat_label"]
 	var attacker_halving_sources: PackedStringArray = snapshot["attacker_halving_sources"]
@@ -3055,7 +3072,7 @@ func _resolve_committed_combat_snapshot(
 		_combat_kill_deferred(killer, victim, next)
 	var attacker_str := int(snapshot.get("attacker_str", 0))
 	if bool(snapshot.get("defender_is_god", false)):
-		_apply_combat_follower_damage(attacker, defender_controller, attacker_str, attacker_halving_sources)
+		_apply_combat_follower_damage(attacker, attack_damage_recipient, attacker_str, attacker_halving_sources)
 		_notify_opponent_attacks_followers(attacker, defender_controller)
 		finish.call()
 		return true
@@ -3073,7 +3090,7 @@ func _resolve_committed_combat_snapshot(
 				var defender_str_for_damage := int(snapshot.get("defender_str_for_damage", defender_str))
 				_apply_combat_follower_damage(
 					attacker,
-					defender_controller,
+					attack_damage_recipient,
 					attacker_str - defender_str_for_damage,
 					attacker_halving_sources,
 					"%s − %s" % [
@@ -3087,7 +3104,7 @@ func _resolve_committed_combat_snapshot(
 				var attacker_str_for_damage := int(snapshot.get("attacker_str_for_damage", attacker_str))
 				_apply_combat_follower_damage(
 					defender,
-					attacker_controller,
+					defense_damage_recipient,
 					defender_str - attacker_str_for_damage,
 					defender_halving_sources,
 					"%s − %s" % [
@@ -3112,8 +3129,8 @@ func _resolve_committed_combat_snapshot(
 		if attacker_str_vs_res < defender_res:
 			var attacker_str_for_conversion := int(snapshot.get("attacker_str_for_conversion", attacker_str_vs_res))
 			_convert_combat_follower_damage(
-				attacker_controller,
-				defender_controller,
+				defense_damage_recipient,
+				attack_damage_recipient,
 				maxi(0, defender_res - attacker_str_for_conversion),
 				defender_halving_sources,
 				"%s − %s" % [
@@ -3228,6 +3245,14 @@ func _notify_after_combat(attacker: Card, defender: Card) -> void:
 					card.on_creature_after_combat(self, attacker, defender)
 	_expire_after_combat_effects(attacker)
 	_expire_after_combat_effects(defender)
+
+func _record_combat_participation(attacker: Card, defender: Card, partner: Card = null) -> void:
+	if not attacker.is_creature_card() or not defender.is_creature_card() or defender.is_god or defender.is_petrified():
+		return
+	attacker.combats_this_game += 1
+	defender.combats_this_game += 1
+	if partner != null and partner.is_creature_card():
+		partner.combats_this_game += 1
 
 func _begin_declared_combat(attacker: Card, defender: Card) -> void:
 	if attacker == null or defender == null:
@@ -3700,6 +3725,8 @@ func is_guardian_protected(target: Card, source: Card = null) -> bool:
 		return false
 	if target.has_status_effect("en_hedu_anna_exaltation_guard"):
 		return true
+	if not target.is_creature_card() or not is_card_on_field(target):
+		return false
 	var target_controller := target.get_controller()
 	if target_controller == null:
 		return false
@@ -3707,28 +3734,20 @@ func is_guardian_protected(target: Card, source: Card = null) -> bool:
 	# still target their own Ancient creatures.
 	if source != null and source.get_controller() == target_controller:
 		return false
-	if not (current_phase == GamePhase.COMBAT or current_player == target_controller or _is_card_in_combat(target)):
+	if not (current_phase == GamePhase.COMBAT or current_player == target_controller or _has_attack_on_stack()):
 		return false
 	if target.culture != "Ancient":
 		return false
 	for zone in target_controller.frontline_zones + target_controller.reserve_zones:
 		for card in zone.cards:
-			if card is Asaruludu and card != target and not card.abilities_suppressed():
+			if card is Asaruludu and card != target and not card.is_face_down and not card.abilities_suppressed():
 				return true
 	return false
 
-# True while this card is part of an attack that is still on the stack. The
-# combat phase flag is only set when an attack resolves, so the priority
-# window that precedes combat needs this explicit check.
-func _is_card_in_combat(card: Card) -> bool:
-	if card == null:
-		return false
+# An attack can open its response window before the combat phase flag is set.
+func _has_attack_on_stack() -> bool:
 	for action in action_stack:
-		if action == null or action.type != CardAction.Type.ATTACK:
-			continue
-		if action.attacker == card or action.united_front_partner == card:
-			return true
-		if action.interceptor == card or action.target == card:
+		if action != null and action.type == CardAction.Type.ATTACK:
 			return true
 	return false
 

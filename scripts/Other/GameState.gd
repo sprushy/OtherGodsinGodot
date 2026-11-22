@@ -97,6 +97,7 @@ static func serialize(gm: GameManager, viewer_player_index: int = -1, visible_pl
 		}
 		if viewer == null or i == viewer_player_index:
 			pdata["starting_creature_typings"] = player.starting_creature_typings.duplicate(true)
+			pdata["starting_deck_has_heroic_stand"] = player.starting_deck_has_heroic_stand
 		for z in player.power_zones:
 			pdata.power_zones.append(_serialize_zone_cards(z, viewer, false, reveal_private_cards))
 		for z in player.frontline_zones:
@@ -266,6 +267,7 @@ static func _serialize_card(card: Card, hidden_mode: int = HIDDEN_MODE_NONE) -> 
 		summoned_after_first_attack_this_turn = card.summoned_after_first_attack_this_turn,
 		creature_major_action_used   = card.creature_major_action_used,
 		creature_minor_actions_used  = card.creature_minor_actions_used,
+		combats_this_game         = card.combats_this_game,
 		is_used                   = card.is_used,
 		is_muted                  = card.is_muted,
 		mute_turns_remaining      = card.mute_turns_remaining,
@@ -508,6 +510,7 @@ static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 			player.player_name = player_name
 		player.reserved_active_god = null
 		player.restore_starting_creature_typings(pdata.get("starting_creature_typings", {}))
+		player.starting_deck_has_heroic_stand = bool(pdata.get("starting_deck_has_heroic_stand", false))
 		player.mana = pdata.get("mana", 0)
 		player.followers = pdata.get("followers", 100)
 		player.guard = pdata.get("guard", 0)
@@ -796,6 +799,7 @@ static func _deserialize_card(cdata: Dictionary) -> Card:
 	card.summoned_after_first_attack_this_turn = cdata.get("summoned_after_first_attack_this_turn", false)
 	card.creature_major_action_used   = cdata.get("creature_major_action_used", false)
 	card.creature_minor_actions_used  = cdata.get("creature_minor_actions_used", 0)
+	card.combats_this_game         = cdata.get("combats_this_game", 0)
 	card.is_used                   = cdata.get("is_used", false)
 	card.is_muted                  = cdata.get("is_muted", false)
 	card.mute_turns_remaining      = cdata.get("mute_turns_remaining", 0)

@@ -15,7 +15,7 @@ func _init() -> void:
 	speed = 2
 	resilience = 15
 	strength = 28
-	ability_text = "[b]Locust Swarm[/b] ([b]Impact[/b]): Reduce your opponent's mana by 2.\n[b]Locust Plague[/b] ([b]Passive[/b]): At the beginning of your turn, reduce your opponent's mana by 2."
+	ability_text = "[b]Locust Swarm[/b] ([b]Impact[/b]): Your opponent loses 2 mana.\n[b]Locust Plague[/b] ([b]Passive[/b]): At the start of your turn, your opponent loses 2 mana."
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricardo Zoppello"
