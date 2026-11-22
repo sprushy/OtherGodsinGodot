@@ -65,6 +65,13 @@ const OPPONENT_ACTIVATED_REMOVAL_KEYS := ["Lindwyrm", "ClayEaters"]
 var _active: bool = false
 var _step_queued: bool = false
 var _retry_poll_queued: bool = false
+# A prompt handler can re-emit another prompt synchronously (the authoritative
+# MatchManager emits over a signal). Answering that nested prompt inline grows
+# one stack frame per prompt until Godot overflows. Defer nested prompts until
+# the current handler returns so the answer chain runs on later frames.
+var _ui_interaction_in_progress: bool = false
+var _deferred_ui_interactions: Array[Dictionary] = []
+var _deferred_ui_flush_scheduled: bool = false
 var _answered_prompt_ids: Dictionary = {}
 var _current_card_prompt_id: int = -1
 var _last_submitted_prompt_id: int = -1
@@ -110,6 +117,9 @@ func detach() -> void:
 	_active = false
 	_step_queued = false
 	_retry_poll_queued = false
+	_ui_interaction_in_progress = false
+	_deferred_ui_interactions.clear()
+	_deferred_ui_flush_scheduled = false
 	_answered_prompt_ids.clear()
 	_strategy_activation_turns.clear()
 	_dellingr_revealed_target_uids.clear()
@@ -185,6 +195,49 @@ func _crumb(label: String) -> void:
 			" turn=", turn, " ms=", Time.get_ticks_msec(), " ", label)
 
 func _on_match_ui_interaction(prompt_player_index: int, type: String, data: Dictionary) -> void:
+	if not _begin_ui_interaction(prompt_player_index, type, data):
+		return
+	_handle_ui_interaction(prompt_player_index, type, data)
+	_ui_interaction_in_progress = false
+
+func _begin_ui_interaction(prompt_player_index: int, type: String, data: Dictionary) -> bool:
+	if not _ui_interaction_in_progress:
+		_ui_interaction_in_progress = true
+		return true
+	# Nested prompt: queue it instead of answering inline. A prompt may be
+	# re-emitted by the command that answers the previous one, and that cycle
+	# would otherwise recurse until Godot's stack overflows.
+	if _deferred_ui_interactions.size() >= 64:
+		_deferred_ui_interactions.pop_front()
+	_deferred_ui_interactions.append({
+		"prompt_player_index": prompt_player_index,
+		"type": type,
+		"data": data.duplicate(true),
+	})
+	if not _deferred_ui_flush_scheduled:
+		_deferred_ui_flush_scheduled = true
+		call_deferred("_flush_deferred_ui_interactions")
+	return false
+
+func _flush_deferred_ui_interactions() -> void:
+	_deferred_ui_flush_scheduled = false
+	if not _active or _deferred_ui_interactions.is_empty():
+		return
+	if _ui_interaction_in_progress:
+		call_deferred("_flush_deferred_ui_interactions")
+		return
+	var pending := _deferred_ui_interactions.duplicate(true)
+	_deferred_ui_interactions.clear()
+	for entry in pending:
+		if not _active:
+			break
+		_on_match_ui_interaction(
+			int(entry.get("prompt_player_index", -1)),
+			str(entry.get("type", "")),
+			entry.get("data", {})
+		)
+
+func _handle_ui_interaction(prompt_player_index: int, type: String, data: Dictionary) -> void:
 	if prompt_player_index != player_index:
 		return
 	if not prompt_types_only.is_empty() and type not in prompt_types_only:

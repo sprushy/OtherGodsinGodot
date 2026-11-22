@@ -18,7 +18,7 @@ func _submit_attack(attacker: Card, target) -> bool:
 		return false
 	return super._submit_attack(attacker, target)
 
-func _on_match_ui_interaction(prompt_player_index: int, type: String, data: Dictionary) -> void:
+func _handle_ui_interaction(prompt_player_index: int, type: String, data: Dictionary) -> void:
 	if prompt_player_index == player_index and type == "wolf_adolescent_maturation":
 		_submit_action({
 			"type": "wolf_adolescent_maturation_choice",
@@ -26,5 +26,5 @@ func _on_match_ui_interaction(prompt_player_index: int, type: String, data: Dict
 			"target_uid": "",
 		})
 		return
-	super._on_match_ui_interaction(prompt_player_index, type, data)
+	super._handle_ui_interaction(prompt_player_index, type, data)
 

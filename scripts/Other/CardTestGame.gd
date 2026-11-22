@@ -259,6 +259,7 @@ func load_hermes_dodge_test_scenario() -> void:
 	_reset_test_match_state()
 	_add_test_god(player1, Hermes.new())
 	_add_test_god(player2, Thor.new())
+	_add_test_power(player1, 0, AspectShift.new(), false)
 
 	_place_test_board_card(player1, player1.frontline_zones[0], HariiWarrior.new(), Card.CreatureMode.AGGRESSIVE)
 	_place_test_board_card(player1, player1.frontline_zones[1], Asaruludu.new())
@@ -275,8 +276,15 @@ func load_hermes_dodge_test_scenario() -> void:
 	_add_test_hand_card(player2, Enkidu.new())
 	_add_test_hand_card(player2, Enkidu.new())
 
+	# Ghost/Spirit cards for Hermes Psychopompus: graveyard copies pay for Wings of the Departed,
+	# while deck copies are Call of the Crossing targets.
+	_add_test_graveyard_card(player1, Edimmu.new())
+	_add_test_graveyard_card(player1, TheChainedGhostOfAthens.new())
+
 	_add_test_deck_card(player1, BrownBear.new())
 	_add_test_deck_card(player1, Gawain.new())
+	_add_test_deck_card(player1, Edimmu.new())
+	_add_test_deck_card(player1, TheChainedGhostOfAthens.new())
 	_add_test_deck_card(player2, BrownBear.new())
 	player1.record_starting_creature_typings([RavenStorm.new()]) # Card Test Reinforcements.
 
@@ -307,6 +315,7 @@ func load_hermes_dodge_test_scenario() -> void:
 	action_label.text = (
 		"Choose an upkeep option, then cast Metamorphosis and search for Knight or Raven. "
 		+ "Reveal a reserve creature to see it gain the chosen typing. Cast Occult Singularity to remove the Aura. "
+		+ "Aspect Shift is locked in P1's first power slot: unlock for 4 to become Hermes Psychopompus, then use Call of the Crossing on a Ghost/Spirit in deck or Wings of the Departed with the Ghost/Spirit cards in your grave. Return to Form shifts back for 4. "
 		+ "You can also use Hermes's Deceptive Speed to test Dodge against Gullinbursti. "
 		+ "On P1's next turn, attack P2's Followers with Asaruludu to test P2's prepared Smite."
 	)

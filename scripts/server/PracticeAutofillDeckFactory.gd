@@ -9,6 +9,19 @@ const DEFAULT_REGULAR_CARD_COUNT := 40
 const MAX_POWERS := 3
 const MAX_BUILD_ATTEMPTS := 32
 const MAX_RANDOM_PICK_ATTEMPTS := 256
+const KEY_OF_SOLOMON_MIN_SOURCES := 2
+const KEY_OF_SOLOMON_MIN_TARGETS := 4
+const VISION_OF_TARTARUS_MIN_VOID_SOURCES := 3
+const VOID_SOURCE_CARD_NAMES := [
+	"Bit Meseri",
+	"Void Shield",
+	"Wheel of Fire",
+	"Asag the Destroyer",
+	"Doorway to the Void",
+	"Walk of the Sage",
+	"Sixth Sage An-Enlilda",
+	"E2-abzu",
+]
 const PROMPT_HEAVY_CARD_NAMES := {
 	"Aphrodite Areia": true,
 	"Blessed Knights": true,
@@ -53,6 +66,8 @@ const SAFE_NON_CREATURE_CARD_NAMES := {
 	"Mead of Poetry": true,
 	"Divine Lightning": true,
 	"Fall of the Mighty": true,
+	"Key of Solomon": true,
+	"Vision of Tartarus": true,
 	"Tonal Extraction": true,
 }
 
@@ -506,13 +521,14 @@ func _has_deckbuilding_requirements(card: Card, cards: Dictionary, god: GodCard)
 			return _count_card_type(cards, Card.CardType.SPELL) + _count_card_type(cards, Card.CardType.HEX) \
 				+ _count_card_type(cards, Card.CardType.CHARM) > int(cards.get(name, 0))
 		"Apollyon's Demiurge": return _count_matching(cards, ["Demon"]) >= 3
+		"Key of Solomon": return _key_of_solomon_has_support(cards)
 		"Eridu, City of Sages": return _count_matching(cards, ["Mage"]) >= 3
 		"Advanced Building Techniques": return _count_card_type(cards, Card.CardType.STRUCTURE) >= 2
 		"Immortal Techniques":
 			return _count_matching(cards, ["Mage"]) > 0 \
 				and _count_card_type(cards, Card.CardType.SPELL) + _count_card_type(cards, Card.CardType.HEX) > 0
-		"A Cost to Walk the Worlds":
-			return _count_named(cards, ["Bit Meseri", "Void Shield", "Wheel of Fire", "Asag the Destroyer"]) > 0
+		"A Cost to Walk the Worlds": return _count_named(cards, VOID_SOURCE_CARD_NAMES) > 0
+		"Vision of Tartarus": return _vision_of_tartarus_has_void_sources(cards)
 		"Allfather's Sacrifice": return _count_tagged(cards, "Spell") > 0
 		"Giant Master Architect": return _count_tagged(cards, "Structure") > 0
 		"Wolf Cub": return _count_other_matching(cards, card, ["Lupine"], 4) > 0
@@ -623,6 +639,17 @@ func _count_matching_any(cards: Dictionary, tags: Array) -> int:
 				total += int(cards[name])
 				break
 	return total
+
+# Key of Solomon needs Animals to sacrifice and Demons in the grave/abyss to
+# return, so only add it once the deck has enough of both.
+func _key_of_solomon_has_support(cards: Dictionary) -> bool:
+	return _count_matching(cards, ["Animal"]) >= KEY_OF_SOLOMON_MIN_SOURCES \
+		and _count_matching(cards, ["Demon"]) >= KEY_OF_SOLOMON_MIN_TARGETS
+
+# Vision of Tartarus needs creatures in either Void to matter, so only add it
+# once the deck has enough cards that send creatures there.
+func _vision_of_tartarus_has_void_sources(cards: Dictionary) -> bool:
+	return _count_named(cards, VOID_SOURCE_CARD_NAMES) >= VISION_OF_TARTARUS_MIN_VOID_SOURCES
 
 # Mirrors SixthSageAnEnlilda's Ancient Dwelling target rule for deck templates.
 func _count_ancient_dwelling_targets(cards: Dictionary) -> int:
@@ -748,6 +775,10 @@ func _is_safe_regular_card(card: Card, god: GodCard, deck_cards: Dictionary, leg
 	if not legendary_only and card.is_legendary:
 		return false
 	if int(deck_cards.get(card.card_name, 0)) >= _max_copies(card):
+		return false
+	if card.card_name == "Key of Solomon" and not _key_of_solomon_has_support(deck_cards):
+		return false
+	if card.card_name == "Vision of Tartarus" and not _vision_of_tartarus_has_void_sources(deck_cards):
 		return false
 	if ranked:
 		if not BotCardStrategyScript.supports_ranked_deck_card(card):

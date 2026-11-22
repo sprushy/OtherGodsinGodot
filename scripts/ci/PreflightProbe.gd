@@ -108,6 +108,7 @@ func run() -> bool:
 	_check_bot_combat_buff_value(failures)
 	_check_bot_jiang_counterstroke(failures)
 	_check_bot_reveal_defense(failures)
+	_check_bot_exorcism_doomed_source(failures)
 	_check_bot_brew_funds_pyre_lethal(failures)
 	_check_bot_brew_funds_summon(failures)
 	_check_bot_brew_funds_unlock(failures)
@@ -1174,12 +1175,38 @@ func _check_ranked_bot_deck_generation(failures: PackedStringArray) -> void:
 		["Circle of Rebirth", {}, false],
 		["Sixth Sage An-Enlilda", {"E2-abzu": 1}, false],
 		["Sixth Sage An-Enlilda", {"E2-abzu": 2}, true],
+		["Key of Solomon", {}, false],
+		["Key of Solomon", {"Brown Bear": 2}, false],
+		["Key of Solomon", {"Alu": 2}, false],
+		["Key of Solomon", {"Brown Bear": 2, "Alu": 2}, false],
+		["Key of Solomon", {"Brown Bear": 2, "Alu": 2, "Gallu": 2}, true],
+		["Vision of Tartarus", {}, false],
+		["Vision of Tartarus", {"Bit Meseri": 2}, false],
+		["Vision of Tartarus", {"Bit Meseri": 1, "Void Shield": 1}, false],
+		["Vision of Tartarus", {"Bit Meseri": 1, "Void Shield": 1, "Wheel of Fire": 1}, true],
 	]
 	for entry in requirement_cases:
 		var ruled_card: Card = factory._cards_by_name.get(str(entry[0]), null)
 		var supported: bool = factory._has_deckbuilding_requirements(ruled_card, entry[1], thor)
 		if supported != bool(entry[2]):
 			failures.append("Ranked bot deck support rule mismatch for %s" % str(entry[0]))
+
+	var unsupported_practice_candidates := factory._get_regular_candidates(thor, {"Brown Bear": 2}, false)
+	if unsupported_practice_candidates.any(func(card: Card) -> bool: return card.card_name == "Key of Solomon"):
+		failures.append("Practice autofill added Key of Solomon without Animal and Demon support")
+	var insufficient_target_candidates := factory._get_regular_candidates(thor, {"Brown Bear": 2, "Alu": 2}, false)
+	if insufficient_target_candidates.any(func(card: Card) -> bool: return card.card_name == "Key of Solomon"):
+		failures.append("Practice autofill added Key of Solomon with fewer than four Demon targets")
+	var supported_practice_candidates := factory._get_regular_candidates(thor, {"Brown Bear": 2, "Alu": 2, "Gallu": 2}, false)
+	if not supported_practice_candidates.any(func(card: Card) -> bool: return card.card_name == "Key of Solomon"):
+		failures.append("Practice autofill cannot add Key of Solomon with Animal sources and four Demon targets")
+
+	var unsupported_vision_candidates := factory._get_regular_candidates(thor, {"Bit Meseri": 2}, false)
+	if unsupported_vision_candidates.any(func(card: Card) -> bool: return card.card_name == "Vision of Tartarus"):
+		failures.append("Practice autofill added Vision of Tartarus without three Void sources")
+	var supported_vision_candidates := factory._get_regular_candidates(thor, {"Bit Meseri": 1, "Void Shield": 1, "Wheel of Fire": 1}, false)
+	if not supported_vision_candidates.any(func(card: Card) -> bool: return card.card_name == "Vision of Tartarus"):
+		failures.append("Practice autofill cannot add Vision of Tartarus with three Void sources")
 
 	var deck := factory.build_random_deck(1337, TiamatThePrimordial.TIAMAT_CARD_NAME, true)
 	var player := _new_fixture_player()
@@ -4078,6 +4105,73 @@ func _check_bot_reveal_defense(failures: PackedStringArray) -> void:
 	if command.get("card_uid") != beast.uid or not command.get("stealth", false):
 		failures.append("Bot failed to include Pictish Beast's Mana Boon in its defensive summon")
 	bot.detach()
+
+func _check_bot_exorcism_doomed_source(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	player.followers = 100
+	opponent.followers = 100
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+
+	var gilgamesh := Gilgamesh.new()
+	gilgamesh.card_owner = player
+	player.frontline_zones[0].add_card(gilgamesh)
+
+	var lion := NergalLion.new()
+	lion.card_owner = player
+	lion.creature_mode = Card.CreatureMode.AGGRESSIVE
+	player.frontline_zones[1].add_card(lion)
+
+	var priest := MasmassuPriest.new()
+	priest.card_owner = opponent
+	priest.creature_mode = Card.CreatureMode.DEFENSIVE
+	priest.is_face_down = true
+	priest.is_stealth = true
+	opponent.frontline_zones[0].add_card(priest)
+
+	var attack := CardAction.new()
+	attack.type = CardAction.Type.ATTACK
+	attack.source_player = player
+	attack.attacker = lion
+	attack.target = priest
+	game.push_to_stack(attack)
+
+	var reveal := CardAction.new()
+	reveal.type = CardAction.Type.EVENT
+	reveal.event_name = "masmassu_priest_reveal"
+	reveal.source_player = opponent
+	reveal.card = priest
+	reveal.target = gilgamesh
+	game.push_to_stack(reveal)
+
+	var exorcism := Exorcism.new()
+	exorcism.card_owner = player
+	if not BotCardStrategyScript.doomed_by_pending_attack(bot, priest, true):
+		failures.append("Bot did not recognize the Priest as doomed by the pending Nergal Lion attack")
+	var doomed_score := BotCardStrategyScript.target_score(bot, exorcism, gilgamesh)
+	if doomed_score <= 0:
+		failures.append("Bot found no value in Exorcism saving a creature from Dalkhu Break")
+
+	lion.strength = 2
+	var surviving_source_score := BotCardStrategyScript.target_score(bot, exorcism, gilgamesh)
+	if surviving_source_score <= doomed_score:
+		failures.append("Bot still over-credits Exorcism for a Priest already dying in combat")
+	var priest_value := BotCardStrategyScript.value(bot, priest)
+	if priest_value > 0 and surviving_source_score - doomed_score < int(priest_value * 0.5):
+		failures.append("Bot stopped valuing the Priest Exorcism actually destroys")
+
+	game.action_stack.clear()
+	game.push_to_stack(reveal)
+	if BotCardStrategyScript.target_score(bot, exorcism, gilgamesh) != surviving_source_score:
+		failures.append("Bot's Exorcism score changed when the weak attacker was removed")
 
 func _check_bot_next_turn_lethal(failures: PackedStringArray) -> void:
 	var game := _new_fixture_game()

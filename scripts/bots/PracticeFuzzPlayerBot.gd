@@ -105,14 +105,14 @@ func _should_retry_poll_later() -> bool:
 		return false
 	return super._should_retry_poll_later()
 
-func _on_match_ui_interaction(prompt_player_index: int, type: String, data: Dictionary) -> void:
+func _handle_ui_interaction(prompt_player_index: int, type: String, data: Dictionary) -> void:
 	if prompt_player_index != player_index:
 		return
 	match type:
 		"priority":
 			_submit_priority_response_from_prompt(data)
 		_:
-			super._on_match_ui_interaction(prompt_player_index, type, data)
+			super._handle_ui_interaction(prompt_player_index, type, data)
 
 func _try_attack() -> bool:
 	if game_manager != null and game_manager.current_player == bot_player and game_manager.turn_number <= 1:

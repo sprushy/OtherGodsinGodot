@@ -795,6 +795,24 @@ static func removal_targets(bot, source: Card, target: Card = null, action: Card
 			victims = wipe_cards(bot, source)
 	return victims.filter(func(victim: Card) -> bool: return can_remove_from_board(bot, source, victim, destroys, targeted))
 
+# Exorcism erases enemy actions that target the exorcised creature, but attack
+# actions carry no `card` and are never swept up by that rule. When a body on
+# such an action is already slated to die in the combat that is waiting on the
+# stack, crediting Exorcism for destroying it would pay twice for one death.
+static func doomed_by_pending_attack(bot, card: Card, defender_only: bool = false) -> bool:
+	if card == null or bot.game_manager == null:
+		return false
+	for queued in bot.game_manager.action_stack:
+		if queued.type != CardAction.Type.ATTACK:
+			continue
+		var is_defender: bool = bot._get_attack_defender_card(queued) == card
+		if not is_defender and (defender_only or queued.attacker != card):
+			continue
+		var economy: Dictionary = bot._estimate_attack_economy(queued, null, 0, 0)
+		if card in economy.get("casualties", []):
+			return true
+	return false
+
 # Explicit effect data feeds the same projection for main-phase buffs, responses,
 # and attacks that only become worthwhile after a response. Never mutate cards
 # or infer effects from their display text while planning.
@@ -1091,8 +1109,26 @@ static func target_score(bot, card: Card, target: Card, action: CardAction = nul
 			for effect in bot.game_manager.get_field_cards(bot.opponent):
 				if effect is PermanentHexCard and effect.attached_target == target:
 					score += value(bot, effect) + 3000
-			if action != null and action.card != null and action.card.get_controller() == bot.opponent and bot._target_includes_card(action.target, target):
-				score += value(bot, action.card)
+			# Every enemy action still targeting this creature is erased, not
+			# just the top one. Price each one by what the response actually
+			# changes: the source body only when combat will not claim it
+			# anyway, and the creature saved from the pending effect.
+			var seen_sources := {}
+			var save_credited := false
+			for queued in bot.game_manager.action_stack:
+				var source := queued.card as Card
+				if source == null or source.get_controller() != bot.opponent:
+					continue
+				if not bot._target_includes_card(queued.target, target):
+					continue
+				if not seen_sources.has(source.uid):
+					seen_sources[source.uid] = true
+					if not doomed_by_pending_attack(bot, source, true):
+						score += value(bot, source)
+				if not save_credited and target in removal_targets(bot, source, target, queued) \
+						and not doomed_by_pending_attack(bot, target):
+					score += value(bot, target)
+					save_credited = true
 			for buff in target.active_buffs:
 				if buff.get("source_card") != target:
 					score -= int(buff.get("str", 0)) * 100 + int(buff.get("res", 0)) * 50 + int(buff.get("spd", 0)) * 200

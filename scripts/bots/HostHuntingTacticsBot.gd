@@ -57,7 +57,7 @@ func _on_network_game_event(event_type: String, data: Dictionary) -> void:
 		_:
 			super._on_network_game_event(event_type, data)
 
-func _on_match_ui_interaction(prompt_player_index: int, type: String, data: Dictionary) -> void:
+func _handle_ui_interaction(prompt_player_index: int, type: String, data: Dictionary) -> void:
 	# In-process fallback (used if this bot ever runs against an authoritative
 	# in-process MatchManager). Mirrors the network handler.
 	if prompt_player_index != player_index:
@@ -66,7 +66,7 @@ func _on_match_ui_interaction(prompt_player_index: int, type: String, data: Dict
 		"hunting_tactics":
 			_submit_hunting_tactics_choice(data)
 		_:
-			super._on_match_ui_interaction(prompt_player_index, type, data)
+			super._handle_ui_interaction(prompt_player_index, type, data)
 
 func _submit_hunting_tactics_choice(data: Dictionary) -> void:
 	if not _mark_prompt_answered(data):
