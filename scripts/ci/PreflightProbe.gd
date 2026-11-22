@@ -1199,6 +1199,30 @@ func _check_ranked_bot_deck_generation(failures: PackedStringArray) -> void:
 		failures.append("Ranked Tezcatlipoca did not include Tonal Extraction in a generated Shapeshifter deck")
 	if factory._get_power_candidates(tez, {tez.card_name: 1, "Brown Bear": 3}, true).any(func(card: Card) -> bool: return card is TonalExtraction):
 		failures.append("Ranked Tezcatlipoca added Tonal Extraction without an eligible creature")
+	var psychopompus := HermesPsychopompus.new()
+	var psychopompus_ghost_signatures: Array[String] = []
+	for seed_value in range(8):
+		var psychopompus_deck := factory.build_random_deck(7600 + seed_value, psychopompus.card_name, true)
+		if psychopompus_deck.is_empty():
+			failures.append("Ranked bot generator did not produce a Hermes Psychopompus deck")
+			break
+		var ghost_names: Array[String] = []
+		var psychopompus_cards: Dictionary = psychopompus_deck.get("cards", {})
+		for card_name in psychopompus_cards:
+			var template: Card = factory._cards_by_name.get(str(card_name), null)
+			if template == null or not template.has_type("Ghost") or template.is_god:
+				continue
+			for _copy in range(int(psychopompus_cards[card_name])):
+				ghost_names.append(str(card_name))
+		if ghost_names.size() < PracticeAutofillDeckFactory.HERMES_PSYCHOPOMPUS_MIN_GHOSTS:
+			failures.append("Ranked Hermes Psychopompus autofill included fewer than four Ghosts")
+		ghost_names.sort()
+		psychopompus_ghost_signatures.append(JSON.stringify(ghost_names))
+	var unique_ghost_signatures := {}
+	for signature in psychopompus_ghost_signatures:
+		unique_ghost_signatures[signature] = true
+	if psychopompus_ghost_signatures.size() == 8 and unique_ghost_signatures.size() < 2:
+		failures.append("Ranked Hermes Psychopompus autofill Ghosts did not vary by seed")
 	var thor := Thor.new()
 	for legendary in [false, true]:
 		# Circle of Rebirth only joins ranked decks with five Animal/Plant

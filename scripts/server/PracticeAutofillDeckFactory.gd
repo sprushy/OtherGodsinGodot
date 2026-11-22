@@ -10,10 +10,6 @@ const MAX_POWERS := 3
 const MAX_BUILD_ATTEMPTS := 32
 const MAX_RANDOM_PICK_ATTEMPTS := 256
 const HERMES_PSYCHOPOMPUS_MIN_GHOSTS := 4
-const HERMES_PSYCHOPOMPUS_FORCED_GHOSTS := {
-	"Edimmu": 3,
-	"The Chained Ghost of Athens": 1,
-}
 const KEY_OF_SOLOMON_MIN_SOURCES := 2
 const KEY_OF_SOLOMON_MIN_TARGETS := 4
 const VISION_OF_TARTARUS_MIN_VOID_SOURCES := 3
@@ -119,7 +115,7 @@ func build_random_deck(seed_value: int, forced_god_name: String = "", ranked: bo
 		deck_cards[god.card_name] = 1
 		var preloaded_regular_count := 0
 		if god is HermesPsychopompus:
-			_seed_psychopompus_ghosts(deck_cards)
+			_seed_psychopompus_ghosts(deck_cards, god, rng, ranked)
 			preloaded_regular_count = _count_regular_cards(deck_cards)
 		if not _fill_regular_cards_for_god(deck_cards, god, rng, ranked, preloaded_regular_count):
 			continue
@@ -235,17 +231,28 @@ func _choose_god_template(rng: RandomNumberGenerator, forced_god_name: String, r
 		return null
 	return candidates[rng.randi_range(0, candidates.size() - 1)]
 
-func _seed_psychopompus_ghosts(deck_cards: Dictionary) -> int:
+func _seed_psychopompus_ghosts(
+	deck_cards: Dictionary,
+	god: GodCard,
+	rng: RandomNumberGenerator,
+	ranked: bool
+) -> int:
 	var seeded := 0
-	for card_name in HERMES_PSYCHOPOMPUS_FORCED_GHOSTS.keys():
-		var template: Card = _cards_by_name.get(str(card_name), null)
-		if template == null or not template.has_type("Ghost"):
-			continue
-		var count := mini(int(HERMES_PSYCHOPOMPUS_FORCED_GHOSTS[card_name]), _max_copies(template))
-		if count <= 0:
-			continue
-		deck_cards[str(card_name)] = count
-		seeded += count
+	while seeded < HERMES_PSYCHOPOMPUS_MIN_GHOSTS:
+		var candidates: Array[Card] = []
+		for template in _all_cards:
+			if template == null or template.card_type != Card.CardType.CREATURE or template.is_god:
+				continue
+			if not template.has_type("Ghost"):
+				continue
+			if not _is_safe_regular_card(template, god, deck_cards, false, ranked):
+				continue
+			candidates.append(template)
+		if candidates.is_empty():
+			break
+		var chosen: Card = candidates[rng.randi_range(0, candidates.size() - 1)]
+		deck_cards[chosen.card_name] = int(deck_cards.get(chosen.card_name, 0)) + 1
+		seeded += 1
 	if seeded < HERMES_PSYCHOPOMPUS_MIN_GHOSTS:
 		push_warning("[PracticeAutofillDeckFactory] Psychopompus autofill seeded only %d Ghosts" % seeded)
 	return seeded
