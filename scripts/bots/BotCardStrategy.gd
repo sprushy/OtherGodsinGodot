@@ -158,6 +158,10 @@ static func _meta_curve_share(anchor_stats: Array, anchor_shares: Array, stat: i
 static func _strength_reach_points(strength: int) -> int:
 	return int(_meta_curve_share(META_REACH_ANCHOR_STATS, META_REACH_ANCHOR_SHARES, strength) * META_STAT_POINT_WEIGHT)
 
+static func estimate_defensive_kill_chance(strength: int) -> float:
+	# An attack against a Defensive creature must strictly exceed its resilience.
+	return _meta_curve_share(META_REACH_ANCHOR_STATS, META_REACH_ANCHOR_SHARES, strength - 1) / 100.0
+
 static func _resilience_survival_points(resilience: int) -> int:
 	return int(_meta_curve_share(META_SURVIVAL_ANCHOR_STATS, META_SURVIVAL_ANCHOR_SHARES, resilience) * META_STAT_POINT_WEIGHT)
 
@@ -1434,7 +1438,11 @@ static func effect_score(bot, card: Card, target: Card = null, action: CardActio
 			# A response that saves a creature has already paid for itself; the
 			# generic CARD_VALUE write-off would turn a real save into a pass.
 			return namburbi_response_gain(bot, card as NamburbiApotropaeon, action) - mana_penalty(bot, activation_cost(bot, card))
-		"HeroicStand": gain = mana_gain_value(bot, 7)
+		"HeroicStand":
+			if not bot.game_manager.can_player_gain_mana_now(bot.bot_player) \
+					or card.get_qualified_creatures(bot.game_manager).is_empty():
+				return BAD
+			gain = mana_gain_value(bot, HeroicStand.MANA_GAIN)
 		"TheInferno", "TheDeluge", "Earthquake", "FiresOfJudgment", "Famine", "OccultSingularity", "FalloftheMighty", "BaneOfTheSvartalfar":
 			gain = 0
 			var removed: Array = []
@@ -1948,7 +1956,20 @@ static func preparation_score(bot, card: Card) -> int:
 		return namburbi_preparation_score(bot, card as NamburbiApotropaeon)
 	if id in ["Banishment", "SpellDemolition", "Sap", "SepLemutti", "Smite", "VoidShield"]:
 		return 1700
-	if id in ["Exorcism", "Hringhorni", "HeroicStand"]:
+	if card is HeroicStand:
+		var game: GameManager = bot.game_manager
+		if not game.can_player_gain_mana_now(bot.bot_player):
+			return 0
+		var value := clampi(mana_gain_value(bot, HeroicStand.MANA_GAIN) - CARD_VALUE, 0, 1700)
+		if not card.get_qualified_creatures(game).is_empty():
+			return value
+		if value > 0 and bot._board_creature_count(bot.opponent) > 0:
+			for creature: Card in bot._get_board_creatures(bot.bot_player):
+				if creature.get_controller() == bot.bot_player and not creature.is_petrified() \
+						and not expires_after_combat(creature) and creature.combats_this_game == HeroicStand.COMBAT_THRESHOLD - 1:
+					return value
+		return 0
+	if id in ["Exorcism", "Hringhorni"]:
 		return 1700 if bot._board_creature_count(bot.opponent) > 0 or bot._board_creature_count(bot.bot_player) > 0 else 0
 	if id in ["TheInferno", "TheDeluge", "Dromi", "Gleipnir"]:
 		var gain := 0

@@ -920,6 +920,9 @@ func _take_main_phase_action() -> bool:
 		var supported := _get_best_supported_attack(_get_attack_ready_creatures(), _get_board_creatures(opponent))
 		if int(supported.get("score", 0)) > int(attack.get("score", 0)):
 			attack = supported
+		var scavenge_attack := _plan_scavenge_against_unknown_stealth()
+		if int(scavenge_attack.get("score", 0)) > int(attack.get("score", 0)):
+			attack = scavenge_attack
 	var manifestation := _plan_god_manifestation(attack, danger)
 	if bool(manifestation.get("lethal", false)) and _submit_strategy_plan(manifestation):
 		return true
@@ -6101,6 +6104,7 @@ func _extend_combat_line(line: Dictionary, attack: Dictionary, occupied_zone: Zo
 		"attackers": spent_attackers + ([attacker] if partner == null else [attacker, partner]),
 		"blocked": next_blocked, "removed": removed + cleared, "mana": mana, "score": score,
 		"spent_hexes": spent_hexes,
+		"heroic_stand_reward": maxi(int(line.get("heroic_stand_reward", 0)), int(result.get("heroic_stand_reward", 0))),
 		"opponent_followers": opponent_followers, "bot_followers": bot_followers,
 		"opponent_guard": int(line["opponent_guard"]) - int(result.get("opponent_guard_spent", 0)),
 		"bot_guard": int(line["bot_guard"]) - int(result.get("bot_guard_spent", 0)),
@@ -6173,7 +6177,7 @@ func _apply_pierce_conversions(result: Dictionary, bot_followers: int, opponent_
 
 func _combat_line_key(line: Dictionary) -> String:
 	var key := [line["mana"], line["opponent_followers"], line["bot_followers"],
-		line["opponent_guard"], line["bot_guard"], line["uncontested"], line["scavenged"]]
+		line["opponent_guard"], line["bot_guard"], line["uncontested"], line["scavenged"], line.get("heroic_stand_reward", 0)]
 	for field in ["attackers", "blocked", "removed", "spent_hexes"]:
 		var cards: Array = line[field]
 		var ids := cards.map(func(card: Card) -> int: return card.get_instance_id() if card != null else 0)
@@ -7414,6 +7418,41 @@ func _get_direct_follower_damage(attacker: Card) -> int:
 	return GameManager.apply_follower_damage_halvings(
 		_get_combat_strength(attacker), GameManager.combat_follower_damage_halvings(attacker)
 	)
+
+func _plan_scavenge_against_unknown_stealth() -> Dictionary:
+	var best := {}
+	var best_score := 0
+	var targets := _get_board_creatures(opponent).filter(func(card: Card) -> bool:
+		return card.is_stealth and not card.is_petrified() and not CardStrategy.visible(self, card)
+	)
+	if targets.is_empty():
+		return best
+	for attacker in _get_attack_ready_creatures():
+		if not (attacker is HyenaPack) or attacker.abilities_suppressed() or not match_manager.can_attack(attacker):
+			continue
+		var recruits := _get_scavenge_recruits(attacker)
+		if recruits.is_empty():
+			continue
+		var strength := _get_attack_strength_against_defense(attacker)
+		var kill_chance := CardStrategy.estimate_defensive_kill_chance(strength)
+		# Resilience 24 is near the upper quartile of the reach curve. Use it
+		# to price the follower damage from a strong Stealth defender.
+		var damage_on_miss := maxi(0, 24 - strength - bot_player.guard)
+		var miss_cost := _score_follower_loss(bot_player, damage_on_miss) if game_manager.can_player_lose_followers_now(bot_player) else 0
+		if game_manager._has_ferocious_defence(opponent):
+			miss_cost += _get_card_economic_value(attacker)
+		var score := roundi(kill_chance * (ECON_CARD_VALUE + _get_scavenge_value(recruits)) - (1.0 - kill_chance) * miss_cost)
+		score -= game_manager.get_creature_action_mana_cost(attacker, "attack") * _mana_rate()
+		if score <= best_score:
+			continue
+		for target in targets:
+			if not _can_attack_creature(attacker, target) or game_manager.is_warded_from_combat_destruction(target, attacker) \
+					or _known_prepared_response_punishes_attack(attacker, target) or not _is_attack_safe_from_interceptors(attacker, target):
+				continue
+			best = {"attacker": attacker, "target": target, "score": score}
+			best_score = score
+			break
+	return best
 
 func _get_best_stealth_attack(attackers: Array[Card], opposing_creatures: Array[Card]) -> Dictionary:
 	var best_attacker: Card = null
@@ -8803,7 +8842,44 @@ func _estimate_projected_attack_economy(action: CardAction, stats: Dictionary, i
 			else:
 				result["reveal_bonus"] = int(result.get("reveal_bonus", 0)) + _estimate_reveal_trigger_value(combatant)
 		_add_expiring_combat_tokens(action, defender, result)
+		var stand_reward := _heroic_stand_combat_reward(action, defender, result)
+		if stand_reward > 0:
+			result["heroic_stand_reward"] = stand_reward
 	return result
+
+func _heroic_stand_combat_reward(action: CardAction, defender: Card, result: Dictionary) -> int:
+	if result["bot_wins"] or result["opponent_wins"] or action.attacker == null \
+			or not action.attacker.is_creature_card() or not CardStrategy.visible(self, defender) \
+			or not defender.is_creature_card() or defender.is_god or defender.is_petrified():
+		return 0
+	var combats := 0
+	for creature: Card in [action.attacker, action.united_front_partner, defender]:
+		if creature != null and creature.get_controller() == bot_player and creature.is_creature_card() \
+				and creature not in result["casualties"]:
+			combats = maxi(combats, creature.combats_this_game)
+	if combats < HeroicStand.COMBAT_THRESHOLD - 2 or combats >= HeroicStand.COMBAT_THRESHOLD \
+			or not game_manager.can_player_gain_mana_now(bot_player):
+		return 0
+	var best := 0
+	for card: Card in bot_player.hand_zone.cards + game_manager.prepared_charms.keys():
+		if card.card_owner != bot_player or not card is HeroicStand or card.is_activation_locked(game_manager) \
+				or game_manager._has_pending_stack_action_for_card(card):
+			continue
+		if card.is_prepared and (card.is_muted or card.current_zone == null or not card.current_zone.is_board_zone()):
+			continue
+		if not card.get_qualified_creatures(game_manager).is_empty():
+			return 0
+		var value := CardStrategy.mana_gain_value(self, HeroicStand.MANA_GAIN) - ECON_CARD_VALUE \
+			- CardStrategy.mana_penalty(self, CardStrategy.activation_cost(self, card))
+		# A hand copy waits for our turn; a freshly prepared copy also has to wait.
+		if (not card.is_prepared and game_manager.current_player != bot_player) \
+				or (card.is_prepared and not game_manager.is_prepared_charm_ready(card)):
+			@warning_ignore("integer_division")
+			value /= 2
+		best = maxi(best, value)
+	# The second combat still leaves another fight to find and survive.
+	@warning_ignore("integer_division")
+	return best if combats == HeroicStand.COMBAT_THRESHOLD - 1 else best / 4
 
 func _add_expiring_combat_tokens(action: CardAction, defender: Card, result: Dictionary) -> void:
 	var casualties: Array = result["casualties"]
@@ -8818,6 +8894,24 @@ func _add_expiring_combat_tokens(action: CardAction, defender: Card, result: Dic
 			continue
 		_add_destroyed_card_to_economy(result, combatant)
 
+func _get_scavenge_recruits(slayer: HyenaPack) -> Dictionary:
+	var zones := slayer.get_available_scavenge_zones()
+	# A projected summon from hand already occupies its own lane.
+	var lane_count := zones.size() - int(slayer.current_zone == bot_player.hand_zone)
+	var recruits := {}
+	for card: Card in bot_player.deck_zone.get_unordered_deck_cards():
+		if recruits.size() >= lane_count:
+			break
+		if card is HyenaPack and game_manager.can_pay_creature_summon_cost(bot_player, card, null, false):
+			recruits[card] = zones[recruits.size()]
+	return recruits
+
+func _get_scavenge_value(recruits: Dictionary) -> int:
+	var value := 0
+	for card: Card in recruits:
+		value += _get_card_economic_value(card)
+	return value
+
 func _add_deck_combat_rewards(action: CardAction, result: Dictionary) -> void:
 	var casualties: Array = result.get("casualties", [])
 	if casualties.is_empty() or bool(result.get("bot_wins", false)) or bool(result.get("opponent_wins", false)):
@@ -8827,21 +8921,9 @@ func _add_deck_combat_rewards(action: CardAction, result: Dictionary) -> void:
 	result["deck_reward"] = int(result.get("deck_reward", 0))
 	var slayer := result.get("bot_slayer") as Card
 	if slayer is HyenaPack:
-		var zones: Array[Zone] = slayer.get_available_scavenge_zones()
-		# A projected summon came from hand and already occupies its own lane.
-		var lane_count := zones.size() - int(slayer.current_zone == bot_player.hand_zone)
-		var count := 0
-		var value := 0
-		var recruits: Dictionary = {}
-		for card: Card in bot_player.deck_zone.get_unordered_deck_cards():
-			if count >= lane_count:
-				break
-			if card is HyenaPack and game_manager.can_pay_creature_summon_cost(bot_player, card, null, false):
-				value += _get_card_economic_value(card)
-				recruits[card] = zones[count]
-				count += 1
-		result["scavenge_count"] = count
-		result["scavenge_value"] = value
+		var recruits := _get_scavenge_recruits(slayer)
+		result["scavenge_count"] = recruits.size()
+		result["scavenge_value"] = _get_scavenge_value(recruits)
 		result["scavenge_recruits"] = recruits
 		result["scavenge_summons"] = recruits
 	elif slayer is Tatzelwurm and game_manager.can_player_add_to_hand_now(bot_player):
@@ -9437,6 +9519,8 @@ func _score_attack_economy(result: Dictionary, line: Dictionary = {}) -> int:
 	var score := int(result.get("opponent_cards_lost", 0)) - int(result.get("bot_cards_lost", 0))
 	score += int(result.get("hex_trade_credit", 0))
 	score += int(result.get("scavenge_value", 0)) + int(result.get("deck_reward", 0))
+	# Several attacks can qualify different creatures for the same charm.
+	score += maxi(0, int(result.get("heroic_stand_reward", 0)) - int(line.get("heroic_stand_reward", 0)))
 	score -= int(result.get("enslavement_risk", 0))
 	score -= int(result.get("guanyu_counter_risk", 0))
 	score += int(result.get("guanyu_counter_break", 0))

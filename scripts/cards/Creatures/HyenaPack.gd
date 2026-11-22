@@ -13,7 +13,7 @@ func _init() -> void:
 	speed = 1
 	resilience = 13
 	strength = 16
-	ability_text = "[b]Scavenge[/b]: [b]Slay[/b]: Summon all in-deck \"Hyena Pack\"s."
+	ability_text = "[b]Scavenge[/b] ([b]Slay[/b]): Summon every Hyena Pack from your deck."
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricardo Zoppello"

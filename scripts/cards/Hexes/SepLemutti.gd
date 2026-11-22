@@ -14,7 +14,7 @@ func _init() -> void:
 	card_types = ["Hex"]
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
-	ability_text = "Activate when a Spirit, Monster, Undead, or Demon is summoned; [b]Shelve[/b] it."
+	ability_text = "When a Spirit, Monster, Undead, or Demon is summoned, [b]Shelve[/b] it."
 	flavor_text = ""
 	artist = "Lorinda Tomko"
 	art_path = ART_PATH

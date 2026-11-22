@@ -25,7 +25,6 @@ const GuanYuManeuverAbilityBadgeCursorSource = preload("res://images/ability_bad
 const HariiShamanAbilityBadgeCursorSource = preload("res://images/ability_badges/HariiShamanBadge.png")
 const LamashatuAbilityBadgeCursorSource = preload("res://images/ability_badges/LamashatuSuckleBadge.png")
 const NimuePresentAbilityBadgeCursorSource = preload("res://images/ability_badges/NimuePresentBadge.png")
-const PaiLongStormcloudAbilityBadgeCursorSource = preload("res://images/ability_badges/PaiLongStormcloudBadge.png")
 const ASKELLADEN_FIGHT_BADGE := preload("res://images/ability_badges/AskelladenFightBadge.png")
 const ASKELLADEN_RETREAT_BADGE := preload("res://images/ability_badges/AskelladenRetreatBadge.png")
 const AncientPyreCursorSource = preload("res://images/ui/cursors/PyreCursor.png")
@@ -37,6 +36,7 @@ const MEAD_CURSOR_IMAGE_PATH := "res://images/ui/cursors/Mead Cursor.png"
 const FREYJA_TABBY_CURSOR_IMAGE_PATH := "res://images/ui/cursors/TabbyCatCursor.png"
 const FREYJA_BLACK_CURSOR_IMAGE_PATH := "res://images/ui/cursors/BlackCatCursor.png"
 const E2_ABZU_CURSOR_IMAGE_PATH := "res://images/ui/cursors/TempleCursor.png"
+const PAI_LONG_WEATHER_CURSOR_IMAGE_PATH := "res://images/ui/cursors/PaiLongWeatherEmblemCursor.png"
 const TERROR_CURSOR_IMAGE_PATH := "res://images/ui/cursors/TerrorCursor.png"
 const RAVEN_STORM_CURSOR_IMAGE_PATH := "res://images/ui/cursors/RavenCursor.png"
 const FIRE_AND_GOLD_CURSOR_IMAGE_PATH := "res://images/ui/cursors/FireGoldCursor.png"
@@ -821,6 +821,7 @@ var _giant_master_architect_cursor_texture: Texture2D = null
 var _hermes_cursor_texture: Texture2D = null
 var _guan_yu_cursor_texture: Texture2D = null
 var _good_fortune_cursor_texture: Texture2D = null
+var _pai_long_weather_cursor_texture: Texture2D = null
 var _ability_badge_cursor_textures: Dictionary = {}
 var _ability_badge_cursor_target_heights: Dictionary = {}
 var _ancient_pyre_cursor_texture: Texture2D = null
@@ -867,6 +868,7 @@ var _giant_master_architect_cursor_target_height: int = 0
 var _hermes_cursor_target_height: int = 0
 var _guan_yu_cursor_target_height: int = 0
 var _good_fortune_cursor_target_height: int = 0
+var _pai_long_weather_cursor_target_height: int = 0
 var _ancient_pyre_cursor_target_height: int = 0
 var _tez_titlacauan_cursor_target_height: int = 0
 var _anointing_statue_cursor_target_height: int = 0
@@ -1041,6 +1043,8 @@ const GOOD_FORTUNE_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.79)
 const ABILITY_BADGE_CURSOR_TARGET_HEIGHT := 96
 const ABILITY_BADGE_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.50)
 const ABILITY_BADGE_CURSOR_MODE_PREFIX := "ability_badge_"
+const PAI_LONG_WEATHER_CURSOR_TARGET_HEIGHT := 108
+const PAI_LONG_WEATHER_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.50)
 const ANCIENT_PYRE_CURSOR_TARGET_HEIGHT := 96
 const ANCIENT_PYRE_CURSOR_HOTSPOT_RATIO := Vector2(0.50, 0.12)
 const TEZ_TITLACAUAN_CURSOR_TARGET_HEIGHT := 108
@@ -3207,8 +3211,9 @@ func _get_selection_cursor_mode() -> String:
 	var hand_drag_cursor_mode := _get_hand_drag_selection_cursor_mode()
 	if not hand_drag_cursor_mode.is_empty():
 		return hand_drag_cursor_mode
-	if _has_overlay_selection_cursor_mode("pai_long_autumn_king_weather"):
-		return "ability_badge_pai_long_stormcloud"
+	if _has_overlay_selection_cursor_mode("pai_long_autumn_king_weather") \
+		or _has_overlay_selection_cursor_mode("pai_long_weather_draw"):
+		return "pai_long_weather"
 	if _overlay_selection_cursor_mode.begins_with(ABILITY_BADGE_CURSOR_MODE_PREFIX):
 		return _overlay_selection_cursor_mode
 	if _has_overlay_selection_cursor_mode("e2_abzu"):
@@ -3304,6 +3309,8 @@ func _get_cursor_mode_target_height(cursor_mode: String) -> int:
 			return UIArtScalerScript.get_board_cursor_target_height(FREYJA_TABBY_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"freyja_black":
 			return UIArtScalerScript.get_board_cursor_target_height(FREYJA_BLACK_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+		"pai_long_weather":
+			return UIArtScalerScript.get_board_cursor_target_height(PAI_LONG_WEATHER_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"e2_abzu":
 			return UIArtScalerScript.get_board_cursor_target_height(E2_ABZU_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
 		"terror":
@@ -3604,8 +3611,6 @@ func _get_ability_badge_cursor_source(cursor_mode: String) -> Texture2D:
 			return LamashatuAbilityBadgeCursorSource
 		"ability_badge_nimue_present":
 			return NimuePresentAbilityBadgeCursorSource
-		"ability_badge_pai_long_stormcloud":
-			return PaiLongStormcloudAbilityBadgeCursorSource
 	return null
 
 func _apply_ability_badge_cursor(cursor_mode: String) -> bool:
@@ -3643,6 +3648,19 @@ func _apply_ancient_pyre_cursor() -> bool:
 	var hotspot := UIArtScalerScript.get_cursor_hotspot(_ancient_pyre_cursor_texture, ANCIENT_PYRE_CURSOR_HOTSPOT_RATIO)
 	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
 		Input.set_custom_mouse_cursor(_ancient_pyre_cursor_texture, cursor_shape, hotspot)
+	return true
+
+func _apply_pai_long_weather_cursor() -> bool:
+	var target_height := UIArtScalerScript.get_board_cursor_target_height(PAI_LONG_WEATHER_CURSOR_TARGET_HEIGHT, PREFERRED_BOARD_ZONE_EXTENT)
+	if _pai_long_weather_cursor_texture == null or _pai_long_weather_cursor_target_height != target_height:
+		_pai_long_weather_cursor_texture = _load_cursor_texture_from_image_path(PAI_LONG_WEATHER_CURSOR_IMAGE_PATH, target_height)
+		_pai_long_weather_cursor_target_height = target_height
+	if _pai_long_weather_cursor_texture == null:
+		return false
+
+	var hotspot := UIArtScalerScript.get_cursor_hotspot(_pai_long_weather_cursor_texture, PAI_LONG_WEATHER_CURSOR_HOTSPOT_RATIO)
+	for cursor_shape in SACRIFICE_CURSOR_SHAPES:
+		Input.set_custom_mouse_cursor(_pai_long_weather_cursor_texture, cursor_shape, hotspot)
 	return true
 
 func _apply_e2_abzu_cursor() -> bool:
@@ -4054,6 +4072,14 @@ func _sync_sacrifice_cursor() -> void:
 	if cursor_mode == "good_fortune":
 		if _apply_good_fortune_cursor():
 			_active_selection_cursor_mode = "good_fortune"
+			_active_selection_cursor_target_height = target_height
+		else:
+			_restore_default_selection_cursor()
+		return
+
+	if cursor_mode == "pai_long_weather":
+		if _apply_pai_long_weather_cursor():
+			_active_selection_cursor_mode = "pai_long_weather"
 			_active_selection_cursor_target_height = target_height
 		else:
 			_restore_default_selection_cursor()
@@ -32971,12 +32997,11 @@ func _hide_ascension_prompt() -> void:
 func _activate_pai_long_weather_draw(card: Card) -> void:
 	if game_manager == null or card.card_owner == null:
 		return
-	var weather_spell: Card = null
+	var weather_spells: Array[Card] = []
 	for card_in_hand in card.card_owner.hand_zone.cards:
 		if card_in_hand != null and card_in_hand.has_type("Weather"):
-			weather_spell = card_in_hand
-			break
-	if weather_spell == null:
+			weather_spells.append(card_in_hand)
+	if weather_spells.is_empty():
 		_set_action_label_text("Pai Long needs a Weather spell in hand.")
 		update_ui()
 		return
@@ -32985,23 +33010,43 @@ func _activate_pai_long_weather_draw(card: Card) -> void:
 		_set_action_label_text("Pai Long cannot draw; deck is empty.")
 		update_ui()
 		return
-	var on_choose_drawn := func(drawn_card: Card) -> void:
-		if drawn_card != null:
-			card.card_owner.move_card(weather_spell, card.card_owner.graveyard_zone)
-			card.card_owner.move_card(drawn_card, card.card_owner.hand_zone)
-			_set_action_label_text("Pai Long discarded " + weather_spell.card_name + " to add " + drawn_card.card_name + " to hand.")
-			game_manager.notify_god_power_activated(card.card_owner, card)
+
+	var begin_draw := func(weather_to_discard: Card) -> void:
+		if weather_to_discard == null:
+			return
+		var on_choose_drawn := func(drawn_card: Card) -> void:
+			if drawn_card != null:
+				card.card_owner.move_card(weather_to_discard, card.card_owner.graveyard_zone)
+				card.card_owner.move_card(drawn_card, card.card_owner.hand_zone)
+				_set_action_label_text("Pai Long discarded " + weather_to_discard.card_name + " to add " + drawn_card.card_name + " to hand.")
+				game_manager.notify_god_power_activated(card.card_owner, card)
+			update_ui()
+		_set_action_label_text("Pai Long: choose a card from your deck to add to hand.")
+		_show_card_selection_overlay(
+			"Choose a Card to Add to Hand",
+			deck_cards,
+			on_choose_drawn,
+			Callable(),
+			"pai_long_weather_draw",
+			"",
+			false,
+			true,
+			true
+		)
+
+	if weather_spells.size() == 1:
+		begin_draw.call(weather_spells[0])
+		return
+
+	var on_cancel_discard := func() -> void:
+		_set_action_label_text("Cancelled Pai Long's weather draw.")
 		update_ui()
+	_set_action_label_text("Pai Long: choose a Weather spell in hand to discard.")
 	_show_card_selection_overlay(
-		"Choose a Card to Add to Hand",
-		deck_cards,
-		on_choose_drawn,
-		Callable(),
-		"ability_badge_pai_long_stormcloud",
-		"",
-		false,
-		true,
-		true
+		"Choose a Weather Spell to Discard",
+		weather_spells,
+		begin_draw,
+		on_cancel_discard
 	)
 
 func _prompt_fenris_devour(card: Card) -> void:

@@ -96,6 +96,7 @@ func run() -> bool:
 	_check_bot_fenrir_summon(failures)
 	_check_bot_wolf_master(failures)
 	_check_bot_main_phase_combat_order(failures)
+	_check_bot_hyena_stealth_attack(failures)
 	_check_bot_aurboda_pierce(failures)
 	_check_bot_tablet_of_life_payoff(failures)
 	_check_bot_conjure_eidolon(failures)
@@ -1491,15 +1492,50 @@ func _check_heroic_stand_combat_count(failures: PackedStringArray) -> void:
 	player.move_card(charm, player.hand_zone)
 	player.frontline_zones[0].add_card(attacker)
 	opponent.frontline_zones[0].add_card(defender)
+	var mana_sink := BrownBear.new()
+	mana_sink.card_owner = player
+	mana_sink.mana_cost = 12
+	player.deck_zone.add_card(mana_sink)
+	player.mana = 0
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	if BotCardStrategyScript.preparation_score(bot, charm) > 0:
+		failures.append("Bot wanted to prepare Heroic Stand before any combat")
 	for turn in [2, 3]:
 		game.turn_number = turn
 		game._record_combat_participation(attacker, defender)
 	if charm.can_activate_from_hand(game):
 		failures.append("Heroic Stand activated before three combats")
+	if BotCardStrategyScript.effect_score(bot, charm) != BotCardStrategyScript.BAD \
+			or BotCardStrategyScript.preparation_score(bot, charm) <= 0:
+		failures.append("Bot did not distinguish preparing Heroic Stand from casting it at two combats")
+	var attack := CardAction.new()
+	attack.type = CardAction.Type.ATTACK
+	attack.source_player = player
+	attack.attacker = attacker
+	attack.target = defender
+	attacker.strength = 10
+	defender.creature_mode = Card.CreatureMode.DEFENSIVE
+	defender.resilience = 10
+	var safe := bot._estimate_attack_economy(attack, null, 0, 0)
+	defender.creature_mode = Card.CreatureMode.AGGRESSIVE
+	defender.strength = 11
+	var fatal := bot._estimate_attack_economy(attack, null, 0, 0)
+	attack.target = opponent
+	var direct := bot._estimate_attack_economy(attack, null, 0, 0)
+	var reward := int(safe.get("heroic_stand_reward", 0))
+	if reward <= 0 or fatal.has("heroic_stand_reward") or direct.has("heroic_stand_reward"):
+		failures.append("Bot did not reserve Heroic Stand's combat reward for a surviving creature fight")
+	if bot._score_attack_economy(safe) - bot._score_attack_economy(safe, {"heroic_stand_reward": reward}) != reward:
+		failures.append("Bot counted Heroic Stand twice in one attack line")
 	game.turn_number = 4
 	game._record_combat_participation(attacker, defender)
 	if not charm.can_activate_from_hand(game):
 		failures.append("Heroic Stand did not count combats across turns")
+	var plan := bot._get_best_strategy_action([], {}, 0)
+	if plan.get("command", {}).get("charm_uid", "") != charm.uid or plan.get("score", 0) <= 0:
+		failures.append("Bot did not plan to cast Heroic Stand once a creature qualified")
 	var mana_before := player.mana
 	charm.resolve(game)
 	if player.mana != mana_before + HeroicStand.MANA_GAIN:
@@ -1513,6 +1549,25 @@ func _check_heroic_stand_combat_count(failures: PackedStringArray) -> void:
 		failures.append("Heroic Stand's hover count did not respect starting deck privacy")
 	if BeardedAxe.new().get_bonus_strength_vs_defense(attacker) != 8:
 		failures.append("Bearded Axe did not grant its Defensive-stance bonus to a non-Norse Warrior")
+	game._upkeep_resolved_turn = game.turn_number
+	game.prepare_card(player, charm, player.reserve_zones[0])
+	if not charm.is_prepared:
+		failures.append("Heroic Stand priority fixture could not prepare the charm")
+		return
+	game.turn_number = 5
+	game.current_player = opponent
+	game.other_player = player
+	game.turn_player = opponent
+	game._upkeep_resolved_turn = game.turn_number
+	game.priority_player = player
+	player.mana = 0
+	var end_turn := CardAction.new()
+	end_turn.type = CardAction.Type.EVENT
+	end_turn.source_player = opponent
+	end_turn.event_name = "end_turn"
+	game.action_stack.append(end_turn)
+	if bot._choose_priority_response() != charm:
+		failures.append("Bot did not use a prepared Heroic Stand on the opponent's turn")
 
 func _check_combat_rounding(failures: PackedStringArray) -> void:
 	var game := _new_fixture_game()
@@ -2469,6 +2524,52 @@ func _check_bot_aurboda_pierce(failures: PackedStringArray) -> void:
 	game.grant_turn_follower_loss_prevention(player)
 	if bot._estimate_attack_economy(action, null, 0, 0)["opponent_followers_lost"] != 0:
 		failures.append("Bot forecast Pierce through follower-loss prevention")
+	bot.detach()
+
+func _check_bot_hyena_stealth_attack(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	player.followers = 100
+	opponent.followers = 100
+	var pai_long := PaiLongAutumnKing.new()
+	var hyena := HyenaPack.new()
+	for attacker: Card in [pai_long, hyena]:
+		attacker.card_owner = player
+		attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
+	player.frontline_zones[0].add_card(pai_long)
+	player.frontline_zones[1].add_card(hyena)
+	var hidden := BrownBear.new()
+	hidden.card_owner = opponent
+	hidden.is_face_down = true
+	hidden.is_stealth = true
+	hidden.creature_mode = Card.CreatureMode.DEFENSIVE
+	hidden.resilience = 22
+	opponent.frontline_zones[0].add_card(hidden)
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	if not bot._plan_scavenge_against_unknown_stealth().is_empty():
+		failures.append("Bot planned a Scavenge attack with no packmates in the deck")
+	var packmate := HyenaPack.new()
+	packmate.card_owner = player
+	player.deck_zone.add_card(packmate)
+	var plan := bot._plan_scavenge_against_unknown_stealth()
+	if plan.get("attacker") != hyena or plan.get("target") != hidden:
+		failures.append("Bot passed up Scavenge against an unknown Stealth creature")
+	hidden.resilience = 12
+	if bot._plan_scavenge_against_unknown_stealth() != plan:
+		failures.append("Bot used an unknown Stealth creature's resilience to plan Scavenge")
+	if bot._take_main_phase_action():
+		for _step in range(8):
+			manager.advance_priority()
+	if hidden.current_zone != opponent.graveyard_zone or packmate.current_zone not in player.frontline_zones:
+		failures.append("Bot did not attack the Stealth creature with Hyena Pack ahead of Pai Long and trigger Scavenge")
 	bot.detach()
 
 func _check_bot_main_phase_combat_order(failures: PackedStringArray) -> void:

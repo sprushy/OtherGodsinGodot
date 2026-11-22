@@ -19,17 +19,17 @@ func _init() -> void:
 func can_activate_from_hand(game_manager: GameManager, triggering_action: CardAction = null) -> bool:
 	if not super.can_activate_from_hand(game_manager, triggering_action):
 		return false
-	return not _get_qualified_creatures(game_manager).is_empty()
+	return not get_qualified_creatures(game_manager).is_empty()
 
 func can_activate_prepared(game_manager: GameManager, triggering_action: CardAction = null) -> bool:
 	if not super.can_activate_prepared(game_manager, triggering_action):
 		return false
-	return not _get_qualified_creatures(game_manager).is_empty()
+	return not get_qualified_creatures(game_manager).is_empty()
 
 func resolve(game_manager: GameManager, _target = null) -> void:
 	if game_manager == null or card_owner == null:
 		return
-	var qualified_creatures := _get_qualified_creatures(game_manager)
+	var qualified_creatures := get_qualified_creatures(game_manager)
 	if qualified_creatures.is_empty():
 		game_manager.note_player_feedback("%s fizzles: none of your creatures has been in %d combats." % [card_name, COMBAT_THRESHOLD])
 		return
@@ -45,7 +45,7 @@ func resolve(game_manager: GameManager, _target = null) -> void:
 	feedback += "."
 	game_manager.note_player_feedback(feedback)
 
-func _get_qualified_creatures(game_manager: GameManager) -> Array[Card]:
+func get_qualified_creatures(game_manager: GameManager) -> Array[Card]:
 	if game_manager == null or card_owner == null:
 		return []
 	return game_manager.get_field_cards(card_owner).filter(func(card: Card) -> bool:

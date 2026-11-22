@@ -253,7 +253,69 @@ func _setup_test_board() -> void:
 	load_featured_card_test_scenario()
 
 func load_featured_card_test_scenario() -> void:
-	load_hermes_dodge_test_scenario()
+	load_pai_long_cursor_test_scenario()
+
+func load_pai_long_cursor_test_scenario() -> void:
+	_reset_test_match_state()
+	_add_test_god(player1, Odin.new())
+	_add_test_god(player2, Thor.new())
+
+	# A temporary board copy is ascended in place, leaving the real ascended god in
+	# P1's god slot with the exact card name "Pai Long" that the badge handler expects.
+	var ascended_pai_long := PaiLongAutumnKing.new()
+	_place_test_board_card(player1, player1.frontline_zones[4], ascended_pai_long)
+	game_manager.ascend_creature(ascended_pai_long, player1)
+
+	# The normal copy stays in hand so Stormcloud can be triggered by a normal summon.
+	_add_test_hand_card(player1, PaiLongAutumnKing.new())
+	_add_test_hand_card(player1, HeavySnow.new())
+	_add_test_hand_card(player1, Storm.new())
+	_add_test_hand_card(player1, Drought.new())
+
+	# Weather targets for Stormcloud, plus non-Weather cards for the ascended draw.
+	_add_test_deck_card(player1, Drought.new())
+	_add_test_deck_card(player1, Storm.new())
+	_add_test_deck_card(player1, BrownBear.new())
+	_add_test_deck_card(player1, GiantMasterArchitect.new())
+	_add_test_deck_card(player1, HeroicStand.new())
+
+	_place_test_board_card(player2, player2.frontline_zones[2], MinotaurFootsoldier.new(), Card.CreatureMode.DEFENSIVE)
+	_add_test_hand_card(player2, DivineLightning.new())
+	_add_test_deck_card(player2, BrownBear.new())
+	_add_test_deck_card(player2, Berserker.new())
+
+	player1.spend_mana(player1.mana)
+	player1.gain_mana(20)
+	player2.spend_mana(player2.mana)
+	player2.gain_mana(12)
+	player1.followers = 100
+	player2.followers = 100
+	player1.followers_changed.emit(player1.followers)
+	player2.followers_changed.emit(player2.followers)
+	player1.has_summoned_this_turn = false
+	player2.has_summoned_this_turn = false
+
+	game_manager.current_player = player1
+	game_manager.other_player = player2
+	game_manager.feedback_viewer = player1
+	player1.is_turn_player = true
+	player2.is_turn_player = false
+	selected_card = null
+	selected_attacker = null
+	selected_interceptor = null
+	_test_turn_owner = player1
+	_test_turn_opponent = player2
+	game_manager.turn_number = 1
+	game_manager.start_turn()
+	_open_upkeep_choice_window()
+	action_label.text = (
+		"Pai Long Cursor Test. P1's god slot holds ascended Pai Long, and P1 also has a normal Pai Long, Autumn King in hand. "
+		+ "Choose Mana for upkeep. Hover P1's god slot to reveal Pai Long's badge and click it. "
+		+ "With multiple Weather spells in hand, the ascended ability first opens a normal click-to-select fan to choose which Weather to discard; the deck picker then uses the weather-emblem cursor. "
+		+ "Cancel or pick a card. Then summon Pai Long, Autumn King from hand into an empty frontline lane: Stormcloud should open the Weather picker with the same weather-emblem cursor. "
+		+ "Heavy Snow, Storm, and Drought in hand are Weather discard fuel. Both selection cursors should use PaiLongWeatherEmblemCursor.png, not the badge art."
+	)
+	update_ui()
 
 func load_hermes_dodge_test_scenario() -> void:
 	_reset_test_match_state()

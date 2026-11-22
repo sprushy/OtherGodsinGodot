@@ -77,6 +77,13 @@ const NAME_POOLS := {
 		"Swift Coin", "Wayfarer's Luck", "Stolen Herd", "Hidden Milestone",
 		"Border Runner", "Winged Cap", "The Kindly Guide", "Lyre of Shell",
 	],
+	"Hermes Psychopompus": [
+		"The Last Passage", "Shepherd of Shades", "The Golden Threshold", "Beyond the Styx",
+		"The Souls' Crossing", "Warden of the Veil", "The Final Escort", "Whispers of Asphodel",
+		"The Road to Hades", "The Psychopomp's Procession", "Between Two Worlds", "The Wand of Slumber",
+		"The Unseen Path", "The Herald of Hades", "Where Shadows Wander", "The Ferryman's Herald",
+		"The Gates of No Return", "The Golden Caduceus", "The Gathering of Ghosts", "The Road Beyond Death",
+	],
 	"Manannán mac Lir": [
 		"Sea Mist", "Silver Bough", "Wave Rider", "Tidewalker",
 		"Hidden Isle", "White Sail", "Deepwater", "Land of Youth",
