@@ -15538,6 +15538,8 @@ func _prompt_card_target_selection(
 	cancel_target: Callable = Callable(),
 	title: String = ""
 ) -> void:
+	if game_manager != null and source != null:
+		targets = game_manager.filter_guardian_targets(targets, source)
 	var prompt := title if title != "" else "Choose a target for " + source.card_name
 	if targets.is_empty() or _should_prompt_targets_in_overlay(targets):
 		_show_card_selection_overlay(prompt, targets, confirm_target, cancel_target, _get_selection_cursor_mode_for_source(source))
@@ -24557,6 +24559,8 @@ func _get_priority_response_target_uids(card: Card, top: CardAction) -> Array:
 		targets = card.get_priority_field_targets(game_manager, top)
 	elif card.has_method("get_valid_targets"):
 		targets = card.get_valid_targets(game_manager)
+	if game_manager != null:
+		targets = game_manager.filter_guardian_targets(targets, card)
 	for target in targets:
 		if target is Card:
 			target_uids.append((target as Card).uid)
@@ -24776,6 +24780,8 @@ func _begin_priority_response_target_selection(
 	response_data: Dictionary,
 	reveal_hidden_cards: bool = false
 ) -> void:
+	if game_manager != null and card != null:
+		targets = game_manager.filter_guardian_targets(targets, card)
 	_mark_priority_response_target_selection_pending(card, response_data)
 	var confirm_target := func(chosen_card: Card) -> void:
 		_clear_pending_priority_response_target_selection()
@@ -24842,6 +24848,8 @@ func _try_submit_authoritative_priority_response(card: Card) -> bool:
 	if card is CharmCard:
 		var charm := card as CharmCard
 		var targets: Array = charm.get_priority_targets(game_manager, top) if charm.targets else []
+		if game_manager != null and charm.targets:
+			targets = game_manager.filter_guardian_targets(targets, charm)
 		var from_hand := charm.current_zone == charm.card_owner.hand_zone
 		var command := {type = "play_charm_response", charm_uid = charm.uid, target_uid = "", from_hand = from_hand}
 		if charm.targets and targets.is_empty():
@@ -24861,6 +24869,8 @@ func _try_submit_authoritative_priority_response(card: Card) -> bool:
 	if card is SpellCard:
 		var spell := card as SpellCard
 		var targets: Array = spell.get_valid_targets(game_manager) if spell.targets and spell.has_method("get_valid_targets") else []
+		if game_manager != null and spell.targets:
+			targets = game_manager.filter_guardian_targets(targets, spell)
 		var command := {type = "cast_spell", spell_uid = spell.uid, target_uid = ""}
 		if spell.targets and targets.is_empty():
 			_set_action_label_text(spell.card_name + " has no valid targets.")
@@ -24878,6 +24888,8 @@ func _try_submit_authoritative_priority_response(card: Card) -> bool:
 			targets = card.get_priority_field_targets(game_manager, top)
 		elif card.has_method("get_valid_targets"):
 			targets = card.get_valid_targets(game_manager)
+		if game_manager != null:
+			targets = game_manager.filter_guardian_targets(targets, card)
 		var command := {type = "play_priority_ability", source_uid = card.uid, target_uid = ""}
 		if bool(card.get("targets")) and targets.is_empty():
 			_set_action_label_text(card.card_name + " has no valid targets.")

@@ -293,6 +293,11 @@ func confirm_click_selection(target) -> void:
 	if not pending_click_selection_validator.call(resolved_target):
 		move_failed.emit("Invalid target for " + pending_click_selection_name)
 		return
+	if resolved_target is Card:
+		var guardian_reason := _get_guardian_target_block_reason(pending_click_selection_source, resolved_target as Card)
+		if guardian_reason != "":
+			move_failed.emit(guardian_reason)
+			return
 		
 	var confirm_callback = pending_click_selection_confirm
 	_clear_targeting_state()
@@ -3245,6 +3250,8 @@ func _get_priority_response_targets(card: Card, top: CardAction) -> Array:
 		targets = card.get_priority_field_targets(game_manager, top)
 	elif card.has_method("get_valid_targets"):
 		targets = card.get_valid_targets(game_manager)
+	if game_manager != null:
+		targets = game_manager.filter_guardian_targets(targets, card)
 	return targets
 
 func _get_priority_response_target_uids(card: Card, top: CardAction) -> Array:
@@ -3270,6 +3277,9 @@ func _validate_priority_response_target(card: Card, top: CardAction, target: Car
 	var requested_uid := str(target_uid).strip_edges()
 	var requires_target := _priority_response_requires_target_choice(card)
 	var valid_targets := _get_priority_response_targets(card, top)
+	var guardian_reason := _get_guardian_target_block_reason(card, target)
+	if guardian_reason != "":
+		return context + ": " + guardian_reason
 	if not requested_uid.is_empty():
 		if not requires_target:
 			return ""
@@ -3282,7 +3292,20 @@ func _validate_priority_response_target(card: Card, top: CardAction, target: Car
 		if valid_targets.is_empty():
 			return context + ": no valid targets"
 		return context + ": target required"
+	# Some responses auto-select targets (e.g. Smite). If the source is a
+	# targeting effect and Guardian filtered every candidate, reject it.
+	if game_manager != null and card != null and game_manager.is_targeting_source(card) and valid_targets.is_empty():
+		return context + ": no valid targets"
 	return ""
+
+# Shared authoritative check for Guardian (Asaruludu's passive). Returns a
+# player-facing failure reason when the source may not target this card.
+func _get_guardian_target_block_reason(source: Card, target: Card) -> String:
+	if game_manager == null or target == null:
+		return ""
+	if not game_manager.is_guardian_protected(target, source):
+		return ""
+	return "%s is protected by Guardian." % target.card_name
 
 func _build_priority_response_options(responses: Array) -> Array:
 	var response_options: Array = []
@@ -5199,6 +5222,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 				public_details["creature_typing"] = CardSubtypes.format_typing(acting_player.starting_creature_typings[typing_key])
 			var spell_target_uid: String = command.get("target_uid", "")
 			var spell_target: Card = game_manager.get_card_by_uid(spell_target_uid) if spell_target_uid != "" else null
+			var spell_guardian_reason := _get_guardian_target_block_reason(spell, spell_target)
+			if spell_guardian_reason != "":
+				move_failed.emit(spell_guardian_reason)
+				return false
 			if spell is ConjureEidolon and not (spell as ConjureEidolon).is_valid_target(spell_target, game_manager):
 				move_failed.emit("Conjure Eidolon requires a non-Spirit creature you control as a legal target.")
 				return false
@@ -5380,6 +5407,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var target_uid: String = command.get("target_uid", "")
 			if target_uid != "":
 				target = game_manager.get_card_by_uid(target_uid)
+			var god_guardian_reason := _get_guardian_target_block_reason(god_card, target)
+			if god_guardian_reason != "":
+				move_failed.emit(god_guardian_reason)
+				return false
 			var god_resolution_text := ""
 			if psychopompus != null:
 				var failure_reason := psychopompus.get_ability_command_failure_reason(game_manager, command, target)
@@ -5426,6 +5457,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var act_target_uid: String = command.get("target_uid", "")
 			if act_target_uid != "":
 				act_target = game_manager.get_card_by_uid(act_target_uid)
+			var power_guardian_reason := _get_guardian_target_block_reason(power_card, act_target)
+			if power_guardian_reason != "":
+				move_failed.emit(power_guardian_reason)
+				return false
 			var power_ward_block_reason := game_manager.get_turn_destruction_ward_activation_block_reason(power_card, act_target)
 			if power_ward_block_reason != "":
 				move_failed.emit(power_ward_block_reason)
@@ -5754,6 +5789,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 				var nested_target_uid := str(aca_option.get("target_uid", aca_option.get("chosen_uid", ""))).strip_edges()
 				if nested_target_uid != "":
 					aca_target = game_manager.get_card_by_uid(nested_target_uid)
+			var aca_guardian_reason := _get_guardian_target_block_reason(aca_source, aca_target)
+			if aca_guardian_reason != "":
+				move_failed.emit(aca_guardian_reason)
+				return false
 			var aca_resolve_target_uid = aca_target.uid if aca_target != null else ""
 			var aca_has_return_to_hand := command.has("return_to_hand")
 			var aca_return_to_hand := bool(command.get("return_to_hand", false))

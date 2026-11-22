@@ -888,10 +888,23 @@ func get_priority_hex_targets(hex: HexCard, action: CardAction) -> Array[Card]:
 	if hex == null or action == null:
 		return valid_targets
 	if hex.has_method("get_priority_targets"):
-		return hex.get_priority_targets(self, action)
+		return filter_guardian_targets(hex.get_priority_targets(self, action), hex)
 	if action.type == CardAction.Type.ATTACK:
 		return get_attack_hex_targets(action, hex)
 	return valid_targets
+
+# Drops targets that Guardian shields from this source. Kept in one place so
+# every hex target list honours Asaruludu without each card re-checking.
+func filter_guardian_targets(targets: Array, source: Card) -> Array[Card]:
+	var filtered: Array[Card] = []
+	for target in targets:
+		if not (target is Card):
+			continue
+		var target_card := target as Card
+		if is_guardian_protected(target_card, source):
+			continue
+		filtered.append(target_card)
+	return filtered
 
 func get_attack_hex_targets(action: CardAction, hex: HexCard) -> Array[Card]:
 	var valid_targets: Array[Card] = []
@@ -913,7 +926,7 @@ func get_attack_hex_targets(action: CardAction, hex: HexCard) -> Array[Card]:
 			continue
 		if candidate.get_controller() != action.source_player:
 			continue
-		if hex.can_activate(candidate, defender):
+		if hex.can_activate(candidate, defender) and not is_guardian_protected(candidate, hex):
 			valid_targets.append(candidate)
 	return valid_targets
 
@@ -1133,6 +1146,10 @@ func _has_gala_tura_graveward(target: Card, source: Card) -> bool:
 func is_immune_to_source(target: Card, source: Card) -> bool:
 	if target == null or source == null:
 		return false
+	# Guardian is a targeting restriction, so route it through the same
+	# immunity check most card target lists already use.
+	if is_targeting_source(source) and is_guardian_protected(target, source):
+		return true
 	if _has_gala_tura_graveward(target, source):
 		return true
 	var target_controller := target.get_controller()
@@ -3674,23 +3691,45 @@ func _class_rend_active(player: Player, victim: Card) -> bool:
 	return false
 
 # Returns true if target is shielded by Guardian (Asaruludu's passive).
-# Applies during the controller's turn or during the combat phase.
+# Asaruludu protects other allied Ancient creatures from opposing targeting
+# effects during its controller's turn or while the target is in combat.
 func is_guardian_protected(target: Card, source: Card = null) -> bool:
+	if target == null:
+		return false
 	if source != null and not is_targeting_source(source):
 		return false
-	if target != null and target.has_status_effect("en_hedu_anna_exaltation_guard"):
+	if target.has_status_effect("en_hedu_anna_exaltation_guard"):
 		return true
 	var target_controller := target.get_controller()
 	if target_controller == null:
 		return false
-	if not (current_phase == GamePhase.COMBAT or current_player == target_controller):
+	# Guardian is a protective ward against opposing effects; a player may
+	# still target their own Ancient creatures.
+	if source != null and source.get_controller() == target_controller:
+		return false
+	if not (current_phase == GamePhase.COMBAT or current_player == target_controller or _is_card_in_combat(target)):
 		return false
 	if target.culture != "Ancient":
 		return false
 	for zone in target_controller.frontline_zones + target_controller.reserve_zones:
 		for card in zone.cards:
-			if card is Asaruludu and not card.abilities_suppressed():
+			if card is Asaruludu and card != target and not card.abilities_suppressed():
 				return true
+	return false
+
+# True while this card is part of an attack that is still on the stack. The
+# combat phase flag is only set when an attack resolves, so the priority
+# window that precedes combat needs this explicit check.
+func _is_card_in_combat(card: Card) -> bool:
+	if card == null:
+		return false
+	for action in action_stack:
+		if action == null or action.type != CardAction.Type.ATTACK:
+			continue
+		if action.attacker == card or action.united_front_partner == card:
+			return true
+		if action.interceptor == card or action.target == card:
+			return true
 	return false
 
 # Returns whether Class Rend would trigger for this kill (evaluated before any zone changes).
