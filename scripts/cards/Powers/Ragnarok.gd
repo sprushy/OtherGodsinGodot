@@ -18,7 +18,7 @@ func _init() -> void:
 	is_legendary = true
 	card_types = ["Power", "Legendary Destruction", "Universal"]
 	targets = false
-	ability_text = "[b]Unlock[/b] (%d): This activates only when you unlock it. Destroy all cards on the field; then each player with more than %d cards in hand discards down to %d. You cannot attack this turn. After %d of your opponent's turns, [b]Relock[/b] this." % [UNLOCK_COST, HAND_LIMIT, HAND_LIMIT, RELOCK_TURNS]
+	ability_text = "[b]Unlock[/b] (%d): Destroy all cards on the field. Each player with more than %d cards in hand discards down to %d. You can't attack this turn. [b]Relock[/b] this after %d of your opponent's turns." % [UNLOCK_COST, HAND_LIMIT, HAND_LIMIT, RELOCK_TURNS]
 	artist = "Riccardo Zoppello"
 	art_path = ART_PATH
 

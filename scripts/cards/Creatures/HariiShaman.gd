@@ -16,20 +16,6 @@ const ANIMAL_SUBTYPE_OPTIONS: Array[String] = [
 	"Taurine",
 	"Avian",
 ]
-const ANIMAL_RELATED_TYPES: Array[String] = [
-	"Animal",
-	"Ursine",
-	"Lupine",
-	"Canine",
-	"Porcine",
-	"Hircine",
-	"Taurine",
-	"Avian",
-]
-const ANIMAL_SUBTYPE_EXTRA_TYPES := {
-	"Avian": ["Aerial"],
-}
-
 var _transforms_used_this_turn: int = 0
 
 func _init() -> void:
@@ -182,31 +168,32 @@ func _can_restore_target(target: Card) -> bool:
 		and target.has_type(ANIMAL_TYPE)
 
 func _transform_to_animal(target: Card, chosen_subtype: String) -> void:
-	var next_types := _filter_transform_types(target.card_types)
-	next_types.erase(HUMAN_TYPE)
-	next_types.erase(WARRIOR_TYPE)
-	_ensure_type(next_types, ANIMAL_TYPE)
-	_ensure_type(next_types, chosen_subtype)
-	for extra_type in ANIMAL_SUBTYPE_EXTRA_TYPES.get(chosen_subtype, []):
-		_ensure_type(next_types, str(extra_type))
-	target.card_types = next_types
+	var next_types := _filter_transform_types(target.get_subtypes())
+	for type_name in CardSubtypes.expand(chosen_subtype):
+		_ensure_type(next_types, type_name)
+	_apply_transform_types(target, next_types)
 
 func _restore_to_norse_human_warrior(target: Card) -> void:
-	var next_types := _filter_transform_types(target.card_types)
+	var next_types := _filter_transform_types(target.get_subtypes())
 	_ensure_type(next_types, HUMAN_TYPE)
 	_ensure_type(next_types, WARRIOR_TYPE)
 	_ensure_type(next_types, NORSE_TYPE)
-	target.card_types = next_types
+	_apply_transform_types(target, next_types)
+
+func _apply_transform_types(target: Card, next_types: Array[String]) -> void:
+	if target.field_subtypes.is_empty():
+		target.card_types = next_types
+		target._emit_visual_state_changed()
+	else:
+		target.replace_field_subtypes(next_types)
 
 func _filter_transform_types(existing_types: Array[String]) -> Array[String]:
 	var filtered: Array[String] = []
+	var avian := CardSubtypes.includes(existing_types, "Avian")
 	for type_name in existing_types:
-		if type_name == TARGETING_TYPE:
-			filtered.append(type_name)
+		if CardSubtypes.matches(type_name, ANIMAL_TYPE) or CardSubtypes.matches(type_name, WARRIOR_TYPE):
 			continue
-		if type_name in ANIMAL_RELATED_TYPES:
-			continue
-		if type_name == HUMAN_TYPE or type_name == WARRIOR_TYPE:
+		if type_name == HUMAN_TYPE or (type_name == "Aerial" and avian):
 			continue
 		filtered.append(type_name)
 	return filtered

@@ -3084,7 +3084,8 @@ func _queue_authoritative_magical_action(
 	resolve_callback: Callable,
 	resolution_text: String = "",
 	preferred_display_zone: Zone = null,
-	response_to: CardAction = null
+	response_to: CardAction = null,
+	public_details: Dictionary = {}
 ) -> void:
 	if game_manager == null or source_card == null:
 		return
@@ -3095,6 +3096,7 @@ func _queue_authoritative_magical_action(
 	action.target = target
 	action.response_to = response_to
 	action.resolve_callback = resolve_callback
+	action.event_data = public_details.duplicate()
 	action.resolution_text = resolution_text if resolution_text != "" else _build_authoritative_resolution_text(action_type, source_card, target)
 	if action_type == CardAction.Type.ABILITY:
 		action.event_data["ability_trigger_hint"] = "activated"
@@ -3379,6 +3381,9 @@ func _get_priority_action_message(top: CardAction, viewer: Player = null) -> Str
 				return _get_action_label(top.attacker, viewer) + " is attacking - you may respond!"
 		CardAction.Type.SPELL:
 			if top.card != null:
+				var named_subtype := str(top.event_data.get("named_subtype", ""))
+				if not named_subtype.is_empty():
+					return "%s names %s." % [_get_action_label(top.card, viewer), named_subtype]
 				return _get_action_label(top.card, viewer) + " is waiting to resolve - you may respond!"
 		CardAction.Type.ABILITY:
 			if top.card != null:
@@ -5185,6 +5190,13 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if spell == null or not (spell is SpellCard):
 				move_failed.emit("cast_spell: spell not found or not a SpellCard")
 				return false
+			var public_details := {}
+			if spell is Metamorphosis:
+				var subtype = command.get("subtype", "")
+				if not subtype is String or subtype not in Metamorphosis.get_subtype_options():
+					move_failed.emit("Metamorphosis needs a valid subtype.")
+					return false
+				public_details["named_subtype"] = subtype
 			var spell_target_uid: String = command.get("target_uid", "")
 			var spell_target: Card = game_manager.get_card_by_uid(spell_target_uid) if spell_target_uid != "" else null
 			if spell is ConjureEidolon and not (spell as ConjureEidolon).is_valid_target(spell_target, game_manager):
@@ -5278,7 +5290,9 @@ func _process_command_impl(command: Dictionary) -> bool:
 				spell_target,
 				spell_resolve,
 				"",
-				preferred_display_zone
+				preferred_display_zone,
+				null,
+				public_details
 			)
 			_advance_authoritative_priority()
 			move_validated.emit(command)

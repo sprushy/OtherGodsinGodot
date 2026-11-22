@@ -15,7 +15,7 @@ func _init() -> void:
 	mana_cost = 0
 	speed = 3
 	targets = true
-	ability_text = "Cannot be negated. Choose a friendly creature. Until the end of your next turn, negate all effects on it except its own, then destroy any enemy cards still targeting it."
+	ability_text = "Cannot be negated. Choose a friendly creature. Negate all effects on it except its own until the end of your next turn and destroy opposing cards targeting it with effects."
 	artist = "Riccardo Zoppello"
 	art_path = ART_PATH
 

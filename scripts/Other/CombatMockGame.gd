@@ -11993,7 +11993,7 @@ func _build_hand_info_sections(card: Card) -> Array[Dictionary]:
 	if card == null:
 		return sections
 	var display_types: Array[String] = []
-	for card_type in card.card_types:
+	for card_type in card.get_subtypes():
 		var normalized := str(card_type).strip_edges()
 		if normalized.is_empty() or normalized in display_types:
 			continue
@@ -12952,7 +12952,7 @@ func _get_tiamat_slot_hover_text(zone: Zone) -> String:
 	var lines: Array[String] = []
 	var total_level := 0
 	for card in zone.cards:
-		var type_str := ", ".join(card.card_types)
+		var type_str := ", ".join(card.get_subtypes())
 		lines.append("%s — Lv%d" % [card.card_name, card.get_effective_level()])
 		lines.append("  %s" % type_str)
 		lines.append("  SPD %d / RES %d / STR %d" % [
@@ -12973,7 +12973,7 @@ func _get_tiamat_slot_hover_bbcode(zone: Zone) -> String:
 	var sections: Array[String] = []
 	var total_level := 0
 	for card in zone.cards:
-		var type_str := " · ".join(card.card_types)
+		var type_str := " · ".join(card.get_subtypes())
 		var entry := "[b]%s[/b]  Lv%d\n%s\nSPD %d / RES %d / STR %d" % [
 			card.card_name,
 			card.get_effective_level(),
@@ -14626,7 +14626,7 @@ func _matches_card_selection_search(card: Card, query: String) -> bool:
 		return true
 	if CardCatalog.to_lookup_key(card.culture).contains(search_key):
 		return true
-	for card_type: String in card.card_types:
+	for card_type: String in card.get_subtypes():
 		if CardCatalog.to_lookup_key(card_type).contains(search_key):
 			return true
 	if CardCatalog.to_lookup_key(card.ability_text).contains(search_key):
@@ -15938,6 +15938,8 @@ func _try_activate_owned_board_spell(card: Card) -> bool:
 		_show_demiurge_prompt(card)
 	elif card is BookOfLife:
 		_show_book_of_life_prompt(card as BookOfLife)
+	elif card is Metamorphosis:
+		_show_metamorphosis_subtype_prompt(card as Metamorphosis)
 	elif card is TheChangelingExchange:
 		_show_changeling_prompt(card as TheChangelingExchange)
 	elif card is DeucalionsInfants:
@@ -17748,6 +17750,8 @@ func _on_empty_zone_pressed(zone: Zone) -> void:
 				_show_demiurge_prompt(selected_card)
 			elif selected_card is BookOfLife:
 				_show_book_of_life_prompt(selected_card as BookOfLife)
+			elif selected_card is Metamorphosis:
+				_show_metamorphosis_subtype_prompt(selected_card as Metamorphosis, zone)
 			elif selected_card is TheChangelingExchange:
 				_show_changeling_prompt(selected_card as TheChangelingExchange)
 			elif selected_card is DeucalionsInfants:
@@ -18606,6 +18610,59 @@ func _show_odin_runic_knowledge_guess_prompt(card: Odin, offering_card: Card) ->
 		update_ui()
 		return
 
+	var cancel := func() -> void:
+		_set_action_label_text("Cancelled " + card.card_name + ".")
+		update_ui()
+	_show_searchable_name_prompt(
+		card.card_name + ": Name the top card",
+		"Voiding %s. Type to filter your main deck list, then click the card name you want to guess." % offering_card.card_name,
+		"Search card names",
+		deck_names,
+		func(chosen_name: String) -> void: _submit_odin_runic_knowledge_activation(card, offering_card, chosen_name),
+		cancel
+	)
+	_set_action_label_text(card.card_name + ": name the top card of your deck.")
+	update_ui()
+
+func _show_metamorphosis_subtype_prompt(spell: Metamorphosis, display_zone: Zone = null, priority_response: bool = false) -> void:
+	var command := _add_display_zone_to_command({type = "cast_spell", spell_uid = spell.uid}, display_zone)
+	var choose_subtype := func(subtype: String) -> void:
+		selected_card = null
+		_pending_spell_display_zone = null
+		command["subtype"] = subtype
+		if priority_response:
+			if not _submit_authoritative_priority_command(command):
+				_show_priority_response_submit_failure(spell)
+				_restore_priority_prompt_from_authoritative_state()
+		else:
+			game_input.submit_action(command)
+	var cancel := func() -> void:
+		selected_card = null
+		_pending_spell_display_zone = null
+		_set_action_label_text("Cancelled " + spell.card_name + ".")
+		update_ui()
+		if priority_response:
+			_clear_priority_prompt_command_context()
+			_restore_priority_prompt_from_authoritative_state()
+			if not _is_priority_prompt_visible():
+				_offer_priority()
+	_show_searchable_name_prompt(
+		"Metamorphosis: Name a subtype",
+		"Choose one subtype for every card on the field.",
+		"Search subtypes",
+		Metamorphosis.get_subtype_options(),
+		choose_subtype,
+		cancel
+	)
+
+func _show_searchable_name_prompt(
+	title_text: String,
+	instructions: String,
+	search_placeholder: String,
+	options: Array[String],
+	on_choose: Callable,
+	on_cancel: Callable
+) -> void:
 	_dismiss_zone_overlay()
 
 	var overlay := Control.new()
@@ -18630,21 +18687,21 @@ func _show_odin_runic_knowledge_guess_prompt(card: Odin, offering_card: Card) ->
 	panel.add_child(vbox)
 
 	var title := Label.new()
-	title.text = card.card_name + ": Name the top card"
+	title.text = title_text
 	title.add_theme_font_size_override("font_size", 16)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(title)
 
 	var info := Label.new()
-	info.text = "Voiding %s. Type to filter your main deck list, then click the card name you want to guess." % offering_card.card_name
+	info.text = instructions
 	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	info.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(info)
 
 	var search := LineEdit.new()
-	search.placeholder_text = "Search card names"
+	search.placeholder_text = search_placeholder
 	search.clear_button_enabled = true
 	search.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	vbox.add_child(search)
@@ -18673,22 +18730,23 @@ func _show_odin_runic_knowledge_guess_prompt(card: Odin, offering_card: Card) ->
 	cancel_btn.text = "Cancel"
 	action_row.add_child(cancel_btn)
 
-	var filtered_names: Array[String] = deck_names.duplicate()
-	var submit_guess := func(chosen_name: String) -> void:
+	var filtered_names: Array[String] = []
+	var submit_name := func(chosen_name: String) -> void:
 		var resolved_name := str(chosen_name).strip_edges()
 		if resolved_name.is_empty():
 			return
 		_dismiss_zone_overlay()
-		_submit_odin_runic_knowledge_activation(card, offering_card, resolved_name)
+		on_choose.call(resolved_name)
 	var rebuild_name_list := func(filter_text: String) -> void:
 		for child in list_vbox.get_children():
+			list_vbox.remove_child(child)
 			child.queue_free()
 		filtered_names.clear()
-		filtered_names.append_array(_filter_odin_runic_knowledge_name_options(deck_names, filter_text))
-		results_label.text = "Matching cards: %d" % filtered_names.size()
+		filtered_names.append_array(_filter_searchable_name_options(options, filter_text))
+		results_label.text = "%d matches" % filtered_names.size()
 		if filtered_names.is_empty():
 			var empty_label := Label.new()
-			empty_label.text = "No matching cards."
+			empty_label.text = "No matches."
 			empty_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 			empty_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			list_vbox.add_child(empty_label)
@@ -18700,7 +18758,7 @@ func _show_odin_runic_knowledge_guess_prompt(card: Odin, offering_card: Card) ->
 			name_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
 			name_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			name_button.pressed.connect(func() -> void:
-				submit_guess.call(chosen_name)
+				submit_name.call(chosen_name)
 			)
 			list_vbox.add_child(name_button)
 
@@ -18708,29 +18766,24 @@ func _show_odin_runic_knowledge_guess_prompt(card: Odin, offering_card: Card) ->
 		rebuild_name_list.call(new_text)
 	)
 	search.text_submitted.connect(func(submitted_text: String) -> void:
-		var exact_match := _find_odin_runic_knowledge_name_match(deck_names, submitted_text)
+		var exact_match := _find_searchable_name_match(options, submitted_text)
 		if exact_match != "":
-			submit_guess.call(exact_match)
+			submit_name.call(exact_match)
 			return
 		if not filtered_names.is_empty():
-			submit_guess.call(filtered_names[0])
+			submit_name.call(filtered_names[0])
 	)
-	cancel_btn.pressed.connect(func() -> void:
+	var cancel_prompt := func() -> void:
 		_dismiss_zone_overlay()
-		_set_action_label_text("Cancelled " + card.card_name + ".")
-		update_ui()
-	)
+		on_cancel.call()
+	cancel_btn.pressed.connect(cancel_prompt)
 	overlay.gui_input.connect(func(event: InputEvent) -> void:
 		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-			_dismiss_zone_overlay()
-			_set_action_label_text("Cancelled " + card.card_name + ".")
-			update_ui()
+			cancel_prompt.call()
 	)
 
 	rebuild_name_list.call("")
 	search.grab_focus()
-	_set_action_label_text(card.card_name + ": name the top card of your deck.")
-	update_ui()
 
 func _submit_odin_runic_knowledge_activation(card: Odin, offering_card: Card, named_card_name: String) -> void:
 	if card == null or offering_card == null or game_manager == null:
@@ -18820,7 +18873,7 @@ func _add_odin_runic_knowledge_name(unique_names: Dictionary, card_name: String)
 		return
 	unique_names[str(template.card_name)] = true
 
-func _filter_odin_runic_knowledge_name_options(all_names: Array[String], filter_text: String) -> Array[String]:
+func _filter_searchable_name_options(all_names: Array[String], filter_text: String) -> Array[String]:
 	var query := str(filter_text).strip_edges()
 	if query.is_empty():
 		return all_names.duplicate()
@@ -18842,7 +18895,7 @@ func _filter_odin_runic_knowledge_name_options(all_names: Array[String], filter_
 	filtered.append_array(contains_matches)
 	return filtered
 
-func _find_odin_runic_knowledge_name_match(all_names: Array[String], query_text: String) -> String:
+func _find_searchable_name_match(all_names: Array[String], query_text: String) -> String:
 	var query_key := CardCatalog.to_lookup_key(query_text)
 	if query_key.is_empty():
 		return ""
@@ -24794,6 +24847,9 @@ func _try_submit_authoritative_priority_response(card: Card) -> bool:
 			}, _should_reveal_charm_target_cards(charm, targets))
 			return true
 		return _submit_authoritative_priority_command(command)
+	if card is Metamorphosis:
+		_show_metamorphosis_subtype_prompt(card as Metamorphosis, null, true)
+		return true
 	if card is SpellCard:
 		var spell := card as SpellCard
 		var targets: Array = spell.get_valid_targets(game_manager) if spell.targets and spell.has_method("get_valid_targets") else []
@@ -32634,6 +32690,11 @@ func _on_card_dropped_to_zone(card: Card, zone: Zone, is_rotated: bool = false, 
 			"Prepared " + _get_stack_card_type_label(card) + ": " + card.card_name + " (face-down)!",
 			zone
 		)
+		return
+	if card is Metamorphosis and priority_drop_allowed:
+		_begin_priority_prompt_command_context()
+		_hide_priority_prompt()
+		_show_metamorphosis_subtype_prompt(card as Metamorphosis, zone, true)
 		return
 	if card is SpellCard and card.targets and not (card is Absence) and not zone.cards.is_empty():
 		if not _can_cast_spell_from_current_zone(card):

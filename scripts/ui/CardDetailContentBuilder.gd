@@ -44,9 +44,10 @@ static func build_visual_hover_body(card: Card, viewer: Player, config: Dictiona
 	if card.is_publicly_identified(game_manager):
 		vbox.add_child(_make_label(PUBLICLY_IDENTIFIED_HOVER_TEXT, 14, Color(1.0, 0.72, 0.72), true))
 
-	if card.card_types.size() > 0:
+	var subtypes := card.get_subtypes()
+	if not subtypes.is_empty():
 		var type_lbl := _make_label(
-			_BULLET_SEPARATOR.join(card.card_types),
+			_BULLET_SEPARATOR.join(subtypes),
 			14,
 			Color(0.7, 0.85, 1.0),
 			true
@@ -526,7 +527,7 @@ static func build_board_popup_body(card: Card, viewer: Player, config: Dictionar
 		var type_parts: Array[String] = []
 		if type_label != "":
 			type_parts.append(type_label)
-		for card_type_name in card.card_types:
+		for card_type_name in card.get_subtypes():
 			if card_type_name not in type_parts:
 				type_parts.append(card_type_name)
 		if type_parts.size() > 0:

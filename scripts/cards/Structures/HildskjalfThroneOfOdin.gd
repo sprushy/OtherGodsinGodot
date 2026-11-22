@@ -18,7 +18,7 @@ func _init() -> void:
 	strength = 0
 	sacrifice_cost = 0
 	targets = true
-	ability_text = "Once per turn, look at the top 3 cards of either deck, choose one to [b]Prime[/b], then [b]Shelve[/b] the rest."
+	ability_text = "Once per turn, look at the top 3 cards of either deck. [b]Prime[/b] one to that deck and [b]Shelve[/b] the rest."
 	flavor_text = ""
 	culture = "Norse"
 	artist = "Lorinda Tomko"

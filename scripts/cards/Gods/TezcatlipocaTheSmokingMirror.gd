@@ -182,6 +182,7 @@ func resolve_necoc_yaotl_sacrifice(game_manager: GameManager, target: Card) -> S
 			target.remove_effects_expiring_after_combat()
 		from_zone.remove_card(target)
 	target.current_zone = null
+	target.field_subtypes.clear()
 	if target.card_owner != null and from_zone != null:
 		target.card_owner.card_moved.emit(target, from_zone, null)
 	necoc_yaotl_sacrifices.append(target)

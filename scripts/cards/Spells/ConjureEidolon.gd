@@ -11,7 +11,7 @@ func _init() -> void:
 	targets = true
 	artist = "User provided"
 	art_path = "res://images/card_art/spells/conjure_eidolon.png"
-	ability_text = "Summon a token copy of a non-Spirit creature you control. [b]Silence[/b] it, add [b]Spirit[/b] to its types, and append Eidolon to its name. Destroy it after it participates in combat."
+	ability_text = "Summon a token copy of a non-Spirit creature you control. [b]Silence[/b] it and add [b]Spirit[/b] to its types. Destroy it after it participates in combat."
 
 func get_valid_targets(game_manager: GameManager) -> Array[Card]:
 	var valid_targets: Array[Card] = []
@@ -72,7 +72,7 @@ func create_eidolon(creature: Card) -> CreatureCard:
 	var eidolon := CreatureCard.new()
 	eidolon.card_owner = card_owner
 	eidolon.card_name = creature.card_name + " Eidolon"
-	eidolon.card_types = creature.card_types.duplicate()
+	eidolon.card_types = creature.get_subtypes().duplicate()
 	for type_name in ["Spirit", "Token"]:
 		if type_name not in eidolon.card_types:
 			eidolon.card_types.append(type_name)

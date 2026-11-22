@@ -18,6 +18,7 @@ enum CreatureMode { AGGRESSIVE, DEFENSIVE }
 
 # Card types (warrior, mage, etc.) - can have multiple
 @export var card_types: Array[String] = []
+var field_subtypes: Array[String] = []
 
 # Lore and background
 @export_multiline var flavor_text: String = ""
@@ -1272,6 +1273,9 @@ func clear_all_effects() -> void:
 		_emit_visual_state_changed()
 
 func clear_board_leave_state() -> void:
+	# Some departures move the card under Kurnugia, where it still counts as fielded.
+	if not field_subtypes.is_empty() and (current_zone != null or not counts_as_on_field()):
+		field_subtypes.clear()
 	clear_all_effects()
 	is_prepared = false
 	is_face_down = false
@@ -1406,7 +1410,7 @@ func _has_raw_enki_hex_immunity() -> bool:
 		return false
 	# This is called while filtering effective statuses. Using has_type() here
 	# re-enters status filtering and can recurse when a hex status is added.
-	if "Mage" not in card_types:
+	if not CardSubtypes.includes(get_subtypes(), "Mage"):
 		return false
 	var controller := get_controller()
 	if controller == null:
@@ -1495,6 +1499,13 @@ func reveal(game_manager: GameManager = null) -> void:
 	if was_hidden and game_manager != null and not abilities_suppressed():
 		on_reveal(game_manager)
 
+func get_subtypes() -> Array[String]:
+	return field_subtypes if not field_subtypes.is_empty() else card_types
+
+func replace_field_subtypes(subtypes: Array[String]) -> void:
+	field_subtypes = subtypes.duplicate()
+	_emit_visual_state_changed()
+
 func has_type(type_name: String) -> bool:
 	if type_name == "Physical":
 		return is_physical_card()
@@ -1504,7 +1515,7 @@ func has_type(type_name: String) -> bool:
 		return false
 	if _has_granted_type(type_name):
 		return true
-	if type_name in card_types:
+	if CardSubtypes.includes(get_subtypes(), type_name):
 		return true
 	for equip in equipment:
 		if equip == null:

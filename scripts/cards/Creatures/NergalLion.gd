@@ -142,7 +142,7 @@ func _contains_card_uid(cards: Array[Card], target_uid: String) -> bool:
 func _is_destruction_card(card: Card) -> bool:
 	if card == null:
 		return false
-	for type_name in card.card_types:
+	for type_name in card.get_subtypes():
 		if str(type_name).to_lower().contains("destruction"):
 			return true
 	return false

@@ -3,8 +3,8 @@ class_name HermesPsychopompus
 
 const CALL_OF_THE_CROSSING := "Call of the Crossing"
 const WINGS_OF_THE_DEPARTED := "Wings of the Departed"
-const ART_PATH := "res://images/card_art/gods/hermes_psychopompus.png"
-const ALT_ART_PATH := "res://images/card_art/gods/hermes_psychopompus_alt_art.png"
+const ART_PATH := "res://images/card_art/gods/hermes_psychopompus_alt_art.png"
+const ALT_ART_PATH := "res://images/card_art/gods/hermes_psychopompus.png"
 
 func _init() -> void:
 	super._init()

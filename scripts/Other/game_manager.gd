@@ -490,7 +490,7 @@ func _would_activation_break_turn_destruction_ward(source_card: Card, protected_
 func _card_has_destruction_theme(source_card: Card) -> bool:
 	if source_card == null:
 		return false
-	for raw_type in source_card.card_types:
+	for raw_type in source_card.get_subtypes():
 		if str(raw_type).findn("destruction") >= 0:
 			return true
 	return false
@@ -3702,6 +3702,16 @@ func _should_class_rend(killer: Card, victim: Card) -> bool:
 		and killer_controller != victim_controller \
 		and _class_rend_active(killer_controller, victim)
 
+func _get_effect_class_rend_source(source: Card, victim: Card, combat_death: bool, destruction: bool) -> Card:
+	if combat_death or not destruction or source == null or victim == null:
+		return null
+	if not source.is_creature_card() or not source.has_type("Demon"):
+		return null
+	if not victim.is_creature_card() or victim.is_petrified() or not is_card_on_field(victim):
+		return null
+	var controller := source.get_controller()
+	return source if controller != null and _class_rend_active(controller, victim) else null
+
 # Executes a combat kill with a pre-determined void flag (avoids mid-sequence zone-state drift).
 func _combat_kill_routed(killer: Card, victim: Card, do_void: bool, suppress_ally_kill_sources: Array = []) -> void:
 	if _prevent_warded_combat_destruction(killer, victim):
@@ -4002,11 +4012,15 @@ func _expect_match_destruction(victim: Card, source: Card, replace: bool = false
 	match_statistics.expect_destruction(victim, source, players, replace, revealed_source)
 
 func _send_to_graveyard_with_hook(card: Card, combat_death: bool = false, destruction: bool = false, source_card: Card = null) -> bool:
+	var effect_source := source_card if source_card != null else get_effect_source_card()
 	if combat_death or destruction:
-		_expect_match_destruction(card, source_card if source_card != null else get_effect_source_card(), source_card != null)
+		_expect_match_destruction(card, effect_source, source_card != null)
 	else:
 		match_statistics.cancel_destruction(card)
-	return _send_to_graveyard_with_hook_resolved(card, false, combat_death, destruction)
+	var class_rend_source := _get_effect_class_rend_source(effect_source, card, combat_death, destruction)
+	return _send_to_graveyard_with_hook_resolved(
+		card, false, combat_death, destruction, Callable(), false, class_rend_source
+	)
 
 func request_send_to_graveyard(
 	card: Card,
@@ -4020,8 +4034,13 @@ func request_send_to_graveyard(
 		if continue_callback.is_valid():
 			continue_callback.call()
 		return true
-	var graveyard_replacements := _get_graveyard_replacement_sources(card)
 	var effect_source := get_effect_source_card()
+	var destruction_source := source_card if source_card != null else effect_source
+	var class_rend_source := _get_effect_class_rend_source(destruction_source, card, combat_death, destruction)
+	# Class Rend replaces the Graveyard destination before a Doorway can offer to replace it.
+	var graveyard_replacements: Array[StructureCard] = []
+	if class_rend_source == null:
+		graveyard_replacements = _get_graveyard_replacement_sources(card)
 	# Separate effects can destroy cards during the same turn-start sequence.
 	if not graveyard_replacements.is_empty() and has_pending_doorway_choice():
 		var from_zone := card.current_zone
@@ -4036,7 +4055,7 @@ func request_send_to_graveyard(
 		)
 		return false
 	if combat_death or destruction:
-		_expect_match_destruction(card, source_card if source_card != null else get_effect_source_card(), source_card != null)
+		_expect_match_destruction(card, destruction_source, source_card != null)
 	else:
 		match_statistics.cancel_destruction(card)
 	if not graveyard_replacements.is_empty():
@@ -4056,7 +4075,8 @@ func request_send_to_graveyard(
 		combat_death,
 		destruction,
 		continue_callback,
-		ignore_self_combat_replacement
+		ignore_self_combat_replacement,
+		class_rend_source
 	)
 
 func request_send_cards_to_graveyard(
@@ -4165,11 +4185,13 @@ func _send_to_graveyard_with_hook_resolved(
 	combat_death: bool = false,
 	destruction: bool = false,
 	continue_callback: Callable = Callable(),
-	ignore_self_combat_replacement: bool = false
+	ignore_self_combat_replacement: bool = false,
+	class_rend_source: Card = null
 ) -> bool:
-	if destruction and not combat_death and _is_turn_destruction_ward_protected(card):
+	var ward_source := class_rend_source if class_rend_source != null else get_effect_source_card()
+	if destruction and not combat_death and _is_turn_destruction_ward_protected(card, ward_source):
 		match_statistics.cancel_destruction(card)
-		print(card.card_name + " resists destruction from " + get_effect_source_card().card_name + " this turn.")
+		print(card.card_name + " resists destruction from " + ward_source.card_name + " this turn.")
 		if continue_callback.is_valid():
 			continue_callback.call()
 		return false
@@ -4192,7 +4214,7 @@ func _send_to_graveyard_with_hook_resolved(
 	# Capture flight before leave hooks and zone movement clear combat effects.
 	var was_aerial := card.has_type("Aerial")
 	var replacement_zone: Zone = null
-	if not (ignore_self_combat_replacement and combat_death) \
+	if class_rend_source == null and not (ignore_self_combat_replacement and combat_death) \
 			and card.has_method("get_self_graveyard_replacement_zone") and not card.abilities_suppressed() \
 			and not _is_watchbeast_active():
 		replacement_zone = card.get_self_graveyard_replacement_zone(self, combat_death, destruction, send_to_abyss)
@@ -4211,7 +4233,7 @@ func _send_to_graveyard_with_hook_resolved(
 		if continue_callback.is_valid():
 			continue_callback.call()
 		return true
-	if not (ignore_self_combat_replacement and combat_death) \
+	if class_rend_source == null and not (ignore_self_combat_replacement and combat_death) \
 			and card.has_method("request_self_graveyard_replacement_choice") and not card.abilities_suppressed() \
 			and not _is_watchbeast_active():
 		if card.request_self_graveyard_replacement_choice(
@@ -4222,7 +4244,12 @@ func _send_to_graveyard_with_hook_resolved(
 			continue_callback
 		):
 			return false
-	if send_to_abyss:
+	if class_rend_source != null:
+		print("Class Rend! " + class_rend_source.card_name + " voids " + card.card_name + "!")
+		for equip in card.equipment.duplicate():
+			_send_to_abyss_with_hook(equip)
+		card.card_owner.move_card(card, card.card_owner.abyss_zone)
+	elif send_to_abyss:
 		card.card_owner.move_card(card, card.card_owner.abyss_zone)
 	else:
 		card.card_owner.move_card(card, card.card_owner.graveyard_zone)
@@ -4316,13 +4343,12 @@ func _clear_pending_return_to_hand_choice() -> void:
 	_pending_return_to_hand_continue = Callable()
 	_pending_return_to_hand_steal_actor = null
 
-func _is_turn_destruction_ward_protected(card: Card) -> bool:
+func _is_turn_destruction_ward_protected(card: Card, source_card: Card) -> bool:
 	if card == null or card.card_type != Card.CardType.CREATURE:
 		return false
 	var protected_player := card.get_controller()
 	if protected_player == null or not has_turn_destruction_ward(protected_player):
 		return false
-	var source_card := get_effect_source_card()
 	if source_card == null:
 		return false
 	var source_controller := source_card.get_controller()
@@ -4463,14 +4489,14 @@ func _push_frontline_entry_event(card: Card) -> void:
 		return
 	push_to_stack(action)
 
-func get_field_cards(player: Player = null, include_sheltered: bool = true) -> Array[Card]:
+func get_field_cards(player: Player = null, include_sheltered: bool = true, include_god_and_power_slots: bool = false) -> Array[Card]:
 	var field_cards: Array[Card] = []
 	var seen_cards: Dictionary = {}
 	if player != null:
-		_append_player_field_cards(player, field_cards, seen_cards, include_sheltered)
+		_append_player_field_cards(player, field_cards, seen_cards, include_sheltered, include_god_and_power_slots)
 		return field_cards
 	for field_player in players:
-		_append_player_field_cards(field_player, field_cards, seen_cards, include_sheltered)
+		_append_player_field_cards(field_player, field_cards, seen_cards, include_sheltered, include_god_and_power_slots)
 	return field_cards
 
 func is_card_on_field(card: Card, include_sheltered: bool = true) -> bool:
@@ -4485,10 +4511,14 @@ func is_card_on_field(card: Card, include_sheltered: bool = true) -> bool:
 			return true
 	return false
 
-func _append_player_field_cards(player: Player, field_cards: Array[Card], seen_cards: Dictionary, include_sheltered: bool) -> void:
+func _append_player_field_cards(player: Player, field_cards: Array[Card], seen_cards: Dictionary, include_sheltered: bool, include_god_and_power_slots: bool) -> void:
 	if player == null:
 		return
-	for zone in player.frontline_zones + player.reserve_zones:
+	var zones := player.frontline_zones + player.reserve_zones
+	if include_god_and_power_slots:
+		zones.append(player.god_zone)
+		zones.append_array(player.power_zones)
+	for zone in zones:
 		if zone == null:
 			continue
 		for card in zone.cards:

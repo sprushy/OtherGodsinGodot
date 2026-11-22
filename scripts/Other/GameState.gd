@@ -245,7 +245,7 @@ static func _serialize_card(card: Card, hidden_mode: int = HIDDEN_MODE_NONE) -> 
 		if attached_target != null and "uid" in attached_target:
 			attached_target_uid = attached_target.uid
 
-	return {
+	var card_data := {
 		uid                       = uid,
 		script_path               = script_path,
 		card_name                 = card.card_name,
@@ -283,6 +283,9 @@ static func _serialize_card(card: Card, hidden_mode: int = HIDDEN_MODE_NONE) -> 
 		active_statuses           = _serialize_card_statuses(card),
 		serialized_state          = sanitize_network_value(card.get_serialized_state(), null),
 	}
+	if not card.field_subtypes.is_empty():
+		card_data["field_subtypes"] = card.field_subtypes.duplicate()
+	return card_data
 
 static func _serialize_card_buffs(card: Card) -> Array:
 	var result := []
@@ -807,6 +810,7 @@ static func _deserialize_card(cdata: Dictionary) -> Card:
 		card.card_types.clear()
 		for type_name in ct:
 			card.card_types.append(str(type_name))
+	card.field_subtypes.assign(cdata.get("field_subtypes", []))
 
 	# Store equipped_on_uid in meta for the second-pass linking step
 	var equipped_uid: String = cdata.get("equipped_on_uid", "")

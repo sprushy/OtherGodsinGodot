@@ -41,6 +41,8 @@ Spells, Hexes, and Charms usually show Speed instead of creature stats. Their Sp
 
 Many cards also have subtype words such as Mage, Warrior, Dragon, Spirit, Aerial, Norse Creature, or Ancient Creature. These are not just flavor. Card effects often care about them.
 
+Some subtypes also count as broader subtypes. For example, Porcine counts as Animal, Raven counts as Avian, Animal, and Aerial, and Knight and Archer count as Warrior. Metamorphosis replaces the subtypes of cards already in play on both sides, including cards in the God and Power Slots. The replacement lasts until each card leaves play. A transformed card keeps its card class and culture.
+
 When a card effect uses division or asks for half of a value, round down unless the card specifically says otherwise. Card details surface this as the Fractions keyword: any ability that produces a fraction shows it, and its reminder text states that Other Gods rounds down.
 
 ## 4. Know The Card Types

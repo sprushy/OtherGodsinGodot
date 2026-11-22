@@ -238,6 +238,8 @@ func move_card(card: Card, to_zone: Zone, deck_placement: Zone.DeckPlacement = Z
 	var deck_identity_public: Variant = _get_deck_identity_public(card, from_zone, destination_zone, deck_placement)
 	if from_zone:
 		from_zone.remove_card(card)
+	elif not destination_zone.is_in_play_zone():
+		card.field_subtypes.clear()
 	destination_zone.add_card(card, deck_placement, deck_identity_public)
 	if destination_zone.is_in_play_zone():
 		card.reset_board_leave_hooks()

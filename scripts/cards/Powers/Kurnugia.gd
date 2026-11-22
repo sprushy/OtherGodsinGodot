@@ -88,17 +88,14 @@ func on_any_card_moved(game_manager: GameManager, moved_card: Card, from_zone: Z
 		if card != null and card != moved_card and card.has_method("on_any_card_moved") and not card.abilities_suppressed():
 			card.on_any_card_moved(game_manager, moved_card, from_zone, to_zone)
 
-	if not is_effectively_active() or game_manager == null:
-		return
 	if moved_card == null or to_zone == null or card_owner == null:
 		return
-	if not _is_qualifying_card(moved_card):
-		return
-	if moved_card.card_owner != card_owner:
-		return
 	if moved_card in sheltered_cards:
-		if to_zone != null:
-			_forget_sheltered_card(moved_card)
+		_forget_sheltered_card(moved_card)
+		return
+	if not is_effectively_active() or game_manager == null:
+		return
+	if moved_card.card_owner != card_owner or not _is_qualifying_card(moved_card):
 		return
 
 	var came_from_field := from_zone != null and from_zone.is_board_zone()

@@ -16,7 +16,7 @@ func _init() -> void:
 	is_legendary = false
 	is_token = true
 	flavor_text = ""
-	ability_text = "Cards and followers on the line behind this card cannot be attacked except by Aerial creatures."
+	ability_text = "Cards and followers behind this card cannot be attacked except by Aerial creatures."
 	culture = "Neutral"
 	artist = "Lorinda Tomko"
 	art_path = ART_PATH

@@ -13,7 +13,7 @@ func _init() -> void:
 	level = 0
 	mana_cost = UNLOCK_COST
 	card_types = ["Power", "Aura"]
-	ability_text = "[b]Aura[/b]: While you have a [b]Plant[/b], [b]Animal[/b], or [b]Hybrid[/b] on the field, other creatures get -1 SPD and use up their turn action if they switch stance."
+	ability_text = "[b]Aura[/b]: While you have a [b]Plant[/b], [b]Animal[/b], or [b]Hybrid[/b] on the field, other creatures get -1 SPD and spend their Major Action if they switch stance."
 	artist = "Mike Capprotti"
 	art_path = ART_PATH
 
@@ -49,7 +49,7 @@ func on_any_creature_mode_changed(game_manager: GameManager, creature: Card, old
 		return
 	creature.spend_major_creature_action()
 	game_manager.note_player_feedback(
-		"%s forces %s to use up its turn action after switching stance." % [
+		"%s forces %s to spend its Major Action after switching stance." % [
 			card_name,
 			creature.get_target_log_display_name(game_manager.get_feedback_viewer())
 		]

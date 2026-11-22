@@ -110,7 +110,6 @@ var server_bot_deck_factory = null
 var _seek_timeout_check_elapsed: float = 0.0
 var _server_bot_seed_counter: int = 0
 var _ranked_bot_deck_pool := RankedBotDeckPoolScript.new()
-var _known_community_bot_ids: Dictionary = {}
 var _bot_deck_rng := RandomNumberGenerator.new()
 var _lobby_frame_seconds := 0.0
 var _next_bot_self_play_msec := 0
@@ -137,7 +136,6 @@ const TOP_BOT_HOSTING_LIMIT := 50
 # Pool rebuild is expensive (replays all bot match results). Only rebuild when
 # something has actually changed since the last refresh.
 var _pool_dirty: bool = true
-var _pool_result_count: int = -1
 var _pool_state_path: String = ""
 
 # Room-list broadcast throttle — limits broadcasts to at most once per second so
@@ -1488,6 +1486,8 @@ func _find_community_bot(account_id: String, bot_id: String) -> Dictionary:
 	if account_id.is_empty() or bot_id.is_empty() or bot_id.contains("/") or bot_id.contains("\\"):
 		return {}
 	var bot_path := ServerPathsScript.get_server_data_file_path("community_bot_pool").path_join("%s.json" % bot_id)
+	if not FileAccess.file_exists(bot_path):
+		return {}
 	var bot := JsonStoreScript.load_dictionary(bot_path, {}, "CommunityBotPool")
 	if str(bot.get("account_id", "")) != account_id:
 		return {}
@@ -1812,9 +1812,9 @@ func _handle_delete_bot(peer_id: int, payload: Dictionary) -> void:
 		return
 	# Expunge the deleted bot's record from the ranked bot ladder so it no
 	# longer appears in standings or recent bot activity.
-	_ranked_bot_deck_pool.invalidate_replay()
-	_refresh_ranked_bot_deck_pool()
+	_ladder_cache.clear()
 	_invalidate_ladder_cache()
+	_refresh_ranked_bot_deck_pool()
 	_send_to_peer(peer_id, LobbyProtocolScript.BOT_DELETED, {
 		"success": true, "message": "Bot deleted from the community pool.", "bot_id": bot_id,
 	})
@@ -2916,84 +2916,24 @@ func _ensure_server_bot_deck_factory() -> void:
 	_ranked_bot_deck_pool.set_deck_auditor(Callable(server_bot_deck_factory, "audit_ranked_bot_deck"))
 
 func _refresh_ranked_bot_deck_pool() -> void:
-	if _pool_state_path.is_empty():
-		_pool_state_path = ServerPathsScript.get_server_data_file_path("bot_pool_state.json")
 	if not _pool_dirty:
 		return
 	_pool_dirty = false
 	_ensure_match_history_store()
 	_ensure_server_bot_deck_factory()
-	var bot_deck_results: Array[Dictionary] = match_history_store.get_bot_deck_results()
-	var result_count := bot_deck_results.size()
-	var last_result_id := str(bot_deck_results.back().get("match_id", "")) if not bot_deck_results.is_empty() else ""
 	var is_default_store: bool = not match_history_store.has_method("get_storage_file_name") \
 		or match_history_store.get_storage_file_name() == MatchHistoryStoreScript.DEFAULT_STORAGE_FILE_NAME
-	if is_default_store and FileAccess.file_exists(_pool_state_path):
-		var loaded := JsonStoreScript.load_dictionary(_pool_state_path, {}, "RankedBotDeckPool")
-		if not loaded.is_empty():
-			var saved_count := int(loaded.get("result_count", -1))
-			var saved_last_id := str(loaded.get("last_replayed_id", ""))
-			if saved_count == result_count and saved_last_id == last_result_id and _ranked_bot_deck_pool.load_state(_pool_state_path):
-				_pool_result_count = result_count
-				var community_bots := _load_all_community_bots()
-				for c_bot in community_bots:
-					_ranked_bot_deck_pool.ensure_community_bot(c_bot)
-				_ranked_bot_deck_pool._ensure_unique_deck_names()
-				_ranked_bot_deck_pool.save_state(_pool_state_path, result_count)
-				return
-	var community_bot_ids := _get_community_bot_ids()
-	if not _same_community_bot_ids(_known_community_bot_ids, community_bot_ids):
-		_ranked_bot_deck_pool.invalidate_replay()
-	_known_community_bot_ids = community_bot_ids.duplicate()
-	var community_bots := _load_all_community_bots()
-	var community_by_id: Dictionary = {}
-	var community_by_owner_and_fp: Dictionary = {}
-	for c_bot in community_bots:
-		var c_id := str(c_bot.get("bot_id", "")).strip_edges()
-		if not c_id.is_empty():
-			community_by_id[c_id] = c_bot
-		var c_owner := str(c_bot.get("owner_name", c_bot.get("account_id", ""))).strip_edges()
-		var c_fp := JSON.stringify([c_bot.get("cards", {}), c_bot.get("reinforcements", {}), c_bot.get("special_setup", {})]).sha256_text()
-		if not c_owner.is_empty():
-			community_by_owner_and_fp["%s:%s" % [c_owner, c_fp]] = c_bot
-
-	# Use the MatchHistoryStore cache, which already merges dedicated per-match
-	# result files via _load_dedicated_results(). This keeps the pool rebuild
-	# incremental and in-memory instead of re-scanning the disk on every refresh.
-	var results: Array[Dictionary] = []
-	for raw_result in bot_deck_results:
-		var result: Dictionary = raw_result.duplicate(true)
-		var list_id := str(result.get("list_id", "")).strip_edges()
-		var owner_name := str(result.get("owner_name", "")).strip_edges()
-		var fp := JSON.stringify([result.get("cards", {}), result.get("reinforcements", {}), result.get("special_setup", {})]).sha256_text()
-		var matched_c_bot: Dictionary = {}
-		if community_by_id.has(list_id):
-			matched_c_bot = community_by_id[list_id]
-		elif not owner_name.is_empty() and community_by_owner_and_fp.has("%s:%s" % [owner_name, fp]):
-			matched_c_bot = community_by_owner_and_fp["%s:%s" % [owner_name, fp]]
-
-		if not matched_c_bot.is_empty():
-			result["is_community_bot"] = true
-			result["list_id"] = str(matched_c_bot.get("bot_id", list_id))
-			result["owner_name"] = str(matched_c_bot.get("owner_name", owner_name))
-			result["bot_name"] = str(matched_c_bot.get("deck_name", result.get("bot_name", "")))
-			results.append(result)
-		elif bool(result.get("is_community_bot", false)):
-			# A deleted community bot's historical results must not keep
-			# (or recreate) a ladder entry: treat them as non-community so the
-			# ranked pool ignores them during replay.
-			result["is_community_bot"] = false
-			results.append(result)
-		else:
-			results.append(result)
-	for c_bot in community_bots:
-		_ranked_bot_deck_pool.ensure_community_bot(c_bot)
+	if is_default_store and _pool_state_path.is_empty():
+		_pool_state_path = ServerPathsScript.get_server_data_file_path("bot_pool_state.json")
+		_ranked_bot_deck_pool.load_state(_pool_state_path)
+	_ranked_bot_deck_pool.sync_community_bots(_load_community_bots_by_id())
+	var results: Array[Dictionary] = match_history_store.get_bot_deck_results()
 	_ranked_bot_deck_pool.refresh(results)
 	if is_default_store:
-		_ranked_bot_deck_pool.save_state(_pool_state_path, result_count)
+		_ranked_bot_deck_pool.save_state(_pool_state_path, results.size())
 
-func _load_all_community_bots() -> Array[Dictionary]:
-	var bots: Array[Dictionary] = []
+func _load_community_bots_by_id() -> Dictionary:
+	var bots := {}
 	var bot_dir := ServerPathsScript.get_server_data_file_path("community_bot_pool")
 	var directory := DirAccess.open(bot_dir)
 	if directory == null:
@@ -3004,34 +2944,11 @@ func _load_all_community_bots() -> Array[Dictionary]:
 		if not directory.current_is_dir() and file_name.ends_with(".json"):
 			var bot := JsonStoreScript.load_dictionary(bot_dir.path_join(file_name), {}, "CommunityBotPool")
 			if not bot.is_empty():
-				bot["bot_id"] = file_name.get_basename()
-				bots.append(bot)
+				bot["deck_name"] = _community_bot_display_name(bot)
+				bots[file_name.get_basename()] = bot
 		file_name = directory.get_next()
 	directory.list_dir_end()
 	return bots
-
-func _get_community_bot_ids() -> Dictionary:
-	var ids := {}
-	var bot_dir := ServerPathsScript.get_server_data_file_path("community_bot_pool")
-	var directory := DirAccess.open(bot_dir)
-	if directory == null:
-		return ids
-	directory.list_dir_begin()
-	var file_name := directory.get_next()
-	while not file_name.is_empty():
-		if not directory.current_is_dir() and file_name.ends_with(".json"):
-			ids[file_name.get_basename()] = true
-		file_name = directory.get_next()
-	directory.list_dir_end()
-	return ids
-
-func _same_community_bot_ids(left: Dictionary, right: Dictionary) -> bool:
-	if left.size() != right.size():
-		return false
-	for key in left:
-		if not right.has(key):
-			return false
-	return true
 
 func _duplicate_dictionary(value) -> Dictionary:
 	if value is Dictionary:

@@ -1173,7 +1173,9 @@ func _project_speed_boost_attacks(attacks: Array[Dictionary], target: Card, spee
 		elif attacker not in updated:
 			updated.append(attacker)
 			projected.append_array(_get_attack_candidates(attacker, partner, false, target, speed_bonus))
-	return [] if updated.is_empty() else projected
+	if updated.is_empty():
+		projected.clear()
+	return projected
 
 func _plan_wings_of_the_departed(god: HermesPsychopompus, attacks: Array[Dictionary], baseline: Dictionary, mana_budget: int, setup_cost: int = 0) -> Dictionary:
 	var best := {}

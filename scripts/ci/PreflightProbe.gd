@@ -49,12 +49,15 @@ func run() -> bool:
 	_ran = true
 	var failures: PackedStringArray = []
 	_check_card_catalog(failures)
+	_check_metamorphosis(failures)
 	_check_deck_validator(failures)
 	_check_match_command_registry_coverage(failures)
 	_check_command_authority(failures)
 	_check_combat_rounding(failures)
 	_check_reveal_before_tactical_retreat(failures)
 	_check_united_front_doorway(failures)
+	_check_guan_yu_manoeuvre_and_slay(failures)
+	_check_class_rend_ability_destruction(failures)
 	_check_ragnarok_doorway(failures)
 	_check_freyja_doorway(failures)
 	_check_card_interception_exceptions(failures)
@@ -70,6 +73,7 @@ func run() -> bool:
 	_check_dedicated_ranked_history(failures)
 	_check_ranked_bot_pool(failures)
 	_check_community_bot_rank_badge(failures)
+	_check_community_bot_replay_identity(failures)
 	_check_ranked_bot_deck_generation(failures)
 	_check_ranked_bot_manifestations(failures)
 	_check_bot_power_followthrough(failures)
@@ -226,6 +230,77 @@ func _check_card_catalog(failures: PackedStringArray) -> void:
 		seen_names[card_name] = true
 		if bool(card.is_token) or card.card_types.has("Token"):
 			failures.append("card catalog exposed token card: %s" % card_name)
+
+func _check_metamorphosis(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	player.game_manager = game
+	opponent.game_manager = game
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	var manager := _new_fixture_match(game)
+	var input := ServerBotGameInput.new(manager, 0)
+	var spell := CardCatalogScript.instantiate_card_by_name("Metamorphosis") as Metamorphosis
+	if spell == null or spell.level != 2 or spell.mana_cost != 0 or spell.culture != "Olympic" \
+			or spell.card_type != Card.CardType.SPELL or not spell.has_type("Transformation"):
+		failures.append("Metamorphosis catalog entry has incorrect card data")
+		return
+	spell.card_owner = player
+	player.hand_zone.add_card(spell)
+	var knight := CreatureCard.new()
+	knight.card_types = ["Knight"]
+	knight.card_owner = player
+	player.frontline_zones[0].add_card(knight)
+	var equipment := BeardedAxe.new()
+	equipment.card_owner = player
+	player.frontline_zones[0].add_card(equipment)
+	equipment.equip_to(knight)
+	var god := Odin.new()
+	god.card_owner = opponent
+	opponent.god_zone.add_card(god)
+	var power := KurnugiaTheBeginningOfTheEnd.new()
+	power.card_owner = opponent
+	power.is_face_down = true
+	opponent.power_zones[0].add_card(power)
+	var hand_card := BrownBear.new()
+	hand_card.card_owner = opponent
+	opponent.hand_zone.add_card(hand_card)
+	if not knight.has_type("Warrior") or not CardSubtypes.matches("Raven", "Animal"):
+		failures.append("Card subtype hierarchy did not inherit parent types")
+	if input.submit_action({type = "cast_spell", spell_uid = spell.uid, subtype = "Spell"}):
+		failures.append("Metamorphosis accepted a card class as its chosen subtype")
+	if not input.submit_action({type = "cast_spell", spell_uid = spell.uid, subtype = "Porcine"}):
+		failures.append("Metamorphosis could not be cast with zero mana and a valid subtype")
+		return
+	for _step in range(8):
+		manager.advance_priority()
+	for transformed: Card in [knight, equipment, god, power]:
+		if not transformed.has_type("Porcine") or not transformed.has_type("Animal"):
+			failures.append("Metamorphosis did not apply its chosen subtype to every card in play")
+			break
+	if knight.has_type("Warrior") or equipment.card_type != Card.CardType.EQUIPMENT or equipment.equipped_on != knight \
+			or not god.is_god or hand_card.has_type("Porcine") or spell.current_zone != player.graveyard_zone:
+		failures.append("Metamorphosis did not preserve card classes, attachments, or zones")
+	var snapshot := GameState.serialize(game, 0)
+	var hidden_power: Dictionary = snapshot["players"][1]["power_zones"][0][0]
+	if hidden_power.has("field_subtypes") or hidden_power.has("card_name"):
+		failures.append("Metamorphosis leaked a face-down Power through a match snapshot")
+	var mirror := _new_fixture_game()
+	mirror.players.assign([_new_fixture_player(), _new_fixture_player()])
+	GameState.apply_to_manager(snapshot, mirror)
+	var mirrored_knight := mirror.get_card_by_uid(knight.uid)
+	if mirrored_knight == null or not mirrored_knight.has_type("Porcine") or mirrored_knight.has_type("Warrior"):
+		failures.append("Metamorphosis subtype did not round-trip through a match snapshot")
+	player.move_card(knight, player.reserve_zones[0])
+	if not knight.has_type("Porcine"):
+		failures.append("Metamorphosis expired while a card was still in play")
+	player.move_card(knight, player.graveyard_zone)
+	if knight.has_type("Porcine") or not knight.has_type("Warrior"):
+		failures.append("Metamorphosis did not restore original typing when the card left play")
 
 func _check_deck_validator(failures: PackedStringArray) -> void:
 	var validator = DeckValidatorScript.new()
@@ -3686,6 +3761,75 @@ func _check_united_front_doorway(failures: PackedStringArray) -> void:
 				or not game.has_resolved_attack_this_turn or manager.has_unresolved_stack_action_window():
 			failures.append("United Front did not complete after its Doorway choices")
 
+func _check_guan_yu_manoeuvre_and_slay(failures: PackedStringArray) -> void:
+	var manager := _new_doorway_match()
+	var game := manager.game_manager
+	var player := game.current_player
+	var opponent := game.other_player
+	var guan_yu := GuanYuActive.new()
+	var watchtower := Watchtower.new()
+	var warrior := HariiWarrior.new()
+	guan_yu.card_owner = player
+	watchtower.card_owner = player
+	warrior.card_owner = player
+	player.frontline_zones[0].add_card(guan_yu)
+	player.reserve_zones[0].add_card(watchtower)
+	player.frontline_zones[1].add_card(warrior)
+	guan_yu.on_impact(game)
+	if guan_yu.get_valid_targets(game) != [watchtower]:
+		failures.append("Manoeuvre did not recognize a Watchtower with zero tactic counters")
+	guan_yu.activate(game, watchtower)
+	if guan_yu.tactic_counters != 6 or watchtower.tactic_counters != 1:
+		failures.append("Manoeuvre did not transfer exactly one tactic counter")
+
+	for send_to_abyss: bool in [true, false]:
+		var target := BrownBear.new()
+		target.card_owner = opponent
+		opponent.frontline_zones[0].add_card(target)
+		game._combat_kill_deferred(warrior, target)
+		if not _answer_doorway_choice(manager, target, send_to_abyss):
+			failures.append("Guan Yu's combat test did not resolve the Doorway choice")
+			return
+		var expected := 6 if send_to_abyss else 7
+		if guan_yu.tactic_counters != expected:
+			failures.append("Guan Yu gained the wrong number of counters for a combat casualty")
+
+func _check_class_rend_ability_destruction(failures: PackedStringArray) -> void:
+	var manager := _new_doorway_match()
+	var game := manager.game_manager
+	var player := game.current_player
+	var opponent := game.other_player
+	var asag := AsagTheDestroyer.new()
+	var demon := Lindwyrm.new()
+	var victim := BrownBear.new()
+	var weapon := ReedBow.new()
+	asag.card_owner = player
+	demon.card_owner = player
+	demon.card_types.append("Demon")
+	demon.level = victim.level + 2
+	victim.card_owner = opponent
+	weapon.card_owner = opponent
+	player.reserve_zones[0].add_card(asag)
+	player.frontline_zones[0].add_card(demon)
+	opponent.frontline_zones[0].add_card(victim)
+	opponent.frontline_zones[0].add_card(weapon)
+	game.equip_card(weapon, victim)
+
+	game.grant_turn_destruction_ward(opponent)
+	game.run_with_effect_source(demon, func() -> void:
+		demon.activate(game, victim)
+	)
+	if victim.current_zone != opponent.frontline_zones[0] or game.has_pending_doorway_choice():
+		failures.append("Class Rend bypassed an effect-destruction ward")
+
+	game.turn_number += 1
+	game.run_with_effect_source(demon, func() -> void:
+		demon.activate(game, victim)
+	)
+	if game.has_pending_doorway_choice() or victim.current_zone != opponent.abyss_zone \
+			or weapon.current_zone != opponent.abyss_zone or victim not in game.destroyed_this_turn:
+		failures.append("Class Rend did not Void a Demon ability's victim and its Equipment")
+
 func _check_ragnarok_doorway(failures: PackedStringArray) -> void:
 	var manager := _new_doorway_match()
 	var game := manager.game_manager
@@ -5140,11 +5284,81 @@ func _check_community_bot_rank_badge(failures: PackedStringArray) -> void:
 	if fresh.is_empty() or int(fresh.get("stars", -1)) != 0 or int(fresh.get("bot_stars", -1)) != 0 \
 			or int(fresh.get("win_streak", -1)) != 0:
 		failures.append("A community bot without recorded results did not default to zero stars")
+	if DirAccess.copy_absolute(bot_path, bot_path + ".bak") != OK:
+		failures.append("Could not write the community bot backup fixture")
+	lobby.session_id_by_peer[2] = "community_probe_session"
+	lobby.sessions_by_id["community_probe_session"] = {"account_id": owner_id}
+	lobby._handle_delete_bot(2, {"bot_id": bot_id})
+	if not lobby._find_community_bot(owner_id, bot_id).is_empty() \
+			or not lobby._ranked_bot_deck_pool.get_deck_details(bot_id).is_empty():
+		failures.append("A deleted community bot remained available in the pool or through its backup")
 	for fixture_path in [bot_path, fresh_path]:
 		DirAccess.remove_absolute(fixture_path)
 		DirAccess.remove_absolute(fixture_path + ".bak")
 		DirAccess.remove_absolute(fixture_path + ".tmp")
 	lobby.free()
+
+func _check_community_bot_replay_identity(failures: PackedStringArray) -> void:
+	var old_id := "0123456789ab_ABCDEFGHJKLM"
+	var current_id := "0123456789ab_NPQRSTUVWXYZ"
+	var resubmitted_id := "0123456789ab_23456789ABCD"
+	var god_name := "Tiamat, the Primordial"
+	var cards := {god_name: 1, "Gallu": 3}
+	var old_result := _bot_pool_result("old_tiamat", old_id, cards, "win", true)
+	old_result["god_name"] = god_name
+	old_result["bot_name"] = "Tiamat: World Serpent"
+	var current_result := _bot_pool_result("current_tiamat", current_id, cards, "win", true)
+	current_result["god_name"] = god_name
+	var current_bot := {"owner_name": "Probe Owner", "deck_name": "Tiamat: Dreameater"}
+	var active := {current_id: current_bot}
+	var results: Array[Dictionary] = [old_result, current_result]
+	var pool := RankedBotDeckPoolScript.new()
+	# Simulate a cache written before deleted submissions were filtered.
+	pool.sync_community_bots({old_id: {"owner_name": "", "deck_name": old_result["bot_name"]}, current_id: current_bot})
+	pool.refresh(results)
+	var god_pool: Dictionary = pool._by_god.get(god_name, {})
+	var cached_old := pool._find_list_by_id(god_pool, old_id)
+	if cached_old.is_empty():
+		failures.append("Could not prepare the stale community bot pool fixture")
+		return
+	cached_old.erase("is_community_bot")
+	god_pool["quarantined_lists"].append(cached_old.duplicate(true))
+	var cache_path := ProjectSettings.globalize_path("user://preflight_community_bot_pool_%d.json" % OS.get_process_id())
+	var restored := RankedBotDeckPoolScript.new()
+	if not pool.save_state(cache_path, results.size()) or not restored.load_state(cache_path):
+		failures.append("Could not restore the stale ranked bot pool fixture")
+		return
+	DirAccess.remove_absolute(cache_path)
+	restored.sync_community_bots(active)
+	restored.refresh(results)
+	var current_record := restored.get_deck_details(current_id)
+	if not restored.get_deck_details(old_id).is_empty() or not restored.get_deck_details(old_id, true).is_empty() \
+			or not restored.select_deck({}, RandomNumberGenerator.new(), 0, true).is_empty() \
+			or restored.select_deck({}, RandomNumberGenerator.new(), 0).get("list_id") != current_id \
+			or int(current_record.get("wins", 0)) != 1 or int(current_record.get("stars", 0)) != 1 \
+			or int(current_record.get("win_streak", 0)) != 1 or current_record.get("deck_name") != current_bot["deck_name"]:
+		failures.append("A stale community bot remained playable or changed the current submission's record")
+
+	# A late finish from the deleted bot still publishes match history, but must
+	# never replay into the resubmission, even when the deck and owner match.
+	var late_result := old_result.duplicate(true)
+	late_result["match_id"] = "late_tiamat"
+	late_result["owner_name"] = current_bot["owner_name"]
+	late_result["is_community_bot"] = true
+	var resubmitted_result := current_result.duplicate(true)
+	resubmitted_result["match_id"] = "resubmitted_tiamat"
+	resubmitted_result["list_id"] = resubmitted_id
+	results.append_array([late_result, resubmitted_result])
+	var resubmitted := {resubmitted_id: current_bot}
+	restored.sync_community_bots(resubmitted)
+	restored.refresh(results)
+	var rebuilt := RankedBotDeckPoolScript.new()
+	rebuilt.sync_community_bots(resubmitted)
+	rebuilt.rebuild_league_records(results)
+	for replayed_pool in [restored, rebuilt]:
+		if not replayed_pool.get_deck_details(old_id).is_empty() or not replayed_pool.get_deck_details(current_id).is_empty() \
+				or int(replayed_pool.get_deck_details(resubmitted_id).get("wins", 0)) != 1:
+			failures.append("A deleted community submission or its record returned after resubmission")
 
 func _bot_pool_result(match_id: String, list_id: String, cards: Dictionary, outcome: String, is_self_play: bool = false) -> Dictionary:
 	return {

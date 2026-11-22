@@ -121,6 +121,7 @@ func _shift_god(outgoing: GodCard, incoming: GodCard, game_manager: GameManager)
 	outgoing.active_buffs = []
 	incoming._sync_status_flags()
 	god_slot.remove_card(outgoing)
+	outgoing.field_subtypes.clear()
 	card_owner.move_card(incoming, god_slot)
 	card_owner.card_moved.emit(outgoing, god_slot, null)
 	game_manager.note_player_feedback("%s shifts %s into %s." % [card_name, outgoing.card_name, incoming.card_name])

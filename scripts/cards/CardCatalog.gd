@@ -239,6 +239,7 @@ const CARD_SCRIPT_PATHS := [
 	"res://scripts/cards/Spells/FoolishOptimism.gd",
 	"res://scripts/cards/Spells/KeyOfSolomon.gd",
 	"res://scripts/cards/Spells/LightOfMorningsDoors.gd",
+	"res://scripts/cards/Spells/Metamorphosis.gd",
 	"res://scripts/cards/Spells/OccultSingularity.gd",
 	"res://scripts/cards/Spells/TabletOfLife.gd",
 	"res://scripts/cards/Spells/RunicSpellbreaker.gd",
