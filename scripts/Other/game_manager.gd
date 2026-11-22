@@ -372,6 +372,20 @@ func is_warded_from_combat_destruction(victim: Card, killer: Card) -> bool:
 		and has_turn_destruction_ward(victim.get_controller()) \
 		and (killer == null or not killer.can_destroy_combat_protected_creatures(victim))
 
+func get_creature_ability_activation_block_reason(card: Card) -> String:
+	if card == null or card.card_type != Card.CardType.CREATURE:
+		return ""
+	var controller := card.get_controller()
+	if controller == null:
+		return ""
+	var opponent := get_opponent(controller)
+	if opponent == null:
+		return ""
+	for field_card in get_field_cards(opponent):
+		if field_card is TheChainedGhostOfAthens and field_card.is_activation_lock_active():
+			return field_card.card_name + " prevents you from activating creature abilities."
+	return ""
+
 func get_turn_destruction_ward_activation_block_reason(source_card: Card, chosen_target = null) -> String:
 	if source_card == null:
 		return ""
@@ -829,6 +843,8 @@ func can_card_respond_to_action(card: Card, top: CardAction, player: Player = nu
 			return false
 		return _priority_response_has_required_targets(card, top)
 	if card.has_method("can_respond_to_priority_action"):
+		if not get_creature_ability_activation_block_reason(card).is_empty():
+			return false
 		if _has_pending_stack_action_for_card(card):
 			return false
 		var response_speed := card.get_effective_speed()
@@ -1696,7 +1712,8 @@ func summon_creature_by_effect(
 	pay_normal_summon_costs: bool = false,
 	consume_turn_summon: bool = false,
 	trigger_impact: bool = true,
-	skip_mana_payment: bool = false
+	skip_mana_payment: bool = false,
+	effect_mana_cost: int = -1
 ) -> bool:
 	if is_game_over or player == null or card == null:
 		return false
@@ -1714,20 +1731,18 @@ func summon_creature_by_effect(
 			using_extra_normal_summon = true
 		else:
 			return false
-	if not can_pay_creature_summon_cost(player, card, summon_source, pay_normal_summon_costs):
-		return false
-
-	var mana_required := get_creature_summon_mana_cost(
-		player,
-		card,
-		summon_source,
-		not pay_normal_summon_costs
-	)
+	var mana_required := effect_mana_cost
+	if pay_normal_summon_costs or mana_required < 0:
+		mana_required = get_creature_summon_mana_cost(player, card, summon_source, not pay_normal_summon_costs)
 	if pay_normal_summon_costs:
-		if not card.pay_costs_with_mana_cost(player, mana_required, self):
+		if not card.can_pay_costs_with_mana_cost(player, mana_required) \
+				or not card.pay_costs_with_mana_cost(player, mana_required, self):
 			return false
-	elif not skip_mana_payment and mana_required > 0 and not player.spend_mana(mana_required):
-		return false
+	else:
+		if player.mana < mana_required:
+			return false
+		if not skip_mana_payment and mana_required > 0 and not player.spend_mana(mana_required):
+			return false
 
 	var from_zone := card.current_zone
 	player.move_card(card, target_zone)
@@ -2302,7 +2317,7 @@ func creature_attack(attacker: Card, target) -> void:
 		return
 
 	if attacker.is_stealth:
-		attacker.reveal_from_stealth(self)
+		attacker.reveal_from_combat(self)
 		if attacker.creature_mode == Card.CreatureMode.DEFENSIVE:
 			attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
 	var united_front_partner: Card = null
@@ -2312,7 +2327,7 @@ func creature_attack(attacker: Card, target) -> void:
 	attacker.spend_attack_creature_action()
 	attacker.mark_attacked_this_turn()
 	if united_front_partner != null:
-		united_front_partner.reveal_from_stealth(self)
+		united_front_partner.reveal_from_combat(self)
 		united_front_partner.spend_attack_creature_action()
 		united_front_partner.mark_attacked_this_turn()
 	
@@ -2348,7 +2363,7 @@ func resolve_followers_attack(attackers: Array[Card], defending_player: Player) 
 		return 0
 
 	for combatant in active_attackers:
-		combatant.reveal_from_stealth(self)
+		combatant.reveal_from_combat(self)
 	for combatant in active_attackers:
 		_notify_attack_declared(combatant)
 
@@ -2381,6 +2396,7 @@ func resolve_followers_attack(attackers: Array[Card], defending_player: Player) 
 
 	for combatant in active_attackers:
 		_notify_opponent_attacks_followers(combatant, defending_player)
+	_destroy_tokens_after_combat(active_attackers)
 
 	_temporary_combat_follower_damage_reversed = false
 	return follower_damage
@@ -2486,12 +2502,13 @@ func resolve_combat(attacker: Card, defender: Card, continue_callback: Callable 
 	var defender_controller := defender.get_controller()
 	var finish := func() -> void:
 		_notify_after_combat(attacker, defender)
+		_destroy_tokens_after_combat([attacker, defender])
 		_clear_combat_engagement_state(defender)
 		_temporary_combat_follower_damage_reversed = false
 		if continue_callback.is_valid():
 			continue_callback.call()
-	attacker.reveal_from_stealth(self)
-	defender.reveal_from_stealth(self)
+	attacker.reveal_from_combat(self)
+	defender.reveal_from_combat(self)
 	_notify_attack_declared(attacker, defender)
 	if defender.is_god:
 		# Gods cannot be targeted in combat — redirect to follower damage
@@ -2641,12 +2658,13 @@ func resolve_united_front_combat(
 	var defender_controller := defender.get_controller()
 	var finish := func() -> void:
 		_notify_after_united_front_combat(attacker, partner, defender)
+		_destroy_tokens_after_combat([primary, support, defender])
 		_clear_combat_engagement_state(defender)
 		if continue_callback.is_valid():
 			continue_callback.call()
 	for combatant in active_attackers:
-		combatant.reveal_from_stealth(self)
-	defender.reveal_from_stealth(self)
+		combatant.reveal_from_combat(self)
+	defender.reveal_from_combat(self)
 	for combatant in active_attackers:
 		_notify_attack_declared(combatant, defender)
 	if defender.has_method("on_defend") and not defender.abilities_suppressed():
@@ -2831,12 +2849,13 @@ func resolve_combat_with_continuation(
 	var defender_controller := defender.get_controller()
 	var finish := func() -> void:
 		_notify_after_combat(attacker, defender)
+		_destroy_tokens_after_combat([attacker, defender])
 		_clear_combat_engagement_state(defender)
 		_temporary_combat_follower_damage_reversed = false
 		if continue_callback.is_valid():
 			continue_callback.call()
-	attacker.reveal_from_stealth(self)
-	defender.reveal_from_stealth(self)
+	attacker.reveal_from_combat(self)
+	defender.reveal_from_combat(self)
 	_notify_attack_declared(attacker, defender)
 	if defender.is_god:
 		var god_damage_target := defender_controller
@@ -3004,6 +3023,7 @@ func _resolve_committed_combat_snapshot(
 	var defender_halving_sources: PackedStringArray = snapshot["defender_halving_sources"]
 	var finish := func() -> void:
 		_notify_after_combat(attacker, defender)
+		_destroy_tokens_after_combat([attacker, defender])
 		_clear_combat_engagement_state(defender)
 		_temporary_combat_follower_damage_reversed = false
 		if continue_callback.is_valid():
@@ -3254,6 +3274,21 @@ func _expire_after_combat_effects(card: Card) -> void:
 	if card == null:
 		return
 	card.remove_effects_expiring_after_combat()
+
+func _destroy_tokens_after_combat(combatants: Array[Card]) -> void:
+	for card in combatants:
+		if card == null or not card.is_token or card.current_zone == null or not card.current_zone.is_board_zone():
+			continue
+		var status := card.get_status_effect(Card.DESTROY_AFTER_COMBAT_STATUS)
+		if status.is_empty():
+			continue
+		var source := status.get("source_card") as Card
+		var token_name := card.get_target_log_display_name(get_feedback_viewer())
+		# Either off-board destination removes a token, so there is no routing choice to make.
+		run_with_effect_source(source, func() -> void:
+			if _send_to_graveyard_with_hook(card, false, true, source) and reached_public_destroyed_destination(card):
+				note_player_feedback("%s is destroyed after combat." % token_name)
+		)
 
 func _get_combat_declaration_key(card: Card) -> String:
 	if card == null:
@@ -3944,7 +3979,7 @@ func _combat_kill(killer: Card, victim: Card) -> void:
 func _prevent_warded_combat_destruction(killer: Card, victim: Card) -> bool:
 	if not is_warded_from_combat_destruction(victim, killer):
 		return false
-	note_player_feedback("%s's ward protects it from being destroyed in combat." % victim.card_name)
+	note_player_feedback("%s's ward protects it from being destroyed in combat." % victim.get_public_combat_log_display_name())
 	return true
 
 func _get_simultaneous_combat_casualties(attacker: Card, defender: Card, support: Card = null) -> Array[Card]:
@@ -4935,6 +4970,8 @@ func _get_giants_disdain_damage_stat(stat_owner: Card, opposing_cards: Array[Car
 	return maxi(0, GameManager.round_down_divide(base_stat, 2))
 
 func _follower_damage_card_label(card: Card, combatants: Array[Card]) -> String:
+	if card.is_stealth and card.has_veil_of_night():
+		return card.get_public_combat_log_display_name()
 	var viewer := get_feedback_viewer()
 	var label := card.get_target_log_display_name(viewer)
 	for combatant in combatants:

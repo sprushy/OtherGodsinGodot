@@ -56,7 +56,7 @@ func on_opponent_attacks_followers(game_manager: GameManager, attacker: Card) ->
 	game_manager.note_player_feedback(
 		"%s: %s falls asleep until the end of their owner's next turn." % [
 			card_name,
-			attacker.card_name
+			attacker.get_public_combat_log_display_name()
 		]
 	)
 

@@ -37,7 +37,7 @@ const META_SURVIVAL_ANCHOR_STATS := [0, 9, 15, 18, 21, 24, 27, 30, 36, 99]
 const META_SURVIVAL_ANCHOR_SHARES := [0.0, 10.0, 21.2, 39.7, 53.8, 73.8, 84.4, 92.6, 98.5, 100.0]
 const META_STAT_POINT_WEIGHT := 23
 const TACTICAL_CARDS := [
-	"BitMeseri", "RunicSpellbreaker", "Snowball", "SirensSong", "TabletOfLife",
+	"BitMeseri", "RunicSpellbreaker", "Snowball", "SirensSong", "TabletOfLife", "ConjureEidolon",
 	"BookOfLife", "Earthquake", "FiresOfJudgment", "Famine", "OccultSingularity",
 	"FalloftheMighty", "BaneOfTheSvartalfar", "CircleofRebirth", "Absence",
 	"LightOfMorningsDoors", "FoolishOptimism", "DivineLightning", "FifaTheMagicalArrow", "Exorcism",
@@ -68,7 +68,7 @@ const STEALTH_SUPPRESSED_KEYS := [
 	"HariiFransiscan", "HariiJarl", "HelBlarDraug", "HumbabaTheTerrible", "HyenaPack",
 	"MalinalxochitlAcolyte", "MinotaurFootsoldier", "Nagual", "NergalLion", "PaiLongAutumnKing",
 	"Pazuzu", "Pegasus", "RabidWolf", "Rabisu", "RedCap",
-	"SevenHeadedSerpent", "SixthSageAnEnlilda", "StoneMonkey", "TelchineApprentice", "Thiazi",
+	"SevenHeadedSerpent", "SixthSageAnEnlilda", "StoneMonkey", "TelchineApprentice", "TheChainedGhostOfAthens", "Thiazi",
 	"ThirdSageEnmedugga", "TianlongHolyDragon", "UriskGrovekeepers", "WhiteStag", "WolfAdolescent",
 	"WolfCub",
 ]
@@ -100,7 +100,7 @@ static func supports_ranked_deck_card(card: Card) -> bool:
 		return true
 	var id := key(card)
 	if card is PowerCard:
-		return id in ACTIVE_POWERS or id in PLANNED_POWERS or id in PASSIVE_POWERS or PASSIVE_TYPES.has(id) \
+		return card is AspectShift or id in ACTIVE_POWERS or id in PLANNED_POWERS or id in PASSIVE_POWERS or PASSIVE_TYPES.has(id) \
 			or id in ["SavingGrace", "Ragnarok", "CallOfTheValkyrie", "AllfathersSacrifice", "FerociousDefence", "TakeTheField", "TonalExtraction"]
 	return id in TACTICAL_CARDS or id in EQUIPMENT or id in STRUCTURES \
 		or id in ["BlotSacrifice", "KeyOfSolomon", "MeadOfPoetry", "WheelOfFire", "ApollyonsDemiurge", "DeucalionsInfants", "TheChangelingExchange"]
@@ -124,6 +124,9 @@ static func open_spaces(player: Player) -> int:
 		if zone.cards.is_empty():
 			count += 1
 	return count
+
+static func expires_after_combat(card: Card) -> bool:
+	return card != null and card.is_token and card.has_status_effect(Card.DESTROY_AFTER_COMBAT_STATUS)
 
 static func follower_gain(player: Player, amount: int) -> int:
 	if player == null or not player.followers_enabled or amount <= 0:
@@ -177,9 +180,12 @@ static func value(bot, card: Card) -> int:
 		+ _resilience_survival_points(card.get_effective_resilience()) \
 		+ maxi(0, card.mana_cost) * 200
 	score += kur_jara_engine_premium(card)
+	score += clanking_chains_gain(bot, card)
 	if card.is_god and _would_destroying_god_cause_god_death(bot, card):
 		var owner := card.get_controller()
 		score += bot._score_follower_loss(owner, GameManager.GOD_DEATH_FOLLOWER_LOSS) + MANA_VALUE
+	if expires_after_combat(card):
+		return roundi(score * 0.65)
 	return score
 
 static func kur_jara_engine_premium(card: Card) -> int:
@@ -204,6 +210,40 @@ static func kur_jara_engine_premium(card: Card) -> int:
 	# Graves are public board knowledge, so fuel is visible to both sides.
 	@warning_ignore("integer_division")
 	return KUR_JARA_ENGINE_PREMIUM if fuel else KUR_JARA_ENGINE_PREMIUM / 3
+
+static func has_active_clanking_chains(game: GameManager, player: Player, removed: Array, except_uid: String = "") -> bool:
+	for field_card in game.get_field_cards(player):
+		if field_card is TheChainedGhostOfAthens and field_card.uid != except_uid \
+				and field_card not in removed and field_card.is_activation_lock_active():
+			return true
+	return false
+
+static func clanking_chains_gain(bot, card: Card, removed: Array = []) -> int:
+	if not card is TheChainedGhostOfAthens or not card.is_activation_lock_active() or not visible(bot, card):
+		return 0
+	var game: GameManager = bot.game_manager
+	var controller := card.get_controller()
+	if game == null or controller == null or has_active_clanking_chains(game, controller, removed, card.uid):
+		return 0
+	var enemy := game.get_opponent(controller)
+	if enemy == null:
+		return 0
+	var gain := 0
+	for creature in game.get_field_cards(enemy, false):
+		if creature.card_type != Card.CardType.CREATURE or creature in removed or not visible(bot, creature) \
+				or creature.is_face_down or creature.is_sleeping or creature.abilities_suppressed():
+			continue
+		# Fenrir's board Devour is an Impact. Its activate method is for the god form.
+		if creature is Fenrir or not creature.has_method("activate"):
+			continue
+		# Main-phase availability checks depend on whose turn it is. Price the
+		# actions the opponent could take on their own turn, including removal.
+		var pressure := 1100
+		if creature is Lindwyrm or creature is Nimue or creature is Alu \
+				or creature is ClayEaters or creature is TezcatlipocaBlasphemer:
+			pressure = 2300
+		gain += _disable_gain(bot, creature, {"activation_locked": pressure})
+	return mini(gain, CARD_VALUE)
 
 static func _would_destroying_god_cause_god_death(bot, god: Card) -> bool:
 	if bot == null or bot.game_manager == null or god == null or not god.is_god:
@@ -1022,6 +1062,11 @@ static func target_score(bot, card: Card, target: Card, action: CardAction = nul
 				# denial outlasts the borrow: see _mummu_temporary_control_bonus.
 				steal += bot._mummu_temporary_control_bonus(target)
 			return steal
+		"ConjureEidolon":
+			var spell := card as ConjureEidolon
+			if not own or not spell.is_valid_target(target, bot.game_manager) or spell.get_open_summon_zone() == null:
+				return BAD
+			return value(bot, spell.create_eidolon(target))
 		"Absence":
 			if not enemy or not visible(bot, target):
 				return BAD

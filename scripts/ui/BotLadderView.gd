@@ -56,6 +56,8 @@ var _deck_contents: RichTextLabel
 var _deck_timeout: Timer
 var _selected_list_id := ""
 var _selected_entry: Dictionary = {}
+var _own_username := ""
+var _own_profile_summary: Dictionary = {}
 var _paging_supported := false
 var _filter_supported := false
 var _current_page := 0
@@ -274,15 +276,11 @@ func show_summary(summary: Dictionary) -> void:
 	_current_page = int(summary.get("page", 0))
 	_last_page = int(summary.get("last_page", 0))
 	_ladder_entries = summary.get("ladder", []).duplicate()
-	var entries: Array = _ladder_entries
-	var has_bot := entries.any(func(entry: Dictionary) -> bool: return bool(entry.get("is_bot", false)))
-	var message := ""
-	if entries.is_empty():
+	var message := "Select an entry to view its record."
+	if _ladder_entries.is_empty():
 		message = _empty_ladder_message()
 	elif not _paging_supported:
-		message = "Best-of-one ladder. Select a bot to see its deck." if has_bot else "Best-of-one ladder."
-	elif has_bot:
-		message = "Select a bot to see its deck."
+		message = "Best-of-one ladder. " + message
 	set_status(message, true)
 	_render_ladder_rows()
 
@@ -298,7 +296,6 @@ func _render_ladder_rows() -> void:
 	var root := _table.create_item()
 	var search_text := get_search_query().to_lower()
 	var selected_filter := _player_filter.get_selected_id()
-	var has_visible_bot := false
 	var visible_count := 0
 	for index in range(_ladder_entries.size()):
 		var entry: Dictionary = _ladder_entries[index]
@@ -342,13 +339,10 @@ func _render_ladder_rows() -> void:
 		if is_bot:
 			row.set_metadata(1, str(entry["list_id"]))
 			row.set_custom_color(1, GOLD)
-			has_visible_bot = true
 	if _ladder_entries.is_empty():
 		_status.text = _empty_ladder_message()
 	elif visible_count == 0:
 		_status.text = "No matching entries on this page."
-	elif not has_visible_bot and _status_message.begins_with("Select a bot"):
-		_status.text = "Search and filter the ranked ladder."
 	else:
 		_status.text = _status_message
 	_status.visible = _selected_entry.is_empty()
@@ -419,8 +413,7 @@ func _open_selected_entry() -> void:
 		return
 	_selected_entry = metadata.duplicate(true)
 	_selected_list_id = str(_selected_entry.get("list_id", ""))
-	_deck_contents.clear()
-	_render_recent_record_details()
+	_render_selected_entry()
 	_deck_contents.show()
 	_back_button.show()
 	_view_deck_button.visible = not _selected_list_id.is_empty()
@@ -440,7 +433,21 @@ func _open_selected_entry() -> void:
 	_set_focus_order(focus_order)
 	_back_button.grab_focus()
 
-func _render_recent_record_details() -> void:
+func set_own_profile_summary(username: String, summary: Dictionary) -> void:
+	if _own_username == username and _own_profile_summary == summary:
+		return
+	var was_own_profile := _is_own_profile_selected()
+	_own_username = username
+	_own_profile_summary = summary.duplicate(true)
+	if was_own_profile or _is_own_profile_selected():
+		_render_selected_entry()
+
+func _is_own_profile_selected() -> bool:
+	return not _own_username.is_empty() and not bool(_selected_entry.get("is_bot", false)) \
+		and str(_selected_entry.get("name", "")).nocasecmp_to(_own_username) == 0
+
+func _render_selected_entry() -> void:
+	_deck_contents.clear()
 	var player_name := str(_selected_entry.get("name", "Player"))
 	var wins := int(_selected_entry.get("wins", 0))
 	var losses := int(_selected_entry.get("losses", 0))
@@ -459,8 +466,10 @@ func _render_recent_record_details() -> void:
 		for god in main_gods:
 			god_names.append(str(god))
 		_deck_contents.add_text("Most played God: %s\n" % " / ".join(god_names))
-	_deck_contents.add_text("\nRecent ranked matches\n")
 	_deck_contents.pop()
+	if _is_own_profile_selected() and not _own_profile_summary.is_empty():
+		_render_own_profile_record()
+	_add_record_heading("Recent ranked matches")
 	var recent_matches: Array = _selected_entry.get("recent_matches", [])
 	if recent_matches.is_empty():
 		_deck_contents.add_text("No ranked matches recorded yet.\n")
@@ -475,6 +484,75 @@ func _render_recent_record_details() -> void:
 				date, int(recent.get("best_of", 1)), result, opponent_text,
 			])
 	_deck_contents.scroll_to_line(0)
+
+func _render_own_profile_record() -> void:
+	_add_record_heading("Match record")
+	_deck_contents.add_text("%d wins · %d losses · %d draws\n" % [
+		int(_own_profile_summary.get("total_wins", 0)),
+		int(_own_profile_summary.get("total_losses", 0)),
+		int(_own_profile_summary.get("total_draws", 0)),
+	])
+	for best_of in [1, 3]:
+		var key := "ranked_bo3_progress" if best_of == 3 else "ranked_progress"
+		var progress: Dictionary = _own_profile_summary.get(key, {})
+		if progress.is_empty():
+			continue
+		var heading := "Bo%d season" % best_of if _own_profile_summary.has("ranked_bo3_progress") else "Season"
+		_add_record_heading("%s %s" % [heading, progress["season"]])
+		_deck_contents.add_text("Peak %s (%d★) · Ranked matches %d · Win streak %d\n" % [
+			progress["peak_rank_name"], progress["peak_stars"], progress["matches"], progress["win_streak"],
+		])
+		if int(progress["matches"]) > 0:
+			var delta := int(progress["last_delta"])
+			var delta_text := "+%d" % delta if delta > 0 else str(delta)
+			_deck_contents.add_text("Last ranked match %s★\n" % delta_text)
+	_render_record_breakdown("By God", "god_records", "god_name", "Unknown God", 4)
+	_render_record_breakdown("By Deck", "deck_records", "deck_name", "Unknown Deck", 3)
+	var recent_matches = _own_profile_summary.get("recent_matches", [])
+	if recent_matches is Array and not recent_matches.is_empty():
+		_add_record_heading("Recent matches")
+		var displayed := 0
+		for recent in recent_matches:
+			if not recent is Dictionary:
+				continue
+			_deck_contents.add_text("%s as %s vs %s\n" % [
+				str(recent.get("result", "")).capitalize(),
+				_format_profile_loadout(str(recent.get("god_name", "")), str(recent.get("deck_name", ""))),
+				_format_profile_loadout(str(recent.get("opponent_god_name", "")), str(recent.get("opponent_deck_name", ""))),
+			])
+			displayed += 1
+			if displayed >= 3:
+				break
+
+func _render_record_breakdown(heading: String, records_key: String, name_key: String, fallback_name: String, limit: int) -> void:
+	var records = _own_profile_summary.get(records_key, [])
+	if not records is Array or records.is_empty():
+		return
+	_add_record_heading(heading)
+	var displayed := 0
+	for record in records:
+		if not record is Dictionary:
+			continue
+		var record_name := str(record.get(name_key, "")).strip_edges()
+		_deck_contents.add_text("%s · %d W · %d L · %d D\n" % [
+			record_name if not record_name.is_empty() else fallback_name,
+			int(record.get("wins", 0)), int(record.get("losses", 0)), int(record.get("draws", 0)),
+		])
+		displayed += 1
+		if displayed >= limit:
+			break
+
+func _add_record_heading(heading: String) -> void:
+	_deck_contents.push_color(MUTED)
+	_deck_contents.add_text("\n%s\n" % heading)
+	_deck_contents.pop()
+
+func _format_profile_loadout(god_name: String, deck_name: String) -> String:
+	var god := god_name.strip_edges()
+	if god.is_empty():
+		god = "Unknown God"
+	var deck := deck_name.strip_edges()
+	return god if deck.is_empty() else "%s (%s)" % [god, deck]
 
 func _format_match_date(unix_time: int) -> String:
 	if unix_time <= 0:

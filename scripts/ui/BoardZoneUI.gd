@@ -2137,7 +2137,7 @@ func _get_god_custom_ability_badge_texture(card: Card) -> Texture2D:
 		return FENRIS_DEVOUR_BADGE_TEXTURE
 	if card.card_name == "Pai Long":
 		return PAI_LONG_BADGE_TEXTURE
-	if card.card_name == "Hermes":
+	if card.card_name == "Hermes" or card is HermesPsychopompus:
 		return HERMES_ABILITY_BADGE_TEXTURE
 	if card.card_name == "Odin, the Allfather":
 		return ODIN_RUNIC_KNOWLEDGE_BADGE_TEXTURE
@@ -2371,7 +2371,7 @@ func _add_nimue_badges(overlay: Control, card: Card) -> void:
 	var clickable := not _is_enemy and card.get_controller() == _get_viewer_player()
 	var can_entomb := false
 	var can_present := false
-	if game_manager != null:
+	if game_manager != null and game_manager.get_creature_ability_activation_block_reason(card).is_empty():
 		can_entomb = nimue.can_activate_entomb(game_manager)
 		can_present = nimue.can_activate_present(game_manager)
 	var top_badge_top := _get_badge_row_top() + CREATURE_ABILITY_BADGE_TOP_OFFSET
@@ -2411,7 +2411,9 @@ func _add_white_serpent_medicine_badge(overlay: Control, card: Card) -> void:
 	var clickable := not _is_enemy and card.get_controller() == viewer
 	var badge_ready := clickable and (
 		_is_card_usable_for_priority(card) if _is_priority_badge_filter_active() else (
-			game_manager != null and serpent.can_activate_medicine(game_manager)
+			game_manager != null
+			and game_manager.get_creature_ability_activation_block_reason(card).is_empty()
+			and serpent.can_activate_medicine(game_manager)
 		)
 	)
 	if not _should_show_ability_badge_control(card, badge_ready, clickable):
@@ -2459,6 +2461,7 @@ func _add_creature_ability_badge(overlay: Control, card: Card) -> void:
 	var badge_ready = clickable and (
 		_is_card_usable_for_priority(card) if _is_priority_badge_filter_active() else (
 			game_manager != null
+			and game_manager.get_creature_ability_activation_block_reason(card).is_empty()
 			and card.has_method("can_activate")
 			and card.has_method("activate")
 			and card.can_activate(game_manager)

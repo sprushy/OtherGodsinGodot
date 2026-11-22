@@ -74,7 +74,7 @@ func _init() -> void:
 		if card == null:
 			continue
 		_cards_by_name[str(card.card_name)] = card
-		if card is GodCard:
+		if card is GodCard and not (card is HermesPsychopompus or card is AphroditeSkotia):
 			_gods.append(card as GodCard)
 	_build_restricted_equipment_lookup()
 
@@ -203,7 +203,7 @@ func _choose_god_template(rng: RandomNumberGenerator, forced_god_name: String, r
 	var resolved_forced_name := forced_god_name.strip_edges()
 	if not resolved_forced_name.is_empty():
 		var forced_card = _cards_by_name.get(resolved_forced_name, null)
-		return forced_card as GodCard
+		return forced_card as GodCard if forced_card in _gods else null
 	var candidates := _gods if ranked else _gods.filter(func(god: GodCard) -> bool:
 		return not TiamatThePrimordial.is_tiamat_god(god)
 	)
@@ -715,13 +715,17 @@ func _get_power_candidates(god: GodCard, deck_cards: Dictionary, ranked: bool = 
 			continue
 		if ranked and not BotCardStrategyScript.supports_ranked_deck_card(template):
 			continue
-		if not ranked and not _safe_non_creature_lookup.has(CardCatalogScript.to_lookup_key(str(template.card_name))):
+		var aphrodite_shift := template is AspectShift and god is AphroditeAreia
+		if not ranked and not aphrodite_shift and not _safe_non_creature_lookup.has(CardCatalogScript.to_lookup_key(str(template.card_name))):
 			continue
 		if int(deck_cards.get(template.card_name, 0)) >= 1:
 			continue
 		if not _is_card_compatible_with_god(template, god):
 			continue
 		if template is TakeTheField and not _can_use_take_the_field(god):
+			continue
+		if template is AspectShift and not aphrodite_shift \
+				and (not god is Hermes or _count_matching(deck_cards, ["Ghost"]) == 0):
 			continue
 		if (ranked or template is TonalExtraction) and not _has_deckbuilding_requirements(template, deck_cards, god):
 			continue

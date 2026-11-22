@@ -2223,7 +2223,7 @@ func _resolve_attack(action: CardAction) -> void:
 		if actual_target.current_zone == null or not actual_target.current_zone.is_board_zone():
 			action.attacker.spend_attack_creature_action()
 			game_manager._clear_combat_engagement_state(actual_target)
-			last_resolution_text = action.attacker.card_name + "'s attack fizzles — target is no longer on the board."
+			last_resolution_text = action.attacker.get_public_combat_log_display_name() + "'s attack fizzles — target is no longer on the board."
 			return
 		if not _offer_creature_combat_prompts(action, actual_target):
 			_finish_creature_combat(action, actual_target)
@@ -2298,7 +2298,7 @@ func _begin_combat_reveal_linger(action: CardAction, target: Card, before_retrea
 
 	var reveal_cards: Array[Card] = []
 	for combatant in [action.attacker, action.united_front_partner, target]:
-		if combatant != null and combatant.is_stealth and combatant not in reveal_cards:
+		if combatant != null and combatant.will_reveal_in_combat() and combatant not in reveal_cards:
 			reveal_cards.append(combatant)
 
 	if reveal_cards.is_empty():
@@ -2313,7 +2313,7 @@ func _begin_combat_reveal_linger(action: CardAction, target: Card, before_retrea
 	_mark_deferred_authoritative_action(action, "combat_reveal_linger")
 
 	for combatant in reveal_cards:
-		combatant.reveal_from_stealth(game_manager)
+		combatant.reveal_from_combat(game_manager)
 
 	if not before_retreat and action.united_front_partner == null:
 		game_manager.capture_committed_combat_snapshot(action.attacker, target)
@@ -2421,7 +2421,7 @@ func _format_card_name_list(cards: Array[Card]) -> String:
 	var names: Array[String] = []
 	for card in cards:
 		if card != null:
-			names.append(card.card_name)
+			names.append(card.get_public_combat_log_display_name())
 	if names.size() <= 1:
 		return names[0] if not names.is_empty() else "A card"
 	if names.size() == 2:
@@ -2448,13 +2448,12 @@ func _resolve_creature_combat_now(
 			combatant.spend_attack_creature_action()
 			combatant.mark_attacked_this_turn()
 		var combat_text := ""
-		if active.size() >= 2:
-			combat_text = active[0].card_name + " and " + active[1].card_name + " fought " + target.card_name + "!"
-		elif not active.is_empty():
-			combat_text = active[0].card_name + " fought " + target.card_name + "!"
+		var target_name := target.get_public_combat_log_display_name()
+		if not active.is_empty():
+			combat_text = "%s fought %s!" % [_format_card_name_list(active), target_name]
 		if action.interceptor != null and not combat_text.is_empty():
 			last_resolution_text = "%s intercepted %s. %s" % [
-				target.card_name,
+				target_name,
 				_format_card_name_list(active),
 				combat_text,
 			]
@@ -2474,7 +2473,7 @@ func _resolve_creature_combat_now(
 			combatant.spend_attack_creature_action()
 			combatant.mark_attacked_this_turn()
 		game_manager._clear_combat_engagement_state(target)
-		last_resolution_text = attacker.card_name + "'s attack fizzles - target is no longer on the board."
+		last_resolution_text = attacker.get_public_combat_log_display_name() + "'s attack fizzles - target is no longer on the board."
 		if completion_callback.is_valid():
 			completion_callback.call()
 		return
@@ -2513,13 +2512,14 @@ func _can_continue_declared_attack(attacker: Card) -> bool:
 func _get_declared_attack_fizzle_reason(attacker: Card, attacking_player: Player) -> String:
 	if attacker == null or not is_instance_valid(attacker):
 		return "The attack fizzles because its attacker is no longer available."
+	var attacker_name := attacker.get_public_combat_log_display_name()
 	if attacking_player != null and attacker.get_controller() != attacking_player:
-		return "%s's attack fizzles because it is no longer under the attacking player's control." % attacker.card_name
+		return "%s's attack fizzles because it is no longer under the attacking player's control." % attacker_name
 	if not _is_attacker_still_on_frontline(attacker):
-		return "%s's attack fizzles because it is no longer on the frontline." % attacker.card_name
+		return "%s's attack fizzles because it is no longer on the frontline." % attacker_name
 	if attacker.creature_mode != Card.CreatureMode.AGGRESSIVE:
-		return "%s's attack fizzles because it is no longer in aggressive stance." % attacker.card_name
-	return "%s's attack fizzles because it can no longer continue attacking." % attacker.card_name
+		return "%s's attack fizzles because it is no longer in aggressive stance." % attacker_name
+	return "%s's attack fizzles because it can no longer continue attacking." % attacker_name
 
 ## Returns any Askelladen cards in the combat that qualify for Tactical Retreat.
 func _get_retreat_candidates(attacker: Card, defender: Card, _turn_player: Player) -> Array:
@@ -2667,7 +2667,7 @@ func _continue_pending_humbaba_attack_resolution(action: CardAction, actual_targ
 		if target_card.current_zone == null or not target_card.current_zone.is_board_zone():
 			action.attacker.spend_attack_creature_action()
 			game_manager._clear_combat_engagement_state(target_card)
-			last_resolution_text = action.attacker.card_name + "'s attack fizzles â€” target is no longer on the board."
+			last_resolution_text = action.attacker.get_public_combat_log_display_name() + "'s attack fizzles — target is no longer on the board."
 			return
 		_finish_creature_combat(action, target_card)
 	elif actual_target is Player:
@@ -4075,7 +4075,7 @@ func request_attack(attacker, target) -> bool:
 			return false
 
 	if attacker_card.is_stealth:
-		attacker_card.reveal_from_stealth(game_manager)
+		attacker_card.reveal_from_combat(game_manager)
 		if attacker_card.creature_mode == Card.CreatureMode.DEFENSIVE:
 			attacker_card.creature_mode = Card.CreatureMode.AGGRESSIVE
 
@@ -4785,7 +4785,14 @@ func _accept_redundant_priority_pass(command: Dictionary, sender_info: Dictionar
 
 func _process_command_impl(command: Dictionary) -> bool:
 	var acting_player := _get_command_actor(_active_command_sender_info)
-	match command.get("type", ""):
+	var command_type := str(command.get("type", ""))
+	if command_type in ["activate_card_ability", "play_priority_ability", "mopsus_reveal_hand_card", "en_hedu_anna_exaltation"]:
+		var source_card := game_manager.get_card_by_uid(str(command.get("source_uid", "")))
+		var block_reason := game_manager.get_creature_ability_activation_block_reason(source_card)
+		if not block_reason.is_empty():
+			move_failed.emit(block_reason)
+			return false
+	match command_type:
 		"set_priority_preferences":
 			var preference_player := acting_player
 			var preference_player_idx := int(command.get("player_index", -1))
@@ -5180,6 +5187,9 @@ func _process_command_impl(command: Dictionary) -> bool:
 				return false
 			var spell_target_uid: String = command.get("target_uid", "")
 			var spell_target: Card = game_manager.get_card_by_uid(spell_target_uid) if spell_target_uid != "" else null
+			if spell is ConjureEidolon and not (spell as ConjureEidolon).is_valid_target(spell_target, game_manager):
+				move_failed.emit("Conjure Eidolon requires a non-Spirit creature you control as a legal target.")
+				return false
 			var spell_ward_block_reason := game_manager.get_turn_destruction_ward_activation_block_reason(spell, spell_target)
 			if spell_ward_block_reason != "":
 				move_failed.emit(spell_ward_block_reason)
@@ -5341,7 +5351,8 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if god_card == null or not god_card.is_god:
 				move_failed.emit("god_ability: god card not found")
 				return false
-			if not god_card.has_method("can_activate") or not god_card.can_activate(game_manager):
+			var psychopompus := god_card as HermesPsychopompus
+			if psychopompus == null and (not god_card.has_method("can_activate") or not god_card.can_activate(game_manager)):
 				var god_failure_reason: String = str(god_card.get_activation_failure_reason(game_manager)) if god_card.has_method("get_activation_failure_reason") else ""
 				move_failed.emit(god_failure_reason if god_failure_reason != "" else god_card.card_name + " activation was rejected without a rules reason.")
 				return false
@@ -5349,11 +5360,19 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var target_uid: String = command.get("target_uid", "")
 			if target_uid != "":
 				target = game_manager.get_card_by_uid(target_uid)
+			var god_resolution_text := ""
+			if psychopompus != null:
+				var failure_reason := psychopompus.get_ability_command_failure_reason(game_manager, command, target)
+				if not failure_reason.is_empty():
+					move_failed.emit(failure_reason)
+					return false
+				god_resolution_text = "%s uses %s." % [god_card.card_name, command["ability"]]
 			var is_champions_call_command: bool = god_card is GodCard \
 				and god_card.has_champions_call() and god_card.is_champions_call_command(command)
 			var is_necoc_yaotl_summon: bool = god_card is TezcatlipocaTheSmokingMirror \
 				and target_uid.is_empty() and god_card.can_resolve_necoc_yaotl_summon(game_manager)
-			if god_card.targets and target == null and not is_champions_call_command and not is_necoc_yaotl_summon:
+			if god_card.targets and target == null and psychopompus == null \
+					and not is_champions_call_command and not is_necoc_yaotl_summon:
 				move_failed.emit("god_ability: target card not found")
 				return false
 			if target != null and god_card.has_method("is_valid_activation_target") and not god_card.is_valid_activation_target(target):
@@ -5371,7 +5390,8 @@ func _process_command_impl(command: Dictionary) -> bool:
 					if god_card.has_method("activate_from_command"):
 						god_card.activate_from_command(game_manager, command)
 					else:
-						god_card.activate(game_manager, target)
+						god_card.activate(game_manager, target),
+				god_resolution_text
 			)
 			_advance_authoritative_priority()
 			move_validated.emit(command)

@@ -395,6 +395,7 @@ var _board_leave_hooks_processed: bool = false
 const PARALYZED_STATUS := "paralyzed"
 const EXTERNAL_EFFECT_NEGATION_STATUS := "external_effect_negation"
 const ABILITY_NEGATED_STATUS := "ability_negated"
+const DESTROY_AFTER_COMBAT_STATUS := "destroy_after_combat"
 const COST_KIND_POWER_UNLOCK := "power_unlock"
 const COST_KIND_POWER_ACTIVATION := "power_activation"
 const COST_KIND_CREATURE_SUMMON := "creature_summon"
@@ -511,7 +512,8 @@ func is_hidden_from_viewer(viewer: Player = null) -> bool:
 	if viewer == null:
 		return false
 	var owner_game_manager := card_owner.game_manager if card_owner != null else null
-	if owner_game_manager != null and is_magical_card() and owner_game_manager._has_pending_stack_action_for_card(self):
+	if owner_game_manager != null and is_magical_card() and owner_game_manager._has_pending_stack_action_for_card(self) \
+			and not (is_stealth and has_veil_of_night()):
 		return false
 	if current_zone != null and current_zone.zone_type == Zone.ZoneType.DECK:
 		# Deck order is private. Opponents may know a primed/shelved card
@@ -569,6 +571,8 @@ func get_target_log_display_name(viewer: Player = null) -> String:
 func is_known_for_combat_log(viewer: Player = null) -> bool:
 	if not is_hidden_from_viewer(viewer):
 		return true
+	if is_stealth and has_veil_of_night():
+		return false
 	return has_meta("combat_declared_attackers") \
 		or has_meta("combat_was_stealth_when_engaged") \
 		or has_meta("combat_was_sleeping_when_engaged")
@@ -577,6 +581,11 @@ func get_combat_log_display_name(viewer: Player = null) -> String:
 	if is_known_for_combat_log(viewer):
 		return get_display_name()
 	return get_target_log_display_name(viewer)
+
+func get_public_combat_log_display_name() -> String:
+	if is_stealth and has_veil_of_night() and not is_revealed_to_all():
+		return get_hidden_log_position_label()
+	return card_name
 
 func is_enslaved() -> bool:
 	var controller := get_controller()
@@ -784,7 +793,7 @@ func get_effective_speed(speed_delta: int = 0) -> int:
 	var base_speed = speed
 	var speed_override: Variant = null
 	var equipment_speed_bonus := 0
-	if is_stealth:
+	if is_stealth and not has_veil_of_night():
 		base_speed -= 1
 	for equip in equipment:
 		equipment_speed_bonus += equip.speed_modifier
@@ -920,6 +929,9 @@ func get_effect_summary_lines() -> Array[String]:
 			continue
 		if raw_status_name == ABILITY_NEGATED_STATUS:
 			lines.append("Abilities negated from " + str(status.get("source", "?")))
+			continue
+		if raw_status_name == DESTROY_AFTER_COMBAT_STATUS:
+			lines.append("Destroyed after its next combat")
 			continue
 		var status_name := raw_status_name.capitalize()
 		lines.append(status_name + " from " + str(status.get("source", "?")))
@@ -1652,6 +1664,22 @@ func can_destroy_combat_protected_creatures(target: Card = null) -> bool:
 
 func reveal_from_stealth(game_manager: GameManager = null) -> void:
 	if is_stealth:
+		reveal(game_manager)
+
+func has_veil_of_night() -> bool:
+	if not is_creature_card():
+		return false
+	var controller := get_controller()
+	if controller == null or controller.god_zone == null or controller.god_zone.cards.is_empty():
+		return false
+	var god := controller.god_zone.cards[0] as AphroditeSkotia
+	return god != null and not god.abilities_suppressed() and not god.is_face_down and not god.is_sleeping
+
+func will_reveal_in_combat() -> bool:
+	return is_stealth and not has_veil_of_night()
+
+func reveal_from_combat(game_manager: GameManager) -> void:
+	if will_reveal_in_combat():
 		reveal(game_manager)
 
 func _has_equipped_evasive() -> bool:

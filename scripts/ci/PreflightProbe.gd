@@ -86,6 +86,7 @@ func run() -> bool:
 	_check_bot_main_phase_combat_order(failures)
 	_check_bot_aurboda_pierce(failures)
 	_check_bot_tablet_of_life_payoff(failures)
+	_check_bot_conjure_eidolon(failures)
 	_check_bot_removal_opens_attacks(failures)
 	_check_bot_paired_removals(failures)
 	_check_bot_summon_and_removal_order(failures)
@@ -93,6 +94,9 @@ func run() -> bool:
 	_check_bot_disable_overlap(failures)
 	_check_bot_defender_target_value(failures)
 	_check_bot_hermes_speed(failures)
+	_check_aspect_shift(failures)
+	_check_bot_aspect_shift(failures)
+	_check_aphrodite_aspect_shift(failures)
 	_check_bot_violent_delights_upkeep(failures)
 	_check_bot_shift_and_extraction(failures)
 	_check_bot_combat_buff_value(failures)
@@ -2355,6 +2359,71 @@ func _check_bot_tablet_of_life_payoff(failures: PackedStringArray) -> void:
 		failures.append("Bot spent Tablet of Life on Humbaba after the first attack resolved")
 	bot.detach()
 
+func _check_bot_conjure_eidolon(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	player.game_manager = game
+	opponent.game_manager = game
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	player.mana = 3
+	opponent.followers = 20
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var spell := ConjureEidolon.new()
+	spell.card_owner = player
+	player.hand_zone.add_card(spell)
+	var weak := CreatureCard.new()
+	weak.card_owner = player
+	weak.strength = 5
+	weak.creature_major_action_used = true
+	player.reserve_zones[0].add_card(weak)
+	weak.add_buff("Fixture buff", 30, 0, 0)
+	var strong := CreatureCard.new()
+	strong.card_owner = player
+	strong.card_name = "Fixture Warrior"
+	strong.card_types = ["Warrior"]
+	strong.strength = 21
+	strong.creature_major_action_used = true
+	player.reserve_zones[1].add_card(strong)
+	var spirit := CreatureCard.new()
+	spirit.card_owner = player
+	spirit.card_types = ["Spirit"]
+	spirit.strength = 40
+	spirit.creature_major_action_used = true
+	player.reserve_zones[2].add_card(spirit)
+	var plan := bot._get_best_strategy_action([], {})
+	if not plan.get("lethal", false) or plan.get("command", {}).get("target_uid") != strong.uid:
+		failures.append("Bot did not choose the legal Eidolon copy with a lethal printed stat line")
+	elif bot._take_main_phase_action():
+		for _step in range(8):
+			manager.advance_priority()
+		var eidolon: Card = player.frontline_zones[0].cards.front() if not player.frontline_zones[0].cards.is_empty() else null
+		if eidolon == null or eidolon.card_name != strong.card_name + " Eidolon" or not eidolon.is_silenced():
+			failures.append("Bot did not resolve the planned Eidolon cast")
+		else:
+			opponent.followers = 100
+			var attack := CardAction.new()
+			attack.type = CardAction.Type.ATTACK
+			attack.attacker = eidolon
+			attack.target = opponent
+			var outcome := bot._estimate_projected_attack_economy(attack, {})
+			if eidolon not in outcome["casualties"] or int(outcome["opponent_followers_lost"]) != eidolon.strength:
+				failures.append("Bot did not forecast the Eidolon expiring after direct follower damage")
+			if bot._take_main_phase_action():
+				for _step in range(8):
+					manager.advance_priority()
+			if opponent.followers != 100 - strong.strength or eidolon.current_zone != null:
+				failures.append("Bot did not follow through with the Eidolon's direct attack")
+	else:
+		failures.append("Bot did not cast Conjure Eidolon before combat")
+	bot.detach()
+
 func _check_bot_removal_opens_attacks(failures: PackedStringArray) -> void:
 	for use_spell in [true, false]:
 		var game := _new_fixture_game()
@@ -2796,6 +2865,270 @@ func _check_bot_hermes_speed(failures: PackedStringArray) -> void:
 	attacks = bot._get_combat_candidates()
 	if not bot._plan_hermes_speed(attacks, bot._plan_combat(attacks)).is_empty():
 		failures.append("Hermes paid for speed even though the attacker already outran Void Shield")
+
+	var psychopompus := HermesPsychopompus.new()
+	psychopompus.card_owner = player
+	player.god_zone.remove_card(hermes)
+	player.god_zone.add_card(psychopompus)
+	player.mana = 4
+	var ghost := Edimmu.new()
+	ghost.card_owner = player
+	player.deck_zone.add_card(ghost)
+	var summon := bot._plan_deck_god_ability(0)
+	if not bot._submit_strategy_plan(summon):
+		failures.append("Hermes Psychopompus did not submit Call of the Crossing")
+	for _step in range(8):
+		manager.advance_priority()
+	if ghost.current_zone not in player.frontline_zones or ghost.creature_mode != Card.CreatureMode.AGGRESSIVE or player.mana != 2:
+		failures.append("Call of the Crossing did not summon the bot's chosen Ghost in aggressive stance for twice its Level")
+
+	attacker.speed = 2
+	opponent.followers = 15
+	for _ghost_index in range(2):
+		var buried_ghost := Edimmu.new()
+		buried_ghost.card_owner = player
+		player.graveyard_zone.add_card(buried_ghost)
+	if not bot._take_main_phase_action():
+		failures.append("Hermes Psychopompus did not submit Wings of the Departed to outrun Void Shield")
+	for _step in range(8):
+		manager.advance_priority()
+	if attacker.get_effective_speed() != 4 or player.mana != 0:
+		failures.append("Wings of the Departed did not give the bot's attacker the required +2 Speed for 2 mana")
+	bot.detach()
+
+func _check_aspect_shift(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	player.mana = 8
+	var manager := _new_fixture_match(game)
+	var hermes := Hermes.new()
+	hermes.card_owner = player
+	hermes._last_used_turn = game.turn_number
+	player.god_zone.add_card(hermes)
+	var shift := AspectShift.new()
+	shift.card_owner = player
+	player.power_zones[0].add_card(shift)
+	if not manager.process_command({"type": "unlock_power", "power_uid": shift.uid}) \
+			or not (player.god_zone.cards[0] is HermesPsychopompus) or player.mana != 4:
+		failures.append("Aspect Shift did not unlock and shift Hermes for 4 mana")
+		return
+	GameState.apply_to_manager(GameState.serialize(game), game)
+	var restored_power := game.get_card_by_uid(shift.uid) as AspectShift
+	if restored_power == null or not manager.process_command({"type": "activate_power", "power_uid": restored_power.uid}):
+		failures.append("Aspect Shift could not shift back after a game-state round trip")
+		return
+	for _step in range(8):
+		manager.advance_priority()
+	var restored_hermes := game.get_card_by_uid(hermes.uid) as Hermes
+	if restored_hermes == null or restored_hermes.current_zone != player.god_zone \
+			or restored_hermes._last_used_turn != game.turn_number or player.mana != 0 or not restored_power.is_face_down:
+		failures.append("Aspect Shift did not restore the original Hermes and relock for 4 mana")
+
+func _check_aphrodite_aspect_shift(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	player.mana = 20
+	player.followers = 10
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var areia := AphroditeAreia.new()
+	areia.card_owner = player
+	player.god_zone.add_card(areia)
+	var power := AspectShift.new()
+	power.card_owner = player
+	player.power_zones[0].add_card(power)
+	var defender := SulakTheUnclean.new()
+	defender.card_owner = player
+	defender.speed = 4
+	defender.resilience = 30
+	defender.creature_mode = Card.CreatureMode.DEFENSIVE
+	defender.is_stealth = true
+	defender.is_face_down = true
+	player.reserve_zones[0].add_card(defender)
+	var enemy := CreatureCard.new()
+	enemy.card_owner = opponent
+	enemy.speed = 4
+	enemy.strength = 20
+	enemy.creature_mode = Card.CreatureMode.AGGRESSIVE
+	opponent.frontline_zones[0].add_card(enemy)
+	var danger := bot._forecast_incoming_follower_loss()
+	var shift := bot._plan_aspect_shift([], {}, danger, {}, player.mana)
+	if defender.get_effective_speed() != 3 or danger != player.followers \
+			or shift.get("command", {}).get("type") != "unlock_power" \
+			or player.god_zone.cards[0] != areia or not bot._take_main_phase_action():
+		failures.append("Bot did not shift Aphrodite to let a hidden defender intercept a lethal attack")
+		return
+	var skotia := player.god_zone.cards[0] as AphroditeSkotia
+	if skotia == null or defender.get_effective_speed() != 4 \
+			or not manager._can_intercept(defender, enemy, player) or player.mana != 16:
+		failures.append("Veil of Night did not remove the hidden defender's Speed penalty for interception")
+		return
+	var recruit := CreatureCard.new()
+	recruit.card_owner = player
+	recruit.speed = 4
+	if not bot._should_summon_creature_stealthily(recruit, player.reserve_zones[1], Card.CreatureMode.DEFENSIVE) \
+			or bot._should_summon_creature_stealthily(defender, player.reserve_zones[1], Card.CreatureMode.DEFENSIVE):
+		failures.append("Bot did not adjust stealth summoning to Veil of Night and Reveal triggers")
+	skotia.is_muted = true
+	if defender.get_effective_speed() != 3 or not defender.will_reveal_in_combat():
+		failures.append("Muting Aphrodite Skotia did not suppress Veil of Night")
+	skotia.is_muted = false
+	game._begin_declared_combat(enemy, defender)
+	var visible_to_opponent: Dictionary = GameState.serialize(game, 1)["players"][0]["reserve_zones"][0][0]
+	if defender.get_combat_log_display_name(opponent) == defender.card_name or not visible_to_opponent.get("hidden", false):
+		failures.append("A creature under Veil of Night leaked its identity during combat")
+	var attack := CardAction.new()
+	attack.type = CardAction.Type.ATTACK
+	attack.source_player = opponent
+	attack.attacker = enemy
+	attack.target = player
+	attack.interceptor = defender
+	manager._resolve_attack(attack)
+	if not defender.is_stealth or not defender.is_face_down or defender.get_effective_strength() != defender.strength \
+			or defender.card_name in manager.last_resolution_text:
+		failures.append("A hidden defender revealed or triggered its Reveal ability under Veil of Night")
+	defender.reveal_from_stealth(game)
+	if defender.is_stealth or defender.get_effective_strength() <= defender.strength:
+		failures.append("Veil of Night blocked a reveal outside combat")
+	defender.clear_buffs_from(SulakTheUnclean.SURPRISE_BUFF_SOURCE)
+	var attacker := CreatureCard.new()
+	attacker.card_owner = player
+	attacker.strength = 20
+	attacker.is_stealth = true
+	attacker.is_face_down = true
+	attacker.creature_mode = Card.CreatureMode.DEFENSIVE
+	player.frontline_zones[0].add_card(attacker)
+	var victim := CreatureCard.new()
+	victim.card_owner = opponent
+	victim.resilience = 1
+	victim.creature_mode = Card.CreatureMode.DEFENSIVE
+	opponent.frontline_zones[1].add_card(victim)
+	game.creature_attack(attacker, victim)
+	if not attacker.is_stealth or not attacker.is_face_down or victim.current_zone != opponent.graveyard_zone:
+		failures.append("Veil of Night did not keep a hidden attacker concealed through combat")
+	player.followers = 100
+	GameState.apply_to_manager(GameState.serialize(game), game)
+	shift = bot._plan_aspect_shift([], {}, bot._forecast_incoming_follower_loss(), {}, player.mana)
+	if shift.get("command", {}).get("type") != "activate_power" or not bot._take_main_phase_action():
+		failures.append("Bot did not restore Aphrodite Areia for a qualifying Violent Delights capture")
+		return
+	for _step in range(8):
+		manager.advance_priority()
+	var restored_power := game.get_card_by_uid(power.uid) as AspectShift
+	var restored_attacker := game.get_card_by_uid(attacker.uid)
+	if not player.god_zone.cards[0] is AphroditeAreia or restored_power == null or not restored_power.is_face_down \
+			or restored_attacker == null or not restored_attacker.will_reveal_in_combat() or player.mana != 12:
+		failures.append("Aspect Shift did not restore Aphrodite Areia and end Veil of Night after a state round trip")
+
+func _check_bot_aspect_shift(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	player.mana = 5
+	opponent.followers = 8
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var hermes := Hermes.new()
+	hermes.card_owner = player
+	player.god_zone.add_card(hermes)
+	var power := AspectShift.new()
+	power.card_owner = player
+	player.power_zones[0].add_card(power)
+	var ghost := Edimmu.new()
+	ghost.card_owner = player
+	player.deck_zone.add_card(ghost)
+	if not bot._plan_aspect_shift([], {}, 0, {}, player.mana).is_empty():
+		failures.append("Bot planned to shift with enough mana to unlock but too little to summon its Ghost")
+	player.mana = 6
+	if not bot._take_main_phase_action() or not (player.god_zone.cards[0] is HermesPsychopompus):
+		failures.append("Bot did not unlock Aspect Shift for a lethal Ghost summon")
+	elif not bot._take_main_phase_action():
+		failures.append("Bot did not follow through with Call of the Crossing after shifting")
+	for _step in range(8):
+		manager.advance_priority()
+	if ghost.current_zone not in player.frontline_zones or player.mana != 0:
+		failures.append("Shifting and summoning the bot's Ghost did not resolve for the combined 6 mana")
+
+	# Empty graveyard means the Hades aspect cannot outrun the prepared shield.
+	player.mana = 6
+	opponent.followers = 15
+	var attacker := CreatureCard.new()
+	attacker.card_owner = player
+	attacker.strength = 20
+	attacker.speed = 2
+	attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
+	player.frontline_zones[0].add_card(attacker)
+	var blocker := CreatureCard.new()
+	blocker.card_owner = opponent
+	blocker.strength = 8
+	blocker.speed = 3
+	blocker.creature_mode = Card.CreatureMode.AGGRESSIVE
+	opponent.frontline_zones[0].add_card(blocker)
+	var shield := VoidShield.new()
+	shield.card_owner = opponent
+	shield.is_face_down = true
+	shield.is_prepared = true
+	opponent.reserve_zones[0].add_card(shield)
+	game.prepared_hexes[shield] = game.turn_number - 1
+	shield.add_status_effect("publicly_revealed", "Preflight")
+	var attacks := bot._get_combat_candidates()
+	var baseline := bot._plan_combat(attacks)
+	hermes._last_used_turn = game.turn_number
+	if not bot._plan_aspect_shift(attacks, baseline, 0, {}, player.mana).is_empty():
+		failures.append("Bot planned to return to Hermes for an ability he had already used this turn")
+	hermes._last_used_turn = -1
+	if not bot._take_main_phase_action():
+		failures.append("Bot did not shift back for the lethal Deceptive Speed line")
+	for _step in range(8):
+		manager.advance_priority()
+	if hermes.current_zone != player.god_zone or not power.is_face_down or player.mana != 2:
+		failures.append("Bot did not return to the original Hermes and relock Aspect Shift")
+	elif not bot._take_main_phase_action():
+		failures.append("Bot did not follow through with Deceptive Speed after returning to Hermes")
+	for _step in range(8):
+		manager.advance_priority()
+	if attacker.get_effective_speed() != 5 or player.mana != 0:
+		failures.append("Returning to Hermes did not produce the planned speed boost")
+
+	attacker.remove_buffs_from_source_card(hermes, Hermes.BUFF_EFFECT_TYPE)
+	player.mana = 6
+	for _ghost_index in range(2):
+		var buried_ghost := Edimmu.new()
+		buried_ghost.card_owner = player
+		player.graveyard_zone.add_card(buried_ghost)
+	attacks = bot._get_combat_candidates()
+	baseline = bot._plan_combat(attacks)
+	hermes._last_used_turn = -1
+	var normal_speed := bot._plan_hermes_speed(attacks, baseline)
+	if not bot._plan_aspect_shift(attacks, baseline, 0, normal_speed, player.mana).is_empty():
+		failures.append("Bot paid to shift when normal Hermes already had a lethal speed boost")
+	hermes._last_used_turn = game.turn_number
+	if not bot._take_main_phase_action() or not (player.god_zone.cards[0] is HermesPsychopompus) \
+			or not bot._take_main_phase_action():
+		failures.append("Bot did not shift and follow through with Wings of the Departed")
+	for _step in range(8):
+		manager.advance_priority()
+	if attacker.get_effective_speed() != 4 or player.mana != 0:
+		failures.append("Shifting for Wings of the Departed did not produce the planned speed boost")
 	bot.detach()
 
 func _check_bot_violent_delights_upkeep(failures: PackedStringArray) -> void:

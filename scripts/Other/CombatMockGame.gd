@@ -7255,7 +7255,9 @@ func _can_preview_hover_card_options(card: Card) -> bool:
 		return true
 	if _creature_can_change_stance(card):
 		return true
-	if card.has_method("can_activate") and card.has_method("activate") and card.can_activate(game_manager):
+	if card.has_method("can_activate") and card.has_method("activate") \
+			and game_manager.get_creature_ability_activation_block_reason(card).is_empty() \
+			and card.can_activate(game_manager):
 		return true
 	return false
 
@@ -15015,9 +15017,14 @@ func _get_target_label(card: Card, viewer: Player = null, fallback: String = "ta
 		resolved_viewer = game_manager.get_feedback_viewer()
 	return card.get_target_log_display_name(resolved_viewer)
 
-func _get_attack_card_label(card: Card, fallback: String = "Card") -> String:
+func _get_attack_card_label(card: Card, fallback: String = "Card", viewer: Player = null) -> String:
 	if card == null:
 		return fallback
+	var resolved_viewer := viewer
+	if resolved_viewer == null and game_manager != null:
+		resolved_viewer = game_manager.get_feedback_viewer()
+	if card.is_stealth and card.has_veil_of_night() and card.is_hidden_from_viewer(resolved_viewer):
+		return card.get_hidden_log_position_label()
 	var controller := card.get_controller()
 	if controller != null and controller.player_name != "":
 		return controller.player_name + "'s " + card.get_display_name()
@@ -15113,6 +15120,14 @@ func _consume_resolution_feedback(fallback: String = "") -> String:
 		if feedback.strip_edges() != "":
 			return feedback
 	return fallback
+
+func _show_creature_ability_activation_block_reason(card: Card) -> bool:
+	var reason := game_manager.get_creature_ability_activation_block_reason(card)
+	if reason.is_empty():
+		return false
+	_set_action_label_text(reason)
+	update_ui()
+	return true
 
 func _get_activation_unavailable_text(card: Card, fallback: String) -> String:
 	if card != null and card.is_activation_locked(game_manager):
@@ -17894,6 +17909,9 @@ func _on_god_card_pressed(card: Card) -> void:
 	if card is Odin:
 		_begin_odin_runic_knowledge_activation(card as Odin)
 		return
+	if card is HermesPsychopompus:
+		_on_god_ability_options_requested(card)
+		return
 	if _is_tezcatlipoca_normal_god(card):
 		_set_action_label_text("Use Tezcatlipoca's Necoc Yaotl badge to sacrifice or summon.")
 		update_ui()
@@ -18115,6 +18133,8 @@ func _on_nimue_badge_clicked(card: Card, mode: String) -> void:
 		_set_action_label_text(nimue.card_name + " cannot activate right now.")
 		update_ui()
 		return
+	if _show_creature_ability_activation_block_reason(nimue):
+		return
 
 	match mode:
 		"entomb":
@@ -18331,21 +18351,25 @@ func _on_god_ability_options_requested(card: Card) -> void:
 	title.modulate = Color(1.0, 0.95, 0.6)
 	vbox.add_child(title)
 
-	var activation_label: String = card.get_activation_label() if card.has_method("get_activation_label") else "Activate Ability"
-	var champion_god := card as GodCard
-	if champion_god != null and _should_start_champions_call_activation(champion_god):
-		activation_label = "Use Champion's Call"
-
-	var activate_btn := Button.new()
-	activate_btn.text = activation_label
-	activate_btn.pressed.connect(func() -> void:
-		_close_context_menu()
+	var psychopompus := card as HermesPsychopompus
+	if psychopompus != null:
+		_add_psychopompus_ability_buttons(vbox, psychopompus)
+	else:
+		var activation_label: String = card.get_activation_label() if card.has_method("get_activation_label") else "Activate Ability"
+		var champion_god := card as GodCard
 		if champion_god != null and _should_start_champions_call_activation(champion_god):
-			_begin_champions_call_activation(champion_god)
-		else:
-			_on_god_card_pressed(card)
-	)
-	vbox.add_child(activate_btn)
+			activation_label = "Use Champion's Call"
+
+		var activate_btn := Button.new()
+		activate_btn.text = activation_label
+		activate_btn.pressed.connect(func() -> void:
+			_close_context_menu()
+			if champion_god != null and _should_start_champions_call_activation(champion_god):
+				_begin_champions_call_activation(champion_god)
+			else:
+				_on_god_card_pressed(card)
+		)
+		vbox.add_child(activate_btn)
 
 	var cancel_btn := Button.new()
 	cancel_btn.text = "Cancel"
@@ -18359,6 +18383,124 @@ func _on_god_ability_options_requested(card: Card) -> void:
 	var mouse_pos := get_global_mouse_position()
 	panel.global_position = mouse_pos
 	call_deferred("_clamp_context_menu_to_viewport", panel, mouse_pos)
+
+func _add_psychopompus_ability_buttons(menu: VBoxContainer, god: HermesPsychopompus) -> void:
+	var summon_button := Button.new()
+	summon_button.text = HermesPsychopompus.CALL_OF_THE_CROSSING
+	summon_button.disabled = not god.can_summon_ghost(game_manager)
+	summon_button.pressed.connect(func() -> void:
+		_close_context_menu()
+		_show_card_selection_overlay(
+			"Choose a Ghost to summon (2 mana per level)",
+			god.get_summonable_ghosts(),
+			_show_psychopompus_summon_lanes.bind(god.uid)
+		)
+	)
+	menu.add_child(summon_button)
+
+	var speed_button := Button.new()
+	speed_button.text = HermesPsychopompus.WINGS_OF_THE_DEPARTED
+	speed_button.disabled = not god.can_boost_speed(game_manager)
+	speed_button.pressed.connect(func() -> void:
+		_close_context_menu()
+		_prompt_card_target_selection(
+			god, god.get_speed_targets(game_manager), _show_psychopompus_speed_payment.bind(god),
+			Callable(), "Choose a creature for Wings of the Departed"
+		)
+	)
+	menu.add_child(speed_button)
+
+func _show_psychopompus_summon_lanes(ghost: Card, god_uid: String) -> void:
+	var god := game_manager.get_card_by_uid(god_uid) as HermesPsychopompus
+	var live_ghost := game_manager.get_card_by_uid(ghost.uid)
+	if god == null or not god.can_use_god_power(game_manager) or live_ghost not in god.get_summonable_ghosts():
+		_set_action_label_text("Call of the Crossing is no longer available for that Ghost.")
+		update_ui()
+		return
+	var content := _create_psychopompus_prompt()
+	var label := Label.new()
+	label.text = "Choose an empty lane for %s in aggressive stance." % live_ghost.card_name
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	content.add_child(label)
+
+	var frontline := HBoxContainer.new()
+	frontline.alignment = BoxContainer.ALIGNMENT_CENTER
+	content.add_child(frontline)
+	var reserve := HBoxContainer.new()
+	reserve.alignment = BoxContainer.ALIGNMENT_CENTER
+	content.add_child(reserve)
+	for lane in god.get_open_ghost_lanes():
+		var button := Button.new()
+		button.text = _get_divine_caprice_zone_title(lane)
+		var command := {
+			type = "god_ability", god_uid = god.uid,
+			ability = HermesPsychopompus.CALL_OF_THE_CROSSING, ghost_uid = live_ghost.uid,
+			zone_type = lane.zone_type, zone_index = lane.zone_index
+		}
+		button.pressed.connect(func() -> void:
+			_dismiss_zone_overlay()
+			game_input.submit_action(command)
+		)
+		var row := frontline if lane.zone_type == Zone.ZoneType.FRONTLINE else reserve
+		row.add_child(button)
+	var cancel := Button.new()
+	cancel.text = "Cancel"
+	cancel.pressed.connect(_dismiss_zone_overlay)
+	content.add_child(cancel)
+
+func _create_psychopompus_prompt() -> VBoxContainer:
+	_dismiss_zone_overlay()
+	var overlay := Control.new()
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(overlay)
+	_promote_transient_ui(overlay)
+	_zone_overlay = overlay
+
+	var panel := _create_centered_overlay_panel(overlay, 0.34, 0.28)
+	var content := VBoxContainer.new()
+	content.alignment = BoxContainer.ALIGNMENT_CENTER
+	content.add_theme_constant_override("separation", 8)
+	panel.add_child(content)
+	return content
+
+func _show_psychopompus_speed_payment(target: Card, god: HermesPsychopompus) -> void:
+	var max_payment := god.get_max_speed_payment()
+	if max_payment < 1:
+		_set_action_label_text(god.get_activation_failure_reason(game_manager))
+		update_ui()
+		return
+	var content := _create_psychopompus_prompt()
+	var label := Label.new()
+	label.text = "Spend mana to give %s +1 SPD per mana until end of turn." % target.get_display_name()
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	content.add_child(label)
+
+	var payment := SpinBox.new()
+	payment.min_value = 1
+	payment.max_value = max_payment
+	payment.value = 1
+	payment.suffix = "mana"
+	content.add_child(payment)
+
+	var confirm := Button.new()
+	confirm.text = "Use Wings of the Departed"
+	confirm.pressed.connect(func() -> void:
+		payment.apply()
+		var amount := int(payment.value)
+		_dismiss_zone_overlay()
+		game_input.submit_action({
+			type = "god_ability", god_uid = god.uid, target_uid = target.uid,
+			ability = HermesPsychopompus.WINGS_OF_THE_DEPARTED, mana_amount = amount
+		})
+	)
+	content.add_child(confirm)
+	var cancel := Button.new()
+	cancel.text = "Cancel"
+	cancel.pressed.connect(_dismiss_zone_overlay)
+	content.add_child(cancel)
 
 func _god_ability_should_use_selection_overlay(card: Card) -> bool:
 	if card == null or game_manager == null or not card.has_method("get_valid_targets"):
@@ -21238,6 +21380,8 @@ func _on_creature_stance_switch_clicked(card: Card, target_mode: Card.CreatureMo
 func _on_creature_ability_badge_clicked(card: Card) -> void:
 	if _game_finished or card == null or game_manager == null:
 		return
+	if _show_creature_ability_activation_block_reason(card):
+		return
 	var permits_priority_response := not (card is TheWhiteSerpent)
 	if _reject_badge_click_while_locked(card, _replay_card_action(_on_creature_ability_badge_clicked, card), permits_priority_response):
 		return
@@ -21362,6 +21506,8 @@ func _on_context_card_ability_option_pressed(card_uid: String, ability: String) 
 	if source_card == null:
 		update_ui()
 		return
+	if _show_creature_ability_activation_block_reason(source_card):
+		return
 	if source_card is TheWhiteSerpent and ability == "medicine" and _is_card_usable_for_priority(source_card):
 		_on_priority_response_chosen(source_card)
 		return
@@ -21390,6 +21536,8 @@ func _on_context_creature_ability_pressed(card_uid: String) -> void:
 	var card := game_manager.get_card_by_uid(card_uid)
 	if card == null:
 		update_ui()
+		return
+	if _show_creature_ability_activation_block_reason(card):
 		return
 	if _is_card_usable_for_priority(card):
 		_on_priority_response_chosen(card)
@@ -21714,7 +21862,8 @@ func _on_board_card_pressed(card: Card) -> void:
 		_set_action_label_text("That card cannot perform an action.")
 		return
 
-	if card is EnHeduAnnaScript and card.can_activate(game_manager):
+	if card is EnHeduAnnaScript and game_manager.get_creature_ability_activation_block_reason(card).is_empty() \
+			and card.can_activate(game_manager):
 		_show_en_hedu_anna_prompt(card as EnHeduAnnaScript)
 		return
 
@@ -22114,13 +22263,15 @@ func _on_creature_right_clicked(card: Card) -> void:
 	var can_stance: bool = _creature_can_change_stance(card)
 	var can_move: bool = _creature_can_move(card)
 	var can_stupefy := false
+	var creature_ability_allowed := game_manager.get_creature_ability_activation_block_reason(card).is_empty()
 	var can_activate_creature: bool = (
-		card.get_controller() == game_manager.current_player
+		creature_ability_allowed
+		and card.get_controller() == game_manager.current_player
 		and card.has_method("can_activate")
 		and card.has_method("activate")
 		and card.can_activate(game_manager)
 	)
-	if not can_activate_creature and card is TheWhiteSerpentScript:
+	if creature_ability_allowed and not can_activate_creature and card is TheWhiteSerpentScript:
 		can_activate_creature = (card as TheWhiteSerpentScript).can_activate_medicine(game_manager)
 	var equipped_ability_cards: Array[Card] = []
 	for equip in card.equipment:
@@ -23896,7 +24047,7 @@ func check_for_possible_intercepts() -> void:
 	if possible_interceptors.size() > 0:
 		var names = []
 		for card in possible_interceptors:
-			names.append(card.card_name)
+			names.append(_get_target_label(card))
 		_set_action_label_text(_get_attack_card_label(selected_attacker, "A creature") + " is attacking. Possible interceptors: " + ", ".join(names) + " - Click one to intercept or click 'No Intercept'")
 		show_no_intercept_button()
 	else:
@@ -23918,7 +24069,7 @@ func _broadcast_intercept_offered(possible_interceptors: Array[Card]) -> void:
 		target_uid = str(game_manager.players.find(pending_attack_target as Player))
 	var defender: Player = pending_attack_target if pending_attack_target is Player else (pending_attack_target as Card).get_controller()
 	var defender_idx := game_manager.players.find(defender)
-	var attacker_label := _get_attack_card_label(selected_attacker, "A creature")
+	var attacker_label := _get_attack_card_label(selected_attacker, "A creature", defender)
 	var event_data := {
 		attacker_uid = selected_attacker.uid,
 		target_uid = target_uid,
@@ -24398,7 +24549,7 @@ func _broadcast_priority_offered(player: Player, responses: Array) -> void:
 
 	var action_msg := ""
 	if top.type == CardAction.Type.ATTACK and top.attacker != null:
-		action_msg = top.attacker.card_name + " is attacking â€” you may respond!"
+		action_msg = top.attacker.get_log_display_name(player) + " is attacking — you may respond!"
 
 	var event_data := {responses = response_options, action_message = action_msg}
 	var remote_player_idx := game_manager.players.find(player)

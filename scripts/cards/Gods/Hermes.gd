@@ -110,6 +110,15 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 func on_removed(_game_manager: GameManager) -> void:
 	_last_used_turn = -1
 
+func get_serialized_state() -> Dictionary:
+	var state := super.get_serialized_state()
+	state["last_used_turn"] = _last_used_turn
+	return state
+
+func apply_serialized_state(state: Dictionary) -> void:
+	super.apply_serialized_state(state)
+	_last_used_turn = int(state.get("last_used_turn", -1))
+
 func _can_use_deceptive_speed(game_manager: GameManager, as_priority_response: bool) -> bool:
 	if card_owner == null or not _meets_deceptive_speed_requirements(game_manager, card_owner.mana):
 		return false

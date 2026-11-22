@@ -266,7 +266,6 @@ var _profile_summary_label: Label = null
 var _rank_badge_buttons: Dictionary[int, Button] = {}
 var _rank_badge_picker: RankBadgePickerScript
 var _current_profile_summary: Dictionary = {}
-var _profile_summary_expanded: bool = false
 var _ranked_ladder_button: Button = null
 var _ranked_ladder_view: RankedLadderViewScript = null
 var _bot_ladder_view: BotLadderViewScript = null
@@ -11829,8 +11828,6 @@ func _build_profile_summary_controls() -> void:
 	panel.name = "ProfileSummaryPanel"
 	panel.visible = false
 	panel.mouse_filter = Control.MOUSE_FILTER_STOP
-	panel.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	panel.gui_input.connect(_on_profile_summary_panel_gui_input)
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.08, 0.10, 0.14, 0.92)
 	style.border_color = Color(0.30, 0.40, 0.55, 0.8)
@@ -11985,6 +11982,7 @@ func _open_bot_ladder(quarantined_only: bool = false) -> void:
 	_bot_ladder_view.delete_requested.connect(_on_bot_ladder_delete_requested)
 	_bot_ladder_view.add_deck_requested.connect(_on_bot_ladder_add_deck_requested)
 	add_child(_bot_ladder_view)
+	_refresh_ladder_profile_summary()
 	_request_bot_ladder()
 
 func _request_bot_ladder(page: int = -1) -> void:
@@ -12811,6 +12809,7 @@ func _refresh_account_identity_label() -> void:
 
 func _refresh_profile_summary_label() -> void:
 	_refresh_ranked_ladder()
+	_refresh_ladder_profile_summary()
 	if _profile_summary_label == null:
 		return
 	var panel := _profile_summary_panel if _profile_summary_panel != null else _profile_summary_label.get_parent()
@@ -12855,139 +12854,18 @@ func _refresh_profile_summary_label() -> void:
 	elif _current_profile_summary.has("ranked_progress"):
 		lines.insert(0, "Sign in to earn ranked stars")
 
-	var god_records = _current_profile_summary.get("god_records", [])
-	var deck_records = _current_profile_summary.get("deck_records", [])
-	var recent_matches = _current_profile_summary.get("recent_matches", [])
-	var has_details := (
-		has_ranked_progress
-		or (god_records is Array and not (god_records as Array).is_empty())
-		or (deck_records is Array and not (deck_records as Array).is_empty())
-		or (recent_matches is Array and not (recent_matches as Array).is_empty())
-	)
-
-	if _profile_summary_expanded and has_details:
-		for best_of in ranked_by_format:
-			var ranked_progress: Dictionary = ranked_by_format[best_of]
-			if ranked_progress.is_empty():
-				continue
-			var season_label := "Bo%d season" % best_of if has_separate_ladders else "Season"
-			lines.append("%s %s  •  Peak %s (%d★)" % [season_label, ranked_progress["season"], ranked_progress["peak_rank_name"], ranked_progress["peak_stars"]])
-			lines.append("Ranked matches %d  •  Win streak %d" % [ranked_progress["matches"], ranked_progress["win_streak"]])
-			if int(ranked_progress["matches"]) > 0:
-				var delta := int(ranked_progress["last_delta"])
-				var delta_text := "+%d" % delta if delta > 0 else str(delta)
-				lines.append("Last ranked match  %s★" % delta_text)
-
-		if god_records is Array and not (god_records as Array).is_empty():
-			lines.append("")
-			lines.append("By God:")
-			var displayed_god_records: int = 0
-			for raw_record in god_records:
-				if not (raw_record is Dictionary):
-					continue
-				var god_record: Dictionary = raw_record as Dictionary
-				lines.append("%s %d-%d" % [
-					str(god_record.get("god_name", "Unknown God")),
-					int(god_record.get("wins", 0)),
-					int(god_record.get("losses", 0)),
-				])
-				displayed_god_records += 1
-				if displayed_god_records >= 4:
-					break
-
-		if deck_records is Array and not (deck_records as Array).is_empty():
-			lines.append("")
-			lines.append("By Deck:")
-			var displayed_deck_records: int = 0
-			for raw_record in deck_records:
-				if not (raw_record is Dictionary):
-					continue
-				var deck_record: Dictionary = raw_record as Dictionary
-				lines.append("%s %d-%d" % [
-					_get_profile_summary_deck_name(str(deck_record.get("deck_name", ""))),
-					int(deck_record.get("wins", 0)),
-					int(deck_record.get("losses", 0)),
-				])
-				displayed_deck_records += 1
-				if displayed_deck_records >= 3:
-					break
-
-		if recent_matches is Array and not (recent_matches as Array).is_empty():
-			lines.append("")
-			lines.append("Recent:")
-			var displayed_recent_matches: int = 0
-			for raw_match in recent_matches:
-				if not (raw_match is Dictionary):
-					continue
-				var recent_match: Dictionary = raw_match as Dictionary
-				var result_text := str(recent_match.get("result", "")).left(1).to_upper()
-				lines.append("%s as %s vs %s" % [
-					result_text,
-					_get_profile_summary_loadout(
-						str(recent_match.get("god_name", "Unknown God")),
-						str(recent_match.get("deck_name", ""))
-					),
-					_get_profile_summary_loadout(
-						str(recent_match.get("opponent_god_name", "Unknown God")),
-						str(recent_match.get("opponent_deck_name", ""))
-					),
-				])
-				displayed_recent_matches += 1
-				if displayed_recent_matches >= 3:
-					break
-
-		lines.append("")
-		lines.append("Tap to collapse")
-	elif has_details:
-		lines.append("Tap for details")
-
 	_profile_summary_label.text = "\n".join(lines)
 	if panel != null:
 		panel.visible = true
 
-func _on_profile_summary_panel_gui_input(event: InputEvent) -> void:
-	if _current_profile_summary.is_empty():
+func _refresh_ladder_profile_summary() -> void:
+	if not is_instance_valid(_bot_ladder_view):
 		return
-	var wants_toggle := false
-	if event is InputEventMouseButton:
-		var mouse_event := event as InputEventMouseButton
-		wants_toggle = mouse_event.button_index == MOUSE_BUTTON_LEFT and mouse_event.pressed
-	elif event is InputEventScreenTouch:
-		var touch_event := event as InputEventScreenTouch
-		wants_toggle = touch_event.pressed
-	if not wants_toggle:
-		return
-	var god_records = _current_profile_summary.get("god_records", [])
-	var deck_records = _current_profile_summary.get("deck_records", [])
-	var recent_matches = _current_profile_summary.get("recent_matches", [])
-	var ranked_progress: Dictionary = _current_profile_summary.get("ranked_progress", {})
-	var ranked_bo3_progress: Dictionary = _current_profile_summary.get("ranked_bo3_progress", {})
-	var has_details := (
-		not ranked_progress.is_empty()
-		or not ranked_bo3_progress.is_empty()
-		or (god_records is Array and not (god_records as Array).is_empty())
-		or (deck_records is Array and not (deck_records as Array).is_empty())
-		or (recent_matches is Array and not (recent_matches as Array).is_empty())
-	)
-	if not has_details:
-		return
-	_profile_summary_expanded = not _profile_summary_expanded
-	_refresh_profile_summary_label()
-
-func _get_profile_summary_deck_name(deck_name: String) -> String:
-	var resolved_deck_name := deck_name.strip_edges()
-	if resolved_deck_name.is_empty():
-		return "Unknown Deck"
-	return resolved_deck_name
-
-func _get_profile_summary_loadout(god_name: String, deck_name: String) -> String:
-	var resolved_god_name := god_name.strip_edges()
-	if resolved_god_name.is_empty():
-		resolved_god_name = "Unknown God"
-	var resolved_deck_name := deck_name.strip_edges()
-	if resolved_deck_name.is_empty():
-		return resolved_god_name
-	return "%s (%s)" % [resolved_god_name, resolved_deck_name]
+	if _has_active_lobby_connection() and _uses_server_account_storage() \
+			and _current_profile_summary.get("profile_id", "") == lobby_client.current_profile_id:
+		_bot_ladder_view.set_own_profile_summary(lobby_client.current_username, _current_profile_summary)
+	else:
+		_bot_ladder_view.set_own_profile_summary("", {})
 
 func _refresh_profile_summary_from_local_history(profile_id: String) -> void:
 	if _is_account_logged_in() or _get_selected_auth_mode() in [AUTH_MODE_LOGIN, AUTH_MODE_REGISTER, AUTH_MODE_CLAIM_LEGACY]:
