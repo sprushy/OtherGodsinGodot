@@ -4,7 +4,7 @@ class_name AnTheBowbender
 func _init() -> void:
 	super._init()
 	card_name = "Án the Bowbender"
-	card_types = ["Human", "Warrior", "Archer", "Norse Creature"]
+	card_types = ["Human", "Warrior", "Archer"]
 	level = 3
 	mana_cost = 0
 	speed = 2

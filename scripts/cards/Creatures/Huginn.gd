@@ -4,14 +4,14 @@ class_name Huginn
 func _init() -> void:
 	super._init()
 	card_name = "Huginn"
-	card_types = ["Animal", "Avian", "Raven", "Aerial", "Norse Creature"]
+	card_types = ["Animal", "Avian", "Raven", "Aerial"]
 	level = 1
 	mana_cost = 0
 	sacrifice_cost = 0
 	speed = 4
 	resilience = 3
 	strength = 7
-	ability_text = "[b]Hex Search[/b] ([b]Prime[/b], [b]Perish[/b]): Prime one Hex."
+	ability_text = "[b]Hex Search[/b] ([b]Perish[/b]): [b]Prime[/b] a Hex from your deck."
 	flavor_text = ""
 	culture = "Norse"
 	artist = "Daniel Decena"

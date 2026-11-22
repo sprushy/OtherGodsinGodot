@@ -23,6 +23,8 @@ func assign_fresh_uid() -> void:
 
 # Keyword definitions - displayed as hover tooltips in ability text.
 const KEYWORD_HINTS = {
+	"Allied": "Other cards you control. The card with this ability is excluded.",
+	"Friendly": "Cards you control, including the card with this ability if it qualifies.",
 	"Void": "Send this card to the Abyss - removed from the game.",
 	"Immortal": "This card cannot be destroyed.",
 	"Sleep": "This creature cannot take any actions while asleep and is put into defensive stance.",
@@ -74,6 +76,7 @@ const KEYWORD_HINTS = {
 }
 
 static var _fractional_terms_regex: RegEx
+static var _relationship_terms_regex: RegEx
 
 static func _escape_hint_text(text: String) -> String:
 	return text.replace("\"", "&quot;")
@@ -83,13 +86,22 @@ static func ability_text_uses_fractions(text: String) -> bool:
 		_fractional_terms_regex = RegEx.create_from_string("(?i)\\b(halve|halved|halves|half|divided by|fractions?|fractional)\\b")
 	return _fractional_terms_regex.search(text) != null
 
+static func mark_relationship_keywords(text: String) -> String:
+	if _relationship_terms_regex == null:
+		_relationship_terms_regex = RegEx.create_from_string("(?i)(?<!\\[b\\])\\b(?:allied|friendly)\\b")
+	return _relationship_terms_regex.sub(text, "[b]$0[/b]", true)
+
 # Wraps bold keywords in [hint=...] BBCode so RichTextLabel shows tooltips.
 static func apply_keyword_hints(text: String) -> String:
-	var result := text
+	var result := mark_relationship_keywords(text)
 	for keyword in KEYWORD_HINTS:
 		var hint_text := _escape_hint_text(KEYWORD_HINTS[keyword])
 		result = result.replace("[b]" + keyword + "[/b]",
 			"[hint=\"" + hint_text + "\"][b]" + keyword + "[/b][/hint]")
+		if keyword in ["Allied", "Friendly"]:
+			var lowercase: String = keyword.to_lower()
+			result = result.replace("[b]" + lowercase + "[/b]",
+				"[hint=\"" + hint_text + "\"][b]" + lowercase + "[/b][/hint]")
 	return result
 
 # True when this card's printed abilities carry an Impact-style trigger marker

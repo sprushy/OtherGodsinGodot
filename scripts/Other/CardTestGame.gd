@@ -77,6 +77,7 @@ func _sync_test_priority_control() -> void:
 func _add_test_hand_card(player: Player, card: Card) -> void:
 	card.card_owner = player
 	player.hand_zone.add_card(card)
+	player.record_starting_creature_typings([card])
 
 func _add_weather_visual_test_hand_cards(player: Player) -> void:
 	_add_test_hand_card(player, HeavySnow.new())
@@ -85,6 +86,7 @@ func _add_weather_visual_test_hand_cards(player: Player) -> void:
 func _add_test_deck_card(player: Player, card: Card) -> void:
 	card.card_owner = player
 	player.deck_zone.add_card(card)
+	player.record_starting_creature_typings([card])
 
 func _add_test_graveyard_card(player: Player, card: Card) -> void:
 	card.card_owner = player
@@ -204,6 +206,7 @@ func _clear_zone(zone: Zone) -> void:
 func _reset_player_test_state(player: Player) -> void:
 	if player == null:
 		return
+	player.starting_creature_typings.clear()
 	_clear_zone(player.hand_zone)
 	_clear_zone(player.deck_zone)
 	_clear_zone(player.graveyard_zone)
@@ -220,6 +223,7 @@ func _reset_test_match_state() -> void:
 	_detach_test_discard_bot()
 	_reset_player_test_state(player1)
 	_reset_player_test_state(player2)
+	game_manager.restore_metamorphosis_auras()
 	game_manager.prepared_hexes.clear()
 	game_manager.prepared_charms.clear()
 	if game_manager.has_method("_clear_pending_doorway_choice"):
@@ -257,8 +261,14 @@ func load_hermes_dodge_test_scenario() -> void:
 	_add_test_god(player2, Thor.new())
 
 	_place_test_board_card(player1, player1.frontline_zones[0], HariiWarrior.new(), Card.CreatureMode.AGGRESSIVE)
+	_place_test_board_card(player1, player1.frontline_zones[1], Asaruludu.new())
 	_place_test_board_card(player2, player2.frontline_zones[0], Gullinbursti.new(), Card.CreatureMode.DEFENSIVE)
+	_place_test_hidden_creature(player1, player1.reserve_zones[2], BrownBear.new())
+	_place_test_hidden_creature(player2, player2.reserve_zones[2], MinotaurFootsoldier.new())
+	_place_test_prepared_card(player2, player2.reserve_zones[3], Smite.new())
 
+	_add_test_hand_card(player1, Metamorphosis.new())
+	_add_test_hand_card(player1, OccultSingularity.new())
 	# Enkidus in hand for both players.
 	_add_test_hand_card(player1, Enkidu.new())
 	_add_test_hand_card(player1, Enkidu.new())
@@ -266,7 +276,9 @@ func load_hermes_dodge_test_scenario() -> void:
 	_add_test_hand_card(player2, Enkidu.new())
 
 	_add_test_deck_card(player1, BrownBear.new())
+	_add_test_deck_card(player1, Gawain.new())
 	_add_test_deck_card(player2, BrownBear.new())
+	player1.record_starting_creature_typings([RavenStorm.new()]) # Card Test Reinforcements.
 
 	player1.spend_mana(player1.mana)
 	player1.gain_mana(12)
@@ -293,8 +305,10 @@ func load_hermes_dodge_test_scenario() -> void:
 	game_manager.start_turn()
 	_open_upkeep_choice_window()
 	action_label.text = (
-		"Hermes Dodge Test. Harii Warrior faces a defensive Gullinbursti. "
-		+ "Choose an upkeep option, then use Hermes's Deceptive Speed on Harii Warrior to get past Dodge."
+		"Choose an upkeep option, then cast Metamorphosis and search for Knight or Raven. "
+		+ "Reveal a reserve creature to see it gain the chosen typing. Cast Occult Singularity to remove the Aura. "
+		+ "You can also use Hermes's Deceptive Speed to test Dodge against Gullinbursti. "
+		+ "On P1's next turn, attack P2's Followers with Asaruludu to test P2's prepared Smite."
 	)
 	update_ui()
 

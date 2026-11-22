@@ -4,7 +4,7 @@ class_name DraugRevenant
 func _init() -> void:
 	super._init()
 	card_name = "Draug Revenant"
-	card_types = ["Undead", "Draug", "Mage", "Battlemage", "Norse Creature"]
+	card_types = ["Undead", "Draug", "Mage", "Battlemage"]
 	level = 1
 	mana_cost = 0
 	sacrifice_cost = 0
@@ -12,7 +12,7 @@ func _init() -> void:
 	resilience = 13
 	strength = 17
 	flavor_text = ""
-	ability_text = "[b]Trollskap[/b]: If this card is destroyed by an effect, return it to your hand instead."
+	ability_text = "[b]Trollskap[/b]: If Draug Revenant is destroyed by an effect, return it to your hand instead."
 	culture = "Norse"
 	artist = "Riccardo Zoppello"
 	art_path = "res://images/card_art/creatures/DragrRevenantAIEdit.png"

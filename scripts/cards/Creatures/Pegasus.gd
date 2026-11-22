@@ -7,7 +7,7 @@ const STEED_SPEED := 5
 func _init() -> void:
 	super._init()
 	card_name = "Pegasus"
-	card_types = ["Animal", "Horse", "Aerial", "Steed", "Olympic Creature"]
+	card_types = ["Animal", "Horse", "Aerial", "Steed"]
 	level = 5
 	mana_cost = 6
 	sacrifice_cost = 0

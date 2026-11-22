@@ -136,13 +136,7 @@ func _is_eligible_well_of_fire_card(card: Card) -> bool:
 	return card != null and card.current_zone == card_owner.graveyard_zone and matches_well_of_fire(card)
 
 func matches_well_of_fire(card: Card) -> bool:
-	if card == null:
-		return false
-	var is_ancient := str(card.culture).strip_edges().nocasecmp_to("Ancient") == 0 \
-		or card.has_type("Ancient") \
-		or card.has_type("Ancient Spell") \
-		or card.has_type("Ancient Charm")
-	if not is_ancient:
+	if card == null or card.culture.strip_edges().nocasecmp_to("Ancient") != 0:
 		return false
 	return card is CharmCard \
 		or card is SpellCard \

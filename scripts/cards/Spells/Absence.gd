@@ -20,7 +20,7 @@ func _init() -> void:
 	# flavor_text = "Silence the divine, if only for a while."
 	flavor_text = ""
 	art_path = ART_PATH
-	ability_text = "[b]Relock[/b] a power, or [b]Mute[/b] a power for 3 of its owner's turns. Face-down powers are revealed first."
+	ability_text = "Choose one. [b]Relock[/b] a Power, or [b]Mute[/b] a Power or God for 3 of its owner's turns. Reveal a face-down Power before Muting it."
 
 func resolve_from_command(game_manager: GameManager, command: Dictionary) -> void:
 	var target_uid: String = command.get("target_uid", "")

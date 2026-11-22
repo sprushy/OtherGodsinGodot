@@ -19,6 +19,7 @@ enum CreatureMode { AGGRESSIVE, DEFENSIVE }
 # Card types (warrior, mage, etc.) - can have multiple
 @export var card_types: Array[String] = []
 var field_subtypes: Array[String] = []
+var _checking_subtype_aura: bool = false
 
 # Lore and background
 @export_multiline var flavor_text: String = ""
@@ -1306,10 +1307,7 @@ func _restore_removed_status_side_effects(statuses: Array) -> void:
 		if status.has("original_speed"):
 			speed = int(status.get("original_speed"))
 		if status.has("original_card_types"):
-			var restored_card_types: Array[String] = []
-			for type_name in status.get("original_card_types", []):
-				restored_card_types.append(str(type_name))
-			card_types = restored_card_types
+			card_types = CardSubtypes.without_culture_labels(status["original_card_types"])
 
 func _sync_status_flags() -> void:
 	var sleep_status: Dictionary = {}
@@ -1500,6 +1498,22 @@ func reveal(game_manager: GameManager = null) -> void:
 		on_reveal(game_manager)
 
 func get_subtypes() -> Array[String]:
+	var underlying_types := get_underlying_subtypes()
+	# Immunity checks can themselves inspect the creature's subtypes.
+	if not is_creature_card() or card_owner == null or card_owner.game_manager == null or _checking_subtype_aura:
+		return underlying_types
+	_checking_subtype_aura = true
+	var aura := card_owner.game_manager.get_metamorphosis_aura(self)
+	_checking_subtype_aura = false
+	if aura == null:
+		return underlying_types
+	var types := aura.chosen_subtypes.duplicate()
+	for type_name in underlying_types:
+		if type_name in CardSubtypes.FIXED_TYPES:
+			types.append(type_name)
+	return types
+
+func get_underlying_subtypes() -> Array[String]:
 	return field_subtypes if not field_subtypes.is_empty() else card_types
 
 func replace_field_subtypes(subtypes: Array[String]) -> void:

@@ -4,7 +4,7 @@ class_name HariiFransiscan
 func _init() -> void:
 	super._init()
 	card_name = "Harii Fransiscan"
-	card_types = ["Human", "Warrior", "Norse Creature"]
+	card_types = ["Human", "Warrior"]
 	level = 2
 	mana_cost = 0
 	speed = 3

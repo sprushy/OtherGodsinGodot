@@ -19,7 +19,7 @@ func _init() -> void:
 	flavor_text = ""
 	artist = ""
 	art_path = "res://images/card_art/charms/HeavySnowArt.jpg"
-	ability_text = "Destroy any face-up [b]Weather[/b] spells. All [b]Anguine[/b] and [b]Amphibious[/b] creatures are switched to stealth, gain [b]Sleep[/b], and cannot move while this remains face-up. Creatures cannot attack on the turn they enter play while this remains face-up."
+	ability_text = "Destroy any other face-up [b]Weather[/b] spells. All [b]Anguine[/b] and [b]Amphibious[/b] creatures are switched to stealth, gain [b]Sleep[/b], and cannot move while this remains face-up. Creatures cannot attack on the turn they enter play while this remains face-up."
 
 func should_go_to_graveyard() -> bool:
 	return false

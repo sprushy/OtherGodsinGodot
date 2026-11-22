@@ -144,8 +144,6 @@ static func get_symbol_texture_for_card(card: Card) -> Texture2D:
 		return _get_atlanitan_level_symbol_texture()
 	if str(card.culture).strip_edges() == "Ancient":
 		return _get_ancient_level_symbol_texture()
-	if card.has_type("Ancient") or card.has_type("Ancient Power") or card.has_type("Ancient Structure"):
-		return _get_ancient_level_symbol_texture()
 	return _get_neutral_level_symbol_texture()
 
 func setup(count: int, size_px: float, color: Color = Color.WHITE, texture: Texture2D = null) -> void:

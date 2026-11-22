@@ -28,6 +28,7 @@ var attack_restriction_turns: int = 0
 
 var card_collection: Array[Card] = []
 var current_deck: Array[Card] = []
+var starting_creature_typings: Dictionary[String, Array] = {}
 var game_manager: GameManager = null
 var reserved_active_god: ActiveGodCard = null
 
@@ -39,6 +40,25 @@ var god_zone: Zone
 var power_zones: Array[Zone] = []
 var frontline_zones: Array[Zone] = []
 var reserve_zones: Array[Zone] = []
+
+func record_starting_creature_typings(cards: Array[Card]) -> void:
+	for card in cards:
+		if card == null or not card.is_creature_card() or card.is_god or card.is_power or card.is_token:
+			continue
+		_record_starting_typing(card.card_types)
+
+func restore_starting_creature_typings(typings: Dictionary) -> void:
+	starting_creature_typings.clear()
+	for types: Array in typings.values():
+		_record_starting_typing(types)
+
+func _record_starting_typing(types: Array) -> void:
+	var subtypes := CardSubtypes.get_transferable_subtypes(types)
+	var sorted_types := subtypes.duplicate()
+	sorted_types.sort()
+	var typing_key := CardSubtypes.format_typing(sorted_types)
+	if not starting_creature_typings.has(typing_key):
+		starting_creature_typings[typing_key] = subtypes
 
 func get_index(manager: GameManager = null) -> int:
 	if manager == null:

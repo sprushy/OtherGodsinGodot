@@ -9,7 +9,7 @@ const ART_PATH := "res://images/card_art/creatures/Hel-BlarDraugEdit.png"
 func _init() -> void:
 	super._init()
 	card_name = "Hel-blar Draug"
-	card_types = ["Undead", "Draug", "Mage", "Battlemage", "Norse Creature"]
+	card_types = ["Undead", "Draug", "Mage", "Battlemage"]
 	level = 2
 	mana_cost = 0
 	sacrifice_cost = 0

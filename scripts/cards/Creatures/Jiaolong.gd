@@ -16,7 +16,7 @@ func _init() -> void:
 	resilience = 16
 	strength = 22
 	sacrifice_cost = 0
-	ability_text = "[b]Shift[/b] ([b]Activate[/b], [b]Minor Action[/b], once per turn): Switch this card between Dragon, Animal, Piscine, Aqueous and Human, Aqueous, Shapeshifter."
+	ability_text = "[b]Shift[/b] ([b]Activate[/b], [b]Minor Action[/b], once per turn): Switch Jiaolong between Dragon, Animal, Piscine, Aqueous and Human, Aqueous, Shapeshifter."
 	flavor_text = ""
 	culture = "Tian"
 	artist = "Riccardo Zoppello"
@@ -95,7 +95,6 @@ func _get_dragon_form_types() -> Array[String]:
 	types.append("Piscine")
 	types.append("Aqueous")
 	types.append("Shapeshifter")
-	types.append("Tian Creature")
 	return types
 
 func _get_human_form_types() -> Array[String]:
@@ -103,5 +102,4 @@ func _get_human_form_types() -> Array[String]:
 	types.append("Human")
 	types.append("Aqueous")
 	types.append("Shapeshifter")
-	types.append("Tian Creature")
 	return types

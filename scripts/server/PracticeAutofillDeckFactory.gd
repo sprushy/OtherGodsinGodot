@@ -631,8 +631,7 @@ func _count_ancient_dwelling_targets(cards: Dictionary) -> int:
 		var candidate: Card = _cards_by_name.get(str(name), null)
 		if candidate == null or candidate.card_type != Card.CardType.STRUCTURE or not candidate.has_type("Dwelling"):
 			continue
-		if candidate.has_type("Ancient Structure") or candidate.has_type("Ancient") \
-				or str(candidate.culture).strip_edges() == "Ancient":
+		if candidate.culture.strip_edges() == "Ancient":
 			total += int(cards[name])
 	return total
 
@@ -683,7 +682,7 @@ func _has_hunting_tactics_pair(cards: Dictionary) -> bool:
 		if candidate == null or candidate.card_type != Card.CardType.CREATURE or candidate.is_god:
 			continue
 		var count := int(cards[name])
-		if candidate.has_type("Lupine") or (candidate.has_type("Norse") and candidate.has_type("Human") and candidate.has_type("Warrior")):
+		if candidate.has_type("Lupine") or (candidate.culture == "Norse" and candidate.has_type("Human") and candidate.has_type("Warrior")):
 			attackers += count
 		if candidate.card_name == "Huginn" or candidate.card_name == "Muninn" or candidate.has_type("Lupine"):
 			supporters += count

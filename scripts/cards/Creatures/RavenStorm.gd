@@ -6,7 +6,7 @@ const ART_PATH := "res://images/card_art/creatures/RavenStormEdit.png"
 func _init() -> void:
 	super._init()
 	card_name = "Raven Storm"
-	card_types = ["Animal", "Avian", "Raven", "Aerial", "Norse Creature"]
+	card_types = ["Animal", "Avian", "Raven", "Aerial"]
 	level = 2
 	mana_cost = 0
 	sacrifice_cost = 0

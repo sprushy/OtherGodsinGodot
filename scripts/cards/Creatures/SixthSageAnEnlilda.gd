@@ -6,14 +6,14 @@ const ART_PATH := "res://images/card_art/creatures/SixthSageEdit.png"
 func _init() -> void:
 	super._init()
 	card_name = "Sixth Sage An-Enlilda"
-	card_types = ["Mer", "Mage", "Priest", "Sage", "Ancient Creature"]
+	card_types = ["Mer", "Mage", "Priest", "Sage"]
 	level = 2
 	mana_cost = 0
 	sacrifice_cost = 0
 	speed = 1
 	resilience = 14
 	strength = 8
-	ability_text = "[b]Conjure Home[/b] ([b]Impact[/b]): You may [b]Void[/b] this card. If you do, [b]Acquire[/b] an Ancient Dwelling."
+	ability_text = "[b]Conjure Home[/b] ([b]Impact[/b]): You may [b]Void[/b] Sixth Sage An-Enlilda. If you do, [b]Acquire[/b] an Ancient Dwelling."
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricardo Zoppello"
@@ -102,11 +102,4 @@ func _is_valid_ancient_dwelling_target(card: Card, controller: Player) -> bool:
 		and card.current_zone == controller.deck_zone \
 		and card.card_type == Card.CardType.STRUCTURE \
 		and card.has_type("Dwelling") \
-		and _is_ancient_dwelling(card)
-
-func _is_ancient_dwelling(card: Card) -> bool:
-	return card != null and (
-		card.has_type("Ancient Structure")
-		or card.has_type("Ancient")
-		or str(card.culture).strip_edges() == "Ancient"
-	)
+		and card.culture.strip_edges() == "Ancient"

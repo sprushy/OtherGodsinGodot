@@ -14,7 +14,7 @@ func _init() -> void:
 	speed = 2
 	culture = "Olympic"
 	card_types = ["Hex", "Permanent", "Binding", "Lasting", "Targeting"]
-	ability_text = "Bind a creature. Move it back 1 row. All its actions cost 1 more mana.\n[b]Upkeep[/b]: You may pay 1 mana to move the bound card back 1 row. From the reserve line you may send it to the grave; from the grave you may [b]Void[/b] it. If the bound creature leaves the field or grave, destroy this card."
+	ability_text = "Bind a creature. Move it back 1 row. All its actions cost 1 more mana.\n[b]Upkeep[/b]: You may pay 1 mana to move the bound card back 1 row. From the reserve line you may send it to the grave; from the grave you may [b]Void[/b] it. If the bound creature leaves the field or grave, destroy Wheel of Fire."
 	flavor_text = ""
 	artist = "Ricardo Zoppello"
 	art_path = ART_PATH

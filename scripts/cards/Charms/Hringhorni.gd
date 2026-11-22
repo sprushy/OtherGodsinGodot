@@ -11,7 +11,7 @@ func _init() -> void:
 	speed = 3
 	targets = true
 	flavor_text = ""
-	ability_text = "Activate when one of your Norse Warriors is destroyed; summon a Norse Warrior of the same level or lower from your deck."
+	ability_text = "When one of your Norse Warriors is destroyed, you may activate Hringhorni. Summon a Norse Warrior from your deck with LVL no higher than the destroyed Warrior's."
 	artist = "Tim Nguyen"
 	art_path = "res://images/card_art/charms/HringhorniEdit.png"
 

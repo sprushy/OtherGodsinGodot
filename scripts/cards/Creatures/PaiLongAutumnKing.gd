@@ -7,14 +7,14 @@ const ALT_ART_PATH := "res://images/card_art/creatures/pai_long_autumn_king_alt.
 func _init() -> void:
 	super._init()
 	card_name = "Pai Long, Autumn King"
-	card_types = ["Dragon", "Long", "Mage", "King", "Aerial", "Tian Creature"]
+	card_types = ["Dragon", "Long", "Mage", "King", "Aerial"]
 	level = 6
 	mana_cost = 9
 	sacrifice_cost = 0
 	speed = 3
 	resilience = 25
 	strength = 36
-	ability_text = "[b]Stormcloud[/b] ([b]Impact[/b]): [b]Acquire[/b] a [b]Weather[/b] spell.\n[b]Weather King[/b] ([b]Passive[/b]): This card is immune to weather effects that do not increase its stats."
+	ability_text = "[b]Stormcloud[/b] ([b]Impact[/b]): [b]Acquire[/b] a [b]Weather[/b] spell.\n[b]Weather King[/b] ([b]Passive[/b]): Pai Long is immune to weather effects that do not increase its stats."
 	flavor_text = ""
 	culture = "Tian"
 	artist = "David Revoy"

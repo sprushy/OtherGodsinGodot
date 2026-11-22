@@ -7,7 +7,7 @@ const FATALITY_MANA_GAIN := 2
 func _init() -> void:
 	super._init()
 	card_name = "White Stag"
-	card_types = ["Animal", "Elaphine", "Neutral Creature"]
+	card_types = ["Animal", "Elaphine"]
 	level = 3
 	mana_cost = 0
 	sacrifice_cost = 0

@@ -21,7 +21,7 @@ func _init() -> void:
 	artist = "User provided art"
 	art_path = ART_PATH
 	art_variants = [ART_PATH, ALT_ART_PATH]
-	ability_text = "Whenever an opposing creature enters the field, put 1 tactic counter on this.\nScout ([b]Activate[/b]): Remove 1 tactic counter: reveal a target opposing hidden card on the field."
+	ability_text = "Whenever an opposing creature enters the field, put 1 tactic counter on Watchtower.\nScout ([b]Activate[/b]): Remove 1 tactic counter to reveal an opposing hidden card on the field."
 
 func get_activation_label() -> String:
 	return "Scout"

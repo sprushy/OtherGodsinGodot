@@ -4,7 +4,7 @@ class_name EnkiLordOfEridu
 func _init() -> void:
 	super._init()
 	card_name = "Enki, Lord of Eridu"
-	card_types = ["Divine Manifestation", "Mer", "Mage", "Priest", "Sage", "Ancient Creature"]
+	card_types = ["Divine Manifestation", "Mer", "Mage", "Priest", "Sage"]
 	level = 6
 	mana_cost = 8
 	sacrifice_cost = 0

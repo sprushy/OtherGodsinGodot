@@ -18,7 +18,7 @@ func _init() -> void:
 	culture = "Norse"
 	# flavor_text = "Thor steps onto the field and the human warbands rally around him."
 	flavor_text = ""
-	ability_text = "[b]Patron's Hand[/b] ([b]Passive[/b]): Can intercept for your followers or Human creatures regardless of speed. Other friendly Warriors on the field gain +5 STR and +5 RES. Follower damage inflicted by this card is halved."
+	ability_text = "[b]Patron's Hand[/b] ([b]Passive[/b]): Can intercept for your followers or Human creatures regardless of speed. Other friendly Warriors on the field gain +5 STR and +5 RES. Follower damage inflicted by Thor is halved."
 	art_path = ART_PATH
 	name_at_bottom = true
 	artist = "Ricarrdo Zoppello"

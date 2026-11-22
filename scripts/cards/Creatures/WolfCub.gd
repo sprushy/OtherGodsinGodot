@@ -9,7 +9,7 @@ var _maturation_ready: bool = false
 func _init() -> void:
 	super._init()
 	card_name = "Wolf Cub"
-	card_types = ["Animal", "Lupine", "Norse Creature"]
+	card_types = ["Animal", "Lupine"]
 	level = 1
 	mana_cost = 0
 	sacrifice_cost = 0

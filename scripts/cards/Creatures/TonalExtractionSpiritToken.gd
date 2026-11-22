@@ -24,15 +24,16 @@ func configure_from_profile(profile: Dictionary) -> void:
 	speed = int(profile.get("speed", speed))
 	resilience = int(profile.get("resilience", resilience))
 	strength = int(profile.get("strength", strength))
-	culture = str(profile.get("culture", culture))
+	var source_types: Array = profile.get("card_types", [])
+	culture = str(profile.get("culture", CardSubtypes.legacy_culture(source_types, culture)))
 	artist = str(profile.get("artist", artist))
 	art_path = str(profile.get("art_path", art_path))
 	ability_text = str(profile.get("ability_text", ""))
 	flavor_text = str(profile.get("flavor_text", ""))
 	var profile_types: Array[String] = []
-	for raw_type in profile.get("card_types", []):
+	for raw_type in source_types:
 		var type_name := str(raw_type).strip_edges()
-		if type_name != "" and type_name not in profile_types:
+		if type_name != "" and not CardSubtypes.is_culture_label(type_name) and type_name not in profile_types:
 			profile_types.append(type_name)
 	for required_type in ["Token", "Spirit"]:
 		if required_type not in profile_types:

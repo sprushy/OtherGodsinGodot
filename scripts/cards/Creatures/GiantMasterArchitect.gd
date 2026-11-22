@@ -6,7 +6,7 @@ const ART_PATH := "res://images/card_art/creatures/giant_master_architect_ai_edi
 func _init() -> void:
 	super._init()
 	card_name = "Giant Master Architect"
-	card_types = ["Giant", "Smith", "Norse Creature"]
+	card_types = ["Giant", "Smith"]
 	level = 5
 	mana_cost = 7
 	sacrifice_cost = 0

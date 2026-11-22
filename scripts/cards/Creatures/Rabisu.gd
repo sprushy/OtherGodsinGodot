@@ -9,7 +9,7 @@ const DRAIN_PER_SLEEPING_CREATURE := 3
 func _init() -> void:
 	super._init()
 	card_name = "Rabisu"
-	card_types = ["Demon", "Vampire", "Ancient Creature"]
+	card_types = ["Demon", "Vampire"]
 	level = 2
 	mana_cost = 0
 	sacrifice_cost = 0

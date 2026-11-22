@@ -3,7 +3,6 @@ class_name HariiShaman
 
 const MAX_TRANSFORMS_PER_TURN := 2
 const ANIMAL_TYPE := "Animal"
-const NORSE_TYPE := "Norse Creature"
 const HUMAN_TYPE := "Human"
 const WARRIOR_TYPE := "Warrior"
 const TARGETING_TYPE := "Targeting"
@@ -21,7 +20,7 @@ var _transforms_used_this_turn: int = 0
 func _init() -> void:
 	super._init()
 	card_name = "Harii Shaman"
-	card_types = ["Human", "Mage", "Shaman", "Battlemage", "Norse Creature"]
+	card_types = ["Human", "Mage", "Shaman", "Battlemage"]
 	if TARGETING_TYPE not in card_types:
 		card_types.append(TARGETING_TYPE)
 	level = 4
@@ -168,16 +167,16 @@ func _can_restore_target(target: Card) -> bool:
 		and target.has_type(ANIMAL_TYPE)
 
 func _transform_to_animal(target: Card, chosen_subtype: String) -> void:
-	var next_types := _filter_transform_types(target.get_subtypes())
+	var next_types := _filter_transform_types(target.get_underlying_subtypes())
 	for type_name in CardSubtypes.expand(chosen_subtype):
 		_ensure_type(next_types, type_name)
 	_apply_transform_types(target, next_types)
 
 func _restore_to_norse_human_warrior(target: Card) -> void:
-	var next_types := _filter_transform_types(target.get_subtypes())
+	var next_types := _filter_transform_types(target.get_underlying_subtypes())
 	_ensure_type(next_types, HUMAN_TYPE)
 	_ensure_type(next_types, WARRIOR_TYPE)
-	_ensure_type(next_types, NORSE_TYPE)
+	target.culture = "Norse"
 	_apply_transform_types(target, next_types)
 
 func _apply_transform_types(target: Card, next_types: Array[String]) -> void:

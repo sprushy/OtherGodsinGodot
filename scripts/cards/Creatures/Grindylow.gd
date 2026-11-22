@@ -6,7 +6,7 @@ const ART_PATH := "res://images/card_art/creatures/grindylow.png"
 func _init() -> void:
 	super._init()
 	card_name = "Grindylow"
-	card_types = ["Aqueous", "Fairy", "Triskelion Creature"]
+	card_types = ["Aqueous", "Fairy"]
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
 	level = 2

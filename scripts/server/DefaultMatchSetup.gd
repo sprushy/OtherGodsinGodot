@@ -148,6 +148,9 @@ func build_match_from_session_decks(game_manager: GameManager, match_session) ->
 			else deck_builder.build_deck(players[player_index], submitted_cards, special_setup)
 		if not built_deck:
 			return {}
+		var reinforcement_counts = submission.get("reinforcements", {})
+		if reinforcement_counts is Dictionary:
+			players[player_index].record_starting_creature_typings(CardCatalogScript.make_cards_from_counts(reinforcement_counts))
 
 	game_manager.setup_game()
 	_apply_standard_opening(players)

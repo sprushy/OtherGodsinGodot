@@ -6,7 +6,7 @@ const MANA_PER_BEAST := 2
 func _init() -> void:
 	super._init()
 	card_name = "Pictish Beast"
-	card_types = ["Animal", "Cryptid", "Aqueous", "Triskelion Creature"]
+	card_types = ["Animal", "Cryptid", "Aqueous"]
 	level = 1
 	mana_cost = 0
 	sacrifice_cost = 0

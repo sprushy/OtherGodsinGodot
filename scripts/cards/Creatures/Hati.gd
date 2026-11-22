@@ -7,14 +7,14 @@ const MOON_HUNT_EXTRA_MANA := 2
 func _init() -> void:
 	super._init()
 	card_name = "Hati"
-	card_types = ["Animal", "Lupine", "Aerial", "Norse Creature"]
+	card_types = ["Animal", "Lupine", "Aerial"]
 	level = 4
 	mana_cost = 0
 	sacrifice_cost = 1
 	speed = 2
 	resilience = 27
 	strength = 27
-	ability_text = "[b]Moon Hunt[/b]: At the end of your turn, you may sacrifice 1 creature to summon this card; if you have already normal summoned, also pay %d mana." % MOON_HUNT_EXTRA_MANA
+	ability_text = "[b]Moon Hunt[/b]: At the end of your turn, you may sacrifice 1 creature to summon Hati; if you have already normal summoned, also pay %d mana." % MOON_HUNT_EXTRA_MANA
 	culture = "Norse"
 	artist = "Unknown"
 	art_path = ART_PATH

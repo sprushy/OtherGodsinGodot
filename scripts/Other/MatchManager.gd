@@ -3381,9 +3381,9 @@ func _get_priority_action_message(top: CardAction, viewer: Player = null) -> Str
 				return _get_action_label(top.attacker, viewer) + " is attacking - you may respond!"
 		CardAction.Type.SPELL:
 			if top.card != null:
-				var named_subtype := str(top.event_data.get("named_subtype", ""))
-				if not named_subtype.is_empty():
-					return "%s names %s." % [_get_action_label(top.card, viewer), named_subtype]
+				var typing_label := str(top.event_data.get("creature_typing", top.event_data.get("named_subtype", "")))
+				if not typing_label.is_empty():
+					return "%s applies %s." % [_get_action_label(top.card, viewer), typing_label]
 				return _get_action_label(top.card, viewer) + " is waiting to resolve - you may respond!"
 		CardAction.Type.ABILITY:
 			if top.card != null:
@@ -5192,11 +5192,11 @@ func _process_command_impl(command: Dictionary) -> bool:
 				return false
 			var public_details := {}
 			if spell is Metamorphosis:
-				var subtype = command.get("subtype", "")
-				if not subtype is String or subtype not in Metamorphosis.get_subtype_options():
-					move_failed.emit("Metamorphosis needs a valid subtype.")
+				var typing_key = command.get("creature_typing", "")
+				if not typing_key is String or not acting_player.starting_creature_typings.has(typing_key):
+					move_failed.emit("Choose a creature typing from your starting decklist or Reinforcements for Metamorphosis.")
 					return false
-				public_details["named_subtype"] = subtype
+				public_details["creature_typing"] = CardSubtypes.format_typing(acting_player.starting_creature_typings[typing_key])
 			var spell_target_uid: String = command.get("target_uid", "")
 			var spell_target: Card = game_manager.get_card_by_uid(spell_target_uid) if spell_target_uid != "" else null
 			if spell is ConjureEidolon and not (spell as ConjureEidolon).is_valid_target(spell_target, game_manager):
@@ -5208,6 +5208,14 @@ func _process_command_impl(command: Dictionary) -> bool:
 				return false
 			var player := acting_player
 			var prepared_spell := spell.is_prepared and spell.current_zone != null and spell.current_zone.is_board_zone()
+			var spell_command_display_zone := _resolve_command_display_zone(command, player)
+			var preferred_display_zone: Zone = spell.current_zone if prepared_spell else spell_command_display_zone
+			if spell is Metamorphosis and not prepared_spell \
+					and not _can_use_requested_stack_display_zone(preferred_display_zone, player, spell):
+				preferred_display_zone = _find_available_stack_display_zone(player)
+				if preferred_display_zone == null:
+					move_failed.emit("Metamorphosis needs an empty friendly lane.")
+					return false
 			if spell is BlotSacrifice:
 				var blot_sacrifice_uid := str(command.get("sacrifice_uid", "")).strip_edges()
 				var blot_sacrifice_target := game_manager.get_card_by_uid(blot_sacrifice_uid) if blot_sacrifice_uid != "" else null
@@ -5276,8 +5284,6 @@ func _process_command_impl(command: Dictionary) -> bool:
 						Card.COST_KIND_HAND_PLAY,
 						{"player": player, "prepared": false}
 					)
-			var spell_command_display_zone := _resolve_command_display_zone(command, player)
-			var preferred_display_zone: Zone = spell.current_zone if prepared_spell else spell_command_display_zone
 			var spell_resolve := func() -> void:
 				_place_persistent_magic_on_board(spell, preferred_display_zone)
 				game_manager.notify_spell_played(player, spell)

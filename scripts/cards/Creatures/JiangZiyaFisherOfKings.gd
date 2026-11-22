@@ -12,7 +12,7 @@ var tactic_counters: int = 0
 func _init() -> void:
 	super._init()
 	card_name = "Jiang Ziya, Fisher of Kings"
-	card_types = ["Human", "General", "Tian Creature"]
+	card_types = ["Human", "General"]
 	level = 1
 	mana_cost = 0
 	sacrifice_cost = 0

@@ -8,7 +8,7 @@ const WARD_SOURCE := "Gudu Priest Creature Ward"
 func _init() -> void:
 	super._init()
 	card_name = "Gudu Priest"
-	card_types = ["Human", "Mage", "Priest", "Ancient Creature"]
+	card_types = ["Human", "Mage", "Priest"]
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
 	level = 1

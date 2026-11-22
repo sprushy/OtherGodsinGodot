@@ -4,7 +4,7 @@ class_name AsagTheDestroyer
 func _init() -> void:
 	super._init()
 	card_name = "Asag the Destroyer"
-	card_types = ["Demon", "Ancient Creature"]
+	card_types = ["Demon"]
 	level = 5
 	mana_cost = 0
 	sacrifice_cost = 1

@@ -15,7 +15,7 @@ func _init() -> void:
 	flavor_text = ""
 	artist = "CC0"
 	art_path = "res://images/card_art/charms/StormEdit.png"
-	ability_text = "Destroy any face-up [b]Weather[/b] spells. All [b]Aerial[/b] creatures lose that classification and get -7 STR and -2 SPD. All non-passive creature abilities are silenced while this remains face-up."
+	ability_text = "Destroy any other face-up [b]Weather[/b] spells. All [b]Aerial[/b] creatures lose that classification and get -7 STR and -2 SPD. All non-passive creature abilities are silenced while this remains face-up."
 
 func should_go_to_graveyard() -> bool:
 	return false

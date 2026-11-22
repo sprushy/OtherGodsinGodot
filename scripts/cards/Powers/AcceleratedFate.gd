@@ -11,7 +11,7 @@ func _init() -> void:
 	card_name = "Accelerated Fate"
 	culture = "Neutral"
 	mana_cost = UNLOCK_COST
-	ability_text = "[b]Unlock[/b] (%d): [b]Activate[/b] - Pay %d mana to draw a card." % [UNLOCK_COST, DRAW_COST]
+	ability_text = "[b]Unlock[/b] (%d)\n[b]Activate[/b] (%d mana): Draw a card." % [UNLOCK_COST, DRAW_COST]
 	art_path = DEFAULT_ART
 	exhausted_art_path = USED_ART
 

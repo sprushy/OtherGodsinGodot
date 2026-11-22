@@ -4,7 +4,7 @@ class_name Capricorn
 func _init() -> void:
 	super._init()
 	card_name = "Capricorn"
-	card_types = ["Animal", "Hircine", "Ancient Creature"]
+	card_types = ["Animal", "Hircine"]
 	level = 1
 	mana_cost = 0
 	sacrifice_cost = 0

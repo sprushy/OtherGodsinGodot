@@ -10,7 +10,7 @@ var _destroy_trigger_queued: bool = false
 func _init() -> void:
 	super._init()
 	card_name = "Gala-Tura"
-	card_types = ["Divine Acolyte", "Golem", "Aerial", "Ancient Creature"]
+	card_types = ["Divine Acolyte", "Golem", "Aerial"]
 	level = 4
 	mana_cost = 2
 	sacrifice_cost = 0

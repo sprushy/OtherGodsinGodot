@@ -6,7 +6,7 @@ const MAX_WARBAND_SUMMONS := 2
 func _init() -> void:
 	super._init()
 	card_name = "Harii Jarl"
-	card_types = ["Human", "Warrior", "Norse Creature"]
+	card_types = ["Human", "Warrior"]
 	level = 4
 	mana_cost = 4
 	speed = 1

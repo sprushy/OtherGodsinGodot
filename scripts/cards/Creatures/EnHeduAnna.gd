@@ -9,7 +9,7 @@ var _god_power_activated_while_face_up_this_turn: bool = false
 func _init() -> void:
 	super._init()
 	card_name = "En-hedu-anna"
-	card_types = ["Human", "Mage", "Priest", "Ancient Creature"]
+	card_types = ["Human", "Mage", "Priest"]
 	level = 4
 	mana_cost = 2
 	speed = 1

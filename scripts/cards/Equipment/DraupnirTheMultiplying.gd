@@ -13,7 +13,7 @@ func _init() -> void:
 	culture = "Norse"
 	card_types = ["Jewelry", "Ring"]
 	mana_cost = 0
-	ability_text = "While equipped, at the end of each of your turns, gain 2 mana. Send this card to the grave after 3 activations."
+	ability_text = "At the end of each of your turns, if Draupnir is equipped, gain %d mana. Send it to the Graveyard after this effect triggers %d times." % [MANA_GAIN, MAX_ACTIVATIONS]
 	flavor_text = ""
 	artist = "Lorinda Tomko"
 	art_path = "res://images/card_art/equipment/draupnir.jpg"

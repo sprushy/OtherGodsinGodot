@@ -13,7 +13,7 @@ func _init() -> void:
 	level = 0
 	card_types = ["Power", "Defense", "Followers"]
 	targets = false
-	ability_text = "[b]Unlock[/b] (%d): [b]Activate[/b] - During your turn, pay any amount of mana. Gain %d Guard for each mana paid. When you would take follower damage, Guard is lost first; any excess damage is dealt to your followers." % [UNLOCK_COST, GUARD_PER_MANA]
+	ability_text = "[b]Unlock[/b] (%d)\n[b]Activate[/b]: On your turn, spend mana to gain %d Guard per mana spent. Guard absorbs Follower damage first. Any excess damage goes to your Followers." % [UNLOCK_COST, GUARD_PER_MANA]
 	art_path = ART_PATH
 
 func can_activate(game_manager: GameManager) -> bool:

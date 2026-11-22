@@ -99,6 +99,7 @@ var _upkeep_started_turn: int = -1
 var _temporary_summon_cost_modifiers: Array[Dictionary] = []
 var _temporary_control_effects: Array[Dictionary] = []
 var _next_board_entry_order: int = 0
+var _metamorphosis_auras: Array[Metamorphosis] = []
 var _pending_doorway_structure: StructureCard = null
 var _pending_doorway_structures: Array[StructureCard] = []
 var _pending_doorway_card: Card = null
@@ -943,6 +944,8 @@ func setup_game() -> void:
 	_pending_defeated_players.clear()
 	for player in players:
 		player.game_manager = self
+		var starting_cards := player.current_deck if not player.current_deck.is_empty() else player.deck_zone.cards
+		player.record_starting_creature_typings(starting_cards)
 		if not player.card_moved.is_connected(_on_player_card_moved):
 			player.card_moved.connect(_on_player_card_moved)
 		var defeat_callback := Callable(self, "_on_player_defeated")
@@ -4489,15 +4492,46 @@ func _push_frontline_entry_event(card: Card) -> void:
 		return
 	push_to_stack(action)
 
-func get_field_cards(player: Player = null, include_sheltered: bool = true, include_god_and_power_slots: bool = false) -> Array[Card]:
+func get_field_cards(player: Player = null, include_sheltered: bool = true) -> Array[Card]:
 	var field_cards: Array[Card] = []
 	var seen_cards: Dictionary = {}
 	if player != null:
-		_append_player_field_cards(player, field_cards, seen_cards, include_sheltered, include_god_and_power_slots)
+		_append_player_field_cards(player, field_cards, seen_cards, include_sheltered)
 		return field_cards
 	for field_player in players:
-		_append_player_field_cards(field_player, field_cards, seen_cards, include_sheltered, include_god_and_power_slots)
+		_append_player_field_cards(field_player, field_cards, seen_cards, include_sheltered)
 	return field_cards
+
+func add_metamorphosis_aura(aura: Metamorphosis) -> void:
+	_metamorphosis_auras.erase(aura)
+	var previous: Metamorphosis = _metamorphosis_auras.back() if not _metamorphosis_auras.is_empty() else null
+	aura.aura_order = previous.aura_order + 1 if previous != null else 0
+	_metamorphosis_auras.append(aura)
+
+func remove_metamorphosis_aura(aura: Metamorphosis) -> void:
+	_metamorphosis_auras.erase(aura)
+
+func restore_metamorphosis_auras() -> void:
+	_metamorphosis_auras.clear()
+	for card in get_field_cards(null, false):
+		if card is Metamorphosis and (card as Metamorphosis).aura_order >= 0:
+			_metamorphosis_auras.append(card as Metamorphosis)
+	_metamorphosis_auras.sort_custom(func(a: Metamorphosis, b: Metamorphosis) -> bool: return a.aura_order < b.aura_order)
+
+func get_metamorphosis_aura(creature: Card) -> Metamorphosis:
+	if _metamorphosis_auras.is_empty() or creature.is_face_down or creature.is_stealth:
+		return null
+	var zone := creature.current_zone
+	if zone != null and not zone.is_board_zone():
+		return null
+	if zone == null and not is_card_on_field(creature):
+		return null
+	# The most recently resolved active Aura takes precedence.
+	for index in range(_metamorphosis_auras.size() - 1, -1, -1):
+		var aura := _metamorphosis_auras[index]
+		if aura.is_aura_live() and not is_immune_to_source(creature, aura):
+			return aura
+	return null
 
 func is_card_on_field(card: Card, include_sheltered: bool = true) -> bool:
 	if card == null:
@@ -4511,14 +4545,10 @@ func is_card_on_field(card: Card, include_sheltered: bool = true) -> bool:
 			return true
 	return false
 
-func _append_player_field_cards(player: Player, field_cards: Array[Card], seen_cards: Dictionary, include_sheltered: bool, include_god_and_power_slots: bool) -> void:
+func _append_player_field_cards(player: Player, field_cards: Array[Card], seen_cards: Dictionary, include_sheltered: bool) -> void:
 	if player == null:
 		return
-	var zones := player.frontline_zones + player.reserve_zones
-	if include_god_and_power_slots:
-		zones.append(player.god_zone)
-		zones.append_array(player.power_zones)
-	for zone in zones:
+	for zone in player.frontline_zones + player.reserve_zones:
 		if zone == null:
 			continue
 		for card in zone.cards:

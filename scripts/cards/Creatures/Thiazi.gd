@@ -18,7 +18,7 @@ func _init() -> void:
 	speed = 1
 	resilience = 26
 	strength = 24
-	ability_text = "[b]Shift[/b] ([b]Activate[/b], [b]Minor Action[/b], once per turn): Switch this card between Giant, Mage, Shapeshifter and Animal, Mage, Avian, Aerial.\n[b]Animal Form[/b] ([b]Passive[/b]): While in Animal form, this card's stats become SPD 3 / RES 15 / STR 27."
+	ability_text = "[b]Shift[/b] ([b]Activate[/b], [b]Minor Action[/b], once per turn): Switch Thiazi between Giant, Mage, Shapeshifter and Animal, Mage, Avian, Aerial.\n[b]Animal Form[/b] ([b]Passive[/b]): While in Animal form, Thiazi's stats become SPD 3 / RES 15 / STR 27."
 	flavor_text = ""
 	culture = "Norse"
 	artist = "Lorinda Tomko"
@@ -115,7 +115,6 @@ func _get_giant_form_types() -> Array[String]:
 		"Giant",
 		"Mage",
 		"Shapeshifter",
-		"Norse Creature",
 	]
 
 func _get_animal_form_types() -> Array[String]:
@@ -125,5 +124,4 @@ func _get_animal_form_types() -> Array[String]:
 		"Avian",
 		"Aerial",
 		"Shapeshifter",
-		"Norse Creature",
 	]

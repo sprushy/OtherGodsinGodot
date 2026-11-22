@@ -7,7 +7,7 @@ const GUARDIAN_SLEEP_SOURCE := "Gidim Ensi Guardian"
 func _init() -> void:
 	super._init()
 	card_name = "Gidim Ensi"
-	card_types = ["Spirit", "Ghost", "Mage", "Priest", "Ancient Creature"]
+	card_types = ["Spirit", "Ghost", "Mage", "Priest"]
 	level = 4
 	mana_cost = 2
 	sacrifice_cost = 0
@@ -15,7 +15,7 @@ func _init() -> void:
 	resilience = 22
 	strength = 18
 	incorporeal = true
-	ability_text = "[b]Incorporeal[/b] ([b]Passive[/b]): Only Spirits or Mages can [b]Engage[/b] this card. This card can only [b]Engage[/b] Spirits or Mages. Sleep Immunity.\nGuardian ([b]Passive[/b]): Creatures that attack your followers sleep until the end of their controller's next turn. This card cannot attack."
+	ability_text = "[b]Incorporeal[/b] ([b]Passive[/b]): Only Spirits or Mages can [b]Engage[/b] Gidim Ensi. Gidim Ensi can only [b]Engage[/b] Spirits or Mages. Sleep Immunity.\nGuardian ([b]Passive[/b]): Creatures that attack your followers sleep until the end of their controller's next turn. Gidim Ensi cannot attack."
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricarrdo Zoppello"

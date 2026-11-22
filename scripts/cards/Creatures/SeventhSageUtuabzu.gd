@@ -8,7 +8,7 @@ const IMPACT_USED_TURN_META := "utuabzu_last_impact_activation_turn"
 func _init() -> void:
 	super._init()
 	card_name = "Seventh Sage Utuabzu"
-	card_types = ["Mer", "Mage", "Priest", "Sage", "Ancient Creature", "Targeting"]
+	card_types = ["Mer", "Mage", "Priest", "Sage", "Targeting"]
 	level = 4
 	mana_cost = 2
 	sacrifice_cost = 0

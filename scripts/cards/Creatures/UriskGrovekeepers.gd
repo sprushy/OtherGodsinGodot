@@ -6,14 +6,14 @@ const ART_PATH := "res://images/card_art/creatures/UriskGrovekeepersEdit.png"
 func _init() -> void:
 	super._init()
 	card_name = "Urisk Grovekeepers"
-	card_types = ["Hybrid", "Satyr", "Warrior", "Triskelion Creature"]
+	card_types = ["Hybrid", "Satyr", "Warrior"]
 	level = 5
 	mana_cost = 4
 	sacrifice_cost = 0
 	speed = 2
 	resilience = 30
 	strength = 28
-	ability_text = "[b]Forest Ward[/b] ([b]Passive[/b]): For your Animal, Plant, or Nature cards, this card has [b]Reach[/b] and can intercept regardless of speed."
+	ability_text = "[b]Forest Ward[/b] ([b]Passive[/b]): For your Animal, Plant, or Nature cards, Urisk Grovekeepers have [b]Reach[/b] and can intercept regardless of speed."
 	flavor_text = ""
 	culture = "Triskelion"
 	artist = "Mike Capprotti via TgcMaker"

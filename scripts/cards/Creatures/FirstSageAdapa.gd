@@ -6,7 +6,7 @@ const MUTE_DURATION := 2
 func _init() -> void:
 	super._init()
 	card_name = "First Sage Adapa"
-	card_types = ["Mer", "Mage", "Priest", "Sage", "Ancient Creature", "Targeting"]
+	card_types = ["Mer", "Mage", "Priest", "Sage", "Targeting"]
 	level = 3
 	mana_cost = 0
 	sacrifice_cost = 0

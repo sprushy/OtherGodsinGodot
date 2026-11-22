@@ -10,7 +10,7 @@ const POISON_RES_LOSS := 5
 func _init() -> void:
 	super._init()
 	card_name = "Malinalxochitl Acolyte"
-	card_types = ["Divine Acolyte", "Monster", "Insect", "Warrior", "Archer", "Nahuatl Creature"]
+	card_types = ["Divine Acolyte", "Monster", "Insect", "Warrior", "Archer"]
 	level = 4
 	mana_cost = 2
 	sacrifice_cost = 0

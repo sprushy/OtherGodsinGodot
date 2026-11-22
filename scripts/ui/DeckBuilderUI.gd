@@ -4599,8 +4599,9 @@ func _show_preview(card: Card, force: bool = false) -> void:
 	var type_parts: PackedStringArray = [_get_type_label(card)]
 	if card.culture != "":
 		type_parts.append(card.culture)
-	if card.card_types.size() > 0:
-		type_parts.append(" / ".join(Array(card.card_types)))
+	var subtypes := card.card_types
+	if not subtypes.is_empty():
+		type_parts.append(" / ".join(subtypes))
 	_prev_type.text = " · ".join(type_parts)
 	_prev_type.tooltip_text = _prev_type.text
 	_prev_type.add_theme_color_override("font_color", _get_type_color(card))

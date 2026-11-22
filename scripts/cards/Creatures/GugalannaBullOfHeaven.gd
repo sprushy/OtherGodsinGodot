@@ -6,7 +6,7 @@ const MIN_RES_TARGET := 30
 func _init() -> void:
 	super._init()
 	card_name = "Gugalanna, Bull of Heaven"
-	card_types = ["Divine Manifestation", "Animal", "Taurine", "Ancient Creature", "Targeting"]
+	card_types = ["Divine Manifestation", "Animal", "Taurine", "Targeting"]
 	level = 4
 	mana_cost = 3
 	sacrifice_cost = 0

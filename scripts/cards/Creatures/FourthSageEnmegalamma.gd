@@ -3,14 +3,14 @@ extends CreatureCard
 func _init() -> void:
 	super._init()
 	card_name = "Fourth Sage Enmegalamma"
-	card_types = ["Mer", "Mage", "Priest", "Sage", "Ancient Creature"]
+	card_types = ["Mer", "Mage", "Priest", "Sage"]
 	level = 2
 	mana_cost = 0
 	sacrifice_cost = 0
 	speed = 1
 	resilience = 15
 	strength = 14
-	ability_text = "[b]Search[/b] Sage ([b]Impact[/b]): You may [b]Acquire[/b] a Mer Sage, except another copy of this card, by paying mana equal to half their level."
+	ability_text = "[b]Search[/b] Sage ([b]Impact[/b]): You may [b]Acquire[/b] a Mer Sage, except another copy of Fourth Sage Enmegalamma, by paying mana equal to half their level."
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricardo Zoppello"

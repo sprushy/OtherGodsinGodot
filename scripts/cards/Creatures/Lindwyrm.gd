@@ -11,7 +11,7 @@ const DEVOUR_STRENGTH_BONUS := 5
 func _init() -> void:
 	super._init()
 	card_name = "Lindwyrm"
-	card_types = ["Dragon", "Wyvern", "Norse Creature"]
+	card_types = ["Dragon", "Wyvern"]
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
 	level = 3
@@ -21,7 +21,7 @@ func _init() -> void:
 	resilience = 11
 	strength = 16
 	targets = true
-	ability_text = "[b]Devour[/b] ([b]Major Action[/b]): Destroy a creature at least 2 levels lower than this card. If you do, this card gains +1 Lvl, +1 Spd, +5 Res, and +5 Str."
+	ability_text = "[b]Devour[/b] ([b]Major Action[/b]): Destroy a creature at least 2 levels lower than Lindwyrm. If you do, Lindwyrm gains +1 Lvl, +1 Spd, +5 Res, and +5 Str."
 	culture = "Norse"
 	artist = "Daniel Decena"
 	art_path = ART_PATH

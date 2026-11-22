@@ -6,7 +6,7 @@ var united_front_partner: Card = null
 func _init() -> void:
 	super._init()
 	card_name = "Robotic Footsoldier"
-	card_types = ["Machine", "Robot", "Atlanitan Creature"]
+	card_types = ["Machine", "Robot"]
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
 	level = 1

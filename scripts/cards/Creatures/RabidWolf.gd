@@ -8,7 +8,7 @@ const DISEASE_EFFECT_TYPE := "rabid_wolf_disease"
 func _init() -> void:
 	super._init()
 	card_name = "Rabid Wolf"
-	card_types = ["Animal", "Lupine", "Norse Creature"]
+	card_types = ["Animal", "Lupine"]
 	level = 3
 	mana_cost = 0
 	sacrifice_cost = 0

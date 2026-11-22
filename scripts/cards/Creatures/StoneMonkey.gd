@@ -7,7 +7,7 @@ const ALT_ART_PATH := "res://images/card_art/creatures/stone_monkey_alt.png"
 func _init() -> void:
 	super._init()
 	card_name = "Stone Monkey"
-	card_types = ["Warrior", "Animal", "Simian", "Tian Creature"]
+	card_types = ["Warrior", "Animal", "Simian"]
 	level = 4
 	mana_cost = 2
 	sacrifice_cost = 0

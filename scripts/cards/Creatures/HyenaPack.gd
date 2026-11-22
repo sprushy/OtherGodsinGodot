@@ -6,7 +6,7 @@ const ART_PATH := "res://images/card_art/creatures/Hyena Pack(print).jpg"
 func _init() -> void:
 	super._init()
 	card_name = "Hyena Pack"
-	card_types = ["Animal", "Feline", "Pack", "Scavenger", "Ancient Creature"]
+	card_types = ["Animal", "Feline", "Pack", "Scavenger"]
 	level = 2
 	mana_cost = 0
 	sacrifice_cost = 0

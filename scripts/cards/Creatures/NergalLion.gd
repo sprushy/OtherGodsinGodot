@@ -6,7 +6,7 @@ const ART_PATH := "res://images/card_art/creatures/NergalLionEdit.png"
 func _init() -> void:
 	super._init()
 	card_name = "Nergal Lion"
-	card_types = ["Divine Acolyte", "Demon", "Pyro", "Aerial", "Ancient Creature", "Targeting"]
+	card_types = ["Divine Acolyte", "Demon", "Pyro", "Aerial", "Targeting"]
 	level = 5
 	mana_cost = 7
 	speed = 2
@@ -16,7 +16,7 @@ func _init() -> void:
 	artist = "Ricardo Zoppello"
 	art_path = ART_PATH
 	targets = true
-	ability_text = "[b]Immolate[/b] ([b]Impact[/b]): Place a [b]Destruction[/b] card that can destroy a physical card from your grave face-down on your field. When it is activated, you do not have to pay its cost."
+	ability_text = "[b]Immolate[/b] ([b]Impact[/b]): Prepare a [b]Destruction[/b] card from your Graveyard that can destroy a physical card. Its mana cost is 0."
 
 func on_impact(game_manager: GameManager) -> void:
 	var valid_targets := get_valid_immolate_targets(game_manager)

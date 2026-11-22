@@ -8,7 +8,7 @@ func _init() -> void:
 	super._init()
 	card_name = "Key of Solomon"
 	culture = "Ancient"
-	card_types = ["Ancient", "Recovery"]
+	card_types = ["Recovery"]
 	level = 1
 	mana_cost = 1
 	speed = 1

@@ -9,7 +9,7 @@ var cleanse_uses_this_turn := 0
 func _init() -> void:
 	super._init()
 	card_name = "Anointing Statue"
-	card_types = ["Triskelion", "Altar"]
+	card_types = ["Altar"]
 	level = 2
 	mana_cost = 0
 	resilience = 25

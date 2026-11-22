@@ -29,6 +29,45 @@ const FIXED_TYPES := [
 	"Targeting", "Token",
 ]
 
+# Older card payloads may still include culture labels in their subtype arrays.
+const CULTURE_NAMES := [
+	"Ancient", "Atlanitan", "Atlantean", "Atlantian", "Nahuatl", "Nahutl", "Neutral",
+	"Norse", "Olympic", "Tian", "Triskelion",
+]
+const CULTURE_LABEL_CLASSES := ["Charm", "Creature", "Equipment", "God", "Hex", "Power", "Spell", "Structure"]
+
+static func is_culture_label(type_name: String) -> bool:
+	var culture_name := type_name.get_slice(" ", 0)
+	if culture_name not in CULTURE_NAMES:
+		return false
+	return type_name == culture_name or type_name.trim_prefix(culture_name + " ") in CULTURE_LABEL_CLASSES
+
+static func without_culture_labels(types: Array) -> Array[String]:
+	var subtypes: Array[String] = []
+	for raw_type in types:
+		var type_name := str(raw_type)
+		if not is_culture_label(type_name):
+			subtypes.append(type_name)
+	return subtypes
+
+static func legacy_culture(types: Array, fallback: String) -> String:
+	for raw_type in types:
+		var type_name := str(raw_type)
+		if is_culture_label(type_name):
+			return type_name.get_slice(" ", 0)
+	return fallback
+
+static func get_transferable_subtypes(types: Array) -> Array[String]:
+	var subtypes: Array[String] = []
+	for type_name: String in types:
+		for subtype in expand(type_name):
+			if subtype not in FIXED_TYPES and not is_culture_label(subtype) and subtype not in subtypes:
+				subtypes.append(subtype)
+	return subtypes
+
+static func format_typing(types: Array) -> String:
+	return " / ".join(types) if not types.is_empty() else "No subtypes"
+
 static func matches(type_name: String, requested_type: String) -> bool:
 	if type_name == requested_type:
 		return true

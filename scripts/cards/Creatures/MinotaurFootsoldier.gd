@@ -9,7 +9,7 @@ const DEFENDER_WAS_SLEEPING_META := "combat_was_sleeping_when_engaged"
 func _init() -> void:
 	super._init()
 	card_name = "Minotaur Footsoldier"
-	card_types = ["Monster", "Animal", "Bovine", "Warrior", "Olympic Creature"]
+	card_types = ["Monster", "Animal", "Bovine", "Warrior"]
 	level = 2
 	mana_cost = 0
 	sacrifice_cost = 0

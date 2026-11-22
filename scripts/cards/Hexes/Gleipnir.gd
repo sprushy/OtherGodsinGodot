@@ -15,7 +15,7 @@ func _init() -> void:
 	speed = 4
 	culture = "Norse"
 	card_types = ["Hex", "Permanent", "Binding", "Legendary", "Targeting"]
-	ability_text = "Choose a face-up creature; it cannot attack or intercept and its abilities are negated. This card remains on the field for as long as its target does."
+	ability_text = "Bind a face-up creature. It can't attack or intercept, and its abilities are negated. Gleipnir stays on the field as long as the bound creature does."
 	art_path = ART_PATH
 	artist = "Lorinda Tomko"
 

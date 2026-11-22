@@ -13,7 +13,7 @@ func _init() -> void:
 	resilience = 10
 	strength = 13
 	sacrifice_cost = 0
-	ability_text = "[b]Easy Transition[/b] ([b]Passive[/b]): This card's shifting is free.\n[b]Shift[/b] ([b]Activate[/b]): Switch this card between Human, Servant, Mage, Witch and Animal, Avian, Aerial. When this card shifts, you may return it to your hand."
+	ability_text = "[b]Easy Transition[/b] ([b]Passive[/b]): Shifting is free for Erlqueen's Nightingale.\n[b]Shift[/b] ([b]Activate[/b]): Switch Erlqueen's Nightingale between Human, Servant, Mage, Witch and Animal, Avian, Aerial. When it shifts, you may return it to your hand."
 	flavor_text = ""
 	culture = "Norse"
 	artist = "Jessica Kings Via Tcg-Maker"
@@ -101,7 +101,6 @@ func _get_human_form_types() -> Array[String]:
 	types.append("Mage")
 	types.append("Witch")
 	types.append("Shapeshifter")
-	types.append("Norse Creature")
 	return types
 
 func _get_bird_form_types() -> Array[String]:
@@ -110,5 +109,4 @@ func _get_bird_form_types() -> Array[String]:
 	types.append("Avian")
 	types.append("Aerial")
 	types.append("Shapeshifter")
-	types.append("Norse Creature")
 	return types

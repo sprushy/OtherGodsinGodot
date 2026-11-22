@@ -4,7 +4,7 @@ class_name Muninn
 func _init() -> void:
 	super._init()
 	card_name = "Muninn"
-	card_types = ["Animal", "Avian", "Raven", "Aerial", "Norse Creature"]
+	card_types = ["Animal", "Avian", "Raven", "Aerial"]
 	level = 1
 	mana_cost = 0
 	sacrifice_cost = 0

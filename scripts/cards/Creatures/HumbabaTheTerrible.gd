@@ -6,14 +6,14 @@ const QUEUED_AUGURY_SUPPRESSION_META := "queued_humbaba_augury_suppression"
 func _init() -> void:
 	super._init()
 	card_name = "Humbaba the Terrible"
-	card_types = ["Giant", "Forest", "Ancient Creature"]
+	card_types = ["Giant", "Forest"]
 	level = 3
 	mana_cost = 0
 	sacrifice_cost = 0
 	speed = 1
 	resilience = 20
 	strength = 27
-	ability_text = "[b]Augury Reading[/b] ([b]Passive[/b]): Every time this card enters combat, your opponent looks at the top three cards of their deck, [b]Primes[/b] one, and [b]Shelves[/b] the others."
+	ability_text = "[b]Augury Reading[/b] ([b]Passive[/b]): Every time Humbaba enters combat, your opponent looks at the top three cards of their deck, [b]Primes[/b] one, and [b]Shelves[/b] the others."
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricardo Zoppello"

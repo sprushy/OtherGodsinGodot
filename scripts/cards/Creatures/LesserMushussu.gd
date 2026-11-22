@@ -4,7 +4,7 @@ class_name LesserMushussu
 func _init() -> void:
 	super._init()
 	card_name = "Lesser Mushussu"
-	card_types = ["Dragon", "Animal", "Ancient Creature"]
+	card_types = ["Dragon", "Animal"]
 	level = 2
 	mana_cost = 0
 	sacrifice_cost = 0

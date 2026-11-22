@@ -11,7 +11,7 @@ var _tree_of_life_pending_destroy_count: int = 0
 func _init() -> void:
 	super._init()
 	card_name = "Kur-Jara"
-	card_types = ["Divine Accolyte", "Golem", "Aerial", "Ancient Creature"]
+	card_types = ["Divine Accolyte", "Golem", "Aerial"]
 	level = 4
 	mana_cost = 2
 	sacrifice_cost = 0

@@ -6,7 +6,7 @@ const ART_PATH := "res://images/card_art/creatures/Mopsus.png"
 func _init() -> void:
 	super._init()
 	card_name = "Mopsus"
-	card_types = ["Human", "Mage", "Warrior", "Olympic Creature"]
+	card_types = ["Human", "Mage", "Warrior"]
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
 	level = 3

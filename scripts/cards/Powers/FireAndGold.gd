@@ -14,7 +14,7 @@ func _init() -> void:
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
 	targets = true
-	ability_text = "[b]Unlock[/b] (2): [b]Activate[/b] - Discard 1 card. If you have a Tian Dragon on the frontline, destroy one structure."
+	ability_text = "[b]Unlock[/b] (%d)\n[b]Activate[/b] (discard %d card): If you have a Tian Dragon on the frontline, destroy one structure." % [UNLOCK_COST, ACTIVATION_DISCARD_COST]
 	artist = "Josh13 via pixabay"
 	art_path = "res://images/card_art/powers/FireandGoldAIEdit.png"
 

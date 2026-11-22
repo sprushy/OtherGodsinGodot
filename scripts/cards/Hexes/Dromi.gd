@@ -15,7 +15,7 @@ func _init() -> void:
 	speed = 3
 	culture = "Norse"
 	card_types = ["Hex", "Permanent", "Binding", "Targeting"]
-	ability_text = "Choose a face-up creature. It can't attack, and its controller loses 7 followers at the start of their turns. This remains on the field as long as its target does."
+	ability_text = "Bind a face-up creature. It can't attack. At the start of your turns, that creature's controller loses 7 Followers. Dromi stays on the field as long as the bound creature does."
 	art_path = "res://images/card_art/hexes/Dromi(web).jpg"
 	artist = "Ricardo Zoppello"
 

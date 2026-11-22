@@ -7,14 +7,14 @@ const ALT_ART_PATH := "res://images/card_art/creatures/tianlong_holy_dragon_alt.
 func _init() -> void:
 	super._init()
 	card_name = "Tianlong, Holy Dragon"
-	card_types = ["Dragon", "Long", "Aerial", "Tian Creature"]
+	card_types = ["Dragon", "Long", "Aerial"]
 	level = 4
 	mana_cost = 2
 	sacrifice_cost = 0
 	speed = 2
 	resilience = 25
 	strength = 28
-	ability_text = "[b]Heaven's Guard[/b] ([b]Passive[/b]): For your god or your higher-level Dragons, this card has [b]Reach[/b] and can intercept regardless of speed."
+	ability_text = "[b]Heaven's Guard[/b] ([b]Passive[/b]): For your god or your higher-level Dragons, Tianlong has [b]Reach[/b] and can intercept regardless of speed."
 	flavor_text = ""
 	culture = "Tian"
 	artist = "Ricardo Zoppello"

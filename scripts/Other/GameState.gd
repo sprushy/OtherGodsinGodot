@@ -95,6 +95,8 @@ static func serialize(gm: GameManager, viewer_player_index: int = -1, visible_pl
 			graveyard    = _serialize_zone_cards(player.graveyard_zone, viewer, false),
 			abyss        = _serialize_zone_cards(player.abyss_zone, viewer, false),
 		}
+		if viewer == null or i == viewer_player_index:
+			pdata["starting_creature_typings"] = player.starting_creature_typings.duplicate(true)
 		for z in player.power_zones:
 			pdata.power_zones.append(_serialize_zone_cards(z, viewer, false, reveal_private_cards))
 		for z in player.frontline_zones:
@@ -505,6 +507,7 @@ static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 		if not player_name.is_empty():
 			player.player_name = player_name
 		player.reserved_active_god = null
+		player.restore_starting_creature_typings(pdata.get("starting_creature_typings", {}))
 		player.mana = pdata.get("mana", 0)
 		player.followers = pdata.get("followers", 100)
 		player.guard = pdata.get("guard", 0)
@@ -531,6 +534,7 @@ static func apply_to_manager(data: Dictionary, gm: GameManager) -> void:
 		for j in mini(res_data.size(), player.reserve_zones.size()):
 			_apply_zone_cards(player.reserve_zones[j], res_data[j])
 
+	gm.restore_metamorphosis_auras()
 	var uid_map := _build_card_uid_map(gm)
 	_restore_card_uid_references(gm, uid_map)
 	_restore_attack_restriction_sources(gm, uid_map)
@@ -804,13 +808,13 @@ static func _deserialize_card(cdata: Dictionary) -> Card:
 	card.is_token                  = cdata.get("is_token", false)
 	card.art_path                  = cdata.get("art_path", card.art_path)
 	card.ability_text              = cdata.get("ability_text", card.ability_text)
-	card.culture                   = cdata.get("culture", card.culture)
-	var ct = cdata.get("card_types", null)
-	if ct is Array:
-		card.card_types.clear()
-		for type_name in ct:
-			card.card_types.append(str(type_name))
-	card.field_subtypes.assign(cdata.get("field_subtypes", []))
+	var saved_types = cdata.get("card_types", null)
+	if saved_types is Array:
+		if not cdata.has("culture") and card.culture.is_empty():
+			card.culture = CardSubtypes.legacy_culture(saved_types, card.culture)
+		card.card_types = CardSubtypes.without_culture_labels(saved_types)
+	card.culture = cdata.get("culture", card.culture)
+	card.field_subtypes = CardSubtypes.without_culture_labels(cdata.get("field_subtypes", []))
 
 	# Store equipped_on_uid in meta for the second-pass linking step
 	var equipped_uid: String = cdata.get("equipped_on_uid", "")
@@ -827,7 +831,10 @@ static func _deserialize_card(cdata: Dictionary) -> Card:
 	# Restore status effects (Card/Player refs will be absent on client; name+metadata is enough)
 	card.active_statuses.clear()
 	for sdata in cdata.get("active_statuses", []):
-		card.active_statuses.append((sdata as Dictionary).duplicate())
+		var status := (sdata as Dictionary).duplicate()
+		if status.has("original_card_types"):
+			status["original_card_types"] = CardSubtypes.without_culture_labels(status["original_card_types"])
+		card.active_statuses.append(status)
 	card._sync_status_flags()
 	card.apply_serialized_state(cdata.get("serialized_state", {}))
 

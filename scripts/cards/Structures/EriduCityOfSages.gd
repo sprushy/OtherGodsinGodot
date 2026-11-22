@@ -6,7 +6,7 @@ const MANA_PER_MAGE := 2
 func _init() -> void:
 	super._init()
 	card_name = "Eridu, City of Sages"
-	card_types = ["Dwelling", "City", "Ancient Structure"]
+	card_types = ["Dwelling", "City"]
 	level = 4
 	mana_cost = 0
 	discard_cost = 1
@@ -14,7 +14,7 @@ func _init() -> void:
 	speed = 0
 	strength = 0
 	sacrifice_cost = 0
-	ability_text = "As an additional cost to play this card, choose and discard a card from your hand.\n[b]Upkeep[/b]: Gain 2 mana for each Mage you have on the field."
+	ability_text = "As an additional cost to play Eridu, choose and discard a card from your hand.\n[b]Upkeep[/b]: Gain 2 mana for each Mage you have on the field."
 	culture = "Ancient"
 	artist = "Ricarrdo Zoppello"
 	art_path = "res://images/card_art/structures/City of Sages(print).jpg"

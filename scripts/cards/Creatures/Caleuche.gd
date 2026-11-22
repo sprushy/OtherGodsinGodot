@@ -6,7 +6,7 @@ const SPIRIT_CREW_SOURCE := "Caleuche Spirit Crew"
 func _init() -> void:
 	super._init()
 	card_name = "Caleuche, the Ghost Ship"
-	card_types = ["Vessel", "Spirit", "Aqueous", "Nahuatl Creature"]
+	card_types = ["Vessel", "Spirit", "Aqueous"]
 	level = 2
 	mana_cost = 0
 	sacrifice_cost = 0

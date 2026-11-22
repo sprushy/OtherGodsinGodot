@@ -6,7 +6,7 @@ const ART_PATH := "res://images/card_art/creatures/afanc.png"
 func _init() -> void:
 	super._init()
 	card_name = "Afanc"
-	card_types = ["Animal", "Monster", "Cryptid", "Aqueous", "Triskelion Creature"]
+	card_types = ["Animal", "Monster", "Cryptid", "Aqueous"]
 	level = 5
 	mana_cost = 0
 	sacrifice_cost = 1

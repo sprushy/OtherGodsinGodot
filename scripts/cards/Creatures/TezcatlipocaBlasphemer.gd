@@ -6,7 +6,7 @@ const ART_PATH := "res://images/card_art/creatures/TezBlasphemerEdit.png"
 func _init() -> void:
 	super._init()
 	card_name = "Tezcatlipoca Blasphemer"
-	card_types = ["Mage", "Shaman", "Priest", "Nahuatl Creature"]
+	card_types = ["Mage", "Shaman", "Priest"]
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
 	level = 1

@@ -719,8 +719,10 @@ static func extract_card_keywords(card: Card) -> Array[String]:
 	var seen: Dictionary = {}
 	var regex := RegEx.new()
 	regex.compile("\\[b\\](.*?)\\[/b\\]")
-	for match in regex.search_all(card.ability_text):
+	for match in regex.search_all(BaseCard.mark_relationship_keywords(card.ability_text)):
 		var keyword := match.get_string(1)
+		if keyword in ["allied", "friendly"]:
+			keyword = keyword.capitalize()
 		if keyword in BaseCard.KEYWORD_HINTS and not seen.has(keyword):
 			found.append(keyword)
 			seen[keyword] = true

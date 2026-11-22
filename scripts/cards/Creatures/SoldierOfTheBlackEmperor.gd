@@ -7,7 +7,7 @@ const ALT_ART_PATH := "res://images/card_art/creatures/soldier_of_the_black_empe
 func _init() -> void:
 	super._init()
 	card_name = "Soldier of the Black Emperor"
-	card_types = ["Dragon", "Long", "Aerial", "Tian Creature"]
+	card_types = ["Dragon", "Long", "Aerial"]
 	level = 5
 	mana_cost = 6
 	sacrifice_cost = 0

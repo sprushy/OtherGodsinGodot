@@ -6,7 +6,7 @@ const PIERCE_FOLLOWERS := 7
 func _init() -> void:
 	super._init()
 	card_name = "Aurbo" + char(240) + "a"
-	card_types = ["Giant", "Warrior", "Norse Creature"]
+	card_types = ["Giant", "Warrior"]
 	level = 3
 	mana_cost = 0
 	sacrifice_cost = 0

@@ -9,14 +9,14 @@ var _resolved_attack_this_turn: bool = false
 func _init() -> void:
 	super._init()
 	card_name = "Red Cap"
-	card_types = ["Fairy", "Warrior", "Triskelion Creature"]
+	card_types = ["Fairy", "Warrior"]
 	level = 2
 	mana_cost = 0
 	sacrifice_cost = 0
 	speed = 3
 	resilience = 16
 	strength = 20
-	ability_text = "[b]Fresh Blood![/b] ([b]Passive[/b]): At the end of any of your turns, if this card did not resolve an attack, destroy it."
+	ability_text = "[b]Fresh Blood![/b] ([b]Passive[/b]): At the end of any of your turns, if Red Cap did not resolve an attack, destroy it."
 	flavor_text = ""
 	culture = "Triskelion"
 	artist = "Ricardo Zoppello"

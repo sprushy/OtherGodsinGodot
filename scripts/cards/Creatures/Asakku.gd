@@ -4,7 +4,7 @@ class_name Asakku
 func _init() -> void:
 	super._init()
 	card_name = "Asakku"
-	card_types = ["Demon", "Ancient Creature"]
+	card_types = ["Demon"]
 	level = 2
 	mana_cost = 0
 	sacrifice_cost = 0

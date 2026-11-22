@@ -71,14 +71,7 @@ static func refresh_card_name_font(label: Label, card: Card) -> void:
 	apply_norse_card_name_font(label, card)
 
 static func is_norse_card(card: Card) -> bool:
-	if card == null:
-		return false
-	if str(card.culture).strip_edges().to_lower() == "norse":
-		return true
-	for card_type in card.card_types:
-		if str(card_type).strip_edges().to_lower().contains("norse"):
-			return true
-	return false
+	return card != null and card.culture.strip_edges().nocasecmp_to("Norse") == 0
 
 static func _load_first_font(paths: Array) -> Font:
 	for path in paths:

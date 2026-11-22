@@ -4,7 +4,7 @@ class_name Gullinbursti
 func _init() -> void:
 	super._init()
 	card_name = "Gullinbursti"
-	card_types = ["Animal", "Porcine", "Norse Creature"]
+	card_types = ["Animal", "Porcine"]
 	level = 4
 	mana_cost = 3
 	sacrifice_cost = 0

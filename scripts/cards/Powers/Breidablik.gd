@@ -20,7 +20,7 @@ func _init() -> void:
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
 	targets = true
-	ability_text = "Peaceful Runes: Pay %d mana to [b]Harbor[/b] a friendly Priest that hasn't attacked this turn.\nEnd of turn: gain followers equal to %dx the level of the harbored Priests.\n[b]Upkeep[/b]: You may repeatedly pay %d mana to return a harbored Priest to the field.\nIf this card is flipped, return all harbored Priests to the field." % [HARBOR_MANA_COST, FOLLOWERS_PER_LEVEL, RETURN_MANA_COST]
+	ability_text = "Peaceful Runes: Pay %d mana to [b]Harbor[/b] a friendly Priest that hasn't attacked this turn.\nEnd of turn: gain followers equal to %dx the level of the harbored Priests.\n[b]Upkeep[/b]: You may repeatedly pay %d mana to return a harbored Priest to the field.\nIf Breidablik is flipped, return all harbored Priests to the field." % [HARBOR_MANA_COST, FOLLOWERS_PER_LEVEL, RETURN_MANA_COST]
 	artist = "Lorinda Tomko"
 	art_path = "res://images/card_art/powers/breidablik.jpg"
 

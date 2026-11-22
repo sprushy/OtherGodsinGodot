@@ -39,9 +39,9 @@ Creature cards also have:
 
 Spells, Hexes, and Charms usually show Speed instead of creature stats. Their Speed matters when they respond to other actions.
 
-Many cards also have subtype words such as Mage, Warrior, Dragon, Spirit, Aerial, Norse Creature, or Ancient Creature. These are not just flavor. Card effects often care about them.
+Many cards also have subtypes such as Mage, Warrior, Dragon, Spirit, and Aerial. Card effects can check a card's subtypes and its separate culture, such as Norse or Ancient.
 
-Some subtypes also count as broader subtypes. For example, Porcine counts as Animal, Raven counts as Avian, Animal, and Aerial, and Knight and Archer count as Warrior. Metamorphosis replaces the subtypes of cards already in play on both sides, including cards in the God and Power Slots. The replacement lasts until each card leaves play. A transformed card keeps its card class and culture.
+Some subtypes also count as broader subtypes. For example, Porcine counts as Animal, Raven counts as Avian, Animal, and Aerial, and Knight and Archer count as Warrior. Metamorphosis lets you choose a subtype combination from the creatures in your starting decklist, including Reinforcements. While the Aura is active, this typing replaces the subtypes of face-up creatures on both sides of the field, including creatures that enter play or turn face up later. Affected creatures keep their culture and regain their underlying subtypes when the Aura ends.
 
 When a card effect uses division or asks for half of a value, round down unless the card specifically says otherwise. Card details surface this as the Fractions keyword: any ability that produces a fraction shows it, and its reminder text states that Other Gods rounds down.
 
@@ -53,7 +53,7 @@ Powers start face-down in your Power Slots. You pay mana to unlock them. Once un
 
 Creatures are your main board presence. They attack, intercept, move, change stance, hold Equipment, and use abilities.
 
-Spells resolve once, then go to the Graveyard unless an effect sends them somewhere else.
+Most Spells go to the Graveyard after they resolve. Aura Spells stay face up on the field and apply their effects while active.
 
 Hexes are prepared face-down on the board and usually trigger automatically when their condition is met.
 
@@ -446,6 +446,8 @@ Some decks use the Graveyard as a resource with resurrect or return effects. Oth
 
 Cards explain their own rules text, and keyword hints appear in card detail views. Learn these common words first:
 
+- Friendly means cards you control, including the card with the ability if it qualifies.
+- Allied means other cards you control. For example, Asaruludu's Guardian protects your other Ancient creatures from targeting on your turn or during combat.
 - Void: send a card to the Abyss.
 - Immortal: cannot be destroyed.
 - Sleep: the Creature cannot take actions or intercept.

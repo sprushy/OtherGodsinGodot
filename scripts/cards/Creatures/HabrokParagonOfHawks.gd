@@ -8,7 +8,7 @@ var _breakout_choice_consumed_turn: int = -1
 func _init() -> void:
 	super._init()
 	card_name = "Habrok, Paragon of Hawks"
-	card_types = ["Animal", "Avian", "Aerial", "Norse Creature"]
+	card_types = ["Animal", "Avian", "Aerial"]
 	level = 4
 	mana_cost = 2
 	sacrifice_cost = 0

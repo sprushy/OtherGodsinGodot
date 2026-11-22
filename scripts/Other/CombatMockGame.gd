@@ -18626,10 +18626,17 @@ func _show_odin_runic_knowledge_guess_prompt(card: Odin, offering_card: Card) ->
 
 func _show_metamorphosis_subtype_prompt(spell: Metamorphosis, display_zone: Zone = null, priority_response: bool = false) -> void:
 	var command := _add_display_zone_to_command({type = "cast_spell", spell_uid = spell.uid}, display_zone)
-	var choose_subtype := func(subtype: String) -> void:
+	var typing_keys_by_label: Dictionary[String, String] = {}
+	for typing_key in spell.card_owner.starting_creature_typings:
+		var subtypes: Array = spell.card_owner.starting_creature_typings[typing_key]
+		typing_keys_by_label[CardSubtypes.format_typing(subtypes)] = typing_key
+	var typing_labels: Array[String] = []
+	typing_labels.assign(typing_keys_by_label.keys())
+	typing_labels.sort_custom(func(a: String, b: String) -> bool: return a.naturalnocasecmp_to(b) < 0)
+	var choose_typing := func(typing_label: String) -> void:
 		selected_card = null
 		_pending_spell_display_zone = null
-		command["subtype"] = subtype
+		command["creature_typing"] = typing_keys_by_label[typing_label]
 		if priority_response:
 			if not _submit_authoritative_priority_command(command):
 				_show_priority_response_submit_failure(spell)
@@ -18647,11 +18654,11 @@ func _show_metamorphosis_subtype_prompt(spell: Metamorphosis, display_zone: Zone
 			if not _is_priority_prompt_visible():
 				_offer_priority()
 	_show_searchable_name_prompt(
-		"Metamorphosis: Name a subtype",
-		"Choose one subtype for every card on the field.",
+		"Metamorphosis: Choose a typing",
+		"Available typings come from your starting decklist and Reinforcements.",
 		"Search subtypes",
-		Metamorphosis.get_subtype_options(),
-		choose_subtype,
+		typing_labels,
+		choose_typing,
 		cancel
 	)
 
@@ -18755,6 +18762,7 @@ func _show_searchable_name_prompt(
 			var chosen_name := candidate_name
 			var name_button := Button.new()
 			name_button.text = chosen_name
+			name_button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 			name_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
 			name_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			name_button.pressed.connect(func() -> void:

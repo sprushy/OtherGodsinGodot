@@ -141,7 +141,6 @@ func _get_human_form_types() -> Array[String]:
 		"Mage",
 		"Shaman",
 		"Shapeshifter",
-		"Nahuatl Creature",
 	]
 
 func _get_feline_form_types() -> Array[String]:
@@ -151,5 +150,4 @@ func _get_feline_form_types() -> Array[String]:
 		"Mage",
 		"Shaman",
 		"Shapeshifter",
-		"Nahuatl Creature",
 	]

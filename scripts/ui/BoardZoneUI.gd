@@ -4057,7 +4057,7 @@ func _get_power_lock_texture(card: Card, culture_is_known: bool = true) -> Textu
 	if card != null:
 		if not culture_is_known:
 			return POWER_LOCK_TEXTURE
-		if str(card.culture).strip_edges() == "Ancient" or card.has_type("Ancient Power"):
+		if card.culture.strip_edges() == "Ancient":
 			return ANCIENT_POWER_LOCK_TEXTURE
 		if str(card.culture).strip_edges() == "Norse":
 			return NORSE_POWER_LOCK_TEXTURE

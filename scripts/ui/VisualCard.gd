@@ -181,7 +181,7 @@ func _make_power_lock_overlay() -> TextureRect:
 
 func _get_power_lock_texture() -> Texture2D:
 	if card_data != null and card_data.card_type == Card.CardType.POWER:
-		if str(card_data.culture).strip_edges() == "Ancient" or card_data.has_type("Ancient Power"):
+		if card_data.culture.strip_edges() == "Ancient":
 			return _ANCIENT_POWER_LOCK_TEXTURE
 		if str(card_data.culture).strip_edges() == "Norse":
 			return _NORSE_POWER_LOCK_TEXTURE

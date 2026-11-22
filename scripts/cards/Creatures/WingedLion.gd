@@ -6,7 +6,7 @@ const ART_PATH := "res://images/card_art/creatures/WingedLionEdit.png"
 func _init() -> void:
 	super._init()
 	card_name = "Winged Lion"
-	card_types = ["Animal", "Feline", "Aerial", "Ancient Creature", "Targeting"]
+	card_types = ["Animal", "Feline", "Aerial", "Targeting"]
 	level = 1
 	mana_cost = 0
 	sacrifice_cost = 0

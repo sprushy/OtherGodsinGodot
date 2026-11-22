@@ -17,7 +17,7 @@ const _NON_REMOVABLE_STATUSES: Array[String] = [
 func _init() -> void:
 	super._init()
 	card_name = "Gawain"
-	card_types = ["Human", "Warrior", "Knight", "Triskelion Creature"]
+	card_types = ["Human", "Warrior", "Knight"]
 	level = 5
 	mana_cost = 3
 	sacrifice_cost = 0

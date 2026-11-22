@@ -284,7 +284,6 @@ func _get_human_form_types() -> Array[String]:
 		"Human",
 		"Mage",
 		"Shapeshifter",
-		"Tian Creature",
 	]
 
 func _get_serpent_form_types() -> Array[String]:
@@ -292,5 +291,4 @@ func _get_serpent_form_types() -> Array[String]:
 		"Animal",
 		"Anguine",
 		"Shapeshifter",
-		"Tian Creature",
 	]

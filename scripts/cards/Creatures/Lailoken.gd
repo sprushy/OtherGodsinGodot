@@ -7,7 +7,7 @@ const MAGIC_DRAIN_STR_BONUS := 5
 func _init() -> void:
 	super._init()
 	card_name = "Lailoken"
-	card_types = ["Human", "Mage", "Triskelion Creature", "Targeting"]
+	card_types = ["Human", "Mage", "Targeting"]
 	level = 1
 	mana_cost = 0
 	sacrifice_cost = 0

@@ -6,7 +6,7 @@ const ART_PATH := "res://images/card_art/creatures/LugalbandaEdit.png"
 func _init() -> void:
 	super._init()
 	card_name = "Lugalbanda"
-	card_types = ["Human", "Warrior", "Ancient Creature"]
+	card_types = ["Human", "Warrior"]
 	level = 2
 	mana_cost = 0
 	sacrifice_cost = 0

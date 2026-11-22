@@ -11,7 +11,7 @@ const SUCKLE_RESILIENCE_BONUS := 5
 func _init() -> void:
 	super._init()
 	card_name = "Lamashatu"
-	card_types = ["Demon", "Ancient Creature"]
+	card_types = ["Demon"]
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
 	level = 4

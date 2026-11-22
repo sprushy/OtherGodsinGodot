@@ -7,14 +7,14 @@ const SUMMON_TAX_AMOUNT := 2
 func _init() -> void:
 	super._init()
 	card_name = "Skoll"
-	card_types = ["Animal", "Lupine", "Aerial", "Norse Creature"]
+	card_types = ["Animal", "Lupine", "Aerial"]
 	level = 4
 	mana_cost = 0
 	sacrifice_cost = 1
 	speed = 2
 	resilience = 29
 	strength = 30
-	ability_text = "Sun Hunt ([b]Upkeep[/b], after the first turn): You may skip your other upkeep options to summon this from your hand without paying its cost. Until end of turn, all other summons cost 2 more."
+	ability_text = "Sun Hunt ([b]Upkeep[/b], after turn 1): Instead of your other Upkeep options, you may summon Skoll from your hand without paying its summon cost. Your other creature summons cost %d more mana this turn." % SUMMON_TAX_AMOUNT
 	culture = "Norse"
 	artist = "Riccardo Zoppello"
 	art_path = ART_PATH

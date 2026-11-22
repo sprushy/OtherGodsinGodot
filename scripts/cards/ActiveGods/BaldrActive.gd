@@ -18,7 +18,7 @@ func _init() -> void:
 	culture = "Norse"
 	# flavor_text = "Baldr's radiance turns every blow against the faithful into renewed devotion."
 	flavor_text = ""
-	ability_text = "[b]Divine Resilience[/b] ([b]Passive[/b]): Immune to creature abilities. Cannot be destroyed in combat. Follower damage resulting from combat with this card is halved.\n[b]Radiant Wisdom[/b] ([b]Passive[/b]): Any time you would inflict follower damage, convert the followers instead."
+	ability_text = "[b]Divine Resilience[/b] ([b]Passive[/b]): Immune to creature abilities. Cannot be destroyed in combat. Follower damage resulting from combat with Baldr is halved.\n[b]Radiant Wisdom[/b] ([b]Passive[/b]): Any time you would inflict follower damage, convert the followers instead."
 	art_path = ART_PATH
 	name_at_bottom = true
 	artist = "Ricardo Zoppello"

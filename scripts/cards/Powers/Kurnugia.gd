@@ -15,8 +15,8 @@ func _init() -> void:
 	culture = "Ancient"
 	level = 0
 	mana_cost = 5
-	card_types = ["Power", "Ancient Power"]
-	ability_text = "[b]Alternate State[/b]: When a friendly Ancient Human or Mer is destroyed or voided from the field, you may place it under this card until the end of your next turn instead. While under this card, it counts as on the field for effects and requirements, keeps its passive abilities, and may use abilities that affect the field."
+	card_types = ["Power"]
+	ability_text = "[b]Alternate State[/b]: When a friendly Ancient Human or Mer is destroyed or voided from the field, you may place it under Kurnugia until the end of your next turn instead. While under Kurnugia, it counts as on the field for effects and requirements, keeps its passive abilities, and may use abilities that affect the field."
 	art_path = ART_PATH
 
 func get_hover_detail_lines(viewer: Player = null) -> Array[String]:

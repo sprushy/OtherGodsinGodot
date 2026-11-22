@@ -49,6 +49,8 @@ func run() -> bool:
 	_ran = true
 	var failures: PackedStringArray = []
 	_check_card_catalog(failures)
+	_check_legacy_card_culture(failures)
+	_check_harii_shaman_culture(failures)
 	_check_metamorphosis(failures)
 	_check_deck_validator(failures)
 	_check_match_command_registry_coverage(failures)
@@ -230,6 +232,39 @@ func _check_card_catalog(failures: PackedStringArray) -> void:
 		seen_names[card_name] = true
 		if bool(card.is_token) or card.card_types.has("Token"):
 			failures.append("card catalog exposed token card: %s" % card_name)
+		for subtype in card.card_types:
+			if CardSubtypes.is_culture_label(subtype):
+				failures.append("card catalog includes culture as a subtype on %s: %s" % [card_name, subtype])
+
+func _check_legacy_card_culture(failures: PackedStringArray) -> void:
+	var legacy_card := {
+		"card_type": Card.CardType.CREATURE,
+		"card_types": ["Human", "Triskelion Creature"],
+		"field_subtypes": ["Animal", "Norse Creature"],
+		"active_statuses": [{"name": "legacy", "original_card_types": ["Human", "Triskelion Creature"]}],
+	}
+	var restored := GameState.deserialize_embedded_card(legacy_card)
+	if restored.culture != "Triskelion" or restored.card_types != ["Human"] or restored.field_subtypes != ["Animal"] \
+			or restored.active_statuses[0]["original_card_types"] != ["Human"]:
+		failures.append("legacy snapshot culture did not migrate to the culture field")
+	legacy_card["culture"] = "Olympic"
+	if GameState.deserialize_embedded_card(legacy_card).culture != "Olympic":
+		failures.append("a legacy subtype overrode the explicit culture field")
+
+func _check_harii_shaman_culture(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	game.players.assign([player, _new_fixture_player()])
+	game.current_player = player
+	var shaman := HariiShaman.new()
+	shaman.card_owner = player
+	player.frontline_zones[0].add_card(shaman)
+	var bear := BrownBear.new()
+	bear.card_owner = player
+	player.reserve_zones[0].add_card(bear)
+	shaman.resolve_transform(game, bear)
+	if bear.culture != "Norse" or not bear.has_type("Human") or not bear.has_type("Warrior") or bear.has_type("Animal"):
+		failures.append("Harii Shaman did not change the animal's culture and subtypes to a Norse Human Warrior")
 
 func _check_metamorphosis(failures: PackedStringArray) -> void:
 	var game := _new_fixture_game()
@@ -246,15 +281,35 @@ func _check_metamorphosis(failures: PackedStringArray) -> void:
 	var input := ServerBotGameInput.new(manager, 0)
 	var spell := CardCatalogScript.instantiate_card_by_name("Metamorphosis") as Metamorphosis
 	if spell == null or spell.level != 2 or spell.mana_cost != 0 or spell.culture != "Olympic" \
-			or spell.card_type != Card.CardType.SPELL or not spell.has_type("Transformation"):
+			or spell.card_type != Card.CardType.SPELL or not spell.has_type("Transformation") \
+			or not spell.has_type("Aura") or not spell.is_permanent():
 		failures.append("Metamorphosis catalog entry has incorrect card data")
 		return
 	spell.card_owner = player
 	player.hand_zone.add_card(spell)
+	var duplicate_typing := CreatureCard.new()
+	duplicate_typing.card_types = ["Porcine", "Animal", "Olympic Creature", "Targeting"]
+	var gawain := Gawain.new()
+	player.record_starting_creature_typings([Gullinbursti.new(), gawain, duplicate_typing, spell])
+	opponent.record_starting_creature_typings([BrownBear.new()])
+	if player.starting_creature_typings.size() != 2 or gawain.get_subtypes().has("Triskelion Creature"):
+		failures.append("Metamorphosis did not combine equivalent typings or hide culture labels")
 	var knight := CreatureCard.new()
 	knight.card_types = ["Knight"]
+	knight.culture = "Triskelion"
 	knight.card_owner = player
 	player.frontline_zones[0].add_card(knight)
+	var opposing_creature := BrownBear.new()
+	opposing_creature.card_owner = opponent
+	opponent.reserve_zones[0].add_card(opposing_creature)
+	var face_down_creature := BrownBear.new()
+	face_down_creature.card_owner = opponent
+	face_down_creature.is_face_down = true
+	opponent.reserve_zones[1].add_card(face_down_creature)
+	var stealthed_creature := BrownBear.new()
+	stealthed_creature.card_owner = player
+	stealthed_creature.is_stealth = true
+	player.reserve_zones[1].add_card(stealthed_creature)
 	var equipment := BeardedAxe.new()
 	equipment.card_owner = player
 	player.frontline_zones[0].add_card(equipment)
@@ -269,38 +324,84 @@ func _check_metamorphosis(failures: PackedStringArray) -> void:
 	var hand_card := BrownBear.new()
 	hand_card.card_owner = opponent
 	opponent.hand_zone.add_card(hand_card)
+	var structure := Watchtower.new()
+	structure.card_owner = opponent
+	opponent.frontline_zones[0].add_card(structure)
 	if not knight.has_type("Warrior") or not CardSubtypes.matches("Raven", "Animal"):
 		failures.append("Card subtype hierarchy did not inherit parent types")
-	if input.submit_action({type = "cast_spell", spell_uid = spell.uid, subtype = "Spell"}):
-		failures.append("Metamorphosis accepted a card class as its chosen subtype")
-	if not input.submit_action({type = "cast_spell", spell_uid = spell.uid, subtype = "Porcine"}):
-		failures.append("Metamorphosis could not be cast with zero mana and a valid subtype")
+	for invalid_choice in ["Gullinbursti", "Animal / Ursine", "Animal / Norse Creature / Porcine"]:
+		if input.submit_action({type = "cast_spell", spell_uid = spell.uid, creature_typing = invalid_choice}):
+			failures.append("Metamorphosis accepted an ineligible decklist choice: %s" % invalid_choice)
+	if not input.submit_action({type = "cast_spell", spell_uid = spell.uid, creature_typing = "Animal / Porcine"}):
+		failures.append("Metamorphosis could not be cast with zero mana and an eligible typing")
 		return
 	for _step in range(8):
 		manager.advance_priority()
-	for transformed: Card in [knight, equipment, god, power]:
-		if not transformed.has_type("Porcine") or not transformed.has_type("Animal"):
-			failures.append("Metamorphosis did not apply its chosen subtype to every card in play")
+	for transformed: Card in [knight, opposing_creature]:
+		if not transformed.has_type("Porcine") or not transformed.has_type("Animal") or transformed.has_type("Norse Creature"):
+			failures.append("Metamorphosis did not copy explicit subtypes alone to face-up creatures on both sides")
 			break
-	if knight.has_type("Warrior") or equipment.card_type != Card.CardType.EQUIPMENT or equipment.equipped_on != knight \
-			or not god.is_god or hand_card.has_type("Porcine") or spell.current_zone != player.graveyard_zone:
-		failures.append("Metamorphosis did not preserve card classes, attachments, or zones")
+	for unaffected: Card in [equipment, god, power, structure, hand_card, face_down_creature, stealthed_creature]:
+		if unaffected.get_subtypes() != unaffected.card_types:
+			failures.append("Metamorphosis transformed a card outside its face-up creature scope")
+			break
+	if knight.has_type("Warrior") or knight.culture != "Triskelion" or equipment.equipped_on != knight or not spell.is_aura_live():
+		failures.append("Metamorphosis did not stay face up as an Aura or preserve culture and attachments")
+	if spell.get_hover_detail_lines(player) != ["Animal / Porcine"]:
+		failures.append("Metamorphosis did not return the chosen typing as typed hover text")
+	var board_popup := CardDetailContentBuilder.build_board_popup_body(spell, player, {"game_manager": game})
+	if board_popup == null:
+		failures.append("Metamorphosis could not build its board popup after resolving")
+	else:
+		board_popup.free()
 	var snapshot := GameState.serialize(game, 0)
-	var hidden_power: Dictionary = snapshot["players"][1]["power_zones"][0][0]
-	if hidden_power.has("field_subtypes") or hidden_power.has("card_name"):
-		failures.append("Metamorphosis leaked a face-down Power through a match snapshot")
+	var hidden_creature: Dictionary = snapshot["players"][1]["reserve_zones"][1][0]
+	if hidden_creature.has("field_subtypes") or hidden_creature.has("card_name"):
+		failures.append("Metamorphosis leaked a face-down creature through a match snapshot")
 	var mirror := _new_fixture_game()
 	mirror.players.assign([_new_fixture_player(), _new_fixture_player()])
+	mirror.setup_game()
 	GameState.apply_to_manager(snapshot, mirror)
 	var mirrored_knight := mirror.get_card_by_uid(knight.uid)
-	if mirrored_knight == null or not mirrored_knight.has_type("Porcine") or mirrored_knight.has_type("Warrior"):
-		failures.append("Metamorphosis subtype did not round-trip through a match snapshot")
-	player.move_card(knight, player.reserve_zones[0])
+	if mirrored_knight == null or not mirrored_knight.has_type("Porcine") or mirrored_knight.culture != "Triskelion" \
+			or mirrored_knight.has_type("Warrior") or not mirror.players[0].starting_creature_typings.has("Human / Knight / Warrior") \
+			or not mirror.players[1].starting_creature_typings.is_empty():
+		failures.append("Metamorphosis Aura did not round-trip through a match snapshot")
+	face_down_creature.reveal(game)
+	var entrant := BrownBear.new()
+	entrant.card_owner = opponent
+	opponent.move_card(entrant, opponent.reserve_zones[2])
+	if not face_down_creature.has_type("Porcine") or not entrant.has_type("Porcine"):
+		failures.append("Metamorphosis did not apply to creatures revealed or entering play after it resolved")
+	spell.is_face_down = true
+	if not knight.has_type("Warrior") or entrant.has_type("Porcine"):
+		failures.append("Metamorphosis remained active while face down")
+	spell.reveal(game)
+	player.move_card(knight, player.reserve_zones[2])
 	if not knight.has_type("Porcine"):
 		failures.append("Metamorphosis expired while a card was still in play")
 	player.move_card(knight, player.graveyard_zone)
 	if knight.has_type("Porcine") or not knight.has_type("Warrior"):
 		failures.append("Metamorphosis did not restore original typing when the card left play")
+	var second_aura := Metamorphosis.new()
+	second_aura.card_owner = player
+	second_aura.is_prepared = true
+	second_aura.is_face_down = true
+	player.reserve_zones[3].add_card(second_aura)
+	if not input.submit_action({type = "cast_spell", spell_uid = second_aura.uid, creature_typing = "Human / Knight / Warrior"}):
+		failures.append("Prepared Metamorphosis could not activate")
+	else:
+		for _step in range(8):
+			manager.advance_priority()
+		if not entrant.has_type("Knight") or not entrant.has_type("Human") or entrant.has_type("Triskelion Creature") \
+				or entrant.has_type("Porcine") or second_aura.current_zone != player.reserve_zones[3]:
+			failures.append("The most recently resolved Metamorphosis did not take precedence")
+	player.move_card(second_aura, player.graveyard_zone)
+	if not entrant.has_type("Porcine"):
+		failures.append("The older Metamorphosis did not resume after the newer Aura left play")
+	player.move_card(spell, player.graveyard_zone)
+	if entrant.has_type("Porcine") or not entrant.has_type("Ursine") or not face_down_creature.has_type("Ursine"):
+		failures.append("Metamorphosis did not restore underlying subtypes when the final Aura left play")
 
 func _check_deck_validator(failures: PackedStringArray) -> void:
 	var validator = DeckValidatorScript.new()
@@ -596,7 +697,7 @@ func _check_full_state_event_payload_budget(failures: PackedStringArray) -> void
 		12345,
 		["session_one", "session_two"],
 		{
-			"session_one": {"deck_name": "Preflight One", "cards": deck_counts},
+			"session_one": {"deck_name": "Preflight One", "cards": deck_counts, "reinforcements": {"Gawain": 1}},
 			"session_two": {"deck_name": "Preflight Two", "cards": deck_counts},
 		},
 		{
@@ -608,6 +709,9 @@ func _check_full_state_event_payload_budget(failures: PackedStringArray) -> void
 	if setup.build_match_from_session_decks(game_manager, session).is_empty():
 		failures.append("preflight could not build submitted-deck match for full_state payload budget")
 		return
+	var starting_typings := game_manager.players[0].starting_creature_typings
+	if not starting_typings.has("Human / Knight / Warrior") or not starting_typings.has("Animal / Ursine") or starting_typings.has("Silence"):
+		failures.append("submitted deck did not record just the starting and Reinforcement creature typings")
 	game_manager.start_turn()
 	var network_manager = NetworkManagerScript.new()
 	for view in [[0, []], [1, []], [GameState.SPECTATOR_VIEWER_INDEX, []], [GameState.SPECTATOR_VIEWER_INDEX, [0, 1]]]:
@@ -617,6 +721,10 @@ func _check_full_state_event_payload_budget(failures: PackedStringArray) -> void
 			"state": GameState.serialize(game_manager, viewer_index, visible_indices),
 			"action_message": "preflight payload budget",
 		}
+		for player_index in range(2):
+			var has_private_typings: bool = event_payload["state"]["players"][player_index].has("starting_creature_typings")
+			if has_private_typings != (viewer_index == player_index):
+				failures.append("starting creature typings were not private to their owner")
 		var rejection_reason: String = network_manager.get_game_event_payload_rejection_reason("full_state", event_payload)
 		if not rejection_reason.is_empty():
 			var payload_bytes := JSON.stringify(event_payload).to_utf8_buffer().size()

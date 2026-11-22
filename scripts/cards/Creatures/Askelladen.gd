@@ -7,7 +7,7 @@ const ALT_ART_PATH := "res://images/card_art/creatures/askelledan_alt.png"
 func _init() -> void:
 	super._init()
 	card_name = "Askelladen"
-	card_types = ["Human", "Warrior", "Norse Creature"]
+	card_types = ["Human", "Warrior"]
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
 	level = 1

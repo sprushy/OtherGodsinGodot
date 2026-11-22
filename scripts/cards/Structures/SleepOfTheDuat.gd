@@ -7,7 +7,7 @@ const ALT_ART_PATH := "res://images/card_art/structures/sleep_of_the_duat_alt.pn
 func _init() -> void:
 	super._init()
 	card_name = "Sleep of the Duat"
-	card_types = ["Dwelling", "Afterlife", "Ancient Structure"]
+	card_types = ["Dwelling", "Afterlife"]
 	level = 4
 	mana_cost = 0
 	discard_cost = 1
@@ -15,7 +15,7 @@ func _init() -> void:
 	speed = 0
 	strength = 0
 	sacrifice_cost = 0
-	ability_text = "As an additional cost to play this card, choose and discard a card from your hand.\nFrom the end of their first turn on the field, creatures sleep unless there is a Divine Manifestation on the field. (A Divine Manifestation on either side of the field wakes all creatures.)"
+	ability_text = "As an additional cost to play Sleep of the Duat, choose and discard a card from your hand.\nFrom the end of their first turn on the field, creatures sleep unless there is a Divine Manifestation on the field. (A Divine Manifestation on either side of the field wakes all creatures.)"
 	culture = "Ancient"
 	artist = "User provided art"
 	art_path = ART_PATH

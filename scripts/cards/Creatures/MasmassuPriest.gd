@@ -7,7 +7,7 @@ const DEMON_SPIRIT_MANA_GAIN := 1
 func _init() -> void:
 	super._init()
 	card_name = "Ma" + char(353) + "ma" + char(353) + char(353) + "u Priest"
-	card_types = ["Human", "Mage", "Priest", "Ancient Creature"]
+	card_types = ["Human", "Mage", "Priest"]
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
 	level = 2

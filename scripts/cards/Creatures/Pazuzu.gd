@@ -8,7 +8,7 @@ const LocustSwarmSoundPlayerScript = preload("res://scripts/audio/LocustSwarmSou
 func _init() -> void:
 	super._init()
 	card_name = "Pazuzu"
-	card_types = ["Demon", "Aerial", "Ancient Creature"]
+	card_types = ["Demon", "Aerial"]
 	level = 5
 	mana_cost = 0
 	sacrifice_cost = 1

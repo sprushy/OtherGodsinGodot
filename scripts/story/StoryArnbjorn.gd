@@ -6,7 +6,7 @@ const ART_PATH := "res://images/story/Arnbjorn.png"
 func _init() -> void:
 	super._init()
 	card_name = "Arnbjørn"
-	card_types = ["Human", "Warrior", "Norse Creature"]
+	card_types = ["Human", "Warrior"]
 	level = 1
 	mana_cost = 0
 	sacrifice_cost = 0

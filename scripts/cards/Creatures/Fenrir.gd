@@ -8,7 +8,7 @@ const DEVOUR_BUFF_SOURCE := "Fenrir Devour"
 func _init() -> void:
 	super._init()
 	card_name = "Fenrir"
-	card_types = ["Animal", "Lupine", "Norse Creature"]
+	card_types = ["Animal", "Lupine"]
 	if "Targeting" not in card_types:
 		card_types.append("Targeting")
 	level = 6
@@ -19,7 +19,7 @@ func _init() -> void:
 	resilience = 20
 	strength = 20
 	targets = true
-	ability_text = "[b]Wolf Master[/b]: [b]Shuffle[/b] this card from your hand. For your turn summon, you may summon a Lupine from your deck, paying its summon cost.\n[b]Devour[/b] ([b]Impact[/b]): Destroy a creature at least 2 levels weaker than this card and gain its Str and Res.\n[b]Sleep Immunity[/b]."
+	ability_text = "[b]Wolf Master[/b]: [b]Shuffle[/b] Fenrir from your hand. For your turn summon, you may summon a Lupine from your deck, paying its summon cost.\n[b]Devour[/b] ([b]Impact[/b]): Destroy a creature at least 2 levels weaker than Fenrir and gain its Str and Res.\n[b]Sleep Immunity[/b]."
 	culture = "Norse"
 	artist = "Riccardo Zoppello"
 	art_path = ART_PATH

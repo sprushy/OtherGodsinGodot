@@ -4,7 +4,7 @@ class_name Enkidu
 func _init() -> void:
 	super._init()
 	card_name = "Enkidu"
-	card_types = ["Human", "Warrior", "Ancient Creature"]
+	card_types = ["Human", "Warrior"]
 	level = 4
 	mana_cost = 2
 	sacrifice_cost = 0

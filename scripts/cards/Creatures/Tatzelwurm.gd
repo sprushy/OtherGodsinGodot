@@ -6,7 +6,7 @@ const ART_PATH := "res://images/card_art/creatures/TatzelwyrmEdit.png"
 func _init() -> void:
 	super._init()
 	card_name = "Tatzelwurm"
-	card_types = ["Animal", "Cryptid", "Norse Creature"]
+	card_types = ["Animal", "Cryptid"]
 	level = 2
 	mana_cost = 0
 	sacrifice_cost = 0
