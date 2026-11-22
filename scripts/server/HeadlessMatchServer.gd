@@ -11,6 +11,7 @@ const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
 const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
 const PracticeFuzzPlayerBotScript = preload("res://scripts/bots/PracticeFuzzPlayerBot.gd")
 const ServerBotGameInputScript = preload("res://scripts/bots/ServerBotGameInput.gd")
+const BotSideboardPolicyScript = preload("res://scripts/bots/BotSideboardPolicy.gd")
 const ServerPathsScript = preload("res://scripts/server/ServerPaths.gd")
 const INITIAL_JOIN_TIMEOUT_SECONDS := 120
 const ABANDONED_MATCH_SHUTDOWN_DELAY_SECONDS := 0.25
@@ -335,10 +336,20 @@ func _poll_server_bots() -> void:
 func _mark_bot_reinforcements_ready() -> void:
 	if match_session == null:
 		return
-	for session_id in match_session.player_session_ids:
-		var resolved_session_id := str(session_id).strip_edges()
-		if not resolved_session_id.is_empty() and match_session.is_bot_session(resolved_session_id):
-			match_session.set_reinforcement_ready(resolved_session_id, true)
+	for player_index in range(match_session.player_session_ids.size()):
+		var session_id := str(match_session.player_session_ids[player_index]).strip_edges()
+		if session_id.is_empty() or not match_session.is_bot_session(session_id):
+			continue
+		BotSideboardPolicyScript.record_series_observation(match_session, game_manager, player_index)
+		var plan: Dictionary = BotSideboardPolicyScript.apply_bot_series_swap(match_session, session_id, _deck_validator)
+		for swap in plan.get("log", []):
+			if swap is Dictionary:
+				print("[Series] Bot %s sidedeck: +%s / -%s" % [
+					session_id,
+					str(swap.get("in", "")),
+					str(swap.get("out", "")),
+				])
+		match_session.set_reinforcement_ready(session_id, true)
 
 func _get_required_human_player_count() -> int:
 	if match_session == null:
@@ -405,6 +416,12 @@ func _on_game_ended(_winner: Player, _loser: Player) -> void:
 		_reinforcement_phase_active = true
 		headless_match_host.series_between_games = true
 		_broadcast_reinforcement_phase(series_snapshot, winner_index, result_message)
+		# Bots submit their swaps immediately, so a match whose seats are all
+		# bot-controlled (self-play, volunteer bot work) is fully ready here.
+		# Human seats still submit over the network and trigger the start from
+		# _on_series_command_received.
+		if match_session.all_reinforcement_submissions_ready():
+			call_deferred("_start_next_series_game")
 		_write_status_file(MatchSessionScript.STATUS_ACTIVE)
 		return
 

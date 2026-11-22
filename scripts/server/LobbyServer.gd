@@ -1300,17 +1300,20 @@ func _handle_request_bot_work(peer_id: int, payload: Dictionary = {}) -> void:
 		if not deck.has("bot_name") or str(deck["bot_name"]).is_empty():
 			deck["bot_name"] = str(deck.get("deck_name", ""))
 	var job_id := _generate_id(32)
+	var best_of := _payload_best_of(payload)
 	_client_bot_jobs[job_id] = {
 		"account_id": str(session["account_id"]),
 		"session_id": str(session.get("session_id", "")),
 		"deck_a": deck_a,
 		"deck_b": deck_b,
+		"best_of": best_of,
 		"expires_unix": int(Time.get_unix_time_from_system()) + 600,
 		"status": "assigned",
 	}
 	_send_to_peer(peer_id, LobbyProtocolScript.BOT_WORK_ASSIGNMENT, {
 		"job_id": job_id,
 		"decks": [deck_a, deck_b],
+		"best_of": best_of,
 	})
 
 func _handle_seed_bot_league(peer_id: int, payload: Dictionary = {}) -> void:
@@ -2112,7 +2115,7 @@ func _handle_submit_bot_work_result(peer_id: int, payload: Dictionary) -> void:
 		var match_id := "volunteer_%s" % job_id
 		var match_session := MatchSessionScript.new(match_id, match_id, "127.0.0.1", 0, player_ids, decks, identities)
 		match_session.is_ranked = true
-		match_session.configure_series_format(1)
+		match_session.configure_series_format(int(job.get("best_of", 1)))
 		var winner_index := int(payload["winner_index"])
 		var result: Dictionary = match_history_store.record_completed_match(
 			match_session,
@@ -2666,12 +2669,14 @@ func _ensure_server_bot_seeks() -> void:
 	for room_variant in rooms_by_id.values():
 		var room := room_variant as LobbyRoom
 		if _is_available_server_bot_seek(room):
-			open_formats[room.is_ranked] = true
+			open_formats["%s|%d" % [room.is_ranked, room.best_of]] = true
 	for ranked in [true, false]:
-		if not open_formats.has(ranked):
-			_create_server_bot_seek(ranked)
+		for best_of in [1, 3]:
+			var format_key := "%s|%d" % [ranked, best_of]
+			if not open_formats.has(format_key):
+				_create_server_bot_seek(ranked, best_of)
 
-func _create_server_bot_seek(ranked: bool) -> LobbyRoom:
+func _create_server_bot_seek(ranked: bool, best_of: int = 1) -> LobbyRoom:
 	_ensure_deck_validator()
 	_ensure_server_bot_deck_factory()
 	if deck_validator == null or server_bot_deck_factory == null:
@@ -2683,7 +2688,7 @@ func _create_server_bot_seek(ranked: bool) -> LobbyRoom:
 	if deck_submission.is_empty():
 		_remove_server_bot_session(bot_session_id)
 		return null
-	var room := _create_room_for_session(bot_session_id, ranked, 1)
+	var room := _create_room_for_session(bot_session_id, ranked, best_of)
 	if room == null:
 		_remove_server_bot_session(bot_session_id)
 		return null
@@ -2954,6 +2959,16 @@ func _validate_server_bot_deck(deck: Dictionary) -> Dictionary:
 	var completed_deck: Dictionary = server_bot_deck_factory.complete_ranked_power_slots(deck)
 	if completed_deck.is_empty():
 		return {}
+	if (completed_deck.get("reinforcements", {}) as Dictionary).is_empty():
+		# Community submissions and older bot decks may predate sideboards;
+		# derive a deterministic Reinforcement pool so every bot can sideboard
+		# in best-of-three series.
+		completed_deck["reinforcements"] = server_bot_deck_factory.build_reinforcements_for_deck(
+			(completed_deck.get("cards", {}) as Dictionary).duplicate(true),
+			str(completed_deck.get("god_name", "")),
+			completed_deck.get("special_setup", {}),
+			absi(hash(str(completed_deck.get("list_id", completed_deck.get("bot_list_id", ""))) + JSON.stringify(completed_deck.get("cards", {}))))
+		)
 	var validation: Dictionary = deck_validator.validate_deck(
 		completed_deck.get("cards", {}),
 		completed_deck.get("special_setup", {}),
@@ -3124,7 +3139,8 @@ func _maintain_bot_self_play() -> void:
 		return
 	_launch_bot_self_play()
 
-func _launch_bot_self_play() -> void:
+
+func _launch_bot_self_play(best_of: int = 1) -> void:
 	_refresh_ranked_bot_deck_pool()
 	var pair := _ranked_bot_deck_pool.select_self_play_pair(_busy_bot_list_ids(), _bot_deck_rng)
 	var first := _build_fresh_bot_deck_submission() if pair.is_empty() else _validate_server_bot_deck(pair[0])
@@ -3145,6 +3161,7 @@ func _launch_bot_self_play() -> void:
 	var first_id := _create_server_bot_session()
 	var second_id := _create_server_bot_session()
 	var room := LobbyRoomScript.new(room_id, first_id)
+	room.best_of = 3 if best_of == 3 else 1
 	room.is_bot_self_play = true
 	for bot_id in [first_id, second_id]:
 		room.add_member(bot_id)
@@ -3824,7 +3841,8 @@ func _leave_room_for_session(session_id: String) -> void:
 
 func _remove_duplicate_bot_seek(room: LobbyRoom) -> void:
 	for other: LobbyRoom in rooms_by_id.values():
-		if other != room and other.is_ranked == room.is_ranked and _is_available_server_bot_seek(other):
+		if other != room and other.is_ranked == room.is_ranked \
+				and other.best_of == room.best_of and _is_available_server_bot_seek(other):
 			_close_room(room.room_id)
 			_broadcast_room_lists()
 			return
@@ -3967,7 +3985,7 @@ func _assign_local_bot_match(
 		"match_id": match_id,
 		"room_id": room.room_id,
 		"is_ranked": room.is_ranked,
-		"best_of": 1,
+		"best_of": 3 if room.best_of == 3 else 1,
 		"player_session_ids": [human_session_id, bot_session_id],
 		"human_session_id": human_session_id,
 		"bot_session_id": bot_session_id,
@@ -3983,6 +4001,7 @@ func _assign_local_bot_match(
 		"human_session_id": human_session_id,
 		"bot_session_id": bot_session_id,
 		"is_ranked": room.is_ranked,
+		"best_of": 3 if room.best_of == 3 else 1,
 		"decks_by_session": player_decks_by_session.duplicate(true),
 		"identity_by_session": player_identity_by_session.duplicate(true),
 		"assigned_unix": int(Time.get_unix_time_from_system()),
@@ -4044,7 +4063,7 @@ func _handle_local_bot_match_result(peer_id: int, payload: Dictionary) -> void:
 		(entry.get("identity_by_session", {}) as Dictionary).duplicate(true)
 	)
 	match_session.is_ranked = bool(entry.get("is_ranked", false))
-	match_session.configure_series_format(1)
+	match_session.configure_series_format(int(entry.get("best_of", 1)))
 	match_session.mark_finished()
 	_ensure_match_history_store()
 	var record_result: Dictionary = match_history_store.record_completed_match(

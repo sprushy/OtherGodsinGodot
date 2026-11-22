@@ -20,6 +20,13 @@ static func _get_shared_cards_by_name() -> Dictionary:
 		_shared_cards_by_name = _build_cards_by_name()
 	return _shared_cards_by_name
 
+
+## Public read access to the shared card-name lookup so bot tooling (sideboard
+## planning, deck auditing) resolves deck entries with the same aliases the
+## validator uses, including normalized and ASCII card names.
+static func get_shared_cards_by_name() -> Dictionary:
+	return _get_shared_cards_by_name()
+
 static func _build_cards_by_name() -> Dictionary:
 	var cards_by_name: Dictionary = {}
 	for card in CardCatalogScript.make_all_cards():

@@ -95,6 +95,7 @@ const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
 const LocalBotMatchGameInputScript = preload("res://scripts/bots/BotGameInput.gd")
 const LocalBotMatchPlayerBotScript = preload("res://scripts/bots/PracticeFuzzPlayerBot.gd")
+const BotSideboardPolicyScript = preload("res://scripts/bots/BotSideboardPolicy.gd")
 const PowerUnlockSoundPlayerScript = preload("res://scripts/audio/PowerUnlockSoundPlayer.gd")
 const LocustSwarmSoundPlayerScript = preload("res://scripts/audio/LocustSwarmSoundPlayer.gd")
 const StructureBuildSoundPlayerScript = preload("res://scripts/audio/StructureBuildSoundPlayer.gd")
@@ -202,6 +203,7 @@ var _is_observer_mode: bool = false
 var _is_local_hosted_bot_observer: bool = false
 var _local_bot_match_bot = null
 var _local_ranked_match_reported: bool = false
+var _local_series_validator = null
 var _observer_reveals_bot_hands: bool = false
 var _observer_feedback_viewer: Player = null
 var selected_card: Card = null
@@ -30331,6 +30333,9 @@ func _count_card_dictionary(cards: Dictionary) -> int:
 func _submit_reinforcement_changes() -> void:
 	if game_input == null or network_manager == null:
 		return
+	if _is_local_bot_match() and _series_between_games_active:
+		_submit_local_bot_series_reinforcements()
+		return
 	var local_index := int(network_manager.local_player_index)
 	game_input.submit_action({
 		"type": "submit_reinforcements",
@@ -32513,6 +32518,8 @@ func _get_player_god_name(player: Player) -> String:
 func _on_game_ended(winner: Player, loser: Player) -> void:
 	if (_is_networked_client or _is_real_network_host()) and _should_defer_game_result_for_series():
 		return
+	if _begin_local_bot_series_window(winner, loser):
+		return
 	_record_local_host_match_result(winner, loser)
 	if _is_local_bot_match():
 		_report_local_bot_match_result(winner, loser)
@@ -32524,6 +32531,145 @@ func _on_game_ended(winner: Player, loser: Player) -> void:
 
 func _is_local_bot_match() -> bool:
 	return bool(_current_match_info.get("local_bot_match", false)) and not _is_networked_client
+
+## Best-of-three local bot challenges play the whole series in this client with
+## in-process authority. After each non-final game, record the series state,
+## let the bot observe and sideboard, and show the human the Reinforcement
+## window instead of the final result. Returns true when the window took over
+## and the caller must not finish the match.
+func _begin_local_bot_series_window(winner: Player, loser: Player) -> bool:
+	if not _is_local_bot_match() or not _should_defer_game_result_for_series():
+		return false
+	var match_session = headless_match_host.match_session if headless_match_host != null else null
+	if match_session == null or game_manager == null:
+		return false
+	var winner_index := game_manager.players.find(winner)
+	if game_manager.game_end_reason == GameManager.GAME_END_REASON_MATCH_FORFEIT and winner_index >= 0:
+		# A forfeit ends the whole series immediately, mirroring the dedicated
+		# match server: award the remaining games and fall through to the
+		# normal result path.
+		var forfeit_winner_session_id := str(match_session.player_session_ids[winner_index]).strip_edges()
+		match_session.series_wins_by_session[forfeit_winner_session_id] = match_session.games_to_win
+		return false
+	var snapshot: Dictionary = match_session.record_series_game_win(winner_index) \
+		if winner_index >= 0 else match_session.get_series_snapshot()
+	_series_snapshot = snapshot.duplicate(true)
+	_current_match_info["series"] = _series_snapshot.duplicate(true)
+	if match_session.is_series_complete():
+		# The normal path reports the whole series exactly once.
+		return false
+	# The bot sideboards against everything it has seen this series before the
+	# game state goes away.
+	var bot_player_index := _find_local_bot_player_index(match_session)
+	BotSideboardPolicyScript.record_series_observation(match_session, game_manager, bot_player_index)
+	var bot_session_id := str(match_session.player_session_ids[bot_player_index]).strip_edges() \
+		if bot_player_index >= 0 and bot_player_index < match_session.player_session_ids.size() else ""
+	if not bot_session_id.is_empty():
+		var plan: Dictionary = BotSideboardPolicyScript.apply_bot_series_swap(
+			match_session, bot_session_id, _get_local_series_validator()
+		)
+		for swap in plan.get("log", []):
+			if swap is Dictionary:
+				_set_action_label_text("Bot sidedeck: +%s / -%s" % [
+					str(swap.get("in", "")),
+					str(swap.get("out", "")),
+				])
+		match_session.set_reinforcement_ready(bot_session_id, true)
+	var human_session_id := ""
+	for session_id in match_session.player_session_ids:
+		if str(session_id).strip_edges() != bot_session_id:
+			human_session_id = str(session_id).strip_edges()
+			break
+	var submission: Dictionary = match_session.player_decks_by_session.get(human_session_id, {})
+	_show_reinforcement_phase({
+		"winner_index": winner_index,
+		"series": snapshot.duplicate(true),
+		"result_message": game_manager.get_game_result_message(winner, loser),
+		"cards": submission.get("cards", {}),
+		"reinforcements": submission.get("reinforcements", {}),
+		"is_ready": bool(match_session.reinforcement_ready_by_session.get(human_session_id, false)),
+	})
+	return true
+
+func _get_local_series_validator():
+	if _local_series_validator == null:
+		_local_series_validator = DeckValidatorScript.new()
+	return _local_series_validator
+
+## Local bot matches run on InProcessGameInput, which has no series command
+## route, so the human's Reinforcement submission is validated and applied
+## right here instead of through game_input.
+func _submit_local_bot_series_reinforcements() -> void:
+	var match_session = headless_match_host.match_session if headless_match_host != null else null
+	if match_session == null:
+		return
+	var local_index := int(network_manager.local_player_index)
+	if local_index < 0 or local_index >= match_session.player_session_ids.size():
+		return
+	var human_session_id := str(match_session.player_session_ids[local_index]).strip_edges()
+	var registered: Dictionary = match_session.registered_player_decks_by_session.get(human_session_id, {})
+	if registered.is_empty():
+		return
+	var special_setup = registered.get("special_setup", {})
+	var validation: Dictionary = _get_local_series_validator().validate_reinforcement_swap(
+		registered.get("cards", {}),
+		registered.get("reinforcements", {}),
+		_reinforcement_main_cards.duplicate(true),
+		_reinforcement_side_cards.duplicate(true),
+		special_setup if special_setup is Dictionary else {}
+	)
+	if not bool(validation.get("is_valid", false)):
+		_set_reinforcement_locked(false)
+		if _reinforcement_submit_button != null:
+			_reinforcement_submit_button.disabled = false
+		if _reinforcement_status_label != null:
+			_reinforcement_status_label.text = str(validation.get("error", "That Reinforcement swap is not legal."))
+		return
+	var current: Dictionary = match_session.player_decks_by_session.get(human_session_id, registered).duplicate(true)
+	current["cards"] = validation.get("cards", {})
+	current["reinforcements"] = validation.get("reinforcements", {})
+	match_session.player_decks_by_session[human_session_id] = current
+	match_session.set_reinforcement_ready(human_session_id, true)
+	_current_match_info["selected_deck_cards"] = (validation.get("cards", {}) as Dictionary).duplicate(true)
+	_current_match_info["selected_deck_reinforcements"] = (validation.get("reinforcements", {}) as Dictionary).duplicate(true)
+	_set_reinforcement_locked(true)
+	if _reinforcement_submit_button != null:
+		_reinforcement_submit_button.disabled = true
+	if _reinforcement_status_label != null:
+		_reinforcement_status_label.text = "Deck locked. Starting the next game..."
+	_start_next_local_bot_series_game()
+
+## Rebuild the in-process match for the next series game through the normal
+## start_game path, which rewires every manager and rebuilds both decks from
+## the session's (now sideboarded) submissions. The relaunch binds a fresh
+## transport, so live spectators of a client-hosted bot challenge lose their
+## feed between games; correctness of the series itself is unaffected.
+func _start_next_local_bot_series_game() -> void:
+	var match_session = headless_match_host.match_session if headless_match_host != null else null
+	if match_session == null:
+		return
+	match_session.begin_next_series_game()
+	_series_snapshot = match_session.get_series_snapshot().duplicate(true)
+	_current_match_info["series"] = _series_snapshot.duplicate(true)
+	_pending_visual_game_result.clear()
+	_ranked_match_result.clear()
+	_clear_resolution_effects()
+	_upkeep_hint_pending_turn = -1
+	_upkeep_hint_pulse_turn = -1
+	_hide_reinforcement_overlay()
+	_hide_game_result_overlay()
+	_post_game_board_refresh_locked = false
+	_game_finished = false
+	_game_result_presented = false
+	_pending_forfeit_return_to_menu = false
+	_restore_corner_action_button()
+	_set_action_label_text("Next game starting...")
+	var match_info := _current_match_info.duplicate(true)
+	match_info["spectate_listen"] = false
+	call_deferred("_relaunch_local_bot_series_game", match_info, match_session)
+
+func _relaunch_local_bot_series_game(match_info: Dictionary, match_session) -> void:
+	start_game(true, false, "127.0.0.1", 0, match_info, match_session)
 
 func _report_local_bot_match_result(winner: Player, loser: Player) -> void:
 	if _local_ranked_match_reported or not local_ranked_match_ended.has_connections():

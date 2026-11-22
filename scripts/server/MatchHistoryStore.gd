@@ -416,25 +416,28 @@ func get_human_ladder(usernames: Dictionary, best_of: int) -> Array[Dictionary]:
 			players.append(entry)
 			continue
 		var progress := _get_ranked_progress(account_id, best_of, season)
-		var record := _get_lifetime_ranked_stats(account_str)
+		var record := _get_lifetime_ranked_stats(account_str, best_of)
 		var player_entry := {"account_id": account_id, "name": usernames[account_id], "points": progress["points"],
 			"rank": progress["rank_name"], "stars": progress["stars"],
 			"wins": int(record["wins"]), "losses": int(record["losses"]), "draws": int(record["draws"]),
 			"main_gods": record["main_gods"],
-			"recent_matches": get_recent_ranked_matches_for_player(account_str, 10, false)}
+			"recent_matches": get_recent_ranked_matches_for_player(account_str, 10, false, best_of)}
 		if not _player_ladder_cache.has(account_str):
 			_player_ladder_cache[account_str] = {}
 		_player_ladder_cache[account_str][best_of] = player_entry.duplicate(true)
 		players.append(player_entry)
 	return players
 
-func _get_lifetime_ranked_stats(account_id: String) -> Dictionary:
+func _get_lifetime_ranked_stats(account_id: String, best_of: int = 1) -> Dictionary:
 	var record := {"wins": 0, "losses": 0, "draws": 0, "main_gods": []}
 	var god_counts: Dictionary = {}
 	var total_games := 0
 	for match_id in _get_sorted_ranked_ids_for_account(account_id):
 		var entry: Dictionary = _matches_by_id.get(match_id, {})
 		if not bool(entry.get("advances_rank", false)):
+			continue
+		# Keep older results without a format on the original Bo1 ladder.
+		if int(entry.get("best_of", 1)) != best_of:
 			continue
 		for raw_player_entry in entry.get("players", []):
 			if not (raw_player_entry is Dictionary):
@@ -469,7 +472,7 @@ func _get_lifetime_ranked_stats(account_id: String) -> Dictionary:
 			record["main_gods"] = gods.slice(0, mini(2, gods.size()))
 	return record
 
-func get_recent_ranked_matches_for_player(account_id: String, limit: int = 10, rescan: bool = true) -> Array[Dictionary]:
+func get_recent_ranked_matches_for_player(account_id: String, limit: int = 10, rescan: bool = true, best_of: int = 1) -> Array[Dictionary]:
 	_ensure_loaded()
 	if rescan:
 		_load_dedicated_results()
@@ -480,6 +483,9 @@ func get_recent_ranked_matches_for_player(account_id: String, limit: int = 10, r
 			break
 		var entry: Dictionary = _matches_by_id.get(match_ids[index], {})
 		if not bool(entry.get("advances_rank", false)):
+			continue
+		# Keep older results without a format on the original Bo1 ladder.
+		if int(entry.get("best_of", 1)) != best_of:
 			continue
 		var player: Dictionary = _get_player_entry_for_account(entry, account_id)
 		if player.is_empty():

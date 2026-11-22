@@ -591,11 +591,13 @@ func request_bot_match_history(before_match_id: String = "") -> void:
 	if is_authenticated() and supports_bot_ladder:
 		_send_request(LobbyProtocolScript.REQUEST_BOT_MATCH_HISTORY, {"before_match_id": before_match_id})
 
-func request_bot_work(bot_id: String = "", excluded_list_ids: Array = [], top_50: bool = false) -> void:
+func request_bot_work(bot_id: String = "", excluded_list_ids: Array = [], top_50: bool = false, best_of: int = 1) -> void:
 	if is_authenticated():
 		var payload := {"bot_id": bot_id, "excluded_list_ids": excluded_list_ids}
 		if top_50:
 			payload["top_50"] = true
+		if best_of == 3:
+			payload["best_of"] = 3
 		_send_request(LobbyProtocolScript.REQUEST_BOT_WORK, payload)
 
 func request_seed_bot_league(count_per_god: int = 10) -> void:

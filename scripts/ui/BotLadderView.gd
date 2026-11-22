@@ -304,6 +304,7 @@ func _empty_ladder_message() -> String:
 func _render_ladder_rows() -> void:
 	_clear_ladder_rows()
 	var root := _table.create_item()
+	var best_of := get_best_of()
 	var search_text := get_search_query().to_lower()
 	var selected_filter := _player_filter.get_selected_id()
 	var visible_count := 0
@@ -328,7 +329,7 @@ func _render_ladder_rows() -> void:
 		var losses := int(entry.get("losses", 0))
 		var draws := int(entry.get("draws", 0))
 		row.set_text(2, "%d-%d-%d" % [wins, losses, draws])
-		row.set_tooltip_text(2, "%d wins · %d losses · %d draws since the ranked ladder began" % [wins, losses, draws])
+		row.set_tooltip_text(2, "%d wins · %d losses · %d draws on the Bo%d ladder" % [wins, losses, draws, best_of])
 		var main_gods: Array = entry.get("main_gods", [])
 		var main_god_names := PackedStringArray()
 		for god_name in main_gods:
@@ -336,7 +337,7 @@ func _render_ladder_rows() -> void:
 			if not clean_god_name.is_empty():
 				main_god_names.append(clean_god_name)
 		row.set_text(3, " / ".join(main_god_names))
-		row.set_tooltip_text(3, "Most played ranked God(s)" if main_god_names.is_empty() else "Most played: %s" % " / ".join(main_god_names))
+		row.set_tooltip_text(3, ("Most played ranked God(s) on the Bo%d ladder" % best_of) if main_god_names.is_empty() else ("Most played on Bo%d: %s" % [best_of, " / ".join(main_god_names)]))
 		if not main_god_names.is_empty():
 			row.set_icon(3, _get_god_icon(main_god_names))
 		row.set_text(4, "%d ★" % int(entry["stars"]))

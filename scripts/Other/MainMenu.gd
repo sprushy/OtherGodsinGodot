@@ -162,6 +162,7 @@ var _bot_league_section: VBoxContainer
 var _ladder_button: Button
 var _quarantined_bots_button: Button
 var _host_bot_match_button: Button
+var _host_bo3_bot_matches_button: Button
 var _host_top_50_bot_matches_button: Button
 var _host_another_bot_match_button: Button
 var _stop_hosting_bot_matches_button: Button
@@ -185,11 +186,17 @@ var _my_bot_option: OptionButton
 var _choose_bot_gauntlet := false
 var _bot_match_hosting_enabled := false
 var _top_50_bot_hosting := false
+# True while volunteer bot-match hosting runs best-of-three series with bot
+# sidedecking instead of single games.
+var _bo3_bot_hosting := false
 # True while the default "host one bot match on sign in" mode is active. It
 # keeps exactly one bot match running and recurs when it finishes, but gives way
 # whenever the player needs the space to play or spectate.
 var _default_bot_hosting := false
 var _pending_local_bot_match_modes: Array[bool] = []
+# Series format (1 or 3) for each pending volunteer request, parallel to
+# _pending_local_bot_match_modes.
+var _pending_local_bot_match_best_of: Array[int] = []
 var _local_bot_match_workers: Dictionary = {}
 var _local_bot_match_supervisor: MatchSupervisor
 var _local_bot_match_lease_timer: Timer
@@ -2978,6 +2985,10 @@ func _build_seek_tabs() -> void:
 	_host_bot_match_button.text = "Host Bot Matches"
 	_host_bot_match_button.pressed.connect(_on_host_bot_match_pressed)
 	_seek_action_row.add_child(_host_bot_match_button)
+	_host_bo3_bot_matches_button = Button.new()
+	_host_bo3_bot_matches_button.text = "Host Bo3 Bot Matches"
+	_host_bo3_bot_matches_button.pressed.connect(_on_host_bo3_bot_matches_pressed)
+	_seek_action_row.add_child(_host_bo3_bot_matches_button)
 	_host_top_50_bot_matches_button = Button.new()
 	_host_top_50_bot_matches_button.text = "Host Top 50 Bot Matches"
 	_host_top_50_bot_matches_button.pressed.connect(_on_host_bot_match_pressed.bind(true))
@@ -3154,6 +3165,17 @@ func _on_host_bot_match_pressed(top_50: bool = false) -> void:
 	_bot_match_hosting_enabled = true
 	_default_bot_hosting = false
 	_top_50_bot_hosting = top_50
+	_bo3_bot_hosting = false
+	_request_continuous_bot_match()
+
+func _on_host_bo3_bot_matches_pressed() -> void:
+	if _bot_match_hosting_enabled and _bo3_bot_hosting:
+		_on_stop_hosting_bot_matches_pressed()
+		return
+	_bot_match_hosting_enabled = true
+	_default_bot_hosting = false
+	_top_50_bot_hosting = false
+	_bo3_bot_hosting = true
 	_request_continuous_bot_match()
 
 func _on_stop_hosting_bot_matches_pressed() -> void:
@@ -3236,11 +3258,12 @@ func _request_local_bot_match(continuous: bool, bot_id: String = "") -> void:
 	if not lobby_client.bot_work_result_received.is_connected(_on_local_bot_work_result):
 		lobby_client.bot_work_result_received.connect(_on_local_bot_work_result)
 	_pending_local_bot_match_modes.append(continuous)
+	_pending_local_bot_match_best_of.append(3 if _bo3_bot_hosting else 1)
 	_custom_bot_ids_pending.append(bot_id)
 	_update_host_bot_match_button()
 	status_label.text = "Requesting a bot match for this computer..."
 	var excluded: Array = _host_bot_gauntlet_opponents.keys() if not _host_bot_gauntlet_id.is_empty() else []
-	lobby_client.request_bot_work(bot_id, excluded, continuous and _top_50_bot_hosting)
+	lobby_client.request_bot_work(bot_id, excluded, continuous and _top_50_bot_hosting, 3 if _bo3_bot_hosting else 1)
 
 func _open_my_bot_picker(for_gauntlet: bool = false) -> void:
 	_choose_bot_gauntlet = for_gauntlet
@@ -3347,12 +3370,16 @@ func _update_host_bot_match_button() -> void:
 	if not is_instance_valid(_host_bot_match_button):
 		return
 	var signed_in := lobby_client != null and lobby_client.is_authenticated()
-	var regular_hosting := _bot_match_hosting_enabled and not _default_bot_hosting and not _top_50_bot_hosting
+	var regular_hosting := _bot_match_hosting_enabled and not _default_bot_hosting and not _top_50_bot_hosting and not _bo3_bot_hosting
 	var top_50_hosting := _bot_match_hosting_enabled and _top_50_bot_hosting
+	var bo3_hosting := _bot_match_hosting_enabled and _bo3_bot_hosting
 	var capacity := _get_local_bot_match_capacity()
 	var local_match_count := _get_local_bot_match_count() + _pending_local_bot_match_modes.size()
 	var has_capacity := local_match_count < capacity
 	_host_bot_match_button.disabled = not signed_in or capacity <= 0 or (regular_hosting and not has_capacity)
+	if is_instance_valid(_host_bo3_bot_matches_button):
+		_host_bo3_bot_matches_button.text = "Stop Bo3 Bot Hosting" if bo3_hosting else "Host Bo3 Bot Matches"
+		_host_bo3_bot_matches_button.disabled = not bo3_hosting and capacity <= 0
 	if is_instance_valid(_host_top_50_bot_matches_button):
 		_host_top_50_bot_matches_button.visible = signed_in and lobby_client.can_host_top_50_bot_matches
 		_host_top_50_bot_matches_button.text = "Stop Top 50 Hosting" if top_50_hosting else "Host Top 50 Bot Matches"
@@ -3414,6 +3441,9 @@ func _on_local_bot_work_assigned(job: Dictionary) -> void:
 		return
 	var continuous := false
 	continuous = _pending_local_bot_match_modes.pop_front()
+	var request_best_of := 1
+	if not _pending_local_bot_match_best_of.is_empty():
+		request_best_of = _pending_local_bot_match_best_of.pop_front()
 	var custom_bot_id: String = _custom_bot_ids_pending.pop_front() if not _custom_bot_ids_pending.is_empty() else ""
 	if (continuous and not _bot_match_hosting_enabled) or lobby_client == null or not lobby_client.is_authenticated():
 		if lobby_client != null:
@@ -3457,7 +3487,7 @@ func _on_local_bot_work_assigned(job: Dictionary) -> void:
 		return
 	var session := MatchSessionScript.new(str(job["job_id"]), str(job["job_id"]), "127.0.0.1", match_port, players, submissions, identities)
 	session.is_ranked = true
-	session.configure_series_format(1)
+	session.configure_series_format(int(job.get("best_of", request_best_of)))
 	session.set_spectator_visible_player_indices("local_volunteer_host", [0, 1])
 	if _local_bot_match_supervisor == null:
 		_local_bot_match_supervisor = MatchSupervisorScript.new()
@@ -3557,6 +3587,8 @@ func _on_local_bot_work_result(job_id: String, success: bool, message: String) -
 		var continuous_request := false
 		if not _pending_local_bot_match_modes.is_empty():
 			continuous_request = _pending_local_bot_match_modes.pop_front()
+		if not _pending_local_bot_match_best_of.is_empty():
+			_pending_local_bot_match_best_of.pop_front()
 		if not _custom_bot_ids_pending.is_empty():
 			_custom_bot_ids_pending.pop_front()
 		if not _host_bot_gauntlet_id.is_empty():
@@ -3742,7 +3774,9 @@ func _stop_local_bot_match_worker() -> void:
 	if is_instance_valid(_local_bot_match_lease_timer):
 		_local_bot_match_lease_timer.stop()
 	_pending_local_bot_match_modes.clear()
+	_pending_local_bot_match_best_of.clear()
 	_custom_bot_ids_pending.clear()
+	_bo3_bot_hosting = false
 	for match_id in _local_bot_match_submitting.keys():
 		if lobby_client != null:
 			lobby_client.cancel_bot_work(str(match_id))
@@ -9851,7 +9885,7 @@ func _launch_local_bot_match(match_info: Dictionary) -> void:
 		identities
 	)
 	match_session.is_ranked = bool(match_info.get("is_ranked", false))
-	match_session.configure_series_format(1)
+	match_session.configure_series_format(int(match_info.get("best_of", 1)))
 	match_session.mark_active()
 	var local_match_info := match_info.duplicate(true)
 	local_match_info["player_index"] = 0

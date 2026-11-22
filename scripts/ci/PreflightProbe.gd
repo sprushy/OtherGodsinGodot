@@ -3,6 +3,8 @@ class_name PreflightProbe
 
 const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
 const BotCardStrategyScript = preload("res://scripts/bots/BotCardStrategy.gd")
+const BotSideboardPolicyScript = preload("res://scripts/bots/BotSideboardPolicy.gd")
+const BotSideboardRatingsScript = preload("res://scripts/bots/BotSideboardRatings.gd")
 const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
 const DefaultMatchSetupScript = preload("res://scripts/server/DefaultMatchSetup.gd")
 const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
@@ -83,6 +85,7 @@ func run() -> bool:
 	_check_community_bot_quarantine(failures)
 	_check_community_bot_replay_identity(failures)
 	_check_ranked_bot_deck_generation(failures)
+	_check_bot_sideboarding(failures)
 	_check_ranked_bot_manifestations(failures)
 	_check_bot_power_followthrough(failures)
 	_check_bot_follower_valuation(failures)
@@ -1142,7 +1145,7 @@ func _check_dedicated_ranked_history(failures: PackedStringArray) -> void:
 		failures.append("Could not prepare a ranked result without a stored format")
 	session.match_id = "ranked_b"
 	session.configure_series_format(3)
-	var bo3_match := writer_b.record_completed_match(session, 0, 1, "Thor", "Odin")
+	var bo3_match := writer_b.record_completed_match(session, 0, 1, "Loki", "Freyja")
 	writer_a.record_completed_match(session, 1, 0, "Odin", "Thor")
 	session.configure_series_format(1)
 	session.match_id = "ranked_c"
@@ -1168,6 +1171,18 @@ func _check_dedicated_ranked_history(failures: PackedStringArray) -> void:
 	var bo3_ladder := reader.get_human_ladder(usernames, 3)
 	if bo1_ladder[0]["points"] != 4 or bo3_ladder[0]["points"] != 1:
 		failures.append("Ladder standings did not use the requested ranked format")
+	if bo1_ladder[0]["wins"] != 3 or bo3_ladder[0]["wins"] != 1 \
+			or bo1_ladder[0]["losses"] != 0 or bo3_ladder[0]["losses"] != 0 \
+			or bo1_ladder[0]["draws"] != 0 or bo3_ladder[0]["draws"] != 0:
+		failures.append("Ladder W/L/D records mixed Bo1 and Bo3 results")
+	if bo1_ladder[0]["main_gods"] != ["Thor"] or bo3_ladder[0]["main_gods"] != ["Loki"]:
+		failures.append("Ladder main gods mixed Bo1 and Bo3 results")
+	var bo1_recent: Array = bo1_ladder[0]["recent_matches"]
+	var bo3_recent: Array = bo3_ladder[0]["recent_matches"]
+	if bo1_recent.size() != 3 or bo3_recent.size() != 1 \
+			or bo1_recent.any(func(match: Dictionary) -> bool: return int(match.get("best_of", 1)) != 1) \
+			or bo3_recent.any(func(match: Dictionary) -> bool: return int(match.get("best_of", 1)) != 3):
+		failures.append("Ladder recent matches mixed Bo1 and Bo3 results")
 	var first_results := reader.get_ranked_match_results(first_match["entry"])
 	var first_win: Dictionary = first_results.get(0, {})
 	var first_loss: Dictionary = first_results.get(1, {})
@@ -1193,6 +1208,180 @@ func _check_dedicated_ranked_history(failures: PackedStringArray) -> void:
 		DirAccess.remove_absolute(result_dir.path_join("%s.json" % match_id.sha256_text()))
 	DirAccess.remove_absolute(result_dir)
 	DirAccess.remove_absolute(storage_path)
+
+func _check_bot_sideboarding(failures: PackedStringArray) -> void:
+	var validator := DeckValidatorScript.new()
+	# Survey ratings: spot-check provenance values and the unrated fallback.
+	if BotSideboardRatingsScript.rating_for("Berserker Mead") != 56 \
+			or BotSideboardRatingsScript.rating_for("Nusku, Active God") != -82:
+		failures.append("Bot sideboard survey ratings lost their Δ field values")
+	if BotSideboardRatingsScript.rating_for("Not A Real Card") != 0:
+		failures.append("Unrated cards should default to the field-average rating")
+
+	# Fresh ranked decks now ship a full, validator-legal sideboard.
+	var factory := PracticeAutofillDeckFactory.new()
+	var deck := factory.build_random_deck(4242, "Thor", true)
+	if deck.is_empty():
+		failures.append("Ranked bot generator produced no Thor deck for sideboard checks")
+		return
+	var side: Dictionary = deck.get("reinforcements", {})
+	if side.is_empty():
+		failures.append("Ranked bot deck shipped without Reinforcements")
+	else:
+		var regular_count := 0
+		var power_count := 0
+		for card_name in deck.get("cards", {}):
+			var template: Card = factory._cards_by_name.get(str(card_name), null)
+			if template == null:
+				continue
+			if template.is_power:
+				power_count += 1
+			elif not template.is_god:
+				regular_count += 1
+		var side_total := 0
+		for card_name in side:
+			side_total += int(side[card_name])
+		if side_total != DeckValidatorScript.get_reinforcement_limit(regular_count, power_count):
+			failures.append("Ranked bot Reinforcements did not fill the reinforcement limit")
+		if not bool(validator.validate_deck(deck.get("cards", {}), deck.get("special_setup", {}), side).get("is_valid", false)):
+			failures.append("Ranked bot Reinforcements failed combined validation")
+
+	# Existing bots without sideboards get one deterministically through the
+	# auditor, and the derivation is stable for the same deck identity.
+	var audited := factory.audit_ranked_bot_deck({
+		"god_name": "Thor",
+		"deck_name": "Preflight Audit Bot",
+		"cards": deck.get("cards", {}).duplicate(true),
+		"special_setup": deck.get("special_setup", {}),
+	})
+	if audited.is_empty() or (audited.get("reinforcements", {}) as Dictionary).is_empty():
+		failures.append("Audited existing bot deck did not gain Reinforcements")
+	else:
+		var reaudited := factory.audit_ranked_bot_deck({
+			"god_name": "Thor",
+			"deck_name": "Preflight Audit Bot",
+			"cards": deck.get("cards", {}).duplicate(true),
+			"special_setup": deck.get("special_setup", {}),
+		})
+		if JSON.stringify(reaudited.get("reinforcements", {})) != JSON.stringify(audited.get("reinforcements", {})):
+			failures.append("Existing bot Reinforcement derivation is not deterministic")
+		var varied := false
+		for probe_seed in range(6):
+			var other := factory.build_random_deck(900 + probe_seed, "Thor", true)
+			if not other.is_empty() \
+					and JSON.stringify(other.get("reinforcements", {})) != JSON.stringify(audited.get("reinforcements", {})):
+				varied = true
+				break
+		if not varied:
+			failures.append("Bot Reinforcement derivation did not vary across decks")
+
+	# Swap planning against a controlled fixture: a Thor shell whose worst
+	# survey cards are known, plus a hate sideboard.
+	var fixture_cards := {
+		"Thor": 1,
+		"Berserker Mead": 1,
+		"Mana Guard": 1,
+		"Palisade": 1,
+		"Byggvir": 3,
+		"Isimud": 3,
+		"Beyla": 3,
+		"Heavy Snow": 3,
+		"First Sage Adapa": 3,
+		"Harii Warrior": 3,
+		"Valkyrie Warrior": 3,
+		"Skoll": 3,
+		"Án the Bowbender": 3,
+		"Grindylow": 3,
+		"White Stag": 3,
+		"Wolf Cub": 3,
+		"Hrimgrimmnir": 3,
+		"Fenrir": 1,
+	}
+	var fixture_side := {
+		"Runic Spellbreaker": 2,
+		"Banishment": 2,
+		"Earthquake": 2,
+		"Absence": 1,
+		"Smite": 2,
+	}
+	var fixture_validation: Dictionary = validator.validate_deck(fixture_cards, {}, fixture_side)
+	if not bool(fixture_validation.get("is_valid", false)):
+		failures.append("Sideboard swap fixture deck failed validation: %s" % str(fixture_validation.get("error", "")))
+		return
+	fixture_cards = fixture_validation.get("cards", {})
+	fixture_side = fixture_validation.get("reinforcements", {})
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 20261122
+
+	var magical_observed := {"cards": {"Fires of Judgment": 3}, "tags": {BotSideboardPolicyScript.Tag.MAGICAL: 8}}
+	var magical_plan: Dictionary = BotSideboardPolicyScript.plan_swap(
+		fixture_cards, fixture_side, {}, magical_observed, rng, validator
+	)
+	if not bool(magical_plan.get("changed", false)):
+		failures.append("Bot sideboard plan ignored a magical-heavy opponent")
+	else:
+		var log_entries: Array = magical_plan.get("log", [])
+		if log_entries.size() != 4:
+			failures.append("Bot sideboard plan did not use its full swap window")
+		var expected_cuts := ["Byggvir", "Isimud", "Beyla", "Heavy Snow"]
+		for index in range(mini(4, log_entries.size())):
+			var entry: Dictionary = log_entries[index]
+			if str(entry.get("out", "")) != expected_cuts[index]:
+				failures.append("Bot sideboard cuts did not follow survey rating order (expected %s, cut %s)" % [
+					expected_cuts[index], str(entry.get("out", "")),
+				])
+				break
+		for entry in log_entries:
+			if str(entry.get("in", "")) not in ["Banishment", "Runic Spellbreaker"]:
+				failures.append("Bot sideboard brought in a card without anti-magical need")
+				break
+		var swap_check: Dictionary = validator.validate_reinforcement_swap(
+			fixture_cards, fixture_side,
+			magical_plan.get("cards", {}), magical_plan.get("reinforcements", {}), {}
+		)
+		if not bool(swap_check.get("is_valid", false)):
+			failures.append("Bot sideboard plan produced an illegal swap: %s" % str(swap_check.get("error", "")))
+
+	var empty_plan: Dictionary = BotSideboardPolicyScript.plan_swap(
+		fixture_cards, fixture_side, {}, {"cards": {}, "tags": {}}, rng, validator
+	)
+	if bool(empty_plan.get("changed", false)):
+		failures.append("Bot sideboard plan swapped cards with nothing observed")
+
+	var creature_observed := {"cards": {"Harii Warrior": 3}, "tags": {BotSideboardPolicyScript.Tag.CREATURE: 6}}
+	var creature_plan: Dictionary = BotSideboardPolicyScript.plan_swap(
+		fixture_cards, fixture_side, {}, creature_observed, rng, validator
+	)
+	if not bool(creature_plan.get("changed", false)):
+		failures.append("Bot sideboard plan ignored a creature-heavy opponent")
+	for entry in creature_plan.get("log", []):
+		var cut_card: Card = BotSideboardPolicyScript.get_card(str((entry as Dictionary).get("out", "")))
+		if cut_card != null and cut_card.card_type == Card.CardType.CREATURE:
+			failures.append("Bot sideboard cut a creature against a creature-heavy opponent")
+			break
+
+	# Observations only ever use public zones: the opponent hand stays out.
+	var game := _new_fixture_game()
+	var opponent := _new_fixture_player()
+	opponent.player_name = "Observed Opponent"
+	var god_card = factory._cards_by_name.get("Odin", null)
+	if god_card != null:
+		opponent.god_zone.add_card(god_card)
+	var hidden_spell = factory._cards_by_name.get("Drought", null)
+	if hidden_spell != null:
+		opponent.hand_zone.add_card(hidden_spell)
+	var seen_creature = factory._cards_by_name.get("Gilgamesh", null)
+	if seen_creature != null:
+		opponent.graveyard_zone.add_card(seen_creature)
+	var fixture_players: Array[Player] = [_new_fixture_player(), opponent]
+	game.players = fixture_players
+	var observation: Dictionary = BotSideboardPolicyScript.summarize_opponent(game, 1)
+	if bool(observation.get("cards", {}).has("Drought")):
+		failures.append("Bot opponent observation leaked a card from the hidden hand")
+	if not bool(observation.get("cards", {}).has("Gilgamesh")):
+		failures.append("Bot opponent observation missed a public graveyard card")
+	if int(observation.get("tags", {}).get(BotSideboardPolicyScript.Tag.POWER_GOD, 0)) < 1:
+		failures.append("Bot opponent observation missed the public god slot")
 
 func _check_ranked_bot_deck_generation(failures: PackedStringArray) -> void:
 	var factory := PracticeAutofillDeckFactory.new()
@@ -5446,14 +5635,16 @@ func _check_standing_bot_seeks(failures: PackedStringArray) -> void:
 	lobby.match_history_store = MatchHistoryStoreScript.new("preflight_standing_bot_seeks_%d.json" % OS.get_process_id(), true)
 	lobby._ensure_server_bot_seeks()
 	lobby._ensure_server_bot_seeks()
-	var open_formats: Array[bool] = []
+	var open_formats: Array[String] = []
 	for entry: Dictionary in lobby._build_room_list():
 		if entry["host_is_bot"] and entry["member_count"] == 1:
-			open_formats.append(entry["is_ranked"])
+			open_formats.append("%s|%d" % [entry["is_ranked"], int(entry.get("best_of", 1))])
 			if entry.has("bot_stars"):
 				failures.append("Open bot challenge advertised a rank before matchmaking")
-	if open_formats.size() != 2 or true not in open_formats or false not in open_formats:
-		failures.append("Lobby did not maintain exactly one open rated and one open unrated bot seek")
+	var expected_formats := ["true|1", "true|3", "false|1", "false|3"]
+	if open_formats.size() != expected_formats.size() \
+			or open_formats.any(func(format_key: String) -> bool: return format_key not in expected_formats):
+		failures.append("Lobby did not maintain one open rated and unrated bot seek per Bo1/Bo3 format: %s" % str(open_formats))
 	lobby.free()
 
 func _check_request_next(failures: PackedStringArray) -> void:

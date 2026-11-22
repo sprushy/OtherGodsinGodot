@@ -4,6 +4,7 @@ class_name PracticeAutofillDeckFactory
 const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
 const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
 const BotCardStrategyScript = preload("res://scripts/bots/BotCardStrategy.gd")
+const BotSideboardPolicyScript = preload("res://scripts/bots/BotSideboardPolicy.gd")
 
 const DEFAULT_REGULAR_CARD_COUNT := 40
 const MAX_POWERS := 3
@@ -133,10 +134,18 @@ func build_random_deck(seed_value: int, forced_god_name: String = "", ranked: bo
 				continue
 		var validation := _validator.validate_deck(deck_cards, special_setup)
 		if bool(validation.get("is_valid", false)):
+			var validated_cards: Dictionary = (validation.get("cards", {}) as Dictionary).duplicate(true)
+			var reinforcements := build_reinforcements_for_deck(
+				validated_cards,
+				god.card_name,
+				validation.get("special_setup", {}),
+				deck_seed
+			)
 			var built := {
 				"name": "%s Autofill %d" % [god.card_name, seed_value],
 				"deck_name": "%s Autofill %d" % [god.card_name, seed_value],
-				"cards": (validation.get("cards", {}) as Dictionary).duplicate(true),
+				"cards": validated_cards,
+				"reinforcements": reinforcements,
 				"special_setup": validation.get("special_setup", {}),
 				"seed": deck_seed,
 				"god_name": god.card_name,
@@ -490,7 +499,125 @@ func audit_ranked_bot_deck(deck: Dictionary) -> Dictionary:
 	audited["cards"] = (validation.get("cards", {}) as Dictionary).duplicate(true)
 	audited["special_setup"] = (validation.get("special_setup", {}) as Dictionary).duplicate(true)
 	audited["reinforcements"] = (validation.get("reinforcements", {}) as Dictionary).duplicate(true)
+	if audited["reinforcements"].is_empty():
+		# Existing ladder lists and community submissions predate bot
+		# sideboards. Derive a deterministic Reinforcement pool from the final
+		# audited deck so every ranked bot — not just newly built ones — enters
+		# best-of-three series with a sideboard. Same deck + god always yields
+		# the same pool, keeping pool replays and fingerprints stable.
+		var side_seed := absi(hash(str(audited.get("god_name", "")) + JSON.stringify(audited["cards"])))
+		audited["reinforcements"] = build_reinforcements_for_deck(
+			audited["cards"],
+			str(audited.get("god_name", "")),
+			audited["special_setup"],
+			side_seed
+		)
 	return audited
+
+## Deterministically builds a Reinforcement (sideboard) pool for a finished
+## deck. Fills up to the validator's reinforcement limit with ranked-legal
+## candidates, weighting picks toward matchup hate tags the main deck does not
+## already cover, while still randomizing through the seed so two similar decks
+## sideboard differently.
+func build_reinforcements_for_deck(
+	cards: Dictionary,
+	god_name: String,
+	special_setup: Dictionary = {},
+	seed_value: int = 0
+) -> Dictionary:
+	var god := _cards_by_name.get(str(god_name), null) as GodCard
+	if god == null or cards.is_empty():
+		return {}
+	var regular_count := _count_regular_cards(cards)
+	var power_count := _count_power_cards(cards)
+	var limit := DeckValidatorScript.get_reinforcement_limit(regular_count, power_count)
+	if limit <= 0:
+		return {}
+	var rng := RandomNumberGenerator.new()
+	rng.seed = absi(seed_value) if seed_value != 0 else absi(hash(str(god_name) + JSON.stringify(cards)))
+	var coverage := BotSideboardPolicyScript.main_deck_tag_coverage(cards)
+	var combined: Dictionary = cards.duplicate(true)
+	var reinforcements: Dictionary = {}
+	var order: Array = []
+	var total := 0
+	var attempts := 0
+	while total < limit and attempts < limit * 12:
+		attempts += 1
+		var candidates: Array[Card] = []
+		var weights: Array[float] = []
+		for template in _all_cards:
+			if not _is_sideboard_candidate(template, god, combined):
+				continue
+			candidates.append(template)
+			weights.append(_sideboard_pick_weight(template, coverage, rng))
+		if candidates.is_empty():
+			break
+		var chosen := _weighted_pick_index(weights, rng)
+		var chosen_card := candidates[chosen]
+		var name := str(chosen_card.card_name)
+		reinforcements[name] = int(reinforcements.get(name, 0)) + 1
+		combined[name] = int(combined.get(name, 0)) + 1
+		if not order.has(name):
+			order.append(name)
+		total += 1
+	if reinforcements.is_empty():
+		return {}
+	# The validator is the last word on legality. If a combination trips a
+	# support or culture rule, drop the most recently added entry and retry.
+	for _trim in range(order.size()):
+		var validation := _validator.validate_deck(cards, special_setup, reinforcements)
+		if bool(validation.get("is_valid", false)):
+			return (validation.get("reinforcements", {}) as Dictionary).duplicate(true)
+		var last_name := str(order.back())
+		order.pop_back()
+		var remaining := int(reinforcements.get(last_name, 0)) - 1
+		if remaining <= 0:
+			reinforcements.erase(last_name)
+		else:
+			reinforcements[last_name] = remaining
+		if reinforcements.is_empty():
+			return {}
+	return {}
+
+func _is_sideboard_candidate(card: Card, god: GodCard, combined: Dictionary) -> bool:
+	if card == null or card.is_god or card.is_power or card.is_single_player_card or card.is_token:
+		return false
+	# Legendary sideboard copies would fail the main-deck legendary cap the
+	# moment a swap brings them in, so bots keep them out entirely.
+	if card.is_legendary:
+		return false
+	if not BotCardStrategyScript.supports_ranked_deck_card(card):
+		return false
+	if int(combined.get(card.card_name, 0)) >= _max_copies(card):
+		return false
+	if not _is_card_compatible_with_god(card, god):
+		return false
+	return _has_deckbuilding_requirements(card, combined, god)
+
+func _sideboard_pick_weight(card: Card, coverage: Dictionary, rng: RandomNumberGenerator) -> float:
+	var weight := 1.0
+	var tags := BotSideboardPolicyScript.hate_tags_for_card(card)
+	if not tags.is_empty():
+		var uncovered := false
+		for tag in tags:
+			if int(coverage.get(tag, 0)) < BotSideboardPolicyScript.MAIN_DECK_COVERED_THRESHOLD:
+				uncovered = true
+				break
+		weight = 2.5 if uncovered else 0.4
+	return weight * (0.5 + rng.randf())
+
+func _weighted_pick_index(weights: Array[float], rng: RandomNumberGenerator) -> int:
+	var total := 0.0
+	for weight in weights:
+		total += maxf(0.0, weight)
+	if total <= 0.0:
+		return rng.randi_range(0, weights.size() - 1)
+	var roll := rng.randf() * total
+	for index in range(weights.size()):
+		roll -= maxf(0.0, weights[index])
+		if roll <= 0.0:
+			return index
+	return weights.size() - 1
 
 func _get_tiamat_occupied_slot_count(special_setup) -> int:
 	var occupied := 0

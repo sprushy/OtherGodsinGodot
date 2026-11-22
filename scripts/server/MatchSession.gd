@@ -45,6 +45,12 @@ var series_wins_by_session: Dictionary = {}
 var registered_player_decks_by_session: Dictionary = {}
 var reinforcement_ready_by_session: Dictionary = {}
 
+## Per-bot opponent observations accumulated across series games
+## ({"cards": {name: count}, "tags": {tag: count}} keyed by bot session id).
+## Bots detach between games, so the session carries what each bot saw of the
+## opponent's public cards so later swap windows build on earlier games.
+var bot_opponent_observations_by_session: Dictionary = {}
+
 ## Player-hosted (listen-server) match bookkeeping. Only meaningful when
 ## server_mode == SERVER_MODE_PLAYER_HOST. host_session_id names the player who
 ## runs the authoritative match; host_reachable_ip/port is their UPnP-mapped
