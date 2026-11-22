@@ -80,6 +80,7 @@ var _pending_power_activation_uid := ""
 var _dellingr_revealed_target_uids: Dictionary = {}
 var _posture_cache := {"turn": -1, "value": {}}
 var _posture_evaluating := false
+var _scoring_byggvir_brewing := false
 # Opt-in decision tracing for summon planning. Set OTHERGODS_BOT_DECISION_LOG=1
 # on the bot's process (practice window or headless server) to print every
 # evaluated summon plan with its score components, so a chosen chump blocker
@@ -5632,7 +5633,8 @@ func _forecast_incoming_combat(action: CardAction, stance: Card, defensive: bool
 		action.attacker, defender, action.united_front_partner, damage_from_defender
 	)
 	var damage := GameManager.apply_follower_damage_halvings(int(result["bot_followers_lost"]), halvings)
-	if (defender is MasmassuPriest or defender is Grindylow) and (projected_stealth or defender.is_stealth):
+	if (defender is MasmassuPriest or defender is Grindylow) and (projected_stealth or defender.is_stealth) \
+			and not defender.has_veil_of_night():
 		var targets := _get_reveal_removal_targets(defender)
 		var target := _choose_combat_reveal_removal(defender, targets, action, result["casualties"] + removed)
 		if target != null:
@@ -6868,6 +6870,9 @@ func _build_creature_play_command(card: Card, zone: Zone, mode: Card.CreatureMod
 func _stealth_would_forfeit_value(card: Card) -> bool:
 	if card == null:
 		return false
+	if card.has_veil_of_night() and not card.abilities_suppressed_by_effects() \
+			and "[b]Reveal[/b]" in card.ability_text:
+		return true
 	var card_key := CardStrategy.key(card)
 	if card_key in CardStrategy.BOARD_ABILITIES:
 		return true
@@ -8822,6 +8827,11 @@ func _estimate_projected_attack_economy(action: CardAction, stats: Dictionary, i
 			if combatant == null or combatant.get_controller() != bot_player \
 					or not (combatant.is_stealth or (combatant == defender and projected_defender_stealth)):
 				continue
+			if combatant.has_veil_of_night():
+				if combatant != defender and combatant not in result["casualties"] \
+						and not combatant.is_publicly_identified(game_manager):
+					result["concealment_value"] = int(result.get("concealment_value", 0)) + VEIL_CONCEALMENT_VALUE
+				continue
 			if combatant.abilities_suppressed_by_effects():
 				continue
 			if combatant == defender and (combatant is MasmassuPriest or combatant is Grindylow):
@@ -9116,6 +9126,10 @@ func _estimate_reveal_trigger_value(card: Card) -> int:
 		if target != null:
 			return CardStrategy.value(self, target) + _reveal_removal_mana_value(card, target)
 	if card is Byggvir:
+		# Mead scoring can forecast combat again with the same unrevealed board.
+		if _scoring_byggvir_brewing:
+			return 0
+		_scoring_byggvir_brewing = true
 		var best_option_score := 0
 		for option in card.get_brewing_options(game_manager):
 			var power := option.get("power", null) as PowerCard
@@ -9127,6 +9141,7 @@ func _estimate_reveal_trigger_value(card: Card) -> int:
 				"flip": option_score = CardStrategy.unlock_score(self, power, 0) if power != null else 0
 				"activate", "activate_targeted": option_score = CardStrategy.power_score(self, power, target) if power != null else 0
 			best_option_score = maxi(best_option_score, option_score)
+		_scoring_byggvir_brewing = false
 		return best_option_score
 	return 0
 

@@ -4150,6 +4150,7 @@ func request_attack(attacker, target) -> bool:
 
 	if attacker_card.is_stealth:
 		attacker_card.reveal_from_combat(game_manager)
+		attacker_card.mark_combat_resilience_inferable()
 		if attacker_card.creature_mode == Card.CreatureMode.DEFENSIVE:
 			attacker_card.creature_mode = Card.CreatureMode.AGGRESSIVE
 

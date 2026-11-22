@@ -5833,6 +5833,29 @@ func _refresh_display() -> void:
 						hover_badge.tooltip_text = hover_breakdown
 						hover_badge.mouse_filter = Control.MOUSE_FILTER_PASS
 
+		elif card.card_type == Card.CardType.CREATURE and not card.is_god and card.is_stealth \
+				and card.has_veil_of_night() and card.is_combat_resilience_inferable() \
+				and not is_own_stealth_faceup:
+			var eff_res := card.get_effective_resilience()
+			var res_font_color := Color(0.92, 0.97, 1.0)
+			if eff_res < card.resilience:
+				res_font_color = Color(1.0, 0.35, 0.35)
+			elif eff_res > card.resilience:
+				res_font_color = Color(0.4, 1.0, 0.4)
+			var res_badge := _add_overlay_stat_badge(
+				card_overlay,
+				"RES:%d" % eff_res,
+				Control.PRESET_BOTTOM_LEFT,
+				6,
+				-32,
+				56 if _hovered else 66,
+				-6,
+				res_font_color
+			)
+			var res_breakdown := card.get_full_stat_breakdown("res")
+			if res_badge != null and res_breakdown != "":
+				res_badge.tooltip_text = res_breakdown
+				res_badge.mouse_filter = Control.MOUSE_FILTER_PASS
 		elif card.card_type == Card.CardType.STRUCTURE:
 			var eff_res_s := card.get_effective_resilience()
 			var breakdown := card.get_buff_tooltip("res")

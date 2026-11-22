@@ -165,7 +165,7 @@ The engine resolves these correctly once played; the bot just doesn't *know* it'
 All are "covered," but these have known shallow spots:
 
 - **Dromi / Gleipnir** (bind hexes): scored as attack-lock/intercept-lock value; gap: they are best *pre-attached to the specific threat before combat*, and Dromi's drain-2-per-turn ticking end-game isn't priced (only an immediate 2×FOLLOWER_LOSS is).
-- **Absence** (mute a power/God 2 turns): scored generically by target cost; gap: should prioritize powers that are about to pay off (counters, stored cards) over face-down randoms, and should be timed to the opponent's lethal/combo turn.
+- **Absence** (mute a power/God 4 turns): scored generically by target cost; gap: should prioritize powers that are about to pay off (counters, stored cards) over face-down randoms, and should be timed to the opponent's lethal/combo turn.
 - **Circle of Rebirth**: evaluates `died_this_turn` only — correct, but the bot doesn't *create* lines where its own deaths feed it (acceptable; keep).
 - **Watchtower** (reveal + counter enemies): flat 6000/3000 by enemy count; gap: doesn't distinguish which enemies (a counter on Fenrir/Jiang Ziya is worth far more than on a Bear).
 - **Doorway to the Void**: values enemy graveyard recursion correctly (Again Walker/Huginn/Freyja bonuses exist) — this is one of the best-modeled structures; keep as the template.

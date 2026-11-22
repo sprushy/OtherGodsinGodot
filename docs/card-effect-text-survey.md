@@ -221,7 +221,7 @@ Each entry gives proposed wording, an edit to make, or a reason to retain the ex
 
 | Card | Recommendation |
 | --- | --- |
-| [Absence](../scripts/cards/Spells/Absence.gd) | “Choose a Power. Reveal it if face-down, then Relock it or Mute it for 3 of its owner’s turns.” |
+| [Absence](../scripts/cards/Spells/Absence.gd) | “Choose a Power. Reveal it if face-down, then Relock it or Mute it for 4 of its owner’s turns.” |
 | [Apollyon's Demiurge](../scripts/cards/Spells/ApollyonsDemiurge.gd) | “Pay X mana. Mill X, then summon a Demon milled this way.” |
 | [Apotheosis](../scripts/cards/Spells/Apotheosis.gd) | “Give a creature you control +1 LVL, +4 STR, +4 RES and +1 SPD. If it reaches level 7, Ascend it.” |
 | [Bane of the Svartalfar](../scripts/cards/Spells/BaneOfTheSvartalfar.gd) | Keep “Dwarves and face-up creatures below level 3” as two qualifying groups. Check the implementation before moving “face-up” to a position where it could qualify Dwarves too. |

@@ -2344,6 +2344,7 @@ func creature_attack(attacker: Card, target) -> void:
 
 	if attacker.is_stealth:
 		attacker.reveal_from_combat(self)
+		attacker.mark_combat_resilience_inferable()
 		if attacker.creature_mode == Card.CreatureMode.DEFENSIVE:
 			attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
 	var united_front_partner: Card = null
@@ -2354,6 +2355,7 @@ func creature_attack(attacker: Card, target) -> void:
 	attacker.mark_attacked_this_turn()
 	if united_front_partner != null:
 		united_front_partner.reveal_from_combat(self)
+		united_front_partner.mark_combat_resilience_inferable()
 		united_front_partner.spend_attack_creature_action()
 		united_front_partner.mark_attacked_this_turn()
 	
@@ -2390,6 +2392,7 @@ func resolve_followers_attack(attackers: Array[Card], defending_player: Player) 
 
 	for combatant in active_attackers:
 		combatant.reveal_from_combat(self)
+		combatant.mark_combat_resilience_inferable()
 	for combatant in active_attackers:
 		_notify_attack_declared(combatant)
 
@@ -2535,7 +2538,9 @@ func resolve_combat(attacker: Card, defender: Card, continue_callback: Callable 
 		if continue_callback.is_valid():
 			continue_callback.call()
 	attacker.reveal_from_combat(self)
+	attacker.mark_combat_resilience_inferable()
 	defender.reveal_from_combat(self)
+	defender.mark_combat_resilience_inferable()
 	_notify_attack_declared(attacker, defender)
 	if defender.is_god:
 		# Gods cannot be targeted in combat — redirect to follower damage
@@ -2697,7 +2702,9 @@ func resolve_united_front_combat(
 			continue_callback.call()
 	for combatant in active_attackers:
 		combatant.reveal_from_combat(self)
+		combatant.mark_combat_resilience_inferable()
 	defender.reveal_from_combat(self)
+	defender.mark_combat_resilience_inferable()
 	for combatant in active_attackers:
 		_notify_attack_declared(combatant, defender)
 	if defender.has_method("on_defend") and not defender.abilities_suppressed():
@@ -2889,7 +2896,9 @@ func resolve_combat_with_continuation(
 		if continue_callback.is_valid():
 			continue_callback.call()
 	attacker.reveal_from_combat(self)
+	attacker.mark_combat_resilience_inferable()
 	defender.reveal_from_combat(self)
+	defender.mark_combat_resilience_inferable()
 	_notify_attack_declared(attacker, defender)
 	if defender.is_god:
 		var god_damage_target := defender_controller

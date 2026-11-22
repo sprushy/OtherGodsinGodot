@@ -3501,7 +3501,7 @@ func _check_aphrodite_aspect_shift(failures: PackedStringArray) -> void:
 			or bot._should_summon_creature_stealthily(defender, player.reserve_zones[1], Card.CreatureMode.DEFENSIVE):
 		failures.append("Bot did not adjust stealth summoning to Veil of Night and Reveal triggers")
 	skotia.is_muted = true
-	if defender.get_effective_speed() != 3:
+	if defender.get_effective_speed() != 3 or not defender.will_reveal_in_combat():
 		failures.append("Muting Aphrodite Skotia did not suppress Veil of Night")
 	skotia.is_muted = false
 	game._begin_declared_combat(enemy, defender)
@@ -3515,10 +3515,12 @@ func _check_aphrodite_aspect_shift(failures: PackedStringArray) -> void:
 	attack.target = player
 	attack.interceptor = defender
 	manager._resolve_attack(attack)
-	if defender.is_stealth or defender.is_face_down:
-		failures.append("A Veil of Night defender did not reveal in combat despite an inferable combat result")
-	if defender.get_effective_strength() != defender.strength:
-		failures.append("A Veil of Night defender triggered a Reveal ability from combat")
+	if not defender.is_stealth or not defender.is_face_down or defender.get_effective_strength() != defender.strength \
+			or defender.card_name in manager.last_resolution_text:
+		failures.append("A hidden defender revealed or triggered its Reveal ability under Veil of Night")
+	if not defender.is_combat_resilience_inferable() \
+			or "RES %d" % defender.get_effective_resilience() not in defender.get_public_combat_log_display_name():
+		failures.append("A Veil of Night defender did not expose its inferable Resilience after combat")
 	var outside_reveal := SulakTheUnclean.new()
 	outside_reveal.card_owner = player
 	outside_reveal.is_stealth = true
@@ -3541,8 +3543,11 @@ func _check_aphrodite_aspect_shift(failures: PackedStringArray) -> void:
 	victim.creature_mode = Card.CreatureMode.DEFENSIVE
 	opponent.frontline_zones[1].add_card(victim)
 	game.creature_attack(attacker, victim)
-	if attacker.is_stealth or attacker.is_face_down or victim.current_zone != opponent.graveyard_zone:
-		failures.append("A Veil of Night attacker did not reveal in combat despite an inferable combat result")
+	if not attacker.is_stealth or not attacker.is_face_down or victim.current_zone != opponent.graveyard_zone:
+		failures.append("Veil of Night did not keep a hidden attacker concealed through combat")
+	if not attacker.is_combat_resilience_inferable() \
+			or "RES %d" % attacker.get_effective_resilience() not in attacker.get_public_combat_log_display_name():
+		failures.append("A Veil of Night attacker did not expose its inferable Resilience after combat")
 	player.followers = 100
 	GameState.apply_to_manager(GameState.serialize(game), game)
 	shift = bot._plan_aspect_shift([], {}, bot._forecast_incoming_follower_loss(), {}, player.mana)

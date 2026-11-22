@@ -568,7 +568,10 @@ func get_target_log_display_name(viewer: Player = null) -> String:
 	if current_zone != null and current_zone.zone_type in [Zone.ZoneType.GRAVEYARD, Zone.ZoneType.ABYSS]:
 		return get_display_name()
 	if is_hidden_from_viewer(viewer):
-		return get_hidden_log_position_label()
+		var label := get_hidden_log_position_label()
+		if is_stealth and has_veil_of_night() and not is_revealed_to_all() and is_combat_resilience_inferable():
+			return "%s (RES %d)" % [label, get_effective_resilience()]
+		return label
 	return get_display_name()
 
 func is_known_for_combat_log(viewer: Player = null) -> bool:
@@ -585,9 +588,20 @@ func get_combat_log_display_name(viewer: Player = null) -> String:
 		return get_display_name()
 	return get_target_log_display_name(viewer)
 
+func is_combat_resilience_inferable() -> bool:
+	return has_meta("combat_resilience_inferable")
+
+func mark_combat_resilience_inferable() -> void:
+	if not is_stealth or not has_veil_of_night():
+		return
+	set_meta("combat_resilience_inferable", true)
+
 func get_public_combat_log_display_name() -> String:
 	if is_stealth and has_veil_of_night() and not is_revealed_to_all():
-		return get_hidden_log_position_label()
+		var label := get_hidden_log_position_label()
+		if is_combat_resilience_inferable():
+			return "%s (RES %d)" % [label, get_effective_resilience()]
+		return label
 	return card_name
 
 func is_enslaved() -> bool:
@@ -1289,6 +1303,8 @@ func clear_board_leave_state() -> void:
 	is_used = false
 	summoned_this_turn = false
 	summoned_after_first_attack_this_turn = false
+	if has_meta("combat_resilience_inferable"):
+		remove_meta("combat_resilience_inferable")
 	reset_creature_action_state()
 	if self is PowerCard:
 		(self as PowerCard).is_publicly_revealed = false
@@ -1702,9 +1718,7 @@ func has_veil_of_night() -> bool:
 	return god != null and not god.abilities_suppressed() and not god.is_face_down and not god.is_sleeping
 
 func will_reveal_in_combat() -> bool:
-	# Veil of Night removes the speed penalty for hidden creatures, but combat
-	# results make their identity inferable, so they still reveal in combat.
-	return is_stealth
+	return is_stealth and not has_veil_of_night()
 
 func reveal_from_combat(game_manager: GameManager) -> void:
 	if will_reveal_in_combat():
