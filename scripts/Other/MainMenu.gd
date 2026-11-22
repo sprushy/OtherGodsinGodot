@@ -3095,15 +3095,16 @@ func _render_recent_match_activities(raw_activities: Variant) -> void:
 		var loser_name := str(activity.get("loser_name", "")).strip_edges()
 		var rank_achievement := str(activity.get("rank_achievement", "")).strip_edges()
 		var ladder_update := str(activity.get("ladder_update", "")).strip_edges()
-		if announcement.contains("has been eliminated") and not ladder_update.is_empty() and not winner_name.is_empty():
-			announcement = "%s. %s enters the ladder %s." % [announcement.trim_suffix("."), winner_name, ladder_update]
-		elif not winner_name.is_empty() and not loser_name.is_empty():
+		if not winner_name.is_empty() and not loser_name.is_empty() and not announcement.contains("has been eliminated"):
 			if not rank_achievement.is_empty():
 				announcement = "%s reached %s by defeating %s" % [winner_name, rank_achievement, loser_name]
 			else:
 				announcement = "%s defeated %s" % [winner_name, loser_name]
 		if not ladder_update.is_empty():
-			announcement += ". %s." % ladder_update.capitalize()
+			var update_sentence := "%s %s" % [winner_name, ladder_update] if not winner_name.is_empty() else ladder_update
+			update_sentence = _capitalize_first_letter(update_sentence.strip_edges())
+			if not update_sentence.is_empty():
+				announcement = "%s. %s." % [announcement.trim_suffix("."), update_sentence] if not announcement.is_empty() else update_sentence
 		if announcement.is_empty():
 			continue
 		var card := PanelContainer.new()
@@ -3131,6 +3132,11 @@ func _add_recent_activity_label(message: String, tint: Color) -> void:
 	label.add_theme_font_size_override("font_size", 15)
 	label.add_theme_color_override("font_color", tint)
 	_recent_activity_rows.add_child(label)
+
+func _capitalize_first_letter(text: String) -> String:
+	if text.is_empty():
+		return text
+	return text.substr(0, 1).to_upper() + text.substr(1)
 
 func _request_recent_match_activity() -> void:
 	if multiplayer_container == null or not multiplayer_container.is_visible_in_tree() \

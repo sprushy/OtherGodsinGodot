@@ -47,6 +47,7 @@ const COLLECTION_ADD_FOOTER_HEIGHT := 30.0
 const COLLECTION_DRAG_THRESHOLD := 8.0
 const COLLECTION_GRID_TOP_INSET := 16.0
 const COLLECTION_SELECTED_CARD_Z_INDEX := 100
+const DRAG_GHOST_Z_INDEX := 4096
 const CARD_VIEW_PRESETS := [
 	{"label": "Tiny", "rows": 5},
 	{"label": "Small", "rows": 4},
@@ -1904,7 +1905,7 @@ func _ensure_collection_card_drag_ghost(mouse_global_position: Vector2) -> void:
 	var ghost := Control.new()
 	ghost.name = "CollectionCardDragGhost"
 	ghost.top_level = true
-	ghost.z_index = 10000
+	ghost.z_index = DRAG_GHOST_Z_INDEX
 	ghost.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	ghost.custom_minimum_size = _card_size
 	ghost.size = _card_size
@@ -2441,7 +2442,7 @@ func _ensure_visual_deck_drag_ghost(mouse_global_position: Vector2) -> void:
 	var ghost := PanelContainer.new()
 	ghost.name = "VisualDeckCardDragGhost"
 	ghost.top_level = true
-	ghost.z_index = 10000
+	ghost.z_index = DRAG_GHOST_Z_INDEX
 	ghost.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	ghost.modulate = Color(1.0, 1.0, 1.0, 0.88)
 	ghost.custom_minimum_size = Vector2(172, 236) if not compact else Vector2(250, 62)
@@ -2749,7 +2750,7 @@ func _ensure_deck_row_drag_ghost(mouse_global_position: Vector2) -> void:
 	var ghost := PanelContainer.new()
 	ghost.name = "DeckRowDragGhost"
 	ghost.top_level = true
-	ghost.z_index = 10000
+	ghost.z_index = DRAG_GHOST_Z_INDEX
 	ghost.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	ghost.modulate = Color(1.0, 1.0, 1.0, 0.88)
 	ghost.custom_minimum_size = Vector2(260, 36)

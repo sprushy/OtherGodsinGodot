@@ -4971,6 +4971,13 @@ func _check_ladder_pages(failures: PackedStringArray) -> void:
 		failures.append("Ladder did not show ranked bots in their match format")
 	if not bo3["ladder"].any(func(row: Dictionary) -> bool: return row.get("portrait") == portrait):
 		failures.append("Bo3 ladder did not include the player's saved crop")
+	var player_entry_update := lobby._ladder_rank_update(249, 149, LobbyServerScript.PLAYER_LADDER_NOTIFICATION_DEPTH)
+	var bot_entry_update := lobby._ladder_rank_update(149, 99, LobbyServerScript.LADDER_NOTIFICATION_DEPTH)
+	var top_ten_climb := lobby._ladder_rank_update(7, 4, LobbyServerScript.LADDER_NOTIFICATION_DEPTH)
+	var top_ten_drop := lobby._ladder_rank_update(4, 7, LobbyServerScript.LADDER_NOTIFICATION_DEPTH)
+	if not player_entry_update.contains("top 150") or not bot_entry_update.contains("top 100") \
+			or not top_ten_climb.contains("#8 to #5") or not top_ten_drop.contains("#5 to #8"):
+		failures.append("Ladder notifications did not track player depth and every top-ten move")
 	var filter_validation := LobbyProtocolScript.validate_request(LobbyProtocolScript.make_message(
 		LobbyProtocolScript.REQUEST_BOT_LADDER,
 		{"best_of": 1, "page": 0, "request_id": 1, "player_type": LobbyProtocolScript.LADDER_FILTER_PLAYERS}))

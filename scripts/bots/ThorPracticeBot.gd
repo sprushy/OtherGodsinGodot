@@ -219,6 +219,19 @@ func _begin_ui_interaction(prompt_player_index: int, type: String, data: Diction
 		call_deferred("_flush_deferred_ui_interactions")
 	return false
 
+func _is_deferred_prompt_stale(entry: Dictionary) -> bool:
+	if match_manager == null or not match_manager.has_method("get_pending_ui_interaction_entries"):
+		return false
+	var data: Dictionary = entry.get("data", {})
+	var prompt_id := int(data.get("_prompt_id", -1))
+	if prompt_id < 0:
+		return false
+	for pending_entry in match_manager.get_pending_ui_interaction_entries():
+		if int(pending_entry.get("prompt_id", -1)) == prompt_id:
+			return false
+	# The prompt was consumed while this answer waited in the re-entrancy queue.
+	return true
+
 func _flush_deferred_ui_interactions() -> void:
 	_deferred_ui_flush_scheduled = false
 	if not _active or _deferred_ui_interactions.is_empty():
@@ -231,6 +244,8 @@ func _flush_deferred_ui_interactions() -> void:
 	for entry in pending:
 		if not _active:
 			break
+		if _is_deferred_prompt_stale(entry):
+			continue
 		_on_match_ui_interaction(
 			int(entry.get("prompt_player_index", -1)),
 			str(entry.get("type", "")),
@@ -375,14 +390,21 @@ func _should_queue_step() -> bool:
 		return false
 	# A click selection raised by this bot's own card must be answered by the
 	# bot: nobody else will in headless games, and the human answers their own.
-	if match_manager.is_targeting_active() and not _owns_pending_click_selection():
-		return false
+	# Check this before the pending-attack guard: a reveal or combat trigger can
+	# leave the attack bookkeeping set while raising a mandatory selection, and
+	# waiting for the attack to clear would stall the game forever.
+	if match_manager.is_targeting_active():
+		return _owns_pending_click_selection()
 	if match_manager.selected_attacker != null or match_manager.pending_attack_target != null:
 		return false
-	if not game_manager.resolving_stack_actions.is_empty():
-		return false
+	# A priority window can be offered while another action is still recorded as
+	# resolving (for example Masmassu Priest's deferred reveal). Answering that
+	# window is legal and necessary: waiting for resolving_stack_actions to
+	# empty stalls the bot with a live priority prompt and no other way forward.
 	if not game_manager.action_stack.is_empty():
 		return game_manager.priority_player == bot_player
+	if not game_manager.resolving_stack_actions.is_empty():
+		return false
 	return game_manager.current_player == bot_player
 
 func _run_step() -> void:

@@ -132,6 +132,10 @@ var _ladder_cache_dirty: bool = true
 var _ladder_cache_last_build_msec: int = 0
 const LADDER_CACHE_MIN_REBUILD_INTERVAL_MSEC: int = 1500
 const TOP_BOT_HOSTING_LIMIT := 50
+# Recent-result notifications track bots in the top 100 and human players deeper.
+const LADDER_NOTIFICATION_DEPTH := 100
+const PLAYER_LADDER_NOTIFICATION_DEPTH := 200
+const TOP_TEN_NOTIFICATION_DEPTH := 10
 
 # Pool rebuild is expensive (replays all bot match results). Only rebuild when
 # something has actually changed since the last refresh.
@@ -1982,7 +1986,9 @@ func _get_recent_match_activity_notifications() -> Array[Dictionary]:
 				current_place = index
 				current_points = int(ladder[index].get("points", -1))
 				break
-		if current_place < 0 or current_place >= 100 or current_points != after_points:
+		var is_player := not account_id.is_empty()
+		var notification_depth := PLAYER_LADDER_NOTIFICATION_DEPTH if is_player else LADDER_NOTIFICATION_DEPTH
+		if current_place < 0 or current_place >= notification_depth or current_points != after_points:
 			continue
 		var previous_place := 0
 		var winner_entry: Dictionary = ladder[current_place]
@@ -2003,20 +2009,39 @@ func _get_recent_match_activity_notifications() -> Array[Dictionary]:
 					previous_place += 1
 				elif other_score == winner_score and str(other.get("name", "")).nocasecmp_to(winner_name) < 0:
 					previous_place += 1
-		var rank_update := ""
-		if current_place < 100 and previous_place >= 100:
-			rank_update = "enters the top 100"
-		for band in range(90, 0, -10):
-			if previous_place >= band and current_place < band:
-				rank_update = "enters the top %d" % band
-		if current_place < 100 and not rank_update.is_empty():
-			activity["ladder_update"] = "%s at position #%d" % [rank_update, current_place + 1]
+		var rank_update := _ladder_rank_update(previous_place, current_place, notification_depth)
+		if not rank_update.is_empty():
+			activity["ladder_update"] = rank_update
 	for activity: Dictionary in activities:
 		activity.erase("winner_account_id")
 		activity.erase("winner_bot_list_id")
 		activity.erase("winner_before_points")
 		activity.erase("winner_after_points")
 	return activities
+
+## Rank-change phrase for a recent ranked result. Human winners are tracked
+## deeper than bots, and every move inside the top ten is reported rather than
+## only crossing a ten-place band.
+func _ladder_rank_update(previous_place: int, current_place: int, notification_depth: int) -> String:
+	var current_number := current_place + 1
+	var previous_number := previous_place + 1
+	var rank_update := ""
+	var band := notification_depth - 10
+	while band >= TOP_TEN_NOTIFICATION_DEPTH:
+		if previous_place >= band and current_place < band:
+			rank_update = "enters the top %d" % band
+		band -= 10
+	if rank_update.is_empty() and previous_place >= notification_depth and current_place < notification_depth:
+		rank_update = "enters the top %d" % notification_depth
+	if not rank_update.is_empty():
+		return "%s at position #%d" % [rank_update, current_number]
+	if current_place < TOP_TEN_NOTIFICATION_DEPTH or previous_place < TOP_TEN_NOTIFICATION_DEPTH:
+		if previous_place == current_place:
+			return ""
+		if current_place < previous_place:
+			return "climbs from #%d to #%d" % [previous_number, current_number]
+		return "drops from #%d to #%d" % [previous_number, current_number]
+	return ""
 
 func _handle_submit_bot_work_result(peer_id: int, payload: Dictionary) -> void:
 	var job_id := str(payload.get("job_id", "")).strip_edges()

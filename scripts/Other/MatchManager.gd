@@ -197,6 +197,7 @@ func reset_runtime_state() -> void:
 	last_resolution_text = ""
 	last_move_failed_reason = ""
 	_authoritative_stack_resolution_pending = false
+	_authoritative_linger_generation += 1
 	remote_authoritative_stack_window_locked = false
 	remote_authoritative_visual_linger_pending = false
 
@@ -383,6 +384,7 @@ const AUTHORITATIVE_STACK_ACTION_LINGER_SECONDS := 1.2
 var last_resolution_text: String = ""
 var last_move_failed_reason: String = ""
 var _authoritative_stack_resolution_pending: bool = false
+var _authoritative_linger_generation: int = 0
 
 const SIMPLE_DEFERRED_PROMPT_COMPLETION_COMMANDS := [
 	"blessed_knights_choice",
@@ -2947,11 +2949,25 @@ func _schedule_authoritative_stack_top_after_priority() -> void:
 		return
 	_request_ui_refresh()
 	call_deferred("_request_ui_refresh")
-	tree.create_timer(AUTHORITATIVE_STACK_ACTION_LINGER_SECONDS).timeout.connect(
-		func() -> void:
-			_finish_authoritative_stack_resolution(resolved_action, resolve_after_passes),
-		CONNECT_ONE_SHOT
-	)
+	# A SceneTreeTimer can be dropped when the transport/tree is rebuilt between
+	# matches, leaving _authoritative_stack_resolution_pending stuck true and
+	# nobody able to advance priority. Drive the linger from process frames
+	# instead, which the main loop always provides.
+	_authoritative_linger_generation += 1
+	_linger_then_finish(resolved_action, resolve_after_passes, _authoritative_linger_generation)
+
+func _linger_then_finish(action: CardAction, force_resolve: bool, generation: int) -> void:
+	var tree: SceneTree = _get_authoritative_resolution_tree() as SceneTree
+	if tree == null:
+		return
+	var deadline := Time.get_ticks_msec() + int(AUTHORITATIVE_STACK_ACTION_LINGER_SECONDS * 1000.0)
+	while Time.get_ticks_msec() < deadline:
+		await tree.process_frame
+		if generation != _authoritative_linger_generation:
+			return
+		if not _authoritative_stack_resolution_pending:
+			return
+	_finish_authoritative_stack_resolution(action, force_resolve)
 
 func _finish_authoritative_stack_resolution(action: CardAction, force_resolve: bool = false) -> void:
 	_authoritative_stack_resolution_pending = false
