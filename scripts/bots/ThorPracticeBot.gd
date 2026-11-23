@@ -1515,6 +1515,7 @@ func _estimate_targeted_casualty_cost(card: Card, form: Card, stats: Dictionary,
 	for attacker in _get_creature_attackers_next_turn(form, []):
 		var action := CardAction.new()
 		action.type = CardAction.Type.ATTACK
+		action.source_player = opponent
 		action.attacker = attacker
 		action.target = card
 		var result := _estimate_raw_attack_economy(action, stats, projected_mode)
@@ -1543,6 +1544,46 @@ func _stance_casualty_savings(creature: Card, mode: Card.CreatureMode) -> int:
 	return _estimate_targeted_casualty_cost(creature, creature, {}) \
 		- _estimate_targeted_casualty_cost(creature, creature, {}, mode)
 
+# Mirror of the casualty skip in _add_combat_casualty: true when this
+# attacker's combat destruction cannot actually take the creature off the
+# board (Stone Skin's self replacement, a combat ward, or a destruction
+# guard).
+func _survives_combat_destruction_by(attacker: Card, creature: Card) -> bool:
+	if CardStrategy.destruction_guard(creature) or game_manager.is_warded_from_combat_destruction(creature, attacker):
+		return true
+	if attacker.can_destroy_combat_protected_creatures(creature):
+		return false
+	var replacement: Zone = creature.get_self_graveyard_replacement_zone(game_manager, true, true, false) if creature is BaseCard else null
+	return replacement != null and replacement == creature.current_zone
+
+# A creature the visible enemy cannot remove from combat but can beat in an
+# aggressive fight is a repeatable follower farm while it stays aggressive:
+# every winning attack transfers followers before the kill, and a body that
+# cannot be Slain survives to be farmed again next turn (Stone Skin is the
+# canonical case). Defensive stance closes the leak outright - a defensive
+# body whose destruction is prevented transfers no followers - and still
+# collects failed-attack conversions, so sitting in attack mode is pure
+# donation.
+func _is_combat_farm_bait(creature: Card, attackers: Array[Card]) -> bool:
+	if attackers.is_empty():
+		return false
+	var beaten := false
+	for attacker in attackers:
+		if not _survives_combat_destruction_by(attacker, creature):
+			return false
+		if _get_vision_adjusted_strength(attacker, 0, creature) > _get_vision_adjusted_strength(creature, 0, attacker):
+			beaten = true
+	return beaten
+
+# Follower-safety value of flipping a farm bait to defensive. The farm
+# recurs every turn the unkillable body stays aggressive, so one forecast
+# turn alone underprices the leak; count it twice against the one-time
+# stance tempo tax.
+func _combat_farm_bait_savings(creature: Card) -> int:
+	var gain := _follower_safety_gain(_forecast_incoming_follower_loss(), {"stance": creature, "defensive": true},
+		bot_player.mana - game_manager.get_creature_action_mana_cost(creature, "change stance"))
+	return gain * 2 if gain > 0 else 0
+
 # Estimated casualty risk of a defensive -> aggressive stance switch from
 # enemy creatures that are not on the board yet: a summon or reserve advance
 # next turn whose STR would clear this creature in aggressive stance (STR vs
@@ -1557,6 +1598,19 @@ func _forecast_aggressive_exposure_risk(creature: Card) -> int:
 		return 0
 	var strength := creature.get_effective_strength()
 	var resilience := creature.get_effective_resilience()
+	# The (STR, RES] window below assumes stronger attackers clear the body
+	# in either stance. A body no visible attacker can remove from combat
+	# breaks that assumption: while it stays aggressive, every stronger
+	# visible enemy attacks it turn after turn and keeps the STR surplus as
+	# followers (Stone Skin is the canonical case). The stance choice is
+	# exactly what keeps that farm open, so charge it directly.
+	var farm_exposure := 0
+	for attacker in _get_creature_attackers_next_turn(creature, []):
+		if not _survives_combat_destruction_by(attacker, creature):
+			continue
+		farm_exposure = maxi(farm_exposure, _get_vision_adjusted_strength(attacker, 0, creature) - strength)
+	if farm_exposure > 0:
+		return _score_follower_loss(bot_player, farm_exposure)
 	# Only attackers inside the (STR, RES] window are exposure added by the
 	# switch: stronger ones clear the creature even in defensive stance, so
 	# the stance choice is not what costs it.
@@ -2741,14 +2795,24 @@ func _get_creature_attackers_next_turn(target: Card, removed: Array) -> Array[Ca
 		return attackers
 	var budget := opponent.mana + game_manager.get_automatic_upkeep_mana_gain(opponent, game_manager.turn_number + 1) \
 		+ game_manager.get_effective_upkeep_mana_gain(game_manager.get_base_upkeep_mana_gain(), opponent)
-	for attacker in _get_board_creatures(opponent):
-		if attacker in removed or attacker.get_controller() != opponent or not CardStrategy.visible(self, attacker) \
+	var candidates := _get_board_creatures(opponent)
+	# A temporarily controlled body (Siren's Song) fights for its owner again
+	# the moment the borrow returns, so an aggressive frontline loan counts
+	# among next turn's attackers. Its current zone is the borrower's copy of
+	# the row it will return to, so the zone type carries over.
+	for card in _get_board_creatures(bot_player):
+		if game_manager.is_temporarily_controlled(card) and card.current_zone != null \
+				and card.current_zone.zone_type == Zone.ZoneType.FRONTLINE:
+			candidates.append(card)
+	for attacker in candidates:
+		if attacker == target or attacker in removed or (attacker.get_controller() != opponent and not game_manager.is_temporarily_controlled(attacker)) \
+				or not CardStrategy.visible(self, attacker) \
 				or attacker.is_petrified() or _status_persists_to_next_turn(attacker, "sleep", removed) \
 				or _status_persists_to_next_turn(attacker, "cannot_attack", removed) \
 				or game_manager.get_creature_action_mana_cost(attacker, "attack") > budget \
 				or (target != null and not game_manager.can_cards_engage_each_other(attacker, target)):
 			continue
-		if attacker.current_zone in opponent.frontline_zones:
+		if attacker.current_zone in opponent.frontline_zones or game_manager.is_temporarily_controlled(attacker):
 			if attacker.creature_mode != Card.CreatureMode.AGGRESSIVE and not attacker.is_stealth:
 				continue
 		elif not _can_advance_from_reserve_next_turn(attacker, budget, removed):
@@ -4835,6 +4899,7 @@ func _plan_defensive_stance(danger: int) -> Dictionary:
 		return best
 	for creature in _get_board_creatures(bot_player):
 		if creature.creature_mode != Card.CreatureMode.AGGRESSIVE or creature.is_sleeping \
+				or game_manager.is_temporarily_controlled(creature) \
 				or not creature.can_take_minor_creature_action() or not game_manager.can_pay_creature_action_mana_cost(creature, "change stance"):
 			continue
 		var cost := game_manager.get_creature_action_mana_cost(creature, "change stance")
@@ -5398,6 +5463,30 @@ func _estimate_saving_grace_turn_loss(action: CardAction, outcome: Dictionary) -
 		"followers": bot_player.followers - loss,
 	}, true)
 
+func _ward_would_flip_on_followup(outcome: Dictionary, total_loss: int, ward_cost: int) -> bool:
+	# Replays the ward's own response test for the next attack this turn,
+	# priced after this attack's damage and guard are already spent. A flip
+	# that is committed at the follow-up window is strictly better landed
+	# now: the mana price is unchanged and this attack's damage comes back.
+	if game_manager.current_player != opponent:
+		return false
+	var loss := int(outcome["bot_followers_lost"])
+	var followup := total_loss - loss
+	if followup <= 0:
+		return false
+	var followers := bot_player.followers - loss
+	if followers <= 0:
+		return false
+	var next_score := _score_follower_loss(bot_player, followup, followers) \
+		- CardStrategy.mana_penalty(self, ward_cost)
+	if next_score <= 0 or followup >= followers:
+		return next_score > 0
+	var loss_share := float(followup) / float(followers)
+	var hold_value := CardStrategy.CARD_VALUE * (1.0 - loss_share * loss_share)
+	if _expects_saving_grace_board_blocker(ward_cost):
+		hold_value *= 0.5
+	return next_score - roundi(hold_value) > 0
+
 func _expects_saving_grace_board_blocker(ward_cost: int) -> bool:
 	var mana := bot_player.mana - ward_cost
 	var next_turn := game_manager.current_player != bot_player
@@ -5528,6 +5617,19 @@ func _forecast_incoming_follower_loss(change: Dictionary = {}, this_turn: bool =
 
 	var targets: Array = [bot_player]
 	var defenders := _get_board_creatures(bot_player)
+	# A temporarily controlled body (Siren's Song) returns to its owner at
+	# this turn's end, before the forecasted attack window opens: it neither
+	# guards the bot's followers nor intercepts for them, and an aggressive
+	# frontline borrow comes back as one of the opponent's attackers instead.
+	var returning_attackers: Array[Card] = []
+	var standing_defenders: Array[Card] = []
+	for card in defenders:
+		if game_manager.is_temporarily_controlled(card):
+			returning_attackers.append(card)
+		else:
+			standing_defenders.append(card)
+	if not returning_attackers.is_empty():
+		defenders = standing_defenders
 	var summon := change.get("summon") as Card
 	var stance := change.get("stance") as Card
 	var defensive := bool(change.get("defensive", false))
@@ -5563,6 +5665,7 @@ func _forecast_incoming_follower_loss(change: Dictionary = {}, this_turn: bool =
 		budget += game_manager.get_automatic_upkeep_mana_gain(opponent, game_manager.turn_number + 1) \
 			+ game_manager.get_effective_upkeep_mana_gain(game_manager.get_base_upkeep_mana_gain(), opponent)
 	var attackers := _get_board_creatures(opponent)
+	attackers.append_array(returning_attackers)
 	var champions_call := {} if this_turn else _projected_champions_call(removed)
 	var manifestation := champions_call.get("attacker") as Card
 	if manifestation != null:
@@ -5571,9 +5674,13 @@ func _forecast_incoming_follower_loss(change: Dictionary = {}, this_turn: bool =
 	var mana_left := maxi(0, int(change.get("mana_left", bot_player.mana)))
 	for attacker in attackers:
 		var attack_zone := destination if attacker == moved else attacker.current_zone
+		var attacker_aggressive := attacker.creature_mode == Card.CreatureMode.AGGRESSIVE or attacker.is_stealth
+		if attacker == stance:
+			attacker_aggressive = not defensive
 		if attacker in removed or attacker == change.get("disable_attacker") or not CardStrategy.visible(self, attacker) \
-				or attacker.get_controller() != opponent or attack_zone == null or attack_zone.zone_type != Zone.ZoneType.FRONTLINE \
-				or (attacker.creature_mode != Card.CreatureMode.AGGRESSIVE and not attacker.is_stealth) \
+				or (attacker.get_controller() != opponent and not game_manager.is_temporarily_controlled(attacker)) \
+				or attack_zone == null or attack_zone.zone_type != Zone.ZoneType.FRONTLINE \
+				or not attacker_aggressive \
 				or attacker.is_petrified() or _status_persists_to_next_turn(attacker, "sleep", removed) \
 				or _status_persists_to_next_turn(attacker, "cannot_attack", removed):
 			continue
@@ -5604,6 +5711,7 @@ func _forecast_incoming_follower_loss(change: Dictionary = {}, this_turn: bool =
 					barriers.append(structure)
 			var action := CardAction.new()
 			action.type = CardAction.Type.ATTACK
+			action.source_player = opponent
 			action.attacker = attacker
 			action.target = target
 			var target_stance := target as Card if target in summons else stance
@@ -7862,12 +7970,16 @@ func _get_mode_switch_score(creature: Card, opposing_creatures: Array[Card]) -> 
 		return -1
 	if not game_manager.can_pay_creature_action_mana_cost(creature, "change stance"):
 		return -1
+	var borrowed := game_manager.is_temporarily_controlled(creature)
 	var added_casualty_cost := -_stance_casualty_savings(creature, Card.CreatureMode.AGGRESSIVE)
 	# Going aggressive also exposes the creature to a plausible enemy summon
 	# or reserve advance next turn that would clear it in aggressive stance
 	# but bounce off its defensive RES. Charge that risk here so a valuable
 	# defender is only spent on a switch the attack actually pays for.
-	added_casualty_cost += _forecast_aggressive_exposure_risk(creature)
+	# A borrowed body is exempt from both charges: it leaves at this turn's
+	# end, and its combat death is the owner's loss, never the bot's.
+	if not borrowed:
+		added_casualty_cost += _forecast_aggressive_exposure_risk(creature)
 	if added_casualty_cost > 0:
 		if not creature.can_take_major_creature_action():
 			return -1
@@ -7897,7 +8009,10 @@ func _get_mode_switch_score(creature: Card, opposing_creatures: Array[Card]) -> 
 		# bodies. This rescues strong attackers stuck defensive with no legal
 		# plan this turn; the defensive flip scorer refuses str-tilted savings
 		# (negative), so the two scorers cannot oscillate.
-		if _get_projected_strength(creature) > _get_projected_resilience(creature):
+		# A borrowed body always qualifies for that fallback: it cannot defend
+		# for the bot after this turn anyway, and handing it back aggressive
+		# makes the owner pay their own stance change or defend at STR.
+		if _get_projected_strength(creature) > _get_projected_resilience(creature) or borrowed:
 			return 1000 + _get_projected_strength(creature) * 10
 		return -1
 	return 300000 + best_attack_score
@@ -7907,25 +8022,43 @@ func _get_defensive_mode_switch_score(creature: Card, opposing_creatures: Array[
 		return -1
 	if creature.creature_mode != Card.CreatureMode.AGGRESSIVE:
 		return -1
+	# A borrowed body (Siren's Song) returns to its owner at this turn's end,
+	# so defensive stance guards nothing for the bot — it only hands the
+	# opponent their body back pre-defended. Never flip a borrow defensive.
+	if game_manager.is_temporarily_controlled(creature):
+		return -1
 	if not creature.can_take_minor_creature_action():
 		return -1
 	if creature.is_sleeping or not game_manager.can_pay_creature_action_mana_cost(creature, "change stance"):
 		return -1
+	var farm_bait := _is_combat_farm_bait(creature, _get_creature_attackers_next_turn(creature, []))
 	if creature.can_take_major_creature_action():
-		# Preserve the attack option while followers are plentiful.
-		if not _is_dangerously_low_on_followers():
-			return -1
+		var has_attack_plan := false
 		for target in opposing_creatures:
 			if _score_standard_attack_plan(creature, target) > -1000000:
+				has_attack_plan = true
+				break
+		# Only a farm bait with no attack plan while followers are healthy
+		# skips the preservation block: staying aggressive would just feed
+		# the enemy farm, so flip now.
+		if not farm_bait or has_attack_plan or _is_dangerously_low_on_followers():
+			# Preserve the attack option while followers are plentiful.
+			if not _is_dangerously_low_on_followers():
 				return -1
-		if opposing_creatures.is_empty() and _can_attack_followers_safely(creature):
-			return -1
+			if has_attack_plan:
+				return -1
+			if opposing_creatures.is_empty() and _can_attack_followers_safely(creature):
+				return -1
 	# Once the attack is spent, preserving the creature can justify a stance
 	# change even when follower pressure is low. An intercept-free followers
 	# lane is not a standing poke once the forecast shows the body destroyed
 	# in aggressive stance before its next attack: with no future poke income,
 	# the casualty savings outrank the per-turn stance tax of flipping back.
+	# A farm bait prices the follower leak itself: its casualty savings are
+	# zero because no stance can save it from combat, but defensive stance
+	# stops the enemy from draining followers off its body every turn.
 	var savings := _stance_casualty_savings(creature, Card.CreatureMode.DEFENSIVE) \
+		+ (_combat_farm_bait_savings(creature) if farm_bait else 0) \
 		- game_manager.get_creature_action_mana_cost(creature, "change stance") * _mana_rate()
 	return savings if savings > 0 else -1
 
@@ -9295,10 +9428,17 @@ func _estimate_raw_attack_economy(action: CardAction, stats: Dictionary, project
 	var attacker := action.attacker
 	var partner := action.united_front_partner
 	var defender := _get_attack_defender_card(action)
+	# Recoil and on-kill triggers charge the player who declared the attack.
+	# Forecast actions state that side directly through source_player; the
+	# controller fallback keeps submitted actions and older call sites on
+	# their previous attribution. A temporarily controlled body (Siren's
+	# Song) fights for its owner once the borrow returns, so a forecast of
+	# that next-turn attack must not bill the bot for its recoil.
+	var acting_player: Player = action.source_player if action.source_player != null else attacker.get_controller()
 	# Aphrodite can only activate Violent Delights on her own turn, so the
 	# risk of her follow-up Enslave counts only when HER attack is the one
 	# making the bot-side creature die in combat.
-	var her_attack := action.attacker.get_controller() == opponent
+	var her_attack := acting_player == opponent
 	var attacker_stats: Vector3i = stats.get(attacker, Vector3i.ZERO)
 	var partner_stats: Vector3i = stats.get(partner, Vector3i.ZERO)
 	var defender_stats: Vector3i = stats.get(defender, Vector3i.ZERO)
@@ -9334,7 +9474,7 @@ func _estimate_raw_attack_economy(action: CardAction, stats: Dictionary, project
 			_add_combat_casualty(result, defender, partner, her_attack)
 			var attacker_damage_strength := game_manager._get_giants_disdain_damage_stat(attacker, opposing_cards, attacker_strength - support_strength)
 			attacker_damage_strength += game_manager._get_giants_disdain_damage_stat(partner, opposing_cards, support_strength)
-			_add_follower_loss_to_economy(result, attacker.get_controller(), defender_strength - attacker_damage_strength, defender)
+			_add_follower_loss_to_economy(result, acting_player, defender_strength - attacker_damage_strength, defender)
 		else:
 			_add_combat_casualty(result, defender, attacker, her_attack)
 			_add_combat_casualty(result, defender, partner, her_attack)
@@ -9348,8 +9488,8 @@ func _estimate_raw_attack_economy(action: CardAction, stats: Dictionary, project
 		_add_combat_casualty(result, attacker, defender, her_attack)
 	else:
 		if attack_strength_vs_defense < defender_resilience:
-			_add_follower_loss_to_economy(result, attacker.get_controller(), defender_resilience - attack_strength_vs_defense)
-			if defender.get_controller() != attacker.get_controller():
+			_add_follower_loss_to_economy(result, acting_player, defender_resilience - attack_strength_vs_defense)
+			if defender.get_controller() != acting_player:
 				result["defensive_conversion_defender"] = defender
 		if game_manager._has_ferocious_defence(defender.get_controller()):
 			_add_combat_casualty(result, defender, attacker, her_attack)

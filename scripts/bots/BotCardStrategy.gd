@@ -1227,35 +1227,63 @@ static func combat_gain_for_stolen_creature(bot, target: Card) -> int:
 	# interception. It is not permanent removal or a newly acquired card, and
 	# the borrowed body's death costs its owner, so every legal attack line is
 	# priced with the same combat estimator the bot uses for its own attacks.
+	# The borrow preserves the body's stance and row, so a line only counts
+	# when the body arrives able to spend its major action this turn: already
+	# aggressive up front, flippable there with its minor action, or an
+	# aggressive reserve body whose advance can precede the attack. Anything
+	# else (a defensive wall, a defensive reserve body needing both a move
+	# and a flip) prices as pure denial instead of an attack that will never
+	# be submitted.
+	var gm: GameManager = bot.game_manager
+	var front_row := target.current_zone != null and target.current_zone.zone_type == Zone.ZoneType.FRONTLINE
+	var setup_cost := 0
+	var can_attack := false
+	if front_row:
+		if target.creature_mode == Card.CreatureMode.AGGRESSIVE:
+			can_attack = true
+		elif target.can_take_minor_creature_action_spending_minor() \
+				and gm.can_pay_creature_action_mana_cost(target, "change stance"):
+			can_attack = true
+			setup_cost = gm.get_creature_action_mana_cost(target, "change stance")
+	elif target.creature_mode == Card.CreatureMode.AGGRESSIVE and not target.has_status_effect("cannot_move") \
+			and target.can_take_minor_creature_action_spending_minor() \
+			and gm.can_pay_creature_action_mana_cost(target, "move") \
+			and bot.bot_player.frontline_zones.any(func(zone: Zone) -> bool: return zone.cards.is_empty()):
+		can_attack = true
+		setup_cost = gm.get_creature_action_mana_cost(target, "move")
 	var score := 0
-	for defender in bot._get_board_creatures(bot.opponent):
-		if defender == target or not visible(bot, defender):
-			continue
-		if not bot._can_attack_creature(target, defender):
-			continue
-		var action := CardAction.new()
-		action.type = CardAction.Type.ATTACK
-		action.attacker = target
-		action.target = defender
-		var economy: Dictionary = bot._estimate_attack_economy(action, null, 0, 0, 0, false)
-		var line_score: int = bot._score_attack_economy(economy)
-		# Until control actually moves, the estimator charges attack recoil to
-		# the current controller. After the steal the bot pays those followers,
-		# and a recoil that reaches the bot's pool can even lose the game. The
-		# defender-side overflow (the stolen body winning the fight) is already
-		# charged to the opponent and stays there, so only correct lines where
-		# the defender survived.
-		var recoil: int = int(economy.get("opponent_followers_lost", 0))
-		if recoil > 0 and not (defender in economy.get("casualties", [])):
-			line_score += -bot._score_follower_loss(bot.opponent, recoil) \
-				+ bot._score_follower_loss(bot.bot_player, recoil)
-			if bool(economy.get("bot_wins", false)):
-				line_score -= CARD_VALUE * 20
-				if recoil >= bot.bot_player.followers:
+	if can_attack:
+		for defender in bot._get_board_creatures(bot.opponent):
+			if defender == target or not visible(bot, defender):
+				continue
+			if not bot._can_attack_creature(target, defender):
+				continue
+			var action := CardAction.new()
+			action.type = CardAction.Type.ATTACK
+			action.attacker = target
+			action.target = defender
+			var economy: Dictionary = bot._estimate_attack_economy(action, null, 0, 0, 0, false)
+			var line_score: int = bot._score_attack_economy(economy)
+			# Until control actually moves, the estimator charges attack recoil to
+			# the current controller. After the steal the bot pays those followers,
+			# and a recoil that reaches the bot's pool can even lose the game. The
+			# defender-side overflow (the stolen body winning the fight) is already
+			# charged to the opponent and stays there, so only correct lines where
+			# the defender survived.
+			var recoil: int = int(economy.get("opponent_followers_lost", 0))
+			if recoil > 0 and not (defender in economy.get("casualties", [])):
+				line_score += -bot._score_follower_loss(bot.opponent, recoil) \
+					+ bot._score_follower_loss(bot.bot_player, recoil)
+				if bool(economy.get("bot_wins", false)):
 					line_score -= CARD_VALUE * 20
-		score = maxi(score, line_score)
-	if bot._board_creature_count(bot.opponent) == 1:
-		score = maxi(score, bot._score_follower_loss(bot.opponent, target.get_effective_strength()))
+					if recoil >= bot.bot_player.followers:
+						line_score -= CARD_VALUE * 20
+			score = maxi(score, line_score)
+		if bot._board_creature_count(bot.opponent) == 1:
+			score = maxi(score, bot._score_follower_loss(bot.opponent, target.get_effective_strength()))
+		# The stance flip or reserve advance that unlocks the attack is real
+		# mana the follow-through has to pay, not part of the free borrow.
+		score -= setup_cost * marginal_mana_value(bot)
 	return score
 
 static func wipe_cards(bot, card: Card) -> Array:
@@ -1425,7 +1453,14 @@ static func effect_score(bot, card: Card, target: Card = null, action: CardActio
 			var hold_value := CARD_VALUE * (1.0 - loss_share * loss_share)
 			if bot._expects_saving_grace_board_blocker(cost):
 				hold_value *= 0.5
-			return score - roundi(hold_value)
+			var net := score - roundi(hold_value)
+			# Holding is only free while a later window can still decline the
+			# flip. If the ward's own test would fire on the follow-up attack
+			# anyway, waiting just donates this attack's damage before the
+			# same flip at the same price, so score the flip as landing now.
+			if net <= 0 and bot._ward_would_flip_on_followup(result, loss, cost):
+				net = score
+			return net
 		"JiangZiyaFisherOfKings":
 			if action == null:
 				return BAD

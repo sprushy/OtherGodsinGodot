@@ -129,6 +129,7 @@ func run() -> bool:
 	_check_bot_pazuzu_drain_forecast(failures)
 	_check_bot_next_turn_lethal(failures)
 	_check_bot_mummu_entropic_force_economy(failures)
+	_check_bot_sirens_song_follow_through(failures)
 	_check_bot_e2_abzu_sage_retrieval(failures)
 	_check_bot_entomb_save_ceiling(failures)
 	_check_standing_bot_seeks(failures)
@@ -5566,6 +5567,92 @@ func _check_bot_mummu_entropic_force_economy(failures: PackedStringArray) -> voi
 	var muted_score := BotCardStrategyScript.target_score(bot, song, borrowed)
 	if steal_score <= muted_score:
 		failures.append("Siren's Song steal did not gain value from Mummu's Entropic Force follow-up")
+	bot.detach()
+
+# A Siren's Song steal is only worth casting for lines the bot can actually
+# spend this turn, and the turn spent holding the borrow must model the body
+# as leaving at turn end: the danger forecast counts it as the owner's
+# returning attacker instead of bot-side defense, no stance plan flips it
+# defensive, and a stuck defensive borrow still flips aggressive so the owner
+# re-receives it in attack stance.
+func _check_bot_sirens_song_follow_through(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	player.followers = 20
+	opponent.followers = 40
+	player.mana = 6
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var song := SirensSong.new()
+	song.card_owner = player
+	# Pricing: an aggressive frontline borrow attacks (their last body even
+	# pokes their own followers), a defensive frontline borrow is one minor
+	# action from that attack, and a defensive reserve borrow can neither
+	# flip nor advance into an attack this turn, so it prices as denial only.
+	var raider := CreatureCard.new()
+	raider.card_name = "Fixture Raider"
+	raider.card_owner = opponent
+	raider.creature_mode = Card.CreatureMode.AGGRESSIVE
+	raider.strength = 8
+	raider.resilience = 8
+	opponent.frontline_zones[0].add_card(raider)
+	if BotCardStrategyScript.target_score(bot, song, raider) <= 0:
+		failures.append("Siren's Song did not price an aggressive frontline steal's attack")
+	raider.creature_mode = Card.CreatureMode.DEFENSIVE
+	if BotCardStrategyScript.target_score(bot, song, raider) <= 0:
+		failures.append("Siren's Song did not price a flippable frontline steal's attack")
+	var wall := CreatureCard.new()
+	wall.card_name = "Fixture Reserve Wall"
+	wall.card_owner = opponent
+	wall.creature_mode = Card.CreatureMode.DEFENSIVE
+	wall.strength = 5
+	wall.resilience = 20
+	opponent.reserve_zones[0].add_card(wall)
+	if BotCardStrategyScript.target_score(bot, song, wall) != 0:
+		failures.append("Siren's Song priced an attack a defensive reserve borrow cannot make")
+	opponent.reserve_zones[0].remove_card(wall)
+	opponent.frontline_zones[0].remove_card(raider)
+	# Forecast and follow-through: with the borrow held, the same bodies
+	# attack next turn as before the steal, and the borrowed body is never
+	# flipped to defensive stance no matter how loud the danger forecast is.
+	var striker := CreatureCard.new()
+	striker.card_name = "Fixture Striker"
+	striker.card_owner = opponent
+	striker.creature_mode = Card.CreatureMode.AGGRESSIVE
+	striker.strength = 10
+	striker.resilience = 10
+	opponent.frontline_zones[1].add_card(striker)
+	var loan := CreatureCard.new()
+	loan.card_name = "Fixture Loan Body"
+	loan.card_owner = opponent
+	loan.creature_mode = Card.CreatureMode.AGGRESSIVE
+	loan.strength = 8
+	loan.resilience = 20
+	opponent.frontline_zones[0].add_card(loan)
+	var danger_before := bot._forecast_incoming_follower_loss()
+	if not game.grant_temporary_control_of_creature(loan, player, song):
+		failures.append("Fixture failed to grant temporary control of the loan body")
+	else:
+		var danger_during := bot._forecast_incoming_follower_loss()
+		if danger_during < danger_before:
+			failures.append("Borrowed body still counted as bot-side defense in the danger forecast")
+		if not bot._plan_defensive_stance(danger_during).is_empty():
+			failures.append("Bot planned a defensive stance switch while its only body was borrowed")
+		if bot._get_defensive_mode_switch_score(loan, bot._get_board_creatures(opponent)) != -1:
+			failures.append("Bot scored a defensive stance switch on a borrowed body")
+		# A defensive borrow with no profitable attack still flips aggressive:
+		# it cannot guard the bot after this turn, and returning it aggressive
+		# makes the owner pay to re-defend it.
+		loan.creature_mode = Card.CreatureMode.DEFENSIVE
+		if bot._get_mode_switch_score(loan, bot._get_board_creatures(opponent)) <= 0:
+			failures.append("Bot refused to flip a defensive borrowed body aggressive before returning it")
 	bot.detach()
 
 func _check_bot_e2_abzu_sage_retrieval(failures: PackedStringArray) -> void:

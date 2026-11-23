@@ -157,7 +157,8 @@ var lobby_client: LobbyClient = null
 var _current_room_snapshot: Dictionary = {}
 var _open_seek_rooms: Array[Dictionary] = []
 var _bot_match_live: Array = []
-var _seek_action_row: HBoxContainer
+var _seek_action_row: VBoxContainer
+var _seek_action_rows: Array[HBoxContainer] = []
 var _bot_league_section: VBoxContainer
 var _ladder_button: Button
 var _quarantined_bots_button: Button
@@ -1340,14 +1341,17 @@ func _apply_seek_action_button_sizing() -> void:
 	if not is_instance_valid(_seek_action_row):
 		return
 	_seek_action_row.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-	_seek_action_row.alignment = BoxContainer.ALIGNMENT_BEGIN
-	for child in _seek_action_row.get_children():
-		if not child is Button:
+	for row in _seek_action_rows:
+		if not is_instance_valid(row):
 			continue
-		var button := child as Button
-		button.add_theme_font_size_override("font_size", 16)
-		button.custom_minimum_size = Vector2(0.0, 36.0)
-		button.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		row.alignment = BoxContainer.ALIGNMENT_BEGIN
+		for child in row.get_children():
+			if not child is Button:
+				continue
+			var button := child as Button
+			button.add_theme_font_size_override("font_size", 16)
+			button.custom_minimum_size = Vector2(0.0, 36.0)
+			button.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 
 func _build_bot_league_section() -> void:
 	if multiplayer_container == null:
@@ -2956,10 +2960,20 @@ func _build_seek_tabs() -> void:
 	if seek_list == null:
 		return
 	multiplayer_container.visibility_changed.connect(_on_ladder_lobby_visibility_changed)
-	_seek_action_row = HBoxContainer.new()
-	_seek_action_row.add_theme_constant_override("separation", 8)
+	_seek_action_row = VBoxContainer.new()
+	_seek_action_row.add_theme_constant_override("separation", 4)
 	multiplayer_container.add_child(_seek_action_row)
 	multiplayer_container.move_child(_seek_action_row, seek_list.get_index() + 1)
+	# Two rows keep the host buttons from stretching the multiplayer UI on one
+	# line: batch bot-match hosting above, personal-bot hosting below.
+	var seek_row_top := HBoxContainer.new()
+	seek_row_top.add_theme_constant_override("separation", 8)
+	_seek_action_row.add_child(seek_row_top)
+	_seek_action_rows.append(seek_row_top)
+	var seek_row_bottom := HBoxContainer.new()
+	seek_row_bottom.add_theme_constant_override("separation", 8)
+	_seek_action_row.add_child(seek_row_bottom)
+	_seek_action_rows.append(seek_row_bottom)
 	var ladder_row := HBoxContainer.new()
 	ladder_row.add_theme_constant_override("separation", 8)
 	multiplayer_container.add_child(ladder_row)
@@ -2982,20 +2996,20 @@ func _build_seek_tabs() -> void:
 	_host_another_bot_match_button = Button.new()
 	_host_another_bot_match_button.text = "Host One Bot Match"
 	_host_another_bot_match_button.pressed.connect(_on_host_another_bot_match_pressed)
-	_seek_action_row.add_child(_host_another_bot_match_button)
+	seek_row_top.add_child(_host_another_bot_match_button)
 	_host_bot_match_button = Button.new()
 	_host_bot_match_button.text = "Host Bot Matches"
 	_host_bot_match_button.pressed.connect(_on_host_bot_match_pressed)
-	_seek_action_row.add_child(_host_bot_match_button)
+	seek_row_top.add_child(_host_bot_match_button)
 	_host_bo3_bot_matches_button = Button.new()
 	_host_bo3_bot_matches_button.text = "Host Bo3 Bot Matches"
 	_host_bo3_bot_matches_button.pressed.connect(_on_host_bo3_bot_matches_pressed)
-	_seek_action_row.add_child(_host_bo3_bot_matches_button)
+	seek_row_top.add_child(_host_bo3_bot_matches_button)
 	_host_top_50_bot_matches_button = Button.new()
 	_host_top_50_bot_matches_button.text = "Host Top 50 Bot Matches"
 	_host_top_50_bot_matches_button.pressed.connect(_on_host_bot_match_pressed.bind(true))
 	_host_top_50_bot_matches_button.hide()
-	_seek_action_row.add_child(_host_top_50_bot_matches_button)
+	seek_row_top.add_child(_host_top_50_bot_matches_button)
 	if OS.is_debug_build():
 		_host_below_top_50_bot_matches_button = Button.new()
 		_host_below_top_50_bot_matches_button.name = "HostBelowTop50BotMatchesButton"
@@ -3003,20 +3017,20 @@ func _build_seek_tabs() -> void:
 		_host_below_top_50_bot_matches_button.tooltip_text = "Debug only: pair bots ranked 51st or lower on the bot ladder."
 		_host_below_top_50_bot_matches_button.pressed.connect(_on_host_below_top_50_bot_matches_pressed)
 		_host_below_top_50_bot_matches_button.hide()
-		_seek_action_row.add_child(_host_below_top_50_bot_matches_button)
+		seek_row_top.add_child(_host_below_top_50_bot_matches_button)
 	_stop_hosting_bot_matches_button = Button.new()
 	_stop_hosting_bot_matches_button.text = "Stop Hosting Bot Matches"
 	_stop_hosting_bot_matches_button.pressed.connect(_on_stop_hosting_bot_matches_pressed)
-	_seek_action_row.add_child(_stop_hosting_bot_matches_button)
+	seek_row_top.add_child(_stop_hosting_bot_matches_button)
 	_stop_hosting_bot_matches_button.hide()
 	_host_own_bot_button = Button.new()
 	_host_own_bot_button.text = "Host Match for Your Bot"
 	_host_own_bot_button.pressed.connect(_open_my_bot_picker.bind(false))
-	_seek_action_row.add_child(_host_own_bot_button)
+	seek_row_bottom.add_child(_host_own_bot_button)
 	_host_bot_gauntlet_button = Button.new()
 	_host_bot_gauntlet_button.text = "Host Gauntlet for Your Bot"
 	_host_bot_gauntlet_button.pressed.connect(_open_my_bot_picker.bind(true))
-	_seek_action_row.add_child(_host_bot_gauntlet_button)
+	seek_row_bottom.add_child(_host_bot_gauntlet_button)
 	_apply_seek_action_button_sizing()
 	# Bot league architecture quarantined: do not build its UI surface.
 	pass
