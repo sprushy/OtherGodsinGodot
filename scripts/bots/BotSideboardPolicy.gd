@@ -29,6 +29,7 @@ enum Tag {
 	AERIAL_WEATHER = 5,
 	POWER_GOD = 6,
 	MECHANIC = 7,
+	RUNIC = 8,
 }
 
 const TAG_NAMES := {
@@ -39,6 +40,7 @@ const TAG_NAMES := {
 	Tag.AERIAL_WEATHER: "aerial/weather/tempo",
 	Tag.POWER_GOD: "anti-power/god",
 	Tag.MECHANIC: "anti-mechanic",
+	Tag.RUNIC: "anti-runic/Odin",
 }
 
 # Curated hate classification: card name -> opponent profiles it answers.
@@ -83,6 +85,9 @@ const CARD_HATE_TAGS := {
 	"Warding Stone": [Tag.AERIAL_WEATHER, Tag.MECHANIC],
 	# Anti-power / god.
 	"Absence": [Tag.POWER_GOD],
+	# Anti-runic/Odin: strips Runic Knowledge fuel (Runic and "of Odin" cards)
+	# from the Odin player's hand.
+	"Compelled by the Secret Name": [Tag.RUNIC],
 	# Anti-mechanic: hidden cards, status, stances, followers, protection.
 	"Watchtower": [Tag.MECHANIC],
 	"Light of Morning's Doors": [Tag.MECHANIC],
@@ -155,7 +160,24 @@ static func threat_tags_for_card(card: Card) -> Array[int]:
 		if ability.find(marker) != -1:
 			tags.append(Tag.MECHANIC)
 			break
+	# Odin and every card that fuels Runic Knowledge (a Runic or an
+	# "of Odin" card) mark the matchup where hand hate pays.
+	if card.has_type("Runic") or card.card_name.to_lower().contains("odin"):
+		tags.append(Tag.RUNIC)
 	return tags
+
+
+# Cards whose effects expose the opponent's hand contents (Mopsus's Seer
+# reveals, Dellingr's Radiate). Two or more sources make Compelled by the
+# Secret Name's guaranteed-hit mode reliable, so sideboard planning treats it
+# as on-plan even without Odin observations.
+const HAND_KNOWLEDGE_SOURCE_NAMES := ["Mopsus", "Dellingr, Active God"]
+
+static func count_hand_knowledge_sources(cards: Dictionary) -> int:
+	var count := 0
+	for card_name in HAND_KNOWLEDGE_SOURCE_NAMES:
+		count += int(cards.get(str(card_name), 0))
+	return count
 
 
 ## Hate tags a sideboard-eligible card answers, curated first with a typed
@@ -247,7 +269,7 @@ static func main_deck_tag_coverage(cards: Dictionary) -> Dictionary:
 
 ## How badly this card is wanted against the observed opponent. Zero means the
 ## matchup profile does not call for it (or nothing of its tags was seen).
-static func hate_need(card: Card, observed: Dictionary, coverage: Dictionary = {}) -> int:
+static func hate_need(card: Card, observed: Dictionary, coverage: Dictionary = {}, knowledge_sources: int = 0) -> int:
 	if card == null:
 		return 0
 	var tags := hate_tags_for_card(card)
@@ -265,6 +287,11 @@ static func hate_need(card: Card, observed: Dictionary, coverage: Dictionary = {
 			need += covered_need
 		else:
 			need += seen
+	# Hand hate with multiple own-deck knowledge engines guarantees
+	# declarations, so it stays on-plan even without Odin observations.
+	if need <= 0 and knowledge_sources >= 2 \
+			and str(card.card_name).strip_edges() == "Compelled by the Secret Name":
+		need = 1
 	return need
 
 
@@ -315,6 +342,7 @@ static func plan_swap(
 	if observed.is_empty() or not (validator is DeckValidator):
 		return result
 	var coverage := main_deck_tag_coverage(registered_cards)
+	var knowledge_sources := count_hand_knowledge_sources(registered_cards)
 
 	# Bring-in candidates: sideboard hate the observed opponent invites.
 	var bring_candidates: Array[Dictionary] = []
@@ -322,7 +350,7 @@ static func plan_swap(
 		var card := get_card(name)
 		if card == null:
 			continue
-		var need := hate_need(card, observed, coverage)
+		var need := hate_need(card, observed, coverage, knowledge_sources)
 		if need <= 0:
 			continue
 		bring_candidates.append({
@@ -347,7 +375,7 @@ static func plan_swap(
 		var card := get_card(name)
 		if _is_protected_main_deck_card(card, special_setup):
 			continue
-		if hate_need(card, observed, coverage) > 0:
+		if hate_need(card, observed, coverage, knowledge_sources) > 0:
 			continue
 		cut_candidates.append({
 			"name": str(name),

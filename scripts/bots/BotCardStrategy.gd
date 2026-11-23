@@ -45,7 +45,7 @@ const TACTICAL_CARDS := [
 	"Banishment", "SpellDemolition", "Sap", "SepLemutti", "Smite", "VoidShield", "ObsidianReflection",
 	"TheInferno", "TheDeluge", "Dromi", "Gleipnir", "SapStrength", "VisionOfTartarus", "VisionOfOdin", "Hermes",
 	"Drought", "HeavySnow", "Storm", "SavingGrace", "JiangZiyaFisherOfKings", "ShroudOfTheAncients", "WildMagic",
-	"FairyBlast", "TheChangelingExchange",
+	"FairyBlast", "TheChangelingExchange", "CompelledByTheSecretName",
 ]
 const ACTIVE_POWERS := ["AcceleratedFate", "OraclesSight", "BerserkerMead", "MechFactory", "Palisade", "ManaGuard"]
 const BOARD_ABILITIES := ["Alu", "Lindwyrm", "Lamashatu", "ClayEaters", "AncientPyre", "Watchtower", "Gawain", "Beyla", "Nimue", "JiangZiyaFisherOfKings",
@@ -1539,11 +1539,99 @@ static func effect_score(bot, card: Card, target: Card = null, action: CardActio
 			gain += bot._score_effect_summon_sacrifice_followup(friendly_summons, activation_cost(bot, card))
 		"LightOfMorningsDoors":
 			gain = card._get_hidden_opponent_cards(bot.game_manager).size() * 1500
+		"CompelledByTheSecretName":
+			gain = compelled_secret_name_gain(bot, card)
 	if gain <= BAD:
 		return BAD
 	if id == "Hermes":
 		return gain - mana_penalty(bot, Hermes.ACTIVATION_COST)
 	return gain - CARD_VALUE - mana_penalty(bot, activation_cost(bot, card))
+
+# Honest-information pricing for Compelled by the Secret Name: revealed hand
+# copies are guaranteed hits, and copies the opponent has already sent to
+# public zones price the chance their remaining copies sit in hand. Hidden
+# hand contents are never read.
+static func compelled_secret_name_gain(bot, _card: Card) -> int:
+	return int(best_compelled_secret_declaration(bot).get("gain", 0))
+
+# Returns the best legal declaration {"card_name": String, "gain": int}, or {}
+# when no public information makes the cast worth a card. The gain is the
+# expected value of the discarded copies: exact for a revealed hand copy, a
+# hand-size/deck-size estimate for names confirmed by public-zone copies.
+static func best_compelled_secret_declaration(bot) -> Dictionary:
+	if bot.opponent == null or bot.opponent.hand_zone == null:
+		return {}
+	var hand_size: int = bot.opponent.hand_zone.cards.size()
+	var deck_size: int = bot.opponent.deck_zone.cards.size() if bot.opponent.deck_zone != null else 0
+	if hand_size <= 0:
+		return {}
+	var per_name := {}
+	for hand_card in bot.opponent.hand_zone.cards:
+		if not visible(bot, hand_card) or not CompelledByTheSecretName.is_declared_name_template_valid(hand_card):
+			continue
+		var entry := _compelled_secret_entry(bot, per_name, hand_card)
+		entry["hand_gain"] = int(entry["hand_gain"]) + value(bot, hand_card)
+	for public_card in _compelled_secret_public_cards(bot):
+		if not CompelledByTheSecretName.is_declared_name_template_valid(public_card):
+			continue
+		_compelled_secret_entry(bot, per_name, public_card)
+	# An Odin across the table runs on Runic Knowledge fuel: stripping Runic
+	# and "of Odin" cards from that hand denies activations.
+	var odin_fuel_priority := false
+	if bot.opponent.god_zone != null and not bot.opponent.god_zone.cards.is_empty():
+		var enemy_god: Card = bot.opponent.god_zone.cards[0]
+		odin_fuel_priority = enemy_god != null and enemy_god.card_name.to_lower().contains("odin")
+	var best_gain := 0
+	var best_name := ""
+	for lookup_key in per_name:
+		var entry: Dictionary = per_name[lookup_key]
+		var gain := int(entry["hand_gain"])
+		if gain > 0:
+			# A guaranteed hit also strips tempo and options from the
+			# opponent, so it beats a bare card-for-card trade.
+			@warning_ignore("integer_division")
+			gain += CARD_VALUE / 2
+		else:
+			var unseen := int(entry["max_copies"]) - int(entry["seen_copies"])
+			if unseen <= 0 or deck_size <= 0:
+				continue
+			var expected := float(unseen) * float(hand_size) / float(hand_size + deck_size)
+			gain = roundi(expected * float(entry["sample_value"]) * 0.75)
+		if odin_fuel_priority and bool(entry["is_odin_fuel"]):
+			@warning_ignore("integer_division")
+			gain += CARD_VALUE / 4
+		if gain > best_gain:
+			best_gain = gain
+			best_name = str(entry["card_name"])
+	if best_gain <= 0:
+		return {}
+	return {"gain": best_gain, "card_name": best_name}
+
+static func _compelled_secret_entry(bot, per_name: Dictionary, card: Card) -> Dictionary:
+	var lookup_key := CardCatalog.to_lookup_key(card.card_name)
+	if not per_name.has(lookup_key):
+		per_name[lookup_key] = {
+			"card_name": str(card.card_name),
+			"hand_gain": 0,
+			"seen_copies": 0,
+			"max_copies": 1 if card.is_legendary else 3,
+			"sample_value": value(bot, card),
+			"is_odin_fuel": card.has_type("Runic") or card.card_name.to_lower().contains("odin"),
+		}
+	return per_name[lookup_key]
+
+static func _compelled_secret_public_cards(bot) -> Array:
+	var cards: Array = []
+	if bot.opponent == null:
+		return cards
+	if bot.opponent.graveyard_zone != null:
+		cards.append_array(bot.opponent.graveyard_zone.cards)
+	if bot.opponent.abyss_zone != null:
+		cards.append_array(bot.opponent.abyss_zone.cards)
+	for field_card in bot.game_manager.get_field_cards(bot.opponent):
+		if visible(bot, field_card):
+			cards.append(field_card)
+	return cards
 
 static func shroud_gain(bot, source: Card, action: CardAction = null) -> int:
 	var gain := 0

@@ -859,6 +859,19 @@ func _submit_priority_response(card: Card) -> bool:
 			"hex_uid": card.uid,
 			"target_uid": target_uid,
 		})
+	if card is CompelledByTheSecretName:
+		# The declaration needs public information to be worth a card; never
+		# respond with a blank command.
+		var secret_declaration := CardStrategy.best_compelled_secret_declaration(self)
+		if secret_declaration.is_empty():
+			return false
+		return _submit_action({
+			"type": "play_charm_response",
+			"charm_uid": card.uid,
+			"from_hand": card.current_zone == bot_player.hand_zone,
+			"target_uid": "",
+			"named_card_name": str(secret_declaration["card_name"]),
+		})
 	if card is CharmCard:
 		var charm := card as CharmCard
 		var targets: Array[Card] = []
@@ -3056,6 +3069,11 @@ func _get_best_strategy_action(attacks: Array[Dictionary], attack: Dictionary, d
 			if _is_better_strategy_plan(changeling_plan, best_plan):
 				best_plan = changeling_plan
 			continue
+		if card is CompelledByTheSecretName:
+			var secret_name_plan := _plan_compelled_secret_name(card as CompelledByTheSecretName)
+			if _is_better_strategy_plan(secret_name_plan, best_plan):
+				best_plan = secret_name_plan
+			continue
 		if card is KurJara:
 			# Tree of Life is planned on its own: a proactive resurrection
 			# cycle, plus a withdrawal dodge that still returns its value.
@@ -3644,6 +3662,41 @@ func _plan_conjure_eidolon(spell: ConjureEidolon, attacks: Array[Dictionary], ba
 		if _is_better_strategy_plan(plan, best):
 			best = plan
 	return best
+
+func _plan_compelled_secret_name(charm: CompelledByTheSecretName) -> Dictionary:
+	# The declaration rides on public information only (see
+	# CardStrategy.best_compelled_secret_declaration): with nothing revealed,
+	# the cast is a plain card loss and the charm is held.
+	if charm == null or charm.card_owner != bot_player or charm.is_muted:
+		return {}
+	var cast_check: Callable
+	if charm.is_prepared:
+		if charm.current_zone == null or not charm.current_zone.is_board_zone():
+			return {}
+		cast_check = func() -> bool: return charm.can_activate_prepared(game_manager)
+	else:
+		if charm.current_zone != bot_player.hand_zone:
+			return {}
+		cast_check = func() -> bool: return charm.can_activate_from_hand(game_manager)
+	if not cast_check.call():
+		return {}
+	var declaration := CardStrategy.best_compelled_secret_declaration(self)
+	if declaration.is_empty():
+		return {}
+	var cast_cost := CardStrategy.activation_cost(self, charm)
+	var score := int(declaration["gain"]) - ECON_CARD_VALUE - CardStrategy.mana_penalty(self, cast_cost)
+	if score <= 0:
+		return {}
+	return {
+		"score": score,
+		"command": {
+			"type": "cast_charm",
+			"charm_uid": charm.uid,
+			"target_uid": "",
+			"prepared": charm.is_prepared,
+			"named_card_name": str(declaration["card_name"]),
+		},
+	}
 
 func _plan_special_card(card: Card, attacks: Array[Dictionary], attack: Dictionary, danger: int) -> Dictionary:
 	if card is ApollyonsDemiurge:

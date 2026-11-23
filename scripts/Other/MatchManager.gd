@@ -5676,6 +5676,15 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if charm_ward_block_reason != "":
 				move_failed.emit(charm_ward_block_reason)
 				return false
+			var charm_public_details: Dictionary = {}
+			var charm_resolve_payload: Variant = charm_target
+			if charm_card is CompelledByTheSecretName:
+				var secret_declared_name := str(command.get("named_card_name", "")).strip_edges()
+				if not CompelledByTheSecretName.is_valid_declared_name(secret_declared_name):
+					move_failed.emit("cast_charm: declare the name of a card that could appear in a main deck.")
+					return false
+				charm_public_details["named_card_name"] = CompelledByTheSecretName.get_canonical_declared_name(secret_declared_name)
+				charm_resolve_payload = charm_public_details["named_card_name"]
 			var charm_prepared: bool = command.get("prepared", false) or charm_card.is_prepared
 			var charm_source_action: CardAction = game_manager.action_stack.back() if not game_manager.action_stack.is_empty() else null
 			if charm_prepared:
@@ -5696,7 +5705,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var preferred_display_zone: Zone = charm_card.current_zone if charm_prepared else charm_command_display_zone
 			var charm_resolve := func() -> void:
 				_place_persistent_magic_on_board(charm_card, preferred_display_zone)
-				charm_card.resolve(game_manager, charm_target)
+				charm_card.resolve(game_manager, charm_resolve_payload)
 				if charm_card.goes_to_graveyard_after_use() \
 						and charm_card.current_zone != null \
 						and charm_card.current_zone != charm_card.card_owner.graveyard_zone:
@@ -5708,7 +5717,8 @@ func _process_command_impl(command: Dictionary) -> bool:
 				charm_resolve,
 				"",
 				preferred_display_zone,
-				charm_source_action
+				charm_source_action,
+				charm_public_details
 			)
 			_advance_authoritative_priority()
 			move_validated.emit(command)
@@ -7150,15 +7160,26 @@ func _process_command_impl(command: Dictionary) -> bool:
 				if not game_manager.activate_prepared_card(pcr_charm, pcr_charm.card_owner):
 					move_failed.emit(_get_move_cost_payment_failure_reason(pcr_charm_card, true, pcr_charm_card.card_owner))
 					return false
+			var pcr_public_details: Dictionary = {}
+			var pcr_resolve_payload: Variant = pcr_target
+			if pcr_charm_card is CompelledByTheSecretName:
+				var pcr_declared_name := str(command.get("named_card_name", "")).strip_edges()
+				if not CompelledByTheSecretName.is_valid_declared_name(pcr_declared_name):
+					move_failed.emit("play_charm_response: declare the name of a card that could appear in a main deck.")
+					return false
+				pcr_public_details["named_card_name"] = CompelledByTheSecretName.get_canonical_declared_name(pcr_declared_name)
+				pcr_resolve_payload = pcr_public_details["named_card_name"]
 			var pcr_action := CardAction.new()
 			pcr_action.type = CardAction.Type.CHARM
 			pcr_action.source_player = pcr_charm_card.card_owner
 			pcr_action.card = pcr_charm
 			pcr_action.target = pcr_target
 			pcr_action.response_to = pcr_source
+			for pcr_detail_key in pcr_public_details:
+				pcr_action.event_data[pcr_detail_key] = pcr_public_details[pcr_detail_key]
 			pcr_action.resolve_callback = func() -> void:
 				_place_persistent_magic_on_board(pcr_charm_card, pcr_action.display_zone)
-				pcr_charm_card.resolve(game_manager, pcr_target)
+				pcr_charm_card.resolve(game_manager, pcr_resolve_payload)
 				if pcr_charm_card.goes_to_graveyard_after_use() \
 						and pcr_charm_card.current_zone != null \
 						and pcr_charm_card.current_zone != pcr_charm_card.card_owner.graveyard_zone:

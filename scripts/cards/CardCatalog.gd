@@ -20,6 +20,7 @@ const EXCLUDED_FILENAMES := [
 	"StructureCard.gd"
 ]
 const CARD_SCRIPT_PATHS := [
+	"res://scripts/cards/Charms/CompelledByTheSecretName.gd",
 	"res://scripts/cards/Charms/DivineLightning.gd",
 	"res://scripts/cards/Charms/Exorcism.gd",
 	"res://scripts/cards/Charms/FifaTheMagicalArrow.gd",

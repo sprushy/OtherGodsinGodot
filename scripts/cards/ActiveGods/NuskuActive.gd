@@ -60,7 +60,16 @@ func resolve_from_command(game_manager: GameManager, command: Dictionary) -> Str
 	var decline := bool(command.get("decline", false))
 	var chosen_uid := str(command.get("chosen_uid", command.get("target_uid", ""))).strip_edges()
 	var feedback := ""
+	var choosing_stage := has_pending_core_flame_choice()
 	if decline:
+		if choosing_stage:
+			# Declining is only offered before the mill. A decline answer at the
+			# choose stage (a bot heuristic can flip once its own mill grows the
+			# grave) must fizzle cleanly: clear the pending choice so the
+			# deferred impact event completes instead of being re-prompted
+			# forever.
+			_clear_pending_core_flame_choice()
+			return _note_core_flame_feedback(game_manager, "Core Flame choice is no longer available.")
 		if not _consume_pending_core_flame_initial_prompt():
 			return _note_core_flame_feedback(game_manager, "Core Flame choice is no longer available.")
 		_clear_pending_core_flame_choice()
@@ -68,6 +77,11 @@ func resolve_from_command(game_manager: GameManager, command: Dictionary) -> Str
 	elif chosen_uid != "":
 		feedback = _complete_pending_core_flame_choice(game_manager, chosen_uid)
 	else:
+		if choosing_stage:
+			# Same fizzle rule: a choose-stage command without a card choice
+			# cannot restart the mill.
+			_clear_pending_core_flame_choice()
+			return _note_core_flame_feedback(game_manager, "Core Flame choice is no longer available.")
 		if not _consume_pending_core_flame_initial_prompt():
 			return _note_core_flame_feedback(game_manager, "Core Flame choice is no longer available.")
 		feedback = _resolve_core_flame_after_mill(game_manager)
@@ -203,9 +217,15 @@ func _request_core_flame_milled_choice(game_manager: GameManager, eligible_cards
 func _complete_pending_core_flame_choice(game_manager: GameManager, chosen_uid: String) -> String:
 	var pending_choice_uids: Array = get_meta(CORE_FLAME_PENDING_CHOICE_UIDS_META, [])
 	if chosen_uid == "" or chosen_uid not in pending_choice_uids:
+		# A stale choice must not wedge the deferred impact event on the
+		# stack; fizzle it so the game can move on.
+		_clear_pending_core_flame_choice()
 		return "Core Flame choice is no longer available."
 	var chosen_card := game_manager.get_card_by_uid(chosen_uid)
 	if chosen_card == null or chosen_card.current_zone != card_owner.graveyard_zone or not chosen_card.is_magical_card():
+		# The offered card left the graveyard between prompt and answer
+		# (e.g. a response effect); fizzle instead of re-prompting forever.
+		_clear_pending_core_flame_choice()
 		return "Core Flame choice is no longer available."
 	var mill_count := int(get_meta(CORE_FLAME_PENDING_MILL_COUNT_META, MILL_COUNT))
 	return _complete_core_flame_choice(game_manager, chosen_card, mill_count)

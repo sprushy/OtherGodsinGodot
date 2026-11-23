@@ -16826,6 +16826,19 @@ func _should_reveal_charm_target_cards(charm: CharmCard, targets: Array) -> bool
 func _queue_charm_action(charm: CharmCard, triggering_action: CardAction = null, target: Card = null) -> void:
 	if charm == null or game_manager == null:
 		return
+	if charm is CompelledByTheSecretName:
+		var secret_source_action: CardAction = triggering_action
+		if secret_source_action == null and not game_manager.action_stack.is_empty():
+			secret_source_action = game_manager.action_stack.back()
+		var secret_priority_response: bool = secret_source_action != null and not game_manager.action_stack.is_empty()
+		var secret_from_hand: bool = charm.current_zone == charm.card_owner.hand_zone
+		var secret_display_zone: Zone = _get_paid_hand_card_display_zone(charm)
+		if secret_display_zone == null and spell_waiting_for_display_zone != null:
+			secret_display_zone = _resolve_pending_display_zone(charm, spell_waiting_for_display_zone)
+		elif secret_display_zone == null and _pending_spell_display_zone != null:
+			secret_display_zone = _resolve_pending_display_zone(charm, _pending_spell_display_zone)
+		_show_compelled_secret_name_prompt(charm as CompelledByTheSecretName, secret_priority_response, secret_from_hand, secret_display_zone)
+		return
 	var source_action: CardAction = triggering_action
 	if source_action == null and not game_manager.action_stack.is_empty():
 		source_action = game_manager.action_stack.back()
@@ -18903,6 +18916,66 @@ func _show_metamorphosis_subtype_prompt(spell: Metamorphosis, display_zone: Zone
 		"Search subtypes",
 		typing_labels,
 		choose_typing,
+		cancel
+	)
+
+func _show_compelled_secret_name_prompt(
+	charm: CompelledByTheSecretName,
+	priority_response: bool,
+	from_hand: bool,
+	display_zone: Zone = null
+) -> void:
+	var charm_command: Dictionary
+	if priority_response:
+		charm_command = {
+			type = "play_charm_response",
+			charm_uid = charm.uid,
+			target_uid = "",
+			from_hand = from_hand,
+		}
+	else:
+		charm_command = {
+			type = "cast_charm",
+			charm_uid = charm.uid,
+			target_uid = "",
+			prepared = not from_hand,
+		}
+		_add_display_zone_to_command(charm_command, display_zone)
+	var choose_name := func(declared_name: String) -> void:
+		selected_card = null
+		_pending_spell_display_zone = null
+		charm_command["named_card_name"] = declared_name
+		if priority_response:
+			if not _submit_authoritative_priority_command(charm_command):
+				_show_priority_response_submit_failure(charm)
+				_restore_priority_prompt_from_authoritative_state()
+			else:
+				_set_action_label_text(charm.card_name + " compels a secret name.")
+				update_ui()
+			return
+		if game_input == null:
+			_set_action_label_text("No match command transport is available.")
+			update_ui()
+			return
+		game_input.submit_action(charm_command)
+		_set_action_label_text(charm.card_name + " compels a secret name.")
+		update_ui()
+	var cancel := func() -> void:
+		selected_card = null
+		_pending_spell_display_zone = null
+		_set_action_label_text("Cancelled " + charm.card_name + ".")
+		update_ui()
+		if priority_response:
+			_clear_priority_prompt_command_context()
+			_restore_priority_prompt_from_authoritative_state()
+			if not _is_priority_prompt_visible():
+				_offer_priority()
+	_show_searchable_name_prompt(
+		"Compelled by the Secret Name: Declare a name",
+		"Name any card that could appear in a main deck. If your opponent holds copies of it, they discard all of them.",
+		"Search card names",
+		charm.get_declared_name_options(),
+		choose_name,
 		cancel
 	)
 
@@ -25109,6 +25182,14 @@ func _try_submit_authoritative_priority_response(card: Card) -> bool:
 		return _submit_authoritative_priority_command(command)
 	if card is CharmCard:
 		var charm := card as CharmCard
+		if charm is CompelledByTheSecretName:
+			_show_compelled_secret_name_prompt(
+				charm as CompelledByTheSecretName,
+				true,
+				charm.current_zone == charm.card_owner.hand_zone,
+				null
+			)
+			return true
 		var targets: Array = charm.get_priority_targets(game_manager, top) if charm.targets else []
 		if game_manager != null and charm.targets:
 			targets = game_manager.filter_guardian_targets(targets, charm)

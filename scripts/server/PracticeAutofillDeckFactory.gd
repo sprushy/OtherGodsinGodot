@@ -686,6 +686,7 @@ func build_reinforcements_for_deck(
 	var rng := RandomNumberGenerator.new()
 	rng.seed = absi(seed_value) if seed_value != 0 else absi(hash(str(god_name) + JSON.stringify(cards)))
 	var coverage := BotSideboardPolicyScript.main_deck_tag_coverage(cards)
+	var knowledge_sources := BotSideboardPolicyScript.count_hand_knowledge_sources(cards)
 	var combined: Dictionary = cards.duplicate(true)
 	var reinforcements: Dictionary = {}
 	var order: Array = []
@@ -699,7 +700,7 @@ func build_reinforcements_for_deck(
 			if not _is_sideboard_candidate(template, god, combined):
 				continue
 			candidates.append(template)
-			weights.append(_sideboard_pick_weight(template, coverage, rng))
+			weights.append(_sideboard_pick_weight(template, coverage, rng, knowledge_sources))
 		if candidates.is_empty():
 			break
 		var chosen := _weighted_pick_index(weights, rng)
@@ -744,7 +745,7 @@ func _is_sideboard_candidate(card: Card, god: GodCard, combined: Dictionary) -> 
 		return false
 	return _has_deckbuilding_requirements(card, combined, god)
 
-func _sideboard_pick_weight(card: Card, coverage: Dictionary, rng: RandomNumberGenerator) -> float:
+func _sideboard_pick_weight(card: Card, coverage: Dictionary, rng: RandomNumberGenerator, knowledge_sources: int = 0) -> float:
 	var weight := 1.0
 	var tags := BotSideboardPolicyScript.hate_tags_for_card(card)
 	if not tags.is_empty():
@@ -754,6 +755,12 @@ func _sideboard_pick_weight(card: Card, coverage: Dictionary, rng: RandomNumberG
 				uncovered = true
 				break
 		weight = 2.5 if uncovered else 0.4
+		if str(card.card_name).strip_edges() == "Compelled by the Secret Name" \
+				and knowledge_sources >= 2:
+			# Multiple ways to know the opponent's hand guarantee
+			# declarations, so the charm stays on-plan even when the deck
+			# already covers its tag.
+			weight = 2.5
 	return weight * (0.5 + rng.randf())
 
 func _weighted_pick_index(weights: Array[float], rng: RandomNumberGenerator) -> int:

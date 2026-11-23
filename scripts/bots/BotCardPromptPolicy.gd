@@ -174,7 +174,18 @@ static func build_command(bot, type: String, data: Dictionary) -> Dictionary:
 			var decline_core_flame: bool = nusku_active != null and bot._should_decline_nusku_core_flame(nusku_active)
 			command.merge({"type": "nusku_active_core_flame_choice", "decline": decline_core_flame})
 			if str(data.get("stage", "")) == "choose":
-				command["chosen_uid"] = _best_uid(bot, data, "target_uids", false)
+				# The mill already resolved, so declining is no longer offered.
+				# Re-running the decline analysis here dead-ends the deferred
+				# impact event: this mill grew the grave by 7, which can flip
+				# _should_decline_nusku_core_flame past its threshold and strand
+				# the prompt in a re-emission loop. Always name a milled card.
+				command["decline"] = false
+				var chosen_uid := _best_uid(bot, data, "target_uids", false)
+				if chosen_uid == "":
+					var offered_uids: Array = data.get("target_uids", [])
+					if not offered_uids.is_empty():
+						chosen_uid = str(offered_uids[0])
+				command["chosen_uid"] = chosen_uid
 		"gala_tura_destroyed":
 			command.merge({
 				"type": "gala_tura_destroyed_choice",
