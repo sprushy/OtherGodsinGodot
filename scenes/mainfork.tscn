@@ -105,7 +105,7 @@ layout_mode = 2
 text = "Seeks And Live Matches"
 
 [node name="SeekList" type="ItemList" parent="Control/MenuContainer/MultiplayerContainer" unique_id=254099637]
-custom_minimum_size = Vector2(0, 180)
+custom_minimum_size = Vector2(0, 320)
 layout_mode = 2
 
 [node name="LeaveSeekButton" type="Button" parent="Control/MenuContainer/MultiplayerContainer" unique_id=124902114]

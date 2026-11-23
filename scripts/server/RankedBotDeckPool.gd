@@ -161,6 +161,13 @@ func refresh(results: Array[Dictionary]) -> void:
 	_replayed_match_count = results.size()
 	_last_replayed_id = last_result_id
 
+func reset_replay_state() -> void:
+	# A saved pool may have been built from a different result stream (for
+	# example before results were split by best-of). Force the next refresh to
+	# replay its assigned results in full instead of resuming a stale cursor.
+	_replayed_match_count = -1
+	_last_replayed_id = ""
+
 func get_eliminated_bot_match_ids() -> Dictionary:
 	return _eliminated_bot_match_ids.duplicate()
 

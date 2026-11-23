@@ -268,6 +268,7 @@ func _build_bot_deck_results(match_session, player_entries: Array[Dictionary]) -
 			"result": player_entry["result"],
 			"player_index": player_entry["player_index"],
 			"is_self_play": match_session.is_bot_self_play(),
+			"best_of": int(match_session.series_best_of),
 		})
 	return results
 
@@ -292,6 +293,8 @@ func get_bot_deck_results() -> Array[Dictionary]:
 			legacy["match_id"] = match_id
 			if not legacy.has("played_unix"):
 				legacy["played_unix"] = float(entry.get("played_unix", 0.0))
+			if not legacy.has("best_of"):
+				legacy["best_of"] = int(entry.get("best_of", 1))
 			_bot_results.append(legacy)
 		for row: Dictionary in entry.get("bot_deck_results", []):
 			var result := row.duplicate(true)
@@ -301,6 +304,8 @@ func get_bot_deck_results() -> Array[Dictionary]:
 			result["bot_eliminated"] = false
 			if not result.has("played_unix"):
 				result["played_unix"] = float(entry.get("played_unix", 0.0))
+			if not result.has("best_of"):
+				result["best_of"] = int(entry.get("best_of", 1))
 			_bot_results.append(result)
 	return _bot_results
 

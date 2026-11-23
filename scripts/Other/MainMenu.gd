@@ -26,6 +26,7 @@ const UIHoverSfxScript = preload("res://scripts/core/UIHoverSfx.gd")
 const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
 const RankedLadderViewScript = preload("res://scripts/ui/RankedLadderView.gd")
 const RankBadgeCatalog = preload("res://scripts/core/RankBadgeCatalog.gd")
+const RankBadgeScript = preload("res://scripts/ui/RankBadge.gd")
 const RankBadgePickerScript = preload("res://scripts/ui/RankBadgePicker.gd")
 const BotLadderViewScript = preload("res://scripts/ui/BotLadderView.gd")
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
@@ -110,6 +111,11 @@ const MENU_INPUT_FONT_SIZE := 20
 const MENU_INPUT_MIN_HEIGHT := 44.0
 const MENU_USERNAME_FONT_SIZE := 32
 const MENU_ACCOUNT_IDENTITY_FONT_SIZE := 20
+const RANKED_RULES_TOOLTIP := "Both players must sign in for a rated match to count. " \
+	+ "Each division takes three stars. A win earns one star. " \
+	+ "From your third consecutive win through Gold, wins earn two stars. " \
+	+ "Losses cost one star starting in Silver, with floors at Divisions V and III. " \
+	+ "Ranks reset monthly based on your season peak."
 const LOCAL_BOT_MATCH_MIN_AVAILABLE_BYTES := 2 * 1024 * 1024 * 1024
 const LOCAL_BOT_MATCH_MEMORY_PER_WORKER := 1024 * 1024 * 1024
 const LOCAL_BOT_MATCH_RESERVED_CORES := 3
@@ -271,9 +277,8 @@ var _pending_active_match_rejoin_info: Dictionary = {}
 var _create_unranked_seek_button: Button = null
 var _create_bo3_ranked_seek_button: Button = null
 var _create_bo3_unranked_seek_button: Button = null
-var _profile_summary_panel: PanelContainer = null
-var _profile_summary_label: Label = null
 var _rank_badge_buttons: Dictionary[int, Button] = {}
+var _rank_badge_previews: Dictionary[int, RankBadgeScript] = {}
 var _rank_badge_picker: RankBadgePickerScript
 var _current_profile_summary: Dictionary = {}
 var _ranked_ladder_button: Button = null
@@ -423,10 +428,10 @@ var _request_next_notices: VBoxContainer = null
 var _deck_picker_button: Button = null
 var _deck_picker_popup: PanelContainer = null
 var _deck_picker_popup_list: VBoxContainer = null
-var _multiplayer_deck_summary_panel: PanelContainer = null
 var _multiplayer_deck_summary_art: TextureRect = null
 var _multiplayer_deck_summary_name_label: Label = null
 var _multiplayer_deck_summary_god_label: Label = null
+var _multiplayer_deck_summary_record_label: Label = null
 var _server_version_label: Label = null
 var _connected_server_version: String = ""
 var _menu_card_templates: Dictionary = {}
@@ -537,7 +542,6 @@ func _ready() -> void:
 	_startup_trace("_ready: local profile store loaded")
 	_restore_auth_preferences()
 	_startup_trace("_ready: auth prefs restored")
-	_build_profile_summary_controls()
 	_build_seek_tabs()
 	_build_players_online_controls()
 	_build_recent_activity_panel()
@@ -2334,6 +2338,33 @@ func _build_menu_card_template_cache() -> void:
 			_menu_card_templates[lookup_key] = card
 	_menu_card_templates_built = true
 
+func _make_multiplayer_deck_field_style(bg_color: Color, border_color: Color) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = bg_color
+	style.border_color = border_color
+	style.set_border_width_all(1)
+	style.set_corner_radius_all(6)
+	style.set_content_margin_all(10)
+	return style
+
+func _make_flat_style(bg_color: Color) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = bg_color
+	style.set_border_width_all(0)
+	style.set_corner_radius_all(4)
+	style.set_content_margin_all(6)
+	return style
+
+func _apply_seek_field_button_style(button: Button, emphasize: bool) -> void:
+	var normal_bg := Color(0.14, 0.15, 0.20, 0.92) if emphasize else Color(0.0, 0.0, 0.0, 0.0)
+	var hover_bg := Color(0.22, 0.20, 0.26, 0.96) if emphasize else Color(0.18, 0.20, 0.26, 0.55)
+	var pressed_bg := Color(0.30, 0.26, 0.30, 1.0) if emphasize else Color(0.24, 0.22, 0.28, 0.75)
+	var disabled_bg := Color(0.10, 0.11, 0.14, 0.80) if emphasize else Color(0.0, 0.0, 0.0, 0.0)
+	button.add_theme_stylebox_override("normal", _make_flat_style(normal_bg))
+	button.add_theme_stylebox_override("hover", _make_flat_style(hover_bg))
+	button.add_theme_stylebox_override("pressed", _make_flat_style(pressed_bg))
+	button.add_theme_stylebox_override("disabled", _make_flat_style(disabled_bg))
+
 func _build_multiplayer_deck_controls() -> void:
 	if menu_container == null or multiplayer_container == null or _deck_picker_button != null:
 		return
@@ -2357,57 +2388,68 @@ func _build_multiplayer_deck_controls() -> void:
 	menu_container.move_child(button, menu_insert_index)
 	_deck_picker_button = button
 
-	var screen_button := Button.new()
-	screen_button.name = "MultiplayerDeckChangeButton"
-	screen_button.text = "Change Deck: No saved decks"
-	screen_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	screen_button.custom_minimum_size = Vector2(0, 36)
-	screen_button.alignment = HORIZONTAL_ALIGNMENT_CENTER
-	screen_button.pressed.connect(_toggle_multiplayer_deck_popup.bind(screen_button))
-	multiplayer_container.add_child(screen_button)
-	_multiplayer_deck_change_button = screen_button
-
-	var summary_panel := PanelContainer.new()
-	summary_panel.name = "SelectedDeckSummaryPanel"
-	summary_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var summary_style := StyleBoxFlat.new()
-	summary_style.bg_color = Color(0.08, 0.09, 0.13, 0.95)
-	summary_style.border_color = Color(0.32, 0.36, 0.46, 1.0)
-	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		summary_style.set_border_width(side as Side, 1)
-	summary_style.corner_radius_top_left = 6
-	summary_style.corner_radius_top_right = 6
-	summary_style.corner_radius_bottom_left = 6
-	summary_style.corner_radius_bottom_right = 6
-	summary_panel.add_theme_stylebox_override("panel", summary_style)
-	multiplayer_container.add_child(summary_panel)
+	var field_button := Button.new()
+	field_button.name = "MultiplayerDeckChangeButton"
+	field_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	field_button.custom_minimum_size = Vector2(0, 92)
+	field_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	field_button.pressed.connect(_toggle_multiplayer_deck_popup.bind(field_button))
+	field_button.add_theme_stylebox_override("normal", _make_multiplayer_deck_field_style(Color(0.08, 0.09, 0.13, 0.95), Color(0.32, 0.36, 0.46, 1.0)))
+	field_button.add_theme_stylebox_override("hover", _make_multiplayer_deck_field_style(Color(0.12, 0.13, 0.18, 0.98), Color(0.60, 0.54, 0.32, 1.0)))
+	field_button.add_theme_stylebox_override("pressed", _make_multiplayer_deck_field_style(Color(0.16, 0.15, 0.20, 1.0), Color(0.86, 0.78, 0.36, 1.0)))
+	field_button.add_theme_stylebox_override("disabled", _make_multiplayer_deck_field_style(Color(0.07, 0.08, 0.11, 0.90), Color(0.24, 0.26, 0.32, 1.0)))
+	multiplayer_container.add_child(field_button)
 	if create_seek_button != null:
-		multiplayer_container.move_child(summary_panel, create_seek_button.get_index())
-	multiplayer_container.move_child(screen_button, summary_panel.get_index())
-	_multiplayer_deck_summary_panel = summary_panel
+		multiplayer_container.move_child(field_button, create_seek_button.get_index())
+	_multiplayer_deck_change_button = field_button
 
-	var summary_row := HBoxContainer.new()
-	summary_row.add_theme_constant_override("separation", 12)
-	summary_panel.add_child(summary_row)
+	var field_row := HBoxContainer.new()
+	field_row.name = "DeckFieldRow"
+	field_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	field_row.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	field_row.offset_left = 10
+	field_row.offset_top = 10
+	field_row.offset_right = -10
+	field_row.offset_bottom = -10
+	field_row.add_theme_constant_override("separation", 12)
+	field_button.add_child(field_row)
+
+	var deck_label := Label.new()
+	deck_label.text = "Deck"
+	deck_label.custom_minimum_size = Vector2(58, 0)
+	deck_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	deck_label.add_theme_font_size_override("font_size", 20)
+	deck_label.add_theme_color_override("font_color", Color(0.94, 0.88, 0.55))
+	deck_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	field_row.add_child(deck_label)
+
+	var selected_box := HBoxContainer.new()
+	selected_box.name = "SelectedDeckBox"
+	selected_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	selected_box.add_theme_constant_override("separation", 10)
+	selected_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	field_row.add_child(selected_box)
 
 	var art := TextureRect.new()
-	art.custom_minimum_size = Vector2(78, 104)
+	art.custom_minimum_size = Vector2(48, 70)
 	art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	art.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	summary_row.add_child(art)
+	selected_box.add_child(art)
 	_multiplayer_deck_summary_art = art
 
 	var summary_text := VBoxContainer.new()
 	summary_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	summary_text.add_theme_constant_override("separation", 4)
-	summary_row.add_child(summary_text)
+	summary_text.add_theme_constant_override("separation", 2)
+	summary_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	selected_box.add_child(summary_text)
 
 	var summary_name := Label.new()
 	summary_name.text = "No deck selected"
 	summary_name.add_theme_font_size_override("font_size", 17)
 	summary_name.add_theme_color_override("font_color", Color(0.94, 0.90, 0.78))
 	summary_name.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	summary_name.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	summary_text.add_child(summary_name)
 	_multiplayer_deck_summary_name_label = summary_name
 
@@ -2416,8 +2458,27 @@ func _build_multiplayer_deck_controls() -> void:
 	summary_god.add_theme_font_size_override("font_size", 12)
 	summary_god.add_theme_color_override("font_color", Color(0.72, 0.78, 0.86))
 	summary_god.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	summary_god.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	summary_text.add_child(summary_god)
 	_multiplayer_deck_summary_god_label = summary_god
+
+	var summary_record := Label.new()
+	summary_record.text = "Record: —"
+	summary_record.add_theme_font_size_override("font_size", 12)
+	summary_record.add_theme_color_override("font_color", Color(0.78, 0.82, 0.90))
+	summary_record.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	summary_text.add_child(summary_record)
+	_multiplayer_deck_summary_record_label = summary_record
+
+	var change_hint := Label.new()
+	change_hint.text = ">"
+	change_hint.custom_minimum_size = Vector2(18, 0)
+	change_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	change_hint.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	change_hint.add_theme_font_size_override("font_size", 20)
+	change_hint.add_theme_color_override("font_color", Color(0.86, 0.78, 0.36))
+	change_hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	field_row.add_child(change_hint)
 
 	var popup := PanelContainer.new()
 	popup.name = "DeckPickerPopup"
@@ -2663,12 +2724,15 @@ func _refresh_multiplayer_deck_picker_button() -> void:
 				var reason := str(selected_entry.get("reason", "")).strip_edges()
 				button_text = "Change Deck: %s (Unavailable)" % deck_name
 				button_tooltip = reason if not reason.is_empty() else "This deck is unavailable for multiplayer."
-	for change_deck_button in [_deck_picker_button, _multiplayer_deck_change_button]:
-		if change_deck_button == null or not is_instance_valid(change_deck_button):
-			continue
-		change_deck_button.text = button_text
-		change_deck_button.tooltip_text = button_tooltip
-		change_deck_button.disabled = disabled
+	if _deck_picker_button != null and is_instance_valid(_deck_picker_button):
+		_deck_picker_button.text = button_text
+		_deck_picker_button.tooltip_text = button_tooltip
+		_deck_picker_button.disabled = disabled
+	# The multiplayer field renders its own "Deck" label and deck summary,
+	# so only its state needs to be refreshed here.
+	if _multiplayer_deck_change_button != null and is_instance_valid(_multiplayer_deck_change_button):
+		_multiplayer_deck_change_button.tooltip_text = button_tooltip
+		_multiplayer_deck_change_button.disabled = disabled
 
 func _make_multiplayer_deck_entry_row(entry: Dictionary) -> Control:
 	var row := PanelContainer.new()
@@ -2911,7 +2975,7 @@ func _update_multiplayer_deck_hint() -> void:
 	var selected_entry: Dictionary = _get_selected_multiplayer_deck_entry()
 	if _multiplayer_deck_summary_name_label != null:
 		if selected_entry.is_empty():
-			_multiplayer_deck_summary_name_label.text = "No deck selected" if _multiplayer_deck_entries.is_empty() else "Choose a deck on the main menu"
+			_multiplayer_deck_summary_name_label.text = "No deck selected" if _multiplayer_deck_entries.is_empty() else "Click to choose a deck"
 			if _multiplayer_deck_summary_god_label != null:
 				_multiplayer_deck_summary_god_label.text = ""
 			if _multiplayer_deck_summary_art != null:
@@ -2930,6 +2994,7 @@ func _update_multiplayer_deck_hint() -> void:
 				else:
 					_multiplayer_deck_summary_art.texture = null
 				_multiplayer_deck_summary_art.modulate = Color(1.0, 1.0, 1.0, 1.0) if is_legal else Color(0.74, 0.74, 0.74, 0.82)
+	_refresh_selected_deck_match_record()
 	if deck_hint_label == null:
 		return
 	if _is_account_sign_in_required():
@@ -11935,51 +12000,80 @@ func _refresh_open_deck_builder_saved_decks() -> void:
 	if deck_builder.has_method("configure_friends"):
 		deck_builder.configure_friends(_get_friend_usernames())
 
-func _build_profile_summary_controls() -> void:
-	if multiplayer_container == null or _profile_summary_label != null:
-		return
-	var panel := PanelContainer.new()
-	panel.name = "ProfileSummaryPanel"
-	panel.visible = false
-	panel.mouse_filter = Control.MOUSE_FILTER_STOP
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.08, 0.10, 0.14, 0.92)
-	style.border_color = Color(0.30, 0.40, 0.55, 0.8)
-	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-		style.set_border_width(side as Side, 1)
-	style.corner_radius_top_left = 4
-	style.corner_radius_top_right = 4
-	style.corner_radius_bottom_left = 4
-	style.corner_radius_bottom_right = 4
-	panel.add_theme_stylebox_override("panel", style)
-	_profile_summary_panel = panel
+func _make_rated_seek_field(best_of: int, insert_index: int) -> PanelContainer:
+	var field := PanelContainer.new()
+	field.name = "Bo%dRatedSeekField" % best_of
+	var style := _make_multiplayer_deck_field_style(Color(0.09, 0.10, 0.14, 0.96), Color(0.52, 0.45, 0.28, 1.0))
+	style.set_content_margin_all(6)
+	field.add_theme_stylebox_override("panel", style)
+	multiplayer_container.add_child(field)
+	multiplayer_container.move_child(field, clampi(insert_index, 0, multiplayer_container.get_child_count() - 1))
 	var row := HBoxContainer.new()
-	panel.add_child(row)
-	_profile_summary_label = Label.new()
-	_profile_summary_label.name = "ProfileSummaryLabel"
-	_profile_summary_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_profile_summary_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-	_profile_summary_label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
-	_profile_summary_label.add_theme_font_size_override("font_size", 13)
-	_profile_summary_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_profile_summary_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.add_child(_profile_summary_label)
-	var badge_buttons := VBoxContainer.new()
-	badge_buttons.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.add_child(badge_buttons)
+	row.name = "RatedSeekRow"
+	row.add_theme_constant_override("separation", 6)
+	field.add_child(row)
+	return field
+
+func _attach_seek_button_to_field(field: PanelContainer, seek_button: Button) -> void:
+	var row := field.get_node_or_null("RatedSeekRow") as HBoxContainer
+	if row == null or seek_button == null:
+		return
+	seek_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	seek_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_apply_seek_field_button_style(seek_button, false)
+	row.add_child(seek_button)
+
+func _add_rank_badge_button(best_of: int, field: PanelContainer) -> void:
+	if _rank_badge_buttons.has(best_of) and is_instance_valid(_rank_badge_buttons[best_of]):
+		return
+	var row := field.get_node_or_null("RatedSeekRow") as HBoxContainer
+	if row == null:
+		return
+	var button := Button.new()
+	button.name = "Bo%dRankBadgeButton" % best_of
+	button.text = ""
+	button.tooltip_text = "Choose and crop your Bo%d rank badge portrait" % best_of
+	button.size_flags_horizontal = Control.SIZE_SHRINK_END
+	button.custom_minimum_size = Vector2(104, 0)
+	_apply_seek_field_button_style(button, true)
+	button.pressed.connect(_open_rank_badge_picker.bind(best_of))
+	button.hide()
+	var content := HBoxContainer.new()
+	content.name = "BadgeButtonContent"
+	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	content.alignment = BoxContainer.ALIGNMENT_CENTER
+	content.add_theme_constant_override("separation", 6)
+	content.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	button.add_child(content)
+	var label := Label.new()
+	label.text = "Badge"
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	content.add_child(label)
+	var preview := RankBadgeScript.new()
+	preview.name = "BadgePreview"
+	preview.custom_minimum_size = Vector2(30, 30)
+	preview.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	preview.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	content.add_child(preview)
+	_rank_badge_previews[best_of] = preview
+	row.add_child(button)
+	_rank_badge_buttons[best_of] = button
+
+func _update_rank_badge_previews() -> void:
 	for best_of in [1, 3]:
-		var button := Button.new()
-		button.text = "Bo%d Badge" % best_of
-		button.tooltip_text = "Choose and crop your rank badge portrait"
-		button.pressed.connect(_open_rank_badge_picker.bind(best_of))
-		button.hide()
-		badge_buttons.add_child(button)
-		_rank_badge_buttons[best_of] = button
-	multiplayer_container.add_child(panel)
-	multiplayer_container.visibility_changed.connect(_on_rank_badge_lobby_visibility_changed)
-	if seek_list != null:
-		multiplayer_container.move_child(panel, seek_list.get_index())
+		var preview := _rank_badge_previews.get(best_of) as RankBadgeScript
+		if preview == null or not is_instance_valid(preview):
+			continue
+		var key := "ranked_bo3_progress" if best_of == 3 else "ranked_progress"
+		var raw_progress: Variant = _current_profile_summary.get(key, {})
+		var progress: Dictionary = raw_progress if raw_progress is Dictionary else {}
+		var rank := str(progress.get("rank_name", "")).strip_edges()
+		var raw_portrait: Variant = progress.get("portrait", {})
+		var portrait: Dictionary = raw_portrait if raw_portrait is Dictionary else {}
+		preview.visible = not rank.is_empty()
+		if preview.visible:
+			preview.set_badge(rank, portrait)
 
 func _open_rank_badge_picker(best_of: int) -> void:
 	if not _has_active_lobby_connection() or is_instance_valid(_rank_badge_picker):
@@ -12924,56 +13018,99 @@ func _refresh_account_identity_label() -> void:
 	_account_identity_label.visible = false
 	_refresh_auth_controls()
 
+## Rank information now lives on the matching rated seek button, and the
+## match record lives on the selected deck field. The old profile panel is gone.
 func _refresh_profile_summary_label() -> void:
 	_refresh_ranked_ladder()
 	_refresh_ladder_profile_summary()
-	if _profile_summary_label == null:
-		return
-	var panel := _profile_summary_panel if _profile_summary_panel != null else _profile_summary_label.get_parent()
-	if _current_profile_summary.is_empty():
-		_profile_summary_label.text = ""
-		if panel != null:
-			panel.visible = false
-		return
-	var total_wins: int = int(_current_profile_summary.get("total_wins", 0))
-	var total_losses: int = int(_current_profile_summary.get("total_losses", 0))
-	var summary_line := "Match Record: %d-%d" % [total_wins, total_losses]
-	var lines: Array[String] = [summary_line]
 	var ranked_by_format: Dictionary = {
 		1: _current_profile_summary.get("ranked_progress", {}),
 		3: _current_profile_summary.get("ranked_bo3_progress", {}),
 	}
 	var can_edit_badge: bool = bool(_current_profile_summary.get("supports_rank_badges", false)) \
 		and _has_active_lobby_connection() and _current_profile_summary.get("profile_id", "") == lobby_client.current_profile_id
-	for best_of in _rank_badge_buttons:
-		_rank_badge_buttons[best_of].visible = can_edit_badge and not ranked_by_format[best_of].is_empty()
-	var has_separate_ladders := _current_profile_summary.has("ranked_bo3_progress")
-	var has_ranked_progress := false
-	if panel != null:
-		panel.tooltip_text = ""
-	for best_of in ranked_by_format:
-		var ranked_progress: Dictionary = ranked_by_format[best_of]
-		if ranked_progress.is_empty():
-			continue
-		has_ranked_progress = true
-		var rank_name := str(ranked_progress["rank_name"])
-		var stars := int(ranked_progress["stars"])
-		var stars_required := int(ranked_progress["stars_required"])
-		var rank_line := "%s  •  %d stars" % [rank_name, stars]
-		if stars_required > 0:
-			rank_line = "%s  %s%s  %d/%d" % [rank_name, "★".repeat(stars), "☆".repeat(stars_required - stars), stars, stars_required]
-		if has_separate_ladders:
-			rank_line = "Bo%d  •  %s" % [best_of, rank_line]
-		lines.insert(lines.size() - 1, rank_line)
-	if has_ranked_progress:
-		if panel != null:
-			panel.tooltip_text = "Both players must sign in for a rated match to count. Each division takes three stars. A win earns one star. From your third consecutive win through Gold, wins earn two stars. Losses cost one star starting in Silver, with floors at Divisions V and III. Ranks reset monthly based on your season peak."
-	elif _current_profile_summary.has("ranked_progress"):
-		lines.insert(0, "Sign in to earn ranked stars")
+	for best_of in [1, 3]:
+		var raw_progress: Variant = ranked_by_format.get(best_of, {})
+		var progress: Dictionary = raw_progress if raw_progress is Dictionary else {}
+		var rank_text := _format_rank_progress(progress)
+		var seek_button := _get_rated_seek_button(best_of)
+		var base_text := "Create Bo%d Rated Seek" % best_of
+		if seek_button != null and is_instance_valid(seek_button):
+			if rank_text.is_empty():
+				seek_button.text = base_text
+				seek_button.tooltip_text = "%s\nSign in to earn ranked stars.\n%s" % [base_text, RANKED_RULES_TOOLTIP]
+			else:
+				seek_button.text = "%s\n%s" % [base_text, rank_text]
+				seek_button.tooltip_text = "Current Bo%d rank: %s\n%s" % [best_of, rank_text, RANKED_RULES_TOOLTIP]
+		var badge_button := _rank_badge_buttons.get(best_of) as Button
+		if badge_button != null and is_instance_valid(badge_button):
+			badge_button.visible = can_edit_badge and not progress.is_empty()
+	_update_rank_badge_previews()
+	_refresh_selected_deck_match_record()
 
-	_profile_summary_label.text = "\n".join(lines)
-	if panel != null:
-		panel.visible = true
+func _get_rated_seek_button(best_of: int) -> Button:
+	if best_of == 1:
+		return create_seek_button as Button
+	return _create_bo3_ranked_seek_button
+
+func _format_rank_progress(ranked_progress: Dictionary) -> String:
+	if ranked_progress.is_empty():
+		return ""
+	var rank_name := str(ranked_progress.get("rank_name", "")).strip_edges()
+	if rank_name.is_empty():
+		return ""
+	var stars := int(ranked_progress.get("stars", 0))
+	var stars_required := int(ranked_progress.get("stars_required", 0))
+	if stars_required <= 0:
+		return "%s  •  %d stars" % [rank_name, stars]
+	var clamped_stars := clampi(stars, 0, stars_required)
+	var filled := "★".repeat(clamped_stars)
+	var empty := "☆".repeat(stars_required - clamped_stars)
+	return "%s  •  %s%s  %d/%d" % [rank_name, filled, empty, stars, stars_required]
+
+func _refresh_selected_deck_match_record() -> void:
+	if _multiplayer_deck_summary_record_label == null or not is_instance_valid(_multiplayer_deck_summary_record_label):
+		return
+	var selected_entry := _get_selected_multiplayer_deck_entry()
+	if selected_entry.is_empty():
+		_multiplayer_deck_summary_record_label.text = "Record: —"
+		return
+	var record := _find_deck_match_record(
+		str(selected_entry.get("deck_id", "")),
+		str(selected_entry.get("deck_name", ""))
+	)
+	if record.is_empty():
+		_multiplayer_deck_summary_record_label.text = "Record: 0-0" if not _current_profile_summary.is_empty() else "Record: —"
+		return
+	_multiplayer_deck_summary_record_label.text = "Record: %d-%d" % [
+		int(record.get("wins", 0)),
+		int(record.get("losses", 0)),
+	]
+
+func _find_deck_match_record(deck_id: String, deck_name: String) -> Dictionary:
+	if _current_profile_summary.is_empty():
+		return {}
+	var raw_records: Variant = _current_profile_summary.get("deck_records", [])
+	if not (raw_records is Array):
+		return {}
+	var records := raw_records as Array
+	var normalized_id := deck_id.strip_edges()
+	var normalized_name := deck_name.strip_edges().to_lower()
+	for raw_record in records:
+		if not (raw_record is Dictionary):
+			continue
+		var record := raw_record as Dictionary
+		if not normalized_id.is_empty() and str(record.get("deck_id", "")).strip_edges() == normalized_id:
+			return record
+	if normalized_name.is_empty() or normalized_name == "unknown deck":
+		return {}
+	for raw_record in records:
+		if not (raw_record is Dictionary):
+			continue
+		var record := raw_record as Dictionary
+		if str(record.get("deck_name", "")).strip_edges().to_lower() == normalized_name:
+			return record
+	return {}
 
 func _refresh_ladder_profile_summary() -> void:
 	if not is_instance_valid(_bot_ladder_view):
@@ -13043,26 +13180,33 @@ func _build_seek_format_controls() -> void:
 	if multiplayer_container == null or create_seek_button == null or _create_unranked_seek_button != null:
 		return
 	create_seek_button.text = "Create Bo1 Rated Seek"
+	var bo1_field := _make_rated_seek_field(1, create_seek_button.get_index())
+	_attach_seek_button_to_field(bo1_field, create_seek_button)
+
 	_create_unranked_seek_button = Button.new()
 	_create_unranked_seek_button.name = "CreateUnrankedSeekButton"
 	_create_unranked_seek_button.text = "Create Bo1 Unrated Seek"
 	_create_unranked_seek_button.pressed.connect(_on_create_unranked_seek_pressed)
 	multiplayer_container.add_child(_create_unranked_seek_button)
-	multiplayer_container.move_child(_create_unranked_seek_button, create_seek_button.get_index() + 1)
+	multiplayer_container.move_child(_create_unranked_seek_button, bo1_field.get_index() + 1)
 
 	_create_bo3_ranked_seek_button = Button.new()
 	_create_bo3_ranked_seek_button.name = "CreateBo3RatedSeekButton"
 	_create_bo3_ranked_seek_button.text = "Create Bo3 Rated Seek"
 	_create_bo3_ranked_seek_button.pressed.connect(_on_create_bo3_ranked_seek_pressed)
-	multiplayer_container.add_child(_create_bo3_ranked_seek_button)
-	multiplayer_container.move_child(_create_bo3_ranked_seek_button, _create_unranked_seek_button.get_index() + 1)
+	var bo3_field := _make_rated_seek_field(3, _create_unranked_seek_button.get_index() + 1)
+	_attach_seek_button_to_field(bo3_field, _create_bo3_ranked_seek_button)
 
 	_create_bo3_unranked_seek_button = Button.new()
 	_create_bo3_unranked_seek_button.name = "CreateBo3UnratedSeekButton"
 	_create_bo3_unranked_seek_button.text = "Create Bo3 Unrated Seek"
 	_create_bo3_unranked_seek_button.pressed.connect(_on_create_bo3_unranked_seek_pressed)
 	multiplayer_container.add_child(_create_bo3_unranked_seek_button)
-	multiplayer_container.move_child(_create_bo3_unranked_seek_button, _create_bo3_ranked_seek_button.get_index() + 1)
+	multiplayer_container.move_child(_create_bo3_unranked_seek_button, bo3_field.get_index() + 1)
+
+	_add_rank_badge_button(1, bo1_field)
+	_add_rank_badge_button(3, bo3_field)
+	multiplayer_container.visibility_changed.connect(_on_rank_badge_lobby_visibility_changed)
 
 func _restore_saved_resume_state() -> void:
 	_update_resume_controls()

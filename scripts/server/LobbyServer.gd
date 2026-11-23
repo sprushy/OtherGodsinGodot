@@ -109,7 +109,11 @@ var server_bot_deck_factory = null
 
 var _seek_timeout_check_elapsed: float = 0.0
 var _server_bot_seed_counter: int = 0
+# Bot ladders are maintained independently for Bo1 and Bo3. `_ranked_bot_deck_pool`
+# stays as the Bo1 pool name for existing callers and stored state; Bo3 uses its
+# own pool, result replay, and persistence file.
 var _ranked_bot_deck_pool := RankedBotDeckPoolScript.new()
+var _ranked_bot_deck_pool_bo3 := RankedBotDeckPoolScript.new()
 var _bot_deck_rng := RandomNumberGenerator.new()
 var _lobby_frame_seconds := 0.0
 var _next_bot_self_play_msec := 0
@@ -128,8 +132,11 @@ var _bot_proposal_last_submit_by_account: Dictionary = {}
 # It is rebuilt only when _ladder_cache_dirty is true, then reused for subsequent
 # requests until something mutates bot standings or match history.
 var _ladder_cache: Array[Dictionary] = []
+var _ladder_cache_bo3: Array[Dictionary] = []
 var _ladder_cache_dirty: bool = true
+var _ladder_cache_bo3_dirty: bool = true
 var _ladder_cache_last_build_msec: int = 0
+var _ladder_cache_bo3_last_build_msec: int = 0
 const LADDER_CACHE_MIN_REBUILD_INTERVAL_MSEC: int = 1500
 const TOP_BOT_HOSTING_LIMIT := 50
 # Recent-result notifications track bots in the top 100 and human players deeper.
@@ -140,7 +147,8 @@ const TOP_TEN_NOTIFICATION_DEPTH := 10
 # Pool rebuild is expensive (replays all bot match results). Only rebuild when
 # something has actually changed since the last refresh.
 var _pool_dirty: bool = true
-var _pool_state_path: String = ""
+var _pool_state_paths: Dictionary = {}
+var _bot_self_play_format_index: int = 0
 
 # Room-list broadcast throttle — limits broadcasts to at most once per second so
 # rapid room churn (e.g. bot self-play cycling) does not flood every connected peer.
@@ -150,7 +158,19 @@ const _ROOM_LIST_BROADCAST_MIN_INTERVAL_MSEC: int = 1000
 
 func _invalidate_ladder_cache() -> void:
 	_ladder_cache_dirty = true
+	_ladder_cache_bo3_dirty = true
 	_pool_dirty = true
+
+func _clear_ladder_caches() -> void:
+	_ladder_cache.clear()
+	_ladder_cache_bo3.clear()
+	_invalidate_ladder_cache()
+
+func _bot_pool(best_of: int) -> RankedBotDeckPoolScript:
+	return _ranked_bot_deck_pool_bo3 if int(best_of) == 3 else _ranked_bot_deck_pool
+
+func _bot_pool_state_path(best_of: int) -> String:
+	return "bot_pool_state_bo3.json" if int(best_of) == 3 else "bot_pool_state.json"
 
 static func get_dedicated_bot_self_play_limit(launch_args: Dictionary) -> int:
 	var default_limit := MAX_BOT_SELF_PLAY
@@ -1195,6 +1215,7 @@ func _handle_request_bot_work(peer_id: int, payload: Dictionary = {}) -> void:
 	var session := _get_session_for_peer(peer_id)
 	if session.is_empty() or str(session.get("account_id", "")).is_empty():
 		return
+	var best_of := _payload_best_of(payload)
 	var top_50 := bool(payload.get("top_50", false))
 	if top_50 and not _is_admin_account(session):
 		_send_to_peer(peer_id, LobbyProtocolScript.BOT_WORK_RESULT, {
@@ -1227,8 +1248,15 @@ func _handle_request_bot_work(peer_id: int, payload: Dictionary = {}) -> void:
 		return
 	# Serve pending league round-robin pairings first so volunteers play the
 	# scheduled tournament matches instead of random self-play pairs.
-	if not top_50 and not below_top_50 and not _pending_league_pairings.is_empty():
-		var pairing: Dictionary = _pending_league_pairings.pop_front()
+	var pending_index := -1
+	if not top_50 and not below_top_50:
+		for index in range(_pending_league_pairings.size()):
+			if int((_pending_league_pairings[index] as Dictionary).get("best_of", 1)) == best_of:
+				pending_index = index
+				break
+	if pending_index >= 0:
+		var pairing: Dictionary = _pending_league_pairings[pending_index]
+		_pending_league_pairings.remove_at(pending_index)
 		var candidate_a := _validate_server_bot_deck(pairing["deck_a"])
 		var candidate_b := _validate_server_bot_deck(pairing["deck_b"])
 		if not candidate_a.is_empty() and not candidate_b.is_empty() \
@@ -1250,6 +1278,7 @@ func _handle_request_bot_work(peer_id: int, payload: Dictionary = {}) -> void:
 				"expires_unix": int(Time.get_unix_time_from_system()) + 600,
 				"status": "assigned",
 				"league_match": true,
+				"best_of": best_of,
 			}
 			_send_to_peer(peer_id, LobbyProtocolScript.BOT_WORK_ASSIGNMENT, {
 				"job_id": job_id,
@@ -1264,7 +1293,7 @@ func _handle_request_bot_work(peer_id: int, payload: Dictionary = {}) -> void:
 	var deck_b: Dictionary
 	if not requested_bot_id.is_empty():
 		busy[requested_bot_id] = true
-		var owned_bot := _find_community_bot(str(session["account_id"]), requested_bot_id)
+		var owned_bot := _find_community_bot(str(session["account_id"]), requested_bot_id, best_of)
 		if owned_bot.is_empty():
 			_send_to_peer(peer_id, LobbyProtocolScript.BOT_WORK_RESULT, {
 				"job_id": "", "success": false, "message": "That submitted bot is unavailable.",
@@ -1277,17 +1306,17 @@ func _handle_request_bot_work(peer_id: int, payload: Dictionary = {}) -> void:
 			})
 			return
 		deck_a = owned_bot
-		var available := _ranked_bot_deck_pool.select_deck(busy, _bot_deck_rng, 0)
-		deck_b = _validate_server_bot_deck(available) if not available.is_empty() else _build_fresh_bot_deck_submission()
+		var available := _bot_pool(best_of).select_deck(busy, _bot_deck_rng, 0)
+		deck_b = _validate_server_bot_deck(available) if not available.is_empty() else _build_fresh_bot_deck_submission({}, best_of)
 	elif below_top_50:
-		var below_ids := _get_bots_below_top_50_list_ids()
+		var below_ids := _get_bots_below_top_50_list_ids(best_of)
 		if below_ids.is_empty():
 			_send_to_peer(peer_id, LobbyProtocolScript.BOT_WORK_RESULT, {
 				"job_id": "", "success": false,
 				"message": "No bot match below the top 50 is available right now.",
 			})
 			return
-		var below_pair := _ranked_bot_deck_pool.select_self_play_pair(
+		var below_pair := _bot_pool(best_of).select_self_play_pair(
 			busy, _bot_deck_rng, below_ids, below_ids, true
 		)
 		if below_pair.size() != 2:
@@ -1299,18 +1328,18 @@ func _handle_request_bot_work(peer_id: int, payload: Dictionary = {}) -> void:
 		deck_a = _validate_server_bot_deck(below_pair[0])
 		deck_b = _validate_server_bot_deck(below_pair[1])
 	else:
-		var top_list_ids := _get_top_50_bot_list_ids() if top_50 else {}
+		var top_list_ids := _get_top_50_bot_list_ids(best_of) if top_50 else {}
 		var pair: Array[Dictionary] = []
 		if not top_50 or not top_list_ids.is_empty():
-			pair = _ranked_bot_deck_pool.select_self_play_pair(busy, _bot_deck_rng, top_list_ids)
+			pair = _bot_pool(best_of).select_self_play_pair(busy, _bot_deck_rng, top_list_ids)
 		if not pair.is_empty():
 			deck_a = _validate_server_bot_deck(pair[0])
 		elif not top_50:
-			deck_a = _build_fresh_bot_deck_submission()
+			deck_a = _build_fresh_bot_deck_submission({}, best_of)
 		if pair.size() == 2:
 			deck_b = _validate_server_bot_deck(pair[1])
 		elif not top_50 or not deck_a.is_empty():
-			deck_b = _build_fresh_bot_deck_submission({str(deck_a.get("god_name", "")): 1})
+			deck_b = _build_fresh_bot_deck_submission({str(deck_a.get("god_name", "")): 1}, best_of)
 	if deck_a.is_empty() or deck_b.is_empty():
 		_send_to_peer(peer_id, LobbyProtocolScript.BOT_WORK_RESULT, {
 			"job_id": "",
@@ -1330,7 +1359,6 @@ func _handle_request_bot_work(peer_id: int, payload: Dictionary = {}) -> void:
 		if not deck.has("bot_name") or str(deck["bot_name"]).is_empty():
 			deck["bot_name"] = str(deck.get("deck_name", ""))
 	var job_id := _generate_id(32)
-	var best_of := _payload_best_of(payload)
 	_client_bot_jobs[job_id] = {
 		"account_id": str(session["account_id"]),
 		"session_id": str(session.get("session_id", "")),
@@ -1352,7 +1380,8 @@ func _handle_seed_bot_league(peer_id: int, payload: Dictionary = {}) -> void:
 		_send_error_to_peer(peer_id, "Sign in before seeding the bot league.")
 		return
 	var count_per_god := clampi(int(payload.get("count_per_god", 10)), 1, 64)
-	var result := seed_bot_league(count_per_god)
+	var best_of := 3 if int(payload.get("best_of", 1)) == 3 else 1
+	var result := seed_bot_league(count_per_god, best_of)
 	_send_to_peer(peer_id, LobbyProtocolScript.BOT_LEAGUE_RESULT, {
 		"request": LobbyProtocolScript.SEED_BOT_LEAGUE,
 		"success": bool(result.get("success", false)),
@@ -1366,7 +1395,8 @@ func _handle_finalize_bot_league(peer_id: int, payload: Dictionary = {}) -> void
 	if session.is_empty():
 		_send_error_to_peer(peer_id, "Join the lobby before finalizing the bot league.")
 		return
-	var result := finalize_bot_league()
+	var best_of := 3 if int(payload.get("best_of", 1)) == 3 else 1
+	var result := finalize_bot_league(best_of)
 	_send_to_peer(peer_id, LobbyProtocolScript.BOT_LEAGUE_RESULT, {
 		"request": LobbyProtocolScript.FINALIZE_BOT_LEAGUE,
 		"success": bool(result.get("success", false)),
@@ -1378,7 +1408,8 @@ func _handle_request_bot_league_status(peer_id: int, payload: Dictionary = {}) -
 	if session.is_empty():
 		_send_error_to_peer(peer_id, "Join the lobby to view bot league status.")
 		return
-	var status := get_bot_league_status()
+	var best_of := 3 if int(payload.get("best_of", 1)) == 3 else 1
+	var status := get_bot_league_status(best_of)
 	_send_to_peer(peer_id, LobbyProtocolScript.BOT_LEAGUE_STATUS, {
 		"success": true,
 		"league_mode": bool(status.get("league_mode", false)),
@@ -1394,7 +1425,8 @@ func _handle_run_league_round_robin(peer_id: int, payload: Dictionary = {}) -> v
 		_send_error_to_peer(peer_id, "Sign in before running the league round robin.")
 		return
 	var matches_per_bot := clampi(int(payload.get("matches_per_bot", 50)), 1, 500)
-	var result := run_league_round_robin(matches_per_bot)
+	var best_of := 3 if int(payload.get("best_of", 1)) == 3 else 1
+	var result := run_league_round_robin(matches_per_bot, best_of)
 	_send_to_peer(peer_id, LobbyProtocolScript.LEAGUE_ROUND_ROBIN_RESULT, {
 		"success": bool(result.get("success", false)),
 		"message": result.get("message", ""),
@@ -1409,9 +1441,13 @@ func _handle_clear_league_bots(peer_id: int, payload: Dictionary = {}) -> void:
 		_send_error_to_peer(peer_id, "Sign in before clearing league bots.")
 		return
 	_refresh_ranked_bot_deck_pool()
-	var result := _ranked_bot_deck_pool.clear_league_bots()
-	_ranked_bot_deck_pool.set_league_mode(false)
-	_pending_league_pairings.clear()
+	var best_of := 3 if int(payload.get("best_of", 1)) == 3 else 1
+	var league_pool := _bot_pool(best_of)
+	var result := league_pool.clear_league_bots()
+	league_pool.set_league_mode(false)
+	_pending_league_pairings = _pending_league_pairings.filter(func(pairing: Dictionary) -> bool:
+		return int(pairing.get("best_of", 1)) != best_of
+	)
 	_invalidate_ladder_cache()
 	_send_to_peer(peer_id, LobbyProtocolScript.CLEAR_LEAGUE_BOTS_RESULT, {
 		"success": true,
@@ -1429,8 +1465,9 @@ func _handle_rebuild_league_records(peer_id: int, payload: Dictionary = {}) -> v
 	# Scan dedicated result files directly, bypassing get_bot_deck_results() cache
 	# which can return empty on a fresh server instance if results were written
 	# to per-match files rather than match_history.json.
-	var results: Array[Dictionary] = _collect_bot_deck_results_from_files()
-	var result := _ranked_bot_deck_pool.rebuild_league_records(results)
+	var best_of := 3 if int(payload.get("best_of", 1)) == 3 else 1
+	var results: Array[Dictionary] = _collect_bot_deck_results_from_files(best_of)
+	var result := _bot_pool(best_of).rebuild_league_records(results)
 	_invalidate_ladder_cache()
 	_send_to_peer(peer_id, LobbyProtocolScript.REBUILD_LEAGUE_RECORDS_RESULT, {
 		"success": true,
@@ -1458,7 +1495,7 @@ func _count_bot_result_files() -> int:
 		count += 1
 	return count
 
-func _collect_bot_deck_results_from_files() -> Array[Dictionary]:
+func _collect_bot_deck_results_from_files(best_of: int = 0) -> Array[Dictionary]:
 	var results: Array[Dictionary] = []
 	# Source 1: dedicated per-match result files (dedicated results mode)
 	var results_dir := ServerPathsScript.get_server_data_file_path("match_history_results")
@@ -1470,7 +1507,8 @@ func _collect_bot_deck_results_from_files() -> Array[Dictionary]:
 			if not dir.current_is_dir() and file_name.ends_with(".json"):
 				var path := results_dir.path_join(file_name)
 				var entry := JsonStoreScript.load_dictionary(path, {}, "MatchHistoryStore")
-				if not entry.is_empty() and entry.has("bot_deck_results"):
+				var entry_best_of := int(entry.get("best_of", 1))
+				if not entry.is_empty() and entry.has("bot_deck_results") and (best_of == 0 or entry_best_of == best_of):
 					for row: Dictionary in entry.get("bot_deck_results", []):
 						if row is Dictionary:
 							var result := row.duplicate(true)
@@ -1480,6 +1518,8 @@ func _collect_bot_deck_results_from_files() -> Array[Dictionary]:
 							result["bot_eliminated"] = false
 							if not result.has("played_unix"):
 								result["played_unix"] = float(entry.get("played_unix", 0.0))
+							if not result.has("best_of"):
+								result["best_of"] = entry_best_of
 							results.append(result)
 			file_name = dir.get_next()
 		dir.list_dir_end()
@@ -1492,7 +1532,8 @@ func _collect_bot_deck_results_from_files() -> Array[Dictionary]:
 		if stored_matches is Dictionary:
 			for match_id_variant in stored_matches.keys():
 				var entry: Dictionary = stored_matches[match_id_variant]
-				if entry is Dictionary and entry.has("bot_deck_results"):
+				var entry_best_of := int(entry.get("best_of", 1))
+				if entry is Dictionary and entry.has("bot_deck_results") and (best_of == 0 or entry_best_of == best_of):
 					for row: Dictionary in entry.get("bot_deck_results", []):
 						if row is Dictionary:
 							var result := row.duplicate(true)
@@ -1502,6 +1543,8 @@ func _collect_bot_deck_results_from_files() -> Array[Dictionary]:
 							result["bot_eliminated"] = false
 							if not result.has("played_unix"):
 								result["played_unix"] = float(entry.get("played_unix", 0.0))
+							if not result.has("best_of"):
+								result["best_of"] = entry_best_of
 							results.append(result)
 		print("[Bot League Debug] collected %d results total (including legacy match_history.json)" % results.size())
 	else:
@@ -1516,18 +1559,34 @@ func _handle_dump_bot_deck_results(peer_id: int, payload: Dictionary = {}) -> vo
 	_ensure_match_history_store()
 	_refresh_ranked_bot_deck_pool()
 	var results = _collect_bot_deck_results_from_files()
-	var dump_result := _ranked_bot_deck_pool.dump_bot_deck_results(results)
-	var pool_dump := _ranked_bot_deck_pool.dump_pool_state()
+	var total := 0
+	var league_count := 0
+	var non_league_count := 0
+	var dump_paths: Array[String] = []
+	var dump_ok := true
+	for best_of in [1, 3]:
+		var format_results: Array[Dictionary] = []
+		for result: Dictionary in results:
+			if int(result.get("best_of", 1)) == int(best_of):
+				format_results.append(result)
+		var dump_result := _bot_pool(best_of).dump_bot_deck_results(format_results)
+		var pool_dump := _bot_pool(best_of).dump_pool_state()
+		total += int(dump_result.get("total", 0))
+		league_count += int(dump_result.get("league_count", 0))
+		non_league_count += int(dump_result.get("non_league_count", 0))
+		dump_ok = dump_ok and bool(pool_dump.get("success", false))
+		if not str(pool_dump.get("path", "")).is_empty():
+			dump_paths.append("Bo%d: %s" % [best_of, str(pool_dump.get("path", ""))])
 	_send_to_peer(peer_id, LobbyProtocolScript.DUMP_BOT_DECK_RESULTS_RESULT, {
 		"success": true,
-		"total": int(dump_result.get("total", 0)),
-		"league_count": int(dump_result.get("league_count", 0)),
-		"non_league_count": int(dump_result.get("non_league_count", 0)),
-		"pool_dump_path": str(pool_dump.get("path", "")),
-		"pool_dump_ok": bool(pool_dump.get("success", false)),
+		"total": total,
+		"league_count": league_count,
+		"non_league_count": non_league_count,
+		"pool_dump_path": ", ".join(dump_paths),
+		"pool_dump_ok": dump_ok,
 	})
 
-func _find_community_bot(account_id: String, bot_id: String) -> Dictionary:
+func _find_community_bot(account_id: String, bot_id: String, best_of: int = 1) -> Dictionary:
 	if account_id.is_empty() or bot_id.is_empty() or bot_id.contains("/") or bot_id.contains("\\"):
 		return {}
 	var bot_path := ServerPathsScript.get_server_data_file_path("community_bot_pool").path_join("%s.json" % bot_id)
@@ -1551,7 +1610,7 @@ func _find_community_bot(account_id: String, bot_id: String) -> Dictionary:
 	# rank badge, live-match rows, and win-streak scoring keep updating as it
 	# plays, instead of restarting at zero stars in every hosted match.
 	_refresh_ranked_bot_deck_pool()
-	var record := _ranked_bot_deck_pool.get_deck_details(bot_id)
+	var record := _bot_pool(best_of).get_deck_details(bot_id)
 	var stars := int(record.get("stars", 0))
 	bot["bot_stars"] = stars
 	bot["stars"] = stars
@@ -1858,8 +1917,7 @@ func _handle_delete_bot(peer_id: int, payload: Dictionary) -> void:
 		return
 	# Expunge the deleted bot's record from the ranked bot ladder so it no
 	# longer appears in standings or recent bot activity.
-	_ladder_cache.clear()
-	_invalidate_ladder_cache()
+	_clear_ladder_caches()
 	_refresh_ranked_bot_deck_pool()
 	_send_to_peer(peer_id, LobbyProtocolScript.BOT_DELETED, {
 		"success": true, "message": "Bot deleted from the community pool.", "bot_id": bot_id,
@@ -1893,8 +1951,7 @@ func _handle_quarantine_bot(peer_id: int, payload: Dictionary) -> void:
 			"success": false, "message": "The server could not update that bot.", "bot_id": bot_id, "quarantined": quarantined,
 		})
 		return
-	_ladder_cache.clear()
-	_invalidate_ladder_cache()
+	_clear_ladder_caches()
 	_refresh_ranked_bot_deck_pool()
 	_send_to_peer(peer_id, LobbyProtocolScript.BOT_QUARANTINED, {
 		"success": true,
@@ -1990,6 +2047,7 @@ func _get_live_bot_work_matches() -> Array[Dictionary]:
 		var second_league := int(RankedProgressionScript.summarize_bot_stars(second_stars)["league"])
 		matches.append({
 			"match_id": "volunteer_%s" % str(job_id),
+			"best_of": 3 if int(job.get("best_of", 1)) == 3 else 1,
 			"played_unix": int(job.get("started_unix", now_unix)),
 			"status": "live",
 			"turn_count": maxi(0, int(job.get("turn_count", 0))),
@@ -2037,9 +2095,12 @@ func _broadcast_bot_match_history() -> void:
 
 func _get_recent_match_activity_notifications() -> Array[Dictionary]:
 	_refresh_ranked_bot_deck_pool()
+	var eliminated_ids := _ranked_bot_deck_pool.get_eliminated_bot_match_ids()
+	for match_id in _ranked_bot_deck_pool_bo3.get_eliminated_bot_match_ids():
+		eliminated_ids[match_id] = true
 	var activities: Array[Dictionary] = match_history_store.get_recent_match_activities(
 		12,
-		_ranked_bot_deck_pool.get_eliminated_bot_match_ids()
+		eliminated_ids
 	)
 	if activities.is_empty():
 		return activities
@@ -2181,8 +2242,9 @@ func _handle_request_bot_ladder(peer_id: int, message_type: String, payload: Dic
 	if message_type == LobbyProtocolScript.REQUEST_BOT_DECK:
 		_refresh_ranked_bot_deck_pool()
 		var list_id: String = payload["list_id"]
+		var best_of := 3 if int(payload.get("best_of", 1)) == 3 else 1
 		_ensure_server_bot_deck_factory()
-		var deck_details := _ranked_bot_deck_pool.get_deck_details(list_id, quarantined_only)
+		var deck_details := _bot_pool(best_of).get_deck_details(list_id, quarantined_only)
 		var completed_deck: Dictionary = server_bot_deck_factory.complete_ranked_power_slots(deck_details)
 		if not completed_deck.is_empty():
 			completed_deck.merge({
@@ -2200,17 +2262,28 @@ func _handle_request_bot_ladder(peer_id: int, message_type: String, payload: Dic
 	var ladder_username := str(session.get("username", "")).strip_edges()
 	_send_to_peer(peer_id, LobbyProtocolScript.BOT_LADDER, _build_ladder_page(payload, ladder_username))
 
-func _get_cached_ladder() -> Array[Dictionary]:
+func _get_cached_ladder(best_of: int = 1) -> Array[Dictionary]:
+	var is_bo3 := int(best_of) == 3
+	var format := 3 if is_bo3 else 1
+	var cache: Array[Dictionary] = _ladder_cache_bo3 if is_bo3 else _ladder_cache
+	var dirty: bool = _ladder_cache_bo3_dirty if is_bo3 else _ladder_cache_dirty
+	var last_build_msec: int = _ladder_cache_bo3_last_build_msec if is_bo3 else _ladder_cache_last_build_msec
 	var now_msec := Time.get_ticks_msec()
-	if _ladder_cache.is_empty() or (_ladder_cache_dirty and now_msec - _ladder_cache_last_build_msec >= LADDER_CACHE_MIN_REBUILD_INTERVAL_MSEC):
-		_ladder_cache = _build_full_ladder()
-		_ladder_cache_dirty = false
-		_ladder_cache_last_build_msec = now_msec
-	return _ladder_cache
+	if cache.is_empty() or (dirty and now_msec - last_build_msec >= LADDER_CACHE_MIN_REBUILD_INTERVAL_MSEC):
+		cache = _build_full_ladder_for_best_of(format)
+		if is_bo3:
+			_ladder_cache_bo3 = cache
+			_ladder_cache_bo3_dirty = false
+			_ladder_cache_bo3_last_build_msec = now_msec
+		else:
+			_ladder_cache = cache
+			_ladder_cache_dirty = false
+			_ladder_cache_last_build_msec = now_msec
+	return cache
 
-func _get_top_50_bot_list_ids() -> Dictionary:
+func _get_top_50_bot_list_ids(best_of: int = 1) -> Dictionary:
 	var list_ids := {}
-	for row in _get_cached_ladder():
+	for row in _get_cached_ladder(best_of):
 		if not bool(row.get("is_bot", false)):
 			continue
 		var list_id := str(row.get("list_id", ""))
@@ -2223,10 +2296,10 @@ func _get_top_50_bot_list_ids() -> Dictionary:
 
 # Complement of the top-bot pool: every matchmaking-eligible bot ranked below
 # the first TOP_BOT_HOSTING_LIMIT bots on the ladder.
-func _get_bots_below_top_50_list_ids() -> Dictionary:
-	var top_ids := _get_top_50_bot_list_ids()
+func _get_bots_below_top_50_list_ids(best_of: int = 1) -> Dictionary:
+	var top_ids := _get_top_50_bot_list_ids(best_of)
 	var list_ids := {}
-	for row in _get_cached_ladder():
+	for row in _get_cached_ladder(best_of):
 		if not bool(row.get("is_bot", false)):
 			continue
 		var list_id := str(row.get("list_id", ""))
@@ -2240,16 +2313,16 @@ func _build_ladder_page(request: Dictionary, current_username: String = "") -> D
 	var is_paged := request.has("request_id")
 	var quarantined_only := bool(request.get("quarantined_only", false))
 	var best_of := int(request.get("best_of", 1)) if is_paged else 1
-	# For best_of == 1 (the default ladder), use the cached full ladder.
-	# Other best_of values are rare admin queries — always compute fresh.
+	# Bo1 and Bo3 each have their own cached full ladder. Other best_of values
+	# are rare admin queries — always compute those fresh.
 	var ladder: Array[Dictionary]
 	if quarantined_only:
-		ladder = _build_quarantined_bot_ladder()
-	elif best_of == 1:
+		ladder = _build_quarantined_bot_ladder(best_of)
+	elif best_of == 1 or best_of == 3:
 		# Deep-duplicate so per-request mutations (can_delete, filtering) don't
 		# corrupt the cache for other callers.
 		ladder = []
-		for row in _get_cached_ladder():
+		for row in _get_cached_ladder(best_of):
 			ladder.append(row.duplicate(true))
 	else:
 		ladder = _build_full_ladder_for_best_of(best_of)
@@ -2282,21 +2355,21 @@ func _build_ladder_page(request: Dictionary, current_username: String = "") -> D
 	if search_query.is_empty() and player_type == LobbyProtocolScript.LADDER_FILTER_EVERYONE and ladder.size() > 100:
 		ladder.resize(100)
 	if not is_paged:
-		return {"ladder": _public_ladder_rows(ladder)}
+		return {"ladder": _public_ladder_rows(ladder, best_of)}
 	var last_page := maxi(0, ceili(float(ladder.size()) / LobbyProtocolScript.LADDER_PAGE_SIZE) - 1)
 	var page := mini(int(request.get("page", 0)), last_page)
 	var start := page * LobbyProtocolScript.LADDER_PAGE_SIZE
 	return {
-		"ladder": _public_ladder_rows(ladder.slice(start, start + LobbyProtocolScript.LADDER_PAGE_SIZE)),
+		"ladder": _public_ladder_rows(ladder.slice(start, start + LobbyProtocolScript.LADDER_PAGE_SIZE), best_of),
 		"request_id": request.get("request_id", 0),
 		"page": page,
 		"last_page": last_page,
 	}
 
-func _build_quarantined_bot_ladder() -> Array[Dictionary]:
+func _build_quarantined_bot_ladder(best_of: int = 1) -> Array[Dictionary]:
 	_refresh_ranked_bot_deck_pool()
 	var ladder: Array[Dictionary] = []
-	for bot in _ranked_bot_deck_pool.get_quarantined_ladder_summary():
+	for bot in _bot_pool(best_of).get_quarantined_ladder_summary():
 		var row := _build_bot_ladder_row(bot, str(bot["god_name"]))
 		row["quarantine_status"] = bot["quarantine_status"]
 		ladder.append(row)
@@ -2305,36 +2378,37 @@ func _build_quarantined_bot_ladder() -> Array[Dictionary]:
 		ladder[index]["ladder_position"] = index + 1
 	return ladder
 
-# Expensive: builds the full sorted ladder with humans + bots for best_of=1.
-# Called only when the cache is dirty.
+# Expensive: builds the full sorted ladder with humans + bots for the requested
+# format. Each format draws bots from its own pool.
 func _build_full_ladder() -> Array[Dictionary]:
 	return _build_full_ladder_for_best_of(1)
 
 func _build_full_ladder_for_best_of(best_of: int) -> Array[Dictionary]:
-	var ladder: Array[Dictionary] = match_history_store.get_human_ladder(account_store.get_ladder_usernames(), best_of)
-	if best_of == 1:
-		_refresh_ranked_bot_deck_pool()
-		var seen_bot_ids: Dictionary = {}
-		var seen_owner_fps: Dictionary = {}
-		for god: Dictionary in _ranked_bot_deck_pool.get_ladder_summary()["gods"]:
-			var lists: Array = god["lists"].duplicate()
-			if not god["challenger"].is_empty():
-				lists.append(god["challenger"])
-			for bot: Dictionary in lists:
-				var bot_id_str := str(bot.get("list_id", "")).strip_edges()
-				if not bot_id_str.is_empty() and seen_bot_ids.has(bot_id_str):
+	var format := 3 if int(best_of) == 3 else 1
+	var ladder: Array[Dictionary] = match_history_store.get_human_ladder(account_store.get_ladder_usernames(), format)
+	_refresh_ranked_bot_deck_pool()
+	var bot_pool := _bot_pool(format)
+	var seen_bot_ids: Dictionary = {}
+	var seen_owner_fps: Dictionary = {}
+	for god: Dictionary in bot_pool.get_ladder_summary()["gods"]:
+		var lists: Array = god["lists"].duplicate()
+		if not god["challenger"].is_empty():
+			lists.append(god["challenger"])
+		for bot: Dictionary in lists:
+			var bot_id_str := str(bot.get("list_id", "")).strip_edges()
+			if not bot_id_str.is_empty() and seen_bot_ids.has(bot_id_str):
+				continue
+			var bot_owner_name := str(bot.get("owner_name", "")).strip_edges()
+			if not bot_owner_name.is_empty():
+				var bot_deck := bot_pool.get_deck_details(bot_id_str)
+				var bot_fp := JSON.stringify([bot_deck.get("cards", {}), bot_deck.get("reinforcements", {}), bot_deck.get("special_setup", {})]).sha256_text()
+				var owner_key := "%s:%s" % [bot_owner_name, bot_fp]
+				if seen_owner_fps.has(owner_key):
 					continue
-				var bot_owner_name := str(bot.get("owner_name", "")).strip_edges()
-				if not bot_owner_name.is_empty():
-					var bot_deck := _ranked_bot_deck_pool.get_deck_details(bot_id_str)
-					var bot_fp := JSON.stringify([bot_deck.get("cards", {}), bot_deck.get("reinforcements", {}), bot_deck.get("special_setup", {})]).sha256_text()
-					var owner_key := "%s:%s" % [bot_owner_name, bot_fp]
-					if seen_owner_fps.has(owner_key):
-						continue
-					seen_owner_fps[owner_key] = true
-				if not bot_id_str.is_empty():
-					seen_bot_ids[bot_id_str] = true
-				ladder.append(_build_bot_ladder_row(bot, str(god.get("god_name", ""))))
+				seen_owner_fps[owner_key] = true
+			if not bot_id_str.is_empty():
+				seen_bot_ids[bot_id_str] = true
+			ladder.append(_build_bot_ladder_row(bot, str(god.get("god_name", ""))))
 	ladder.sort_custom(_is_higher_ladder_row)
 	var unique_ladder: Array[Dictionary] = []
 	var seen_display_names: Dictionary = {}
@@ -2383,13 +2457,13 @@ func _is_higher_ladder_row(a: Dictionary, b: Dictionary) -> bool:
 		return a_record_score > b_record_score
 	return a["name"].nocasecmp_to(b["name"]) < 0
 
-func _decorate_ladder_rows(rows: Array[Dictionary]) -> void:
+func _decorate_ladder_rows(rows: Array[Dictionary], best_of: int = 1) -> void:
 	for row in rows:
 		if bool(row.get("is_bot", false)):
 			var list_id := str(row.get("list_id", ""))
 			if not row.has("portrait"):
 				var league := int(row.get("league", 0))
-				var bot_deck := _ranked_bot_deck_pool.get_deck_details(list_id, row.has("quarantine_status"))
+				var bot_deck := _bot_pool(best_of).get_deck_details(list_id, row.has("quarantine_status"))
 				row["portrait"] = RankBadgeCatalog.portrait_from_deck(
 					league,
 					bot_deck.get("cards", {}),
@@ -2398,8 +2472,8 @@ func _decorate_ladder_rows(rows: Array[Dictionary]) -> void:
 			if not row.has("recent_matches"):
 				row["recent_matches"] = match_history_store.get_recent_ranked_bot_matches_for_list(list_id, 10, false)
 
-func _public_ladder_rows(rows: Array[Dictionary]) -> Array[Dictionary]:
-	_decorate_ladder_rows(rows)
+func _public_ladder_rows(rows: Array[Dictionary], best_of: int = 1) -> Array[Dictionary]:
+	_decorate_ladder_rows(rows, best_of)
 	for row in rows:
 		var account_id := str(row.get("account_id", ""))
 		row.erase("account_id")
@@ -2729,7 +2803,7 @@ func _create_server_bot_seek(ranked: bool, best_of: int = 1) -> LobbyRoom:
 	var bot_session_id := _create_server_bot_session()
 	if bot_session_id.is_empty():
 		return null
-	var deck_submission := _build_fresh_bot_deck_submission()
+	var deck_submission := _build_fresh_bot_deck_submission({}, best_of)
 	if deck_submission.is_empty():
 		_remove_server_bot_session(bot_session_id)
 		return null
@@ -2798,7 +2872,7 @@ func _match_server_bot_to_player(room: LobbyRoom) -> bool:
 	var existing := room.get_deck_submission(room.host_session_id)
 	if str(existing.get("bot_list_id", "")).is_empty():
 		return not existing.is_empty()
-	var fresh := _build_fresh_bot_deck_submission()
+	var fresh := _build_fresh_bot_deck_submission({}, room.best_of)
 	if fresh.is_empty():
 		return false
 	_apply_server_bot_deck(room, fresh)
@@ -2816,7 +2890,8 @@ func _find_rank_matched_bot_deck(best_of: int, account_id: String, is_ranked: bo
 	# Bronze divisions use it once after a qualifying loss.
 	var force_quarantined: bool = is_ranked and (rank["name"] == "Iron V" or post_loss)
 	var unavailable := _busy_bot_list_ids()
-	var deck := _ranked_bot_deck_pool.select_deck(unavailable, _bot_deck_rng, target_stars, force_quarantined)
+	var bot_pool := _bot_pool(best_of)
+	var deck := bot_pool.select_deck(unavailable, _bot_deck_rng, target_stars, force_quarantined)
 	var attempt := 0
 	while not deck.is_empty():
 		attempt += 1
@@ -2835,7 +2910,7 @@ func _find_rank_matched_bot_deck(best_of: int, account_id: String, is_ranked: bo
 			account_id, best_of, target_stars, league, RankedProgressionScript.LEAGUES[league] if league < RankedProgressionScript.LEAGUES.size() else "?", force_quarantined, list_id, deck_stars, deck_name, attempt
 		])
 		unavailable[deck["list_id"]] = true
-		deck = _ranked_bot_deck_pool.select_deck(unavailable, _bot_deck_rng, target_stars, force_quarantined)
+		deck = bot_pool.select_deck(unavailable, _bot_deck_rng, target_stars, force_quarantined)
 	print("[BotMatchmaker] account=%s best_of=%d target_stars=%d league=%d(%s) force_quarantined=%s -> no bot available after %d attempts" % [
 		account_id, best_of, target_stars, league, RankedProgressionScript.LEAGUES[league] if league < RankedProgressionScript.LEAGUES.size() else "?", force_quarantined, attempt
 	])
@@ -2846,12 +2921,14 @@ func _find_rank_matched_bot_deck(best_of: int, account_id: String, is_ranked: bo
 # The lists are exempt from early retirement so they can finish their round-robin.
 # Actual games are then run by the existing bot self-play / volunteer workers,
 # which record results into match history; the pool replays them into records.
-func seed_bot_league(count_per_god: int = 10) -> Dictionary:
+func seed_bot_league(count_per_god: int = 10, best_of: int = 1) -> Dictionary:
 	_ensure_match_history_store()
 	_ensure_server_bot_deck_factory()
 	_refresh_ranked_bot_deck_pool()
 	if server_bot_deck_factory == null:
 		return {"success": false, "message": "Bot deck factory is unavailable."}
+	var format := 3 if int(best_of) == 3 else 1
+	var bot_pool := _bot_pool(format)
 	var god_names: Array[String] = server_bot_deck_factory.get_ranked_god_names()
 	god_names.sort()
 	var seeded: Dictionary = {}
@@ -2870,7 +2947,7 @@ func seed_bot_league(count_per_god: int = 10) -> Dictionary:
 				deck = {}
 			if deck.is_empty():
 				continue
-			var list_id := _ranked_bot_deck_pool.register_league_list(str(god_name), deck)
+			var list_id := bot_pool.register_league_list(str(god_name), deck)
 			if not list_id.is_empty():
 				list_ids.append(list_id)
 		seeded[str(god_name)] = {"list_ids": list_ids.duplicate(), "count": list_ids.size()}
@@ -2881,34 +2958,37 @@ func seed_bot_league(count_per_god: int = 10) -> Dictionary:
 # the active ladder bot, quarantines the weakest seeded bot of each god as a
 # forced-matchmaking bad bot (for Iron V and post-loss Iron/Bronze pairing), and
 # removes every other seeded bot.
-func finalize_bot_league() -> Dictionary:
+func finalize_bot_league(best_of: int = 1) -> Dictionary:
 	_ensure_match_history_store()
 	_ensure_server_bot_deck_factory()
 	_refresh_ranked_bot_deck_pool()
+	var bot_pool := _bot_pool(best_of)
 	var god_names: Array[String] = server_bot_deck_factory.get_ranked_god_names()
-	var summary := _ranked_bot_deck_pool.finalize_league(god_names)
-	_ranked_bot_deck_pool.set_league_mode(false)
+	var summary := bot_pool.finalize_league(god_names)
+	bot_pool.set_league_mode(false)
 	_invalidate_ladder_cache()
 	return {"success": true, "summary": summary}
 
-func get_bot_league_status() -> Dictionary:
+func get_bot_league_status(best_of: int = 1) -> Dictionary:
 	_refresh_ranked_bot_deck_pool()
-	return _ranked_bot_deck_pool.get_league_status()
+	return _bot_pool(best_of).get_league_status()
 
 # Schedules a round robin where every league bot plays `matches_per_bot` matches
 # against randomly chosen opponents. Pairings are stored and served to volunteer
 # bot workers through the existing request_bot_work flow, so matches are played
 # and recorded through the normal match-history pipeline.
-func run_league_round_robin(matches_per_bot: int = 50) -> Dictionary:
+func run_league_round_robin(matches_per_bot: int = 50, best_of: int = 1) -> Dictionary:
 	_ensure_match_history_store()
 	_ensure_server_bot_deck_factory()
 	_refresh_ranked_bot_deck_pool()
 	if server_bot_deck_factory == null:
 		return {"success": false, "message": "Bot deck factory is unavailable."}
+	var format := 3 if int(best_of) == 3 else 1
+	var bot_pool := _bot_pool(format)
 	var god_names: Array[String] = server_bot_deck_factory.get_ranked_god_names()
 	var all_bots: Array = []
 	for god_name in god_names:
-		var pool: Dictionary = _ranked_bot_deck_pool._by_god.get(str(god_name), {})
+		var pool: Dictionary = bot_pool._by_god.get(str(god_name), {})
 		if pool.is_empty():
 			continue
 		for list in pool.get("lists", []):
@@ -2933,10 +3013,21 @@ func run_league_round_robin(matches_per_bot: int = 50) -> Dictionary:
 				continue
 			if int(match_counts.get(opponent_id, 0)) >= matches_per_bot:
 				continue
-			pairings.append({"deck_a": bot.duplicate(true), "deck_b": opponent.duplicate(true)})
+			pairings.append({
+				"deck_a": bot.duplicate(true),
+				"deck_b": opponent.duplicate(true),
+				"best_of": format,
+			})
 			match_counts[bot_id] = int(match_counts.get(bot_id, 0)) + 1
 			match_counts[opponent_id] = int(match_counts.get(opponent_id, 0)) + 1
-	_pending_league_pairings = pairings
+	# Keep any pending pairings for the other format so a round-robin rebuild
+	# for one ladder cannot silently cancel the other ladder's scheduled games.
+	var retained_pairings: Array = []
+	for existing in _pending_league_pairings:
+		if int(existing.get("best_of", 1)) != format:
+			retained_pairings.append(existing)
+	retained_pairings.append_array(pairings)
+	_pending_league_pairings = retained_pairings
 	_invalidate_ladder_cache()
 	return {"success": true, "total_matches": pairings.size(), "matches_per_bot": matches_per_bot, "bot_count": all_bots.size()}
 
@@ -2953,7 +3044,7 @@ func _busy_bot_list_ids() -> Dictionary:
 				busy[list_id] = true
 	return busy
 
-func _build_fresh_bot_deck_submission(extra_reserved: Dictionary = {}) -> Dictionary:
+func _build_fresh_bot_deck_submission(extra_reserved: Dictionary = {}, best_of: int = 1) -> Dictionary:
 	_ensure_server_bot_deck_factory()
 	_refresh_ranked_bot_deck_pool()
 	_server_bot_seed_counter += 1
@@ -2961,7 +3052,7 @@ func _build_fresh_bot_deck_submission(extra_reserved: Dictionary = {}) -> Dictio
 	var reserved := _get_reserved_fresh_bot_god_counts()
 	for god_name in extra_reserved:
 		reserved[god_name] = int(reserved.get(god_name, 0)) + int(extra_reserved[god_name])
-	var preferred_gods := _ranked_bot_deck_pool.rank_underrepresented_gods(
+	var preferred_gods := _bot_pool(best_of).rank_underrepresented_gods(
 		server_bot_deck_factory.get_ranked_god_names(), _bot_deck_rng, reserved
 	)
 	for god_name in preferred_gods:
@@ -3052,7 +3143,9 @@ func _validate_server_bot_deck(deck: Dictionary) -> Dictionary:
 func _ensure_server_bot_deck_factory() -> void:
 	if server_bot_deck_factory == null:
 		server_bot_deck_factory = PracticeAutofillDeckFactoryScript.new()
-	_ranked_bot_deck_pool.set_deck_auditor(Callable(server_bot_deck_factory, "audit_ranked_bot_deck"))
+	var auditor := Callable(server_bot_deck_factory, "audit_ranked_bot_deck")
+	_ranked_bot_deck_pool.set_deck_auditor(auditor)
+	_ranked_bot_deck_pool_bo3.set_deck_auditor(auditor)
 
 func _refresh_ranked_bot_deck_pool() -> void:
 	if not _pool_dirty:
@@ -3062,14 +3155,25 @@ func _refresh_ranked_bot_deck_pool() -> void:
 	_ensure_server_bot_deck_factory()
 	var is_default_store: bool = not match_history_store.has_method("get_storage_file_name") \
 		or match_history_store.get_storage_file_name() == MatchHistoryStoreScript.DEFAULT_STORAGE_FILE_NAME
-	if is_default_store and _pool_state_path.is_empty():
-		_pool_state_path = ServerPathsScript.get_server_data_file_path("bot_pool_state.json")
-		_ranked_bot_deck_pool.load_state(_pool_state_path)
-	_ranked_bot_deck_pool.sync_community_bots(_load_community_bots_by_id())
-	var results: Array[Dictionary] = match_history_store.get_bot_deck_results()
-	_ranked_bot_deck_pool.refresh(results)
-	if is_default_store:
-		_ranked_bot_deck_pool.save_state(_pool_state_path, results.size())
+	var community_bots := _load_community_bots_by_id()
+	var results_by_format := {1: [] as Array[Dictionary], 3: [] as Array[Dictionary]}
+	for result: Dictionary in match_history_store.get_bot_deck_results():
+		var best_of := int(result.get("best_of", 1))
+		var format := 3 if best_of == 3 else 1
+		(results_by_format[format] as Array[Dictionary]).append(result)
+	for best_of in [1, 3]:
+		var bot_pool := _bot_pool(best_of)
+		if is_default_store and not _pool_state_paths.has(best_of):
+			var state_path := ServerPathsScript.get_server_data_file_path(_bot_pool_state_path(best_of))
+			_pool_state_paths[best_of] = state_path
+			if bot_pool.load_state(state_path):
+				# The saved cursor may describe a pre-split result stream.
+				bot_pool.reset_replay_state()
+		bot_pool.sync_community_bots(community_bots)
+		var format_results: Array[Dictionary] = results_by_format[best_of]
+		bot_pool.refresh(format_results)
+		if is_default_store:
+			bot_pool.save_state(_pool_state_paths[best_of], format_results.size())
 
 func _load_community_bots_by_id() -> Dictionary:
 	var bots := {}
@@ -3183,14 +3287,18 @@ func _maintain_bot_self_play() -> void:
 	if not capacity_blocker.is_empty():
 		_log_bot_self_play_block(capacity_blocker)
 		return
-	_launch_bot_self_play()
+	# Alternate background self-play between the two bot ladders so both stay populated.
+	var next_best_of := 3 if _bot_self_play_format_index % 2 == 1 else 1
+	_bot_self_play_format_index += 1
+	_launch_bot_self_play(next_best_of)
 
 
 func _launch_bot_self_play(best_of: int = 1) -> void:
 	_refresh_ranked_bot_deck_pool()
-	var pair := _ranked_bot_deck_pool.select_self_play_pair(_busy_bot_list_ids(), _bot_deck_rng)
-	var first := _build_fresh_bot_deck_submission() if pair.is_empty() else _validate_server_bot_deck(pair[0])
-	var second := _build_fresh_bot_deck_submission({str(first.get("god_name", "")): 1}) if pair.is_empty() else _validate_server_bot_deck(pair[1])
+	var format := 3 if int(best_of) == 3 else 1
+	var pair := _bot_pool(format).select_self_play_pair(_busy_bot_list_ids(), _bot_deck_rng)
+	var first := _build_fresh_bot_deck_submission({}, format) if pair.is_empty() else _validate_server_bot_deck(pair[0])
+	var second := _build_fresh_bot_deck_submission({str(first.get("god_name", "")): 1}, format) if pair.is_empty() else _validate_server_bot_deck(pair[1])
 	if first.is_empty() or second.is_empty() or not RankedBotDeckPoolScript.can_self_play_pair(first, second):
 		_log_bot_self_play_block("The ranked bot deck pool produced no valid self-play pair.")
 		return
@@ -3207,7 +3315,7 @@ func _launch_bot_self_play(best_of: int = 1) -> void:
 	var first_id := _create_server_bot_session()
 	var second_id := _create_server_bot_session()
 	var room := LobbyRoomScript.new(room_id, first_id)
-	room.best_of = 3 if best_of == 3 else 1
+	room.best_of = format
 	room.is_bot_self_play = true
 	for bot_id in [first_id, second_id]:
 		room.add_member(bot_id)

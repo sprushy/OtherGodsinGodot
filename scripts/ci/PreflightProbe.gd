@@ -81,6 +81,7 @@ func run() -> bool:
 	_check_rank_badges(failures)
 	_check_dedicated_ranked_history(failures)
 	_check_ranked_bot_pool(failures)
+	_check_bo3_bot_ladder_separation(failures)
 	_check_community_bot_rank_badge(failures)
 	_check_community_bot_quarantine(failures)
 	_check_community_bot_replay_identity(failures)
@@ -6000,6 +6001,76 @@ func _check_ladder_pages(failures: PackedStringArray) -> void:
 	DirAccess.remove_absolute(result_dir.path_join("%s.json" % session.match_id.sha256_text()))
 	DirAccess.remove_absolute(result_dir)
 
+func _check_bo3_bot_ladder_separation(failures: PackedStringArray) -> void:
+	var storage_file := "preflight_bo3_bot_pool_%d.json" % OS.get_process_id()
+	var writer := MatchHistoryStoreScript.new(storage_file, true)
+	var deck_counts := _known_good_deck_counts()
+	var specs: Array[Dictionary] = [
+		{"match_id": "bo1_only_bot", "best_of": 1, "bot_name": "Thor: Bo1 Only"},
+		{"match_id": "bo3_only_bot", "best_of": 3, "bot_name": "Thor: Bo3 Only"},
+	]
+	for spec: Dictionary in specs:
+		var bot_session_id := "BOT_%s" % str(spec["match_id"]).to_upper()
+		var session := MatchSessionScript.new(str(spec["match_id"]), "preflight_room", "127.0.0.1", 12345,
+			[bot_session_id, "human"], {
+				bot_session_id: {
+					"bot_god_name": "Thor", "bot_name": str(spec["bot_name"]), "cards": deck_counts.duplicate(),
+				},
+			}, {
+				bot_session_id: {"is_bot": true, "player_name": str(spec["bot_name"])},
+				"human": {"account_id": "bo_ladder_human"},
+			})
+		session.is_ranked = true
+		session.configure_series_format(int(spec["best_of"]))
+		var saved := writer.record_completed_match(session, 0, 1, "Thor", "Odin")
+		if not bool(saved.get("success", false)):
+			failures.append("Could not record the %s bot result" % spec["match_id"])
+	var reader := MatchHistoryStoreScript.new(storage_file, true)
+	var results := reader.get_bot_deck_results()
+	var bo1_count := 0
+	var bo3_count := 0
+	for result: Dictionary in results:
+		if int(result.get("best_of", 0)) == 1:
+			bo1_count += 1
+		elif int(result.get("best_of", 0)) == 3:
+			bo3_count += 1
+	if bo1_count != 1 or bo3_count != 1:
+		failures.append("Bot results were not tagged with their match format: Bo1=%d Bo3=%d" % [bo1_count, bo3_count])
+	var lobby := LobbyServerScript.new()
+	lobby.match_history_store = reader
+	lobby._refresh_ranked_bot_deck_pool()
+	var bo1_pool := lobby._ranked_bot_deck_pool
+	var bo3_pool := lobby._ranked_bot_deck_pool_bo3
+	if bo1_pool.get_deck_details("bo1_only_bot").is_empty() or not bo3_pool.get_deck_details("bo1_only_bot").is_empty() \
+			or bo3_pool.get_deck_details("bo3_only_bot").is_empty() or not bo1_pool.get_deck_details("bo3_only_bot").is_empty():
+		failures.append("Bo1 and Bo3 bot pools replayed each other's results")
+	# Quarantine one bot in each pool. Iron V matchmaking must pull the Bo1 bot
+	# for a Bo1 seek and the Bo3 bot for a Bo3 seek, never the other format's.
+	var bo1_thor: Dictionary = bo1_pool._by_god["Thor"]
+	bo1_pool._retire_list(bo1_thor, bo1_pool._find_list_by_id(bo1_thor, "bo1_only_bot"))
+	var bo3_thor: Dictionary = bo3_pool._by_god["Thor"]
+	bo3_pool._retire_list(bo3_thor, bo3_pool._find_list_by_id(bo3_thor, "bo3_only_bot"))
+	lobby.sessions_by_id["bo1_human"] = {"account_id": "bo1_account", "connected": true}
+	lobby.sessions_by_id["bo3_human"] = {"account_id": "bo3_account", "connected": true}
+	var bo1_seek := lobby._create_server_bot_seek(true, 1)
+	var bo3_seek := lobby._create_server_bot_seek(true, 3)
+	if bo1_seek == null or bo3_seek == null:
+		failures.append("Could not create a seek for both bot match formats")
+	else:
+		lobby._join_room_for_session("bo1_human", bo1_seek.room_id)
+		lobby._join_room_for_session("bo3_human", bo3_seek.room_id)
+		var bo1_matched := lobby._match_server_bot_to_player(bo1_seek)
+		var bo3_matched := lobby._match_server_bot_to_player(bo3_seek)
+		var bo1_bot := bo1_seek.get_deck_submission(bo1_seek.host_session_id)
+		var bo3_bot := bo3_seek.get_deck_submission(bo3_seek.host_session_id)
+		if not bo1_matched or not bo3_matched or str(bo1_bot.get("bot_list_id", "")) != "bo1_only_bot" \
+				or str(bo3_bot.get("bot_list_id", "")) != "bo3_only_bot":
+			failures.append("Ranked bot matchmaking did not draw each format's opponent from its own ladder")
+		elif int(bo1_bot.get("bot_stars", -1)) != int(bo1_pool.get_deck_details("bo1_only_bot", true).get("stars", -2)) \
+				or int(bo3_bot.get("bot_stars", -1)) != int(bo3_pool.get_deck_details("bo3_only_bot", true).get("stars", -2)):
+			failures.append("Ranked bot seek ranks did not come from the format-specific ladder")
+	lobby.free()
+
 func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 	var named_results: Array[Dictionary] = [
 		_bot_pool_result("m_bloodaxe", "", {"Thor": 1, "Bloodaxe Variant": 40}, "win"),
@@ -6038,8 +6109,9 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 	if recap.has(0) or not recap.get(1, {}).get("loss_protected", false):
 		failures.append("Rated bot match did not award a recap only to the signed-in player")
 	var stored_results := reader.get_bot_deck_results()
-	if stored_results.size() != 1 or stored_results[0]["god_name"] != "Thor" or stored_results[0]["result"] != "win":
-		failures.append("Rated bot match did not persist the registered winning list")
+	if stored_results.size() != 1 or stored_results[0]["god_name"] != "Thor" or stored_results[0]["result"] != "win" \
+			or int(stored_results[0].get("best_of", 0)) != 1:
+		failures.append("Rated bot match did not persist the registered winning list and its best-of")
 	var lobby := LobbyServerScript.new()
 	lobby.match_history_store = reader
 	var seek := lobby._create_server_bot_seek(true)
