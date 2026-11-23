@@ -12023,6 +12023,14 @@ func _attach_seek_button_to_field(field: PanelContainer, seek_button: Button) ->
 	_apply_seek_field_button_style(seek_button, false)
 	row.add_child(seek_button)
 
+func _create_rated_seek_button(best_of: int, field: PanelContainer, on_pressed: Callable) -> Button:
+	var button := Button.new()
+	button.name = "CreateBo%dRatedSeekButton" % best_of
+	button.text = "Create Bo%d Rated Seek" % best_of
+	button.pressed.connect(on_pressed)
+	_attach_seek_button_to_field(field, button)
+	return button
+
 func _add_rank_badge_button(best_of: int, field: PanelContainer) -> void:
 	if _rank_badge_buttons.has(best_of) and is_instance_valid(_rank_badge_buttons[best_of]):
 		return
@@ -13177,11 +13185,22 @@ func _build_active_match_rejoin_dialog() -> void:
 	_active_match_rejoin_dialog = dialog
 
 func _build_seek_format_controls() -> void:
-	if multiplayer_container == null or create_seek_button == null or _create_unranked_seek_button != null:
+	if multiplayer_container == null or _create_unranked_seek_button != null:
 		return
-	create_seek_button.text = "Create Bo1 Rated Seek"
-	var bo1_field := _make_rated_seek_field(1, create_seek_button.get_index())
-	_attach_seek_button_to_field(bo1_field, create_seek_button)
+	# The scene-defined CreateSeekButton inherits layout state from the VBox it
+	# starts in. Rebuild Bo1 the same way as Bo3 so both rated fields match.
+	var legacy_bo1_button := create_seek_button as Button
+	var bo1_insert_index := -1
+	if is_instance_valid(legacy_bo1_button):
+		bo1_insert_index = multiplayer_container.get_children().find(legacy_bo1_button)
+	if bo1_insert_index < 0:
+		bo1_insert_index = multiplayer_container.get_child_count()
+
+	var bo1_field := _make_rated_seek_field(1, bo1_insert_index)
+	create_seek_button = _create_rated_seek_button(1, bo1_field, _on_create_seek_pressed)
+	if is_instance_valid(legacy_bo1_button):
+		legacy_bo1_button.visible = false
+		legacy_bo1_button.queue_free()
 
 	_create_unranked_seek_button = Button.new()
 	_create_unranked_seek_button.name = "CreateUnrankedSeekButton"
@@ -13190,12 +13209,8 @@ func _build_seek_format_controls() -> void:
 	multiplayer_container.add_child(_create_unranked_seek_button)
 	multiplayer_container.move_child(_create_unranked_seek_button, bo1_field.get_index() + 1)
 
-	_create_bo3_ranked_seek_button = Button.new()
-	_create_bo3_ranked_seek_button.name = "CreateBo3RatedSeekButton"
-	_create_bo3_ranked_seek_button.text = "Create Bo3 Rated Seek"
-	_create_bo3_ranked_seek_button.pressed.connect(_on_create_bo3_ranked_seek_pressed)
 	var bo3_field := _make_rated_seek_field(3, _create_unranked_seek_button.get_index() + 1)
-	_attach_seek_button_to_field(bo3_field, _create_bo3_ranked_seek_button)
+	_create_bo3_ranked_seek_button = _create_rated_seek_button(3, bo3_field, _on_create_bo3_ranked_seek_pressed)
 
 	_create_bo3_unranked_seek_button = Button.new()
 	_create_bo3_unranked_seek_button.name = "CreateBo3UnratedSeekButton"

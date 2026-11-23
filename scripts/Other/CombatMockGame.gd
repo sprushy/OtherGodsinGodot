@@ -1122,6 +1122,7 @@ const ACTION_LOG_LINE_SEPARATION := 5
 const ACTION_LOG_POPUP_LAYER := 1000
 const ACTION_LOG_POPUP_WIDTH := 460.0
 const ACTION_LOG_POPUP_HEIGHT := 380.0
+const ACTION_LOG_COPY_FEEDBACK_SECONDS := 1.5
 const ACTION_LOG_LEFT_INSET := 6
 const ACTION_LOG_NOTEBOOK_ICON := preload("res://images/ui/play_view/match_log_notebook.svg")
 const TURN_CHOICE_TOP_GAP := 10.0
@@ -5078,6 +5079,11 @@ func _setup_action_log() -> void:
 	log_title.add_theme_font_size_override("font_size", 13)
 	header.add_child(log_title)
 
+	var header_spacer := Control.new()
+	header_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(header_spacer)
+	header.add_child(_create_action_log_copy_button())
+
 	_action_log_button = Button.new()
 	_action_log_button.name = "ActionLogNotebookButton"
 	_action_log_button.text = "Log"
@@ -5460,6 +5466,23 @@ func _get_action_log_history_messages() -> Array[String]:
 	for i in range(_action_log_messages.size()):
 		history_messages.append(_action_log_messages[i])
 	return history_messages
+
+func _create_action_log_copy_button() -> Button:
+	var copy_button := Button.new()
+	copy_button.name = "ActionLogCopyButton"
+	copy_button.text = "Copy"
+	copy_button.tooltip_text = "Copy the full game log to the clipboard"
+	copy_button.pressed.connect(func() -> void: _copy_action_log_to_clipboard(copy_button))
+	return copy_button
+
+func _copy_action_log_to_clipboard(copy_button: Button) -> void:
+	DisplayServer.clipboard_set("\n".join(_get_action_log_history_messages()))
+	if copy_button == null or not is_instance_valid(copy_button):
+		return
+	copy_button.text = "Copied!"
+	await get_tree().create_timer(ACTION_LOG_COPY_FEEDBACK_SECONDS).timeout
+	if is_instance_valid(copy_button):
+		copy_button.text = "Copy"
 
 func _refresh_match_replay_button() -> void:
 	if _action_log_replay_button == null or not is_instance_valid(_action_log_replay_button):
@@ -6076,6 +6099,7 @@ func _open_action_log_popup() -> void:
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(spacer)
+	header.add_child(_create_action_log_copy_button())
 
 	var close_button := Button.new()
 	close_button.text = "Close"
