@@ -20,6 +20,12 @@ var _bot_results: Array[Dictionary] = []
 var _sorted_ranked_ids_by_account_id: Dictionary = {}
 var _bot_match_ids_by_list_id: Dictionary = {}
 var _sorted_bot_ids_by_list_id: Dictionary = {}
+# Cached full-history ordering for activity feeds; kept append-only in finish
+# order like the other sorted views, with a full re-sort only on reorder.
+var _all_match_ids: Array[String] = []
+var _sorted_all_match_ids: Array[String] = []
+# Cached per-profile history ordering (see _get_profile_history_ids).
+var _sorted_history_ids_by_profile_id: Dictionary = {}
 var _dedicated_result_files_loaded: Dictionary = {}
 var _player_ladder_cache: Dictionary = {}
 var _player_ladder_cache_season: int = -1
@@ -133,7 +139,13 @@ func get_profile_summary(profile_id: String, recent_limit: int = 5, account_id: 
 
 	for index in range(history_ids.size() - 1, -1, -1):
 		var match_id: String = history_ids[index]
-		var entry: Dictionary = _get_match_entry(match_id)
+		# Read-only traversal: use the stored entry directly instead of the
+		# deep-copying _get_match_entry, which duplicates the profile's whole
+		# match history on every profile view.
+		var raw_entry = _matches_by_id.get(match_id, {})
+		if not (raw_entry is Dictionary):
+			continue
+		var entry: Dictionary = raw_entry
 		if entry.is_empty():
 			continue
 		var player_entry: Dictionary = _get_player_entry_for_profile(entry, resolved_profile_id)
@@ -277,10 +289,22 @@ func get_bot_deck_results() -> Array[Dictionary]:
 	_load_dedicated_results()
 	if _sorted_bot_match_ids.size() == _bot_deck_match_ids.size():
 		return _bot_results
-	var start := _sorted_bot_match_ids.size()
-	var updated_ids := _get_sorted_match_ids(_bot_deck_match_ids)
-	if start > 0 and updated_ids[start - 1] != _sorted_bot_match_ids.back():
-		start = 0
+	var old_count := _sorted_bot_match_ids.size()
+	# Sort only the newly indexed ids when they land in finish order after the
+	# cached tail (the normal case). A late-arriving older result re-sorts the
+	# whole stream, mirroring RankedBotDeckPool.refresh's cursor validation.
+	var appended_ids: Array[String] = _bot_deck_match_ids.slice(old_count)
+	var updated_ids: Array[String]
+	var reordered := old_count > _bot_deck_match_ids.size() \
+		or (old_count > 0 and _has_id_sorting_before(appended_ids, _sorted_bot_match_ids[old_count - 1]))
+	if reordered:
+		updated_ids = _get_sorted_match_ids(_bot_deck_match_ids)
+	else:
+		updated_ids = _sorted_bot_match_ids.duplicate()
+		if not appended_ids.is_empty():
+			updated_ids.append_array(_get_sorted_match_ids(appended_ids))
+	var start := 0 if reordered or (old_count > 0 and updated_ids[old_count - 1] != _sorted_bot_match_ids[old_count - 1]) else old_count
+	if start == 0:
 		_bot_results = []
 	else:
 		_bot_results = _bot_results.duplicate()
@@ -334,7 +358,7 @@ func get_recent_match_activities(limit: int = 12, eliminated_bot_match_ids: Dict
 	_ensure_loaded()
 	_load_dedicated_results()
 	var activities: Array[Dictionary] = []
-	var match_ids := _get_sorted_match_ids(_matches_by_id.keys())
+	var match_ids := _get_sorted_all_match_ids()
 	for index in range(match_ids.size() - 1, -1, -1):
 		if activities.size() >= maxi(1, limit):
 			break
@@ -617,6 +641,7 @@ func _replay_ranked_history(account_id: String, best_of: int, stop_before_match_
 
 func _index_result(entry: Dictionary) -> void:
 	var match_id := str(entry["match_id"])
+	_all_match_ids.append(match_id)
 	if entry.has("bot_deck_result") or entry.has("bot_deck_results"):
 		_bot_deck_match_ids.append(match_id)
 		for bot_result in entry.get("bot_deck_results", []):
@@ -626,7 +651,9 @@ func _index_result(entry: Dictionary) -> void:
 			_bot_match_ids_by_list_id.get_or_add(list_id, []).append(match_id)
 			_sorted_bot_ids_by_list_id.erase(list_id)
 	for player_entry in entry["players"]:
-		_add_history_id(_history_ids_by_profile_id, str(player_entry["profile_id"]), match_id)
+		var profile_id := str(player_entry["profile_id"])
+		_add_history_id(_history_ids_by_profile_id, profile_id, match_id)
+		_sorted_history_ids_by_profile_id.erase(profile_id)
 		if bool(entry.get("advances_rank", false)):
 			var account_id := str(player_entry["account_id"])
 			_add_history_id(_ranked_history_ids_by_account_id, account_id, match_id)
@@ -690,7 +717,14 @@ func _build_player_entry(
 	}
 
 func _get_profile_history_ids(profile_id: String) -> Array[String]:
-	return _get_sorted_match_ids(_history_ids_by_profile_id.get(profile_id, []))
+	# Cached sorted view; invalidated per profile in _index_result when new
+	# history ids land, so profile views do not re-sort the whole history.
+	var cached = _sorted_history_ids_by_profile_id.get(profile_id, null)
+	if cached is Array:
+		return cached
+	var sorted_ids := _get_sorted_match_ids(_history_ids_by_profile_id.get(profile_id, []))
+	_sorted_history_ids_by_profile_id[profile_id] = sorted_ids
+	return sorted_ids
 
 func _get_sorted_match_ids(raw_history_ids) -> Array[String]:
 	var history_ids: Array[String] = []
@@ -700,6 +734,31 @@ func _get_sorted_match_ids(raw_history_ids) -> Array[String]:
 		history_ids.append(str(raw_match_id))
 	history_ids.sort_custom(_match_finished_before)
 	return history_ids
+
+## True when any of the given ids would sort strictly before the cached tail in
+## finish order, meaning the cached prefix can no longer be kept as-is.
+func _has_id_sorting_before(ids: Array[String], tail_id: String) -> bool:
+	for id in ids:
+		if _match_finished_before(id, tail_id):
+			return true
+	return false
+
+## Full-history finish order for the activity feed. Maintained append-only like
+## the other sorted views: only newly indexed ids are sorted per call, and a
+## late-arriving older result triggers one full re-sort.
+func _get_sorted_all_match_ids() -> Array[String]:
+	if _sorted_all_match_ids.size() == _all_match_ids.size():
+		return _sorted_all_match_ids
+	var old_count := _sorted_all_match_ids.size()
+	var appended_ids: Array[String] = _all_match_ids.slice(old_count)
+	if old_count > _all_match_ids.size() \
+			or (old_count > 0 and _has_id_sorting_before(appended_ids, _sorted_all_match_ids[old_count - 1])):
+		_sorted_all_match_ids = _get_sorted_match_ids(_all_match_ids)
+	else:
+		_sorted_all_match_ids = _sorted_all_match_ids.duplicate()
+		if not appended_ids.is_empty():
+			_sorted_all_match_ids.append_array(_get_sorted_match_ids(appended_ids))
+	return _sorted_all_match_ids
 
 ## Cached sorted ranked history for one account. `_index_result` invalidates the
 ## entry whenever a new ranked match id is appended for that account.
@@ -767,6 +826,9 @@ func _ensure_loaded() -> void:
 	_sorted_ranked_ids_by_account_id = {}
 	_sorted_bot_ids_by_list_id = {}
 	_bot_match_ids_by_list_id = {}
+	_all_match_ids = []
+	_sorted_all_match_ids = []
+	_sorted_history_ids_by_profile_id = {}
 	_player_ladder_cache = {}
 	_player_ladder_cache_season = -1
 	_load_serve_quarantined()
@@ -780,6 +842,8 @@ func _ensure_loaded() -> void:
 	var stored_history_ids = root.get("history_ids_by_profile_id", {})
 	if stored_matches is Dictionary:
 		_matches_by_id = (stored_matches as Dictionary).duplicate(true)
+		for match_id in _matches_by_id.keys():
+			_all_match_ids.append(str(match_id))
 	if stored_history_ids is Dictionary:
 		_history_ids_by_profile_id = (stored_history_ids as Dictionary).duplicate(true)
 
@@ -828,6 +892,11 @@ func _get_dedicated_results_dir() -> String:
 	return _get_storage_path().get_basename() + "_results"
 
 func _load_dedicated_results() -> void:
+	# Deliberately unthrottled: subprocess-written results are only ever
+	# discovered through this scan, so every query must see committed results
+	# immediately (preflight treats that as the contract). The per-file parse
+	# is skipped for already-loaded files; the O(N log N) sorts on top of this
+	# are the parts kept incremental elsewhere.
 	var results_dir := _get_dedicated_results_dir()
 	if not DirAccess.dir_exists_absolute(results_dir):
 		return

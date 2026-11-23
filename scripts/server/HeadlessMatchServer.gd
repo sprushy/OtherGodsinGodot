@@ -17,7 +17,9 @@ const INITIAL_JOIN_TIMEOUT_SECONDS := 120
 const ABANDONED_MATCH_SHUTDOWN_DELAY_SECONDS := 0.25
 const GAME_END_SHUTDOWN_DELAY_SECONDS := 3.0
 const WATCHED_BOT_STEP_DELAY_SECONDS := 1.0
-const STATUS_HEARTBEAT_INTERVAL_SECONDS := 1.0
+# Supervisor treats the status file as stale after 20s (MATCH_STATUS_FILE_STALE_
+# SECONDS), so a 3s heartbeat keeps a 6x safety margin with a third of the writes.
+const STATUS_HEARTBEAT_INTERVAL_SECONDS := 3.0
 const RANKED_TURN_TIMEOUT_MSEC := 180_000
 const RANKED_TIMEOUT_RESOLUTION_GRACE_MSEC := 8_000
 const BOT_SELF_PLAY_STALL_MSEC := 45_000
@@ -60,6 +62,13 @@ var _ranked_clock_remaining_by_player: Dictionary = {}
 var _ranked_clock_started_msec := 0
 var _ranked_timeout_turn_number := -1
 var _ranked_timeout_deadline_msec := 0
+# The ranked turn clock is checked a few times per second instead of every frame:
+# timeouts are measured in seconds (180s budget + 8s grace), so per-frame scans
+# of the pending interaction list buy nothing.
+var _ranked_clock_check_elapsed: float = 0.0
+const _RANKED_CLOCK_CHECK_INTERVAL_SECONDS := 0.25
+# The status directory is created once; the heartbeat writes skip the mkdir.
+var _status_dir_ensured: bool = false
 
 func _process(delta: float) -> void:
 	if not _abandoned_shutdown_started:
@@ -71,7 +80,10 @@ func _process(delta: float) -> void:
 				return
 			_write_status_file()
 	_shutdown_if_match_was_abandoned()
-	_check_ranked_turn_clock()
+	_ranked_clock_check_elapsed += delta
+	if _ranked_clock_check_elapsed >= _RANKED_CLOCK_CHECK_INTERVAL_SECONDS:
+		_ranked_clock_check_elapsed = 0.0
+		_check_ranked_turn_clock()
 	if _bot_review_started_msec > 0 and not _abandoned_shutdown_started and not _finished_shutdown_pending:
 		var now := Time.get_ticks_msec()
 		if now - _bot_review_progress_msec >= BOT_SELF_PLAY_STALL_MSEC:
@@ -752,11 +764,6 @@ func _write_status_file(status_override: String = "", reason: String = "") -> vo
 	var status := status_override.strip_edges()
 	if status.is_empty():
 		status = str(match_session.status).strip_edges()
-	var status_dir := status_path.get_base_dir()
-	if not status_dir.is_empty():
-		var mkdir_err := DirAccess.make_dir_recursive_absolute(status_dir)
-		if mkdir_err != OK and mkdir_err != ERR_ALREADY_EXISTS:
-			return
 	var payload := {
 		"match_id": str(match_session.match_id),
 		"room_id": str(match_session.room_id),
@@ -775,7 +782,26 @@ func _write_status_file(status_override: String = "", reason: String = "") -> vo
 	if match_session.is_bot_self_play() and _bot_review_started_msec > 0:
 		payload["bot_turn"] = _bot_review_turn
 		payload["bot_issues"] = _bot_review_issues
-	JsonStoreScript.save_json(status_path, payload, "HeadlessMatchServer")
+	# Status files are disposable heartbeat data the supervisor reads only to
+	# detect staleness, so write them directly instead of the atomic
+	# temp+backup+rename dance: a torn write parses as no-status data and the
+	# supervisor falls back to its 20s staleness threshold, which is the same
+	# outcome as a failed atomic write.
+	var status_dir := status_path.get_base_dir()
+	if not _status_dir_ensured and not status_dir.is_empty():
+		var mkdir_err := DirAccess.make_dir_recursive_absolute(status_dir)
+		if mkdir_err != OK and mkdir_err != ERR_ALREADY_EXISTS:
+			return
+		_status_dir_ensured = true
+	var file := FileAccess.open(status_path, FileAccess.WRITE)
+	if file == null:
+		# The directory may have been removed since the last write; retry the
+		# mkdir on the next heartbeat.
+		_status_dir_ensured = false
+		return
+	file.store_string(JSON.stringify(payload, "", false))
+	file.flush()
+	file.close()
 
 func _start_bot_review() -> void:
 	_bot_review_started_msec = maxi(1, Time.get_ticks_msec())

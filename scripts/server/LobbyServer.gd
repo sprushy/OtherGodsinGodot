@@ -162,6 +162,23 @@ var _room_list_broadcast_pending: bool = false
 var _room_list_broadcast_last_msec: int = 0
 const _ROOM_LIST_BROADCAST_MIN_INTERVAL_MSEC: int = 1000
 
+# Bot-history broadcast throttle. Building the history page is expensive (it can
+# refresh the bot pools and rebuild the ladder), so bursts of bot-work events
+# coalesce instead of each paying the full chain.
+var _bot_history_broadcast_pending: bool = false
+var _bot_history_broadcast_last_msec: int = 0
+const _BOT_HISTORY_BROADCAST_MIN_INTERVAL_MSEC: int = 1500
+
+# Owner-bot deck fingerprints, cached per list id and cleared whenever the bot
+# pools refresh (community syncs and adoptions are the only ways deck content
+# changes). Avoids re-hashing every owned bot's full deck on each ladder rebuild.
+var _bot_deck_fingerprints_by_list_id: Dictionary = {}
+
+# Slow-path diagnostics: expensive rebuilds log (rate-limited) only when they
+# exceed this budget, so healthy servers stay silent in the log.
+const _SLOW_PATH_LOG_THRESHOLD_MSEC: int = 25
+const _SLOW_PATH_LOG_INTERVAL_MSEC: int = 60000
+
 func _invalidate_ladder_cache() -> void:
 	_ladder_cache_dirty = true
 	_ladder_cache_bo3_dirty = true
@@ -2116,6 +2133,28 @@ func _compare_live_bot_match_rank(a: Dictionary, b: Dictionary) -> bool:
 	return int(a.get("played_unix", 0)) > int(b.get("played_unix", 0))
 
 func _broadcast_bot_match_history() -> void:
+	var now_msec := Time.get_ticks_msec()
+	if now_msec - _bot_history_broadcast_last_msec >= _BOT_HISTORY_BROADCAST_MIN_INTERVAL_MSEC:
+		_bot_history_broadcast_last_msec = now_msec
+		_do_broadcast_bot_match_history()
+	else:
+		_bot_history_broadcast_pending = true
+		call_deferred("_flush_pending_bot_history_broadcast")
+
+func _flush_pending_bot_history_broadcast() -> void:
+	if not _bot_history_broadcast_pending:
+		return
+	_bot_history_broadcast_pending = false
+	_bot_history_broadcast_last_msec = Time.get_ticks_msec()
+	_do_broadcast_bot_match_history()
+
+func _do_broadcast_bot_match_history() -> void:
+	# Building the page can refresh the bot pools and rebuild the ladder, so do
+	# not pay for any of that when nobody is signed in to receive it. Clients
+	# request their first page via REQUEST_BOT_MATCH_HISTORY on join.
+	if not _has_signed_in_peer():
+		return
+	var started_msec := Time.get_ticks_msec()
 	var page: Dictionary = match_history_store.get_recent_bot_matches(50)
 	page["before_match_id"] = ""
 	page["live_matches"] = _get_live_bot_work_matches()
@@ -2125,6 +2164,27 @@ func _broadcast_bot_match_history() -> void:
 		var session := _get_session_for_peer(peer_id)
 		if not str(session.get("account_id", "")).is_empty():
 			_send_to_peer(peer_id, LobbyProtocolScript.BOT_MATCH_HISTORY, page)
+	_log_slow_path("bot history broadcast", started_msec)
+
+func _has_signed_in_peer() -> bool:
+	for raw_peer_id in session_id_by_peer.keys():
+		var session := _get_session_for_peer(int(raw_peer_id))
+		if not str(session.get("account_id", "")).is_empty():
+			return true
+	return false
+
+var _slow_path_log_next_msec: Dictionary = {}
+
+func _log_slow_path(label: String, started_msec: int, detail: String = "") -> void:
+	var elapsed_msec := Time.get_ticks_msec() - started_msec
+	if elapsed_msec < _SLOW_PATH_LOG_THRESHOLD_MSEC:
+		return
+	var now_msec := Time.get_ticks_msec()
+	if now_msec < int(_slow_path_log_next_msec.get(label, 0)):
+		return
+	_slow_path_log_next_msec[label] = now_msec + _SLOW_PATH_LOG_INTERVAL_MSEC
+	var suffix := "" if detail.is_empty() else " (%s)" % detail
+	push_warning("Slow server path: %s took %d ms%s." % [label, elapsed_msec, suffix])
 
 func _get_recent_match_activity_notifications() -> Array[Dictionary]:
 	_refresh_ranked_bot_deck_pool()
@@ -2138,29 +2198,31 @@ func _get_recent_match_activity_notifications() -> Array[Dictionary]:
 	if activities.is_empty():
 		return activities
 	var ladder_bo1 := _get_cached_ladder()
+	var place_lookup_bo1 := _build_ladder_place_lookup(ladder_bo1)
 	var ladder_bo3: Array[Dictionary] = []
+	var place_lookup_bo3: Dictionary = {}
 	for activity: Dictionary in activities:
 		var best_of := int(activity.get("best_of", 1))
 		var ladder: Array[Dictionary] = ladder_bo1
+		var place_lookup: Dictionary = place_lookup_bo1
 		if best_of == 3:
 			if ladder_bo3.is_empty():
 				ladder_bo3 = _build_full_ladder_for_best_of(3)
+				place_lookup_bo3 = _build_ladder_place_lookup(ladder_bo3)
 			ladder = ladder_bo3
+			place_lookup = place_lookup_bo3
 		var list_id := str(activity.get("winner_bot_list_id", ""))
 		var account_id := str(activity.get("winner_account_id", ""))
 		var before_points := int(activity.get("winner_before_points", -1))
 		var after_points := int(activity.get("winner_after_points", -1))
 		if (list_id.is_empty() and account_id.is_empty()) or before_points < 0 or after_points < 0:
 			continue
-		var current_place := -1
+		# O(1) winner lookup instead of scanning the ladder per activity.
+		var winner_key := list_id if not list_id.is_empty() else account_id
+		var current_place := int(place_lookup.get(winner_key, -1))
 		var current_points := -1
-		for index in range(ladder.size()):
-			var matches_current_winner := str(ladder[index].get("list_id", "")) == list_id if not list_id.is_empty() \
-				else str(ladder[index].get("account_id", "")) == account_id
-			if matches_current_winner:
-				current_place = index
-				current_points = int(ladder[index].get("points", -1))
-				break
+		if current_place >= 0:
+			current_points = int(ladder[current_place].get("points", -1))
 		var is_player := not account_id.is_empty()
 		var notification_depth := PLAYER_LADDER_NOTIFICATION_DEPTH if is_player else LADDER_NOTIFICATION_DEPTH
 		if current_place < 0 or current_place >= notification_depth or current_points != after_points:
@@ -2193,6 +2255,21 @@ func _get_recent_match_activity_notifications() -> Array[Dictionary]:
 		activity.erase("winner_before_points")
 		activity.erase("winner_after_points")
 	return activities
+
+## Maps each ladder row's bot list id (and human account id) to its ladder
+## position, so activity notifications can find winners without scanning the
+## full ladder once per activity.
+func _build_ladder_place_lookup(ladder: Array[Dictionary]) -> Dictionary:
+	var lookup := {}
+	for index in range(ladder.size()):
+		var row: Dictionary = ladder[index]
+		var list_id := str(row.get("list_id", ""))
+		if not list_id.is_empty():
+			lookup[list_id] = index
+		var account_id := str(row.get("account_id", ""))
+		if not account_id.is_empty():
+			lookup[account_id] = index
+	return lookup
 
 ## Rank-change phrase for a recent ranked result. Human winners are tracked
 ## deeper than bots, and every move inside the top ten is reported rather than
@@ -2434,6 +2511,7 @@ func _build_full_ladder() -> Array[Dictionary]:
 	return _build_full_ladder_for_best_of(1)
 
 func _build_full_ladder_for_best_of(best_of: int) -> Array[Dictionary]:
+	var started_msec := Time.get_ticks_msec()
 	var format := 3 if int(best_of) == 3 else 1
 	var ladder: Array[Dictionary] = match_history_store.get_human_ladder(account_store.get_ladder_usernames(), format)
 	_refresh_ranked_bot_deck_pool()
@@ -2450,8 +2528,7 @@ func _build_full_ladder_for_best_of(best_of: int) -> Array[Dictionary]:
 				continue
 			var bot_owner_name := str(bot.get("owner_name", "")).strip_edges()
 			if not bot_owner_name.is_empty():
-				var bot_deck := bot_pool.get_deck_details(bot_id_str)
-				var bot_fp := JSON.stringify([bot_deck.get("cards", {}), bot_deck.get("reinforcements", {}), bot_deck.get("special_setup", {})]).sha256_text()
+				var bot_fp := _owner_bot_fingerprint(bot_pool, bot_id_str)
 				var owner_key := "%s:%s" % [bot_owner_name, bot_fp]
 				if seen_owner_fps.has(owner_key):
 					continue
@@ -2472,7 +2549,23 @@ func _build_full_ladder_for_best_of(best_of: int) -> Array[Dictionary]:
 	ladder = unique_ladder
 	for index in range(ladder.size()):
 		ladder[index]["ladder_position"] = index + 1
+	# Decorate once per rebuild so every request (and peer) reuses the cached
+	# rows' portraits and recent matches instead of recomputing them.
+	_decorate_ladder_rows(ladder, format)
+	_log_slow_path("ladder rebuild", started_msec, "%d rows" % ladder.size())
 	return ladder
+
+## Stable content fingerprint for an owned bot's deck. Hashing the full deck is
+## expensive, so results are cached until the next pool refresh (community syncs
+## and adoptions are the only ways owned deck content changes).
+func _owner_bot_fingerprint(bot_pool: RankedBotDeckPoolScript, list_id: String) -> String:
+	var cached := str(_bot_deck_fingerprints_by_list_id.get(list_id, ""))
+	if not cached.is_empty():
+		return cached
+	var bot_deck := bot_pool.get_deck_details(list_id)
+	var fingerprint := JSON.stringify([bot_deck.get("cards", {}), bot_deck.get("reinforcements", {}), bot_deck.get("special_setup", {})]).sha256_text()
+	_bot_deck_fingerprints_by_list_id[list_id] = fingerprint
+	return fingerprint
 
 func _build_bot_ladder_row(bot: Dictionary, god_name: String) -> Dictionary:
 	var rank := RankedProgressionScript.summarize_bot_stars(int(bot["stars"]))
@@ -2524,15 +2617,20 @@ func _decorate_ladder_rows(rows: Array[Dictionary], best_of: int = 1) -> void:
 
 func _public_ladder_rows(rows: Array[Dictionary], best_of: int = 1) -> Array[Dictionary]:
 	_decorate_ladder_rows(rows, best_of)
+	# Rows are references into the cached ladder array, so strip private fields
+	# from per-request copies. Mutating the cached rows themselves would erase
+	# account ids that activity notifications still need.
+	var public_rows: Array[Dictionary] = []
 	for row in rows:
-		var account_id := str(row.get("account_id", ""))
-		row.erase("account_id")
-		if account_id.is_empty():
-			continue
-		var portrait := _get_public_rank_portrait(account_id, row["rank"])
-		if not portrait.is_empty():
-			row["portrait"] = portrait
-	return rows
+		var public_row: Dictionary = row.duplicate()
+		var account_id := str(public_row.get("account_id", ""))
+		public_row.erase("account_id")
+		if not account_id.is_empty():
+			var portrait := _get_public_rank_portrait(account_id, public_row["rank"])
+			if not portrait.is_empty():
+				public_row["portrait"] = portrait
+		public_rows.append(public_row)
+	return public_rows
 
 func _handle_request_friends(peer_id: int) -> void:
 	var session: Dictionary = _get_session_for_peer(peer_id)
@@ -3205,6 +3303,7 @@ func _ensure_server_bot_deck_factory() -> void:
 func _refresh_ranked_bot_deck_pool() -> void:
 	if not _pool_dirty:
 		return
+	var started_msec := Time.get_ticks_msec()
 	_pool_dirty = false
 	_ensure_match_history_store()
 	_ensure_server_bot_deck_factory()
@@ -3212,6 +3311,9 @@ func _refresh_ranked_bot_deck_pool() -> void:
 		or match_history_store.get_storage_file_name() == MatchHistoryStoreScript.DEFAULT_STORAGE_FILE_NAME
 	var community_bots := _load_community_bots_by_id()
 	_update_pool_results_by_format(match_history_store.get_bot_deck_results())
+	# Deck content only changes through the pools (community syncs, adoptions),
+	# so cached owner fingerprints are valid until the next dirty refresh.
+	_bot_deck_fingerprints_by_list_id.clear()
 	for best_of in [1, 3]:
 		var bot_pool := _bot_pool(best_of)
 		if is_default_store and not _pool_state_paths.has(best_of):
@@ -3225,8 +3327,12 @@ func _refresh_ranked_bot_deck_pool() -> void:
 		bot_pool.sync_community_bots(community_bots)
 		var format_results: Array[Dictionary] = _pool_results_by_format[best_of]
 		bot_pool.refresh(format_results)
-		if is_default_store:
+		# Persist only when the replay or the community sync actually changed
+		# pool state; a refresh triggered by a human result or profile change
+		# must not rewrite both format's state files.
+		if is_default_store and bot_pool.needs_save():
 			bot_pool.save_state(_pool_state_paths[best_of], format_results.size())
+	_log_slow_path("bot pool refresh", started_msec)
 
 # Splits the bot result stream into per-format buckets incrementally: the full
 # history is split exactly once, and only newly recorded results are appended
@@ -3248,6 +3354,10 @@ func _update_pool_results_by_format(results: Array[Dictionary]) -> void:
 	_pool_results_bucketed_count = results.size()
 	_pool_results_boundary_id = str(results.back().get("match_id", "")) if not results.is_empty() else ""
 
+# Community bot submissions change rarely; parsed files are cached keyed on
+# name + modification time + size so refreshes skip re-parsing unchanged JSON.
+var _community_bot_cache_by_key: Dictionary = {}
+
 func _load_community_bots_by_id() -> Dictionary:
 	var bots := {}
 	var bot_dir := ServerPathsScript.get_server_data_file_path("community_bot_pool")
@@ -3258,7 +3368,22 @@ func _load_community_bots_by_id() -> Dictionary:
 	var file_name := directory.get_next()
 	while not file_name.is_empty():
 		if not directory.current_is_dir() and file_name.ends_with(".json"):
-			var bot := JsonStoreScript.load_dictionary(bot_dir.path_join(file_name), {}, "CommunityBotPool")
+			var file_path := bot_dir.path_join(file_name)
+			var cache_key := ""
+			var file := FileAccess.open(file_path, FileAccess.READ)
+			if file != null:
+				cache_key = "%s|%d|%d" % [file_name, FileAccess.get_modified_time(file_path), file.get_length()]
+				file.close()
+			var cached: Dictionary = _community_bot_cache_by_key.get(cache_key, {}) if not cache_key.is_empty() else {}
+			var bot: Dictionary
+			if not cached.is_empty():
+				bot = cached.duplicate(true)
+			else:
+				bot = JsonStoreScript.load_dictionary(file_path, {}, "CommunityBotPool")
+				if not bot.is_empty() and not cache_key.is_empty():
+					if _community_bot_cache_by_key.size() > 4096:
+						_community_bot_cache_by_key.clear()
+					_community_bot_cache_by_key[cache_key] = bot.duplicate(true)
 			if not bot.is_empty():
 				bot["deck_name"] = _community_bot_display_name(bot)
 				bots[file_name.get_basename()] = bot

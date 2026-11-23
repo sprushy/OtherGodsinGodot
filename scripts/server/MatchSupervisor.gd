@@ -33,7 +33,10 @@ var last_create_match_error: String = ""
 var _shared_bot_match_servers: Dictionary = {}
 
 var _rng := RandomNumberGenerator.new()
-var _cleanup_poll_interval_seconds: float = 1.0
+# Status files carry a 20s staleness threshold (MATCH_STATUS_FILE_STALE_
+# SECONDS), so polling every 3s keeps abandonment/cleanup latency well inside
+# that margin with a third of the per-match status-file parses.
+var _cleanup_poll_interval_seconds: float = 3.0
 var _cleanup_poll_elapsed: float = 0.0
 var _supervisor_heartbeat_path: String = ""
 var _next_supervisor_heartbeat_msec: int = 0

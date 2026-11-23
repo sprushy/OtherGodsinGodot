@@ -132,6 +132,10 @@ var _replayed_match_count := -1
 var _last_replayed_id := ""
 var _deck_auditor: Callable
 var _eliminated_bot_match_ids: Dictionary = {}
+# Set whenever persisted state (by_god, eliminated ids, assigned names) actually
+# changes; cleared by a successful save_state. Callers use needs_save() to skip
+# rewriting the state file for refreshes that changed nothing.
+var _state_changed := true
 # League (bot tournament) state. While league_mode is active, seeded bot lists
 # are exempt from early retirement so they can finish their round-robin.
 var _league_mode: bool = false
@@ -155,11 +159,16 @@ func refresh(results: Array[Dictionary]) -> void:
 		start = 0
 		_by_god.clear()
 		_eliminated_bot_match_ids.clear()
+	_state_changed = true
 	for index in range(start, results.size()):
 		_apply_result(results[index])
 	_ensure_unique_deck_names()
 	_replayed_match_count = results.size()
 	_last_replayed_id = last_result_id
+
+## Whether persisted pool state has changed since the last successful save.
+func needs_save() -> bool:
+	return _state_changed
 
 func get_eliminated_bot_match_ids() -> Dictionary:
 	return _eliminated_bot_match_ids.duplicate()
@@ -192,6 +201,8 @@ func _ensure_unique_deck_names() -> void:
 		if not list_id.is_empty() and _assigned_names_by_list_id.has(list_id):
 			var assigned := str(_assigned_names_by_list_id[list_id]).strip_edges()
 			if not _is_generic_bot_name(assigned) and not used_names.has(assigned.to_lower()):
+				if str(deck.get("deck_name", "")) != assigned:
+					_state_changed = true
 				deck["deck_name"] = assigned
 				used_names[assigned.to_lower()] = true
 
@@ -227,8 +238,9 @@ func _ensure_unique_deck_names() -> void:
 			needs_name.append(entry)
 			continue
 		used_names[base_name.to_lower()] = true
-		if not list_id.is_empty():
+		if not list_id.is_empty() and str(_assigned_names_by_list_id.get(list_id, "")) != base_name:
 			_assigned_names_by_list_id[list_id] = base_name
+			_state_changed = true
 
 	# Replace saved numeric fallback names after reserving established names.
 	for entry: Dictionary in decks:
@@ -250,6 +262,7 @@ func _ensure_unique_deck_names() -> void:
 		used_names[base_name.to_lower()] = true
 		if not list_id.is_empty():
 			_assigned_names_by_list_id[list_id] = base_name
+		_state_changed = true
 
 func _bot_name_priority(deck: Dictionary) -> int:
 	if str(deck.get("owner_name", "")).strip_edges() != "":
@@ -388,6 +401,7 @@ func register_league_list(god_name: String, deck: Dictionary, explicit_list_id: 
 	_league_list_ids.append(list_id)
 	_league_mode = true
 	_assigned_names_by_list_id[list_id] = new_list["deck_name"]
+	_state_changed = true
 	_ensure_unique_deck_names()
 	return list_id
 
@@ -421,6 +435,10 @@ func sync_community_bots(community_bots_by_id: Dictionary) -> void:
 		pool["quarantined_ids"] = (pool.get("quarantined_ids", []) as Array).filter(
 			func(id: String) -> bool: return not removed_ids.has(id) and not _is_inactive_community_bot({}, id)
 		)
+	# Community sync can remove bots, promote challengers, or refresh metadata;
+	# persist those changes instead of only saving on result-driven replays.
+	if not removed_ids.is_empty():
+		_state_changed = true
 
 func _is_inactive_community_bot(deck: Dictionary, list_id: String) -> bool:
 	return not _community_bots_by_id.has(list_id) and (
@@ -428,12 +446,20 @@ func _is_inactive_community_bot(deck: Dictionary, list_id: String) -> bool:
 	)
 
 func _apply_community_metadata(deck: Dictionary, submission: Dictionary) -> void:
+	var owner_name := str(submission.get("owner_name", submission.get("account_id", ""))).strip_edges()
+	var deck_name := str(submission["deck_name"])
+	var excluded := bool(submission.get("quarantined", false))
+	if deck.get("is_community_bot") != true \
+			or str(deck.get("owner_name", "")) != owner_name \
+			or str(deck.get("deck_name", "")) != deck_name \
+			or bool(deck.get("excluded_from_matchmaking", false)) != excluded:
+		_state_changed = true
 	deck["is_community_bot"] = true
-	deck["owner_name"] = str(submission.get("owner_name", submission.get("account_id", ""))).strip_edges()
-	deck["deck_name"] = str(submission["deck_name"])
+	deck["owner_name"] = owner_name
+	deck["deck_name"] = deck_name
 	# A submitter can quarantine their own bot. Unlike the system's weak-bot
 	# quarantine, this bot must never be paired — not even in forced matchmaking.
-	deck["excluded_from_matchmaking"] = bool(submission.get("quarantined", false))
+	deck["excluded_from_matchmaking"] = excluded
 	_assigned_names_by_list_id[deck["list_id"]] = deck["deck_name"]
 
 func finalize_league(god_names: Array[String]) -> Dictionary:
@@ -441,6 +467,7 @@ func finalize_league(god_names: Array[String]) -> Dictionary:
 	# new tournament bots), clears their tournament flags, and marks the weakest
 	# seeded bot of each god as quarantined for forced matchmaking (Iron V and
 	# post-loss Iron/Bronze pairing). Nothing is removed.
+	_state_changed = true
 	var summary: Dictionary = {}
 	for god_name in god_names:
 		var pool: Dictionary = _by_god.get(str(god_name), {})
@@ -961,7 +988,15 @@ func save_state(path: String, result_count: int = 0) -> bool:
 		"result_count": result_count,
 		"assigned_names": _assigned_names_by_list_id,
 	}
-	return JsonStoreScript.save_json(path, data, "RankedBotDeckPool")
+	# Machine-only state file: compact JSON roughly halves its size versus the
+	# tab-indented default.
+	var saved := JsonStoreScript.save_json(path, data, "RankedBotDeckPool", true)
+	if saved:
+		# The saved state and the replay cursor are written atomically together,
+		# so a restart resumes from exactly the stars the file contains. Keep
+		# them in one file if this ever changes format.
+		_state_changed = false
+	return saved
 
 func load_state(path: String) -> bool:
 	var loaded := JsonStoreScript.load_dictionary(path, {}, "RankedBotDeckPool")
@@ -972,6 +1007,9 @@ func load_state(path: String) -> bool:
 	_replayed_match_count = int(loaded.get("replayed_match_count", -1))
 	_last_replayed_id = str(loaded.get("last_replayed_id", ""))
 	_assigned_names_by_list_id = (loaded.get("assigned_names", {}) as Dictionary).duplicate(true)
+	# The loaded state matches the file on disk; only genuine repairs below
+	# (or later refreshes/syncs) should mark state as needing a save.
+	_state_changed = false
 	_audit_active_lists()
 	return true
 
@@ -1010,6 +1048,7 @@ func _audit_active_list(list: Dictionary) -> void:
 	list["reinforcements"] = (audited.get("reinforcements", {}) as Dictionary).duplicate(true)
 	list["special_setup"] = (audited.get("special_setup", {}) as Dictionary).duplicate(true)
 	list["fingerprint"] = _fingerprint(list)
+	_state_changed = true
 
 func can_play_list(god_name: String, list_id: String) -> bool:
 	if list_id.is_empty():

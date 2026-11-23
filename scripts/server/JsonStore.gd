@@ -17,7 +17,7 @@ static func load_dictionary(storage_path: String, fallback: Dictionary = {}, lab
 		return (backup.get("data", {}) as Dictionary).duplicate(true)
 	return fallback.duplicate(true)
 
-static func save_json(storage_path: String, payload, label: String = "JsonStore") -> bool:
+static func save_json(storage_path: String, payload, label: String = "JsonStore", compact: bool = false) -> bool:
 	var resolved_path := _globalize_path(storage_path)
 	var parent_dir := resolved_path.get_base_dir()
 	if not parent_dir.is_empty():
@@ -25,9 +25,16 @@ static func save_json(storage_path: String, payload, label: String = "JsonStore"
 
 	var temp_path := _temp_path(resolved_path)
 	var backup_path := _backup_path(resolved_path)
-	var json_text := JSON.stringify(payload, "\t")
+	# Compact JSON (no indentation) is for machine-only stores whose size
+	# matters; human-inspected stores keep the tab-indented default.
+	var json_text := JSON.stringify(payload, "" if compact else "\t")
 	if json_text.to_utf8_buffer().size() > MAX_JSON_STORE_BYTES:
-		push_warning("%s: refusing to write oversized JSON store %s." % [label, resolved_path])
+		# The store refuses to write beyond this cap. For state files that carry
+		# a replay cursor (for example RankedBotDeckPool) that means the cursor
+		# stops persisting and every restart replays the full history until the
+		# store is pruned, so make this loud instead of a warning.
+		push_error("%s: refusing to write oversized JSON store %s (%d bytes > %d). Prune the store." % [
+			label, resolved_path, json_text.to_utf8_buffer().size(), MAX_JSON_STORE_BYTES])
 		return false
 
 	var file := FileAccess.open(temp_path, FileAccess.WRITE)
