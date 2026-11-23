@@ -16,7 +16,7 @@ func _init() -> void:
 	resilience = 27
 	strength = 14
 	targets = true
-	ability_text = "[b]Channel Ally[/b] ([b]Impact[/b]): Choose another allied Ancient Sage on the field or in the [b]Void[/b] and activate its impact effect.\n[b]Imbue Ally[/b] ([b]Activate[/b], %d Mana): Choose another allied Ancient Sage on the field and activate its impact effect if it hasn't activated this turn." % IMBUE_ALLY_COST
+	ability_text = "[b]Channel Ally[/b] ([b]Impact[/b]): Choose another allied Ancient Sage on the field or in the [b]Void[/b], except another copy of Seventh Sage Utuabzu, and activate its impact effect.\n[b]Imbue Ally[/b] ([b]Activate[/b], %d Mana): Choose another allied Ancient Sage on the field, except another copy of Seventh Sage Utuabzu, and activate its impact effect if it hasn't activated this turn." % IMBUE_ALLY_COST
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricardo Tamoo"
@@ -156,6 +156,10 @@ func _get_allied_sages_in_zone(zone: Zone) -> Array[Card]:
 
 func _is_valid_allied_sage_target(card: Card) -> bool:
 	if card == null or card == self:
+		return false
+	# Another Seventh Sage's impact is Channel Ally, so channelling a copy would
+	# let two copies re-trigger each other without ever resolving.
+	if card is SeventhSageUtuabzu:
 		return false
 	var controller := get_controller()
 	if controller == null or card.get_controller() != controller:

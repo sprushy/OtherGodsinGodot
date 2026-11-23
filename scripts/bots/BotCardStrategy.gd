@@ -1518,6 +1518,14 @@ static func effect_score(bot, card: Card, target: Card = null, action: CardActio
 				else:
 					amount -= _debilitation_discount(bot, doomed)
 				gain += amount if doomed.get_controller() == bot.opponent else -amount
+				# A wipe the bot casts itself can be preceded by Mummu's
+				# Entropic Force: every own doomed card worth more shelved
+				# than destroyed banks into the deck and pockets level-1 mana
+				# before the sweep resolves (Bane petrifies instead of
+				# destroying, so nothing is saved by shelving ahead of it).
+				if action == null and id != "BaneOfTheSvartalfar" \
+						and doomed.get_controller() == bot.bot_player:
+					gain += bot._mummu_wipe_shelve_credit(doomed)
 				removed.append(doomed)
 			if action != null and action.type == CardAction.Type.ATTACK and combat_visible(bot, action) and (action.attacker in removed or bot._get_attack_defender_card(action) in removed):
 				gain -= bot._score_attack_economy(bot._estimate_attack_economy(action, null, 0, 0))

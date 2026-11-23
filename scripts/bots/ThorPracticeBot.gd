@@ -30,6 +30,13 @@ const COMBAT_ATTACK_SEARCH_WIDTH := 16
 const COMBAT_REMOVAL_SEARCH_WIDTH := 32
 const COMBAT_RESPONSE_SEARCH_WIDTH := 24
 const ECON_MANA_VALUE := 1000
+# Wipes the bot casts in its own main phase, so Mummu can shelve every own
+# doomed card worth more banked than destroyed before the sweep resolves
+# (Bane of the Svartalfar petrifies instead of destroying and is excluded).
+const MUMMU_SHELVE_WIPE_KEYS := [
+	"TheInferno", "TheDeluge", "Earthquake", "FiresOfJudgment", "Famine",
+	"OccultSingularity", "FalloftheMighty",
+]
 # Celestial Light converts one follower per grave card once Nusku, Active God
 # perishes, so declining Core Flame only enters consideration past this grave.
 const NUSKU_CELESTIAL_LIGHT_MIN_GRAVE := 12
@@ -1001,6 +1008,7 @@ func _take_main_phase_action() -> bool:
 		return true
 	var united_front := _plan_united_front(attacks, attack)
 	var plans := [united_front]
+	plans.append(_plan_self_deluge(danger))
 	plans.append_array(defenses)
 	plans.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a.get("score", 0)) > int(b.get("score", 0)))
 	var attack_score := int(attack.get("score", 0))
@@ -1061,6 +1069,16 @@ func _submit_strategy_plan(plan: Dictionary) -> bool:
 		# not fire on the brew step itself.
 		var brew := _brew_setup_plan(plan)
 		return not brew.is_empty() and _submit_action(brew["command"])
+	if plan.has("mummu_shelve_setup"):
+		# A wipe line that destroys own cards worth more shelved than dead
+		# runs Entropic Force first: submit the next profitable shelf in the
+		# plan's place; the next pass replays the line on the thinned board
+		# (the shelved card already left its doom list and its credit).
+		var shelf := _next_mummu_wipe_shelve_command(str(plan["mummu_shelve_setup"]))
+		if not shelf.is_empty():
+			return _submit_action(shelf)
+		plan = plan.duplicate()
+		plan.erase("mummu_shelve_setup")
 	var command: Dictionary = plan["command"]
 	var submitted := _submit_action(command)
 	if submitted and plan.has("once_per_turn_uid"):
@@ -2614,6 +2632,19 @@ func _estimate_projected_summon_casualty_cost(
 		if creature not in result.get("casualties", []):
 			continue
 		var loss := _score_projected_summon_attack_loss(result)
+		# A hidden reveal body answers the attack that kills it: combat reveals
+		# it, and its Reveal removal (Drown Below / Dalkhu Break) destroys a
+		# creature before damage resolves, so the casualty is never a naked
+		# loss. Credit the chosen victim against the projected loss. An
+		# interceptor takes the hit instead and the body stays hidden, so that
+		# path below correctly gets no credit.
+		if stealth and (creature is Grindylow or creature is MasmassuPriest) \
+				and not creature.abilities_suppressed_by_effects():
+			var reveal_target := _choose_combat_reveal_removal(
+				creature, _get_reveal_removal_targets(creature), action, result["casualties"]
+			)
+			if reveal_target != null:
+				loss -= _get_card_economic_value(reveal_target)
 		if replaces_god:
 			loss += _combat_god_death_cost(bot_player, removed + result["casualties"], int(result["bot_followers_lost"]), true)
 		for interceptor in match_manager._get_possible_interceptors(attacker, target):
@@ -2947,7 +2978,13 @@ func _get_creature_attackers_next_turn(target: Card, removed: Array) -> Array[Ca
 			continue
 		if attacker.current_zone in opponent.frontline_zones or game_manager.is_temporarily_controlled(attacker):
 			if attacker.creature_mode != Card.CreatureMode.AGGRESSIVE and not attacker.is_stealth:
-				continue
+				# A defensive frontline body flips stance as a minor action and
+				# still keeps its major action for the swing, so it is a real
+				# next-turn attacker whenever the flip fits the budget.
+				var flip_cost := game_manager.get_creature_action_mana_cost(attacker, "change stance")
+				if attacker.get_max_minor_creature_actions_per_turn() < 1 \
+						or game_manager.get_creature_action_mana_cost(attacker, "attack") + flip_cost > budget:
+					continue
 		elif not _can_advance_from_reserve_next_turn(attacker, budget, removed):
 			continue
 		attackers.append(attacker)
@@ -3251,6 +3288,13 @@ func _get_best_strategy_action(attacks: Array[Dictionary], attack: Dictionary, d
 				if (not card.goes_to_graveyard_after_use() or card is WildMagic) and not card.is_prepared and reserve != null:
 					command["display_zone"] = {"player_index": player_index, "zone_type": reserve.zone_type, "zone_index": reserve.zone_index}
 				var plan := {"command": command, "score": score, "mana_refund": refund_gain}
+				if CardStrategy.key(card) in MUMMU_SHELVE_WIPE_KEYS:
+					# The sweep kills own cards too: tag the wipe so the shelf
+					# setup submits before the cast (see _submit_strategy_plan).
+					for victim: Card in removed:
+						if victim.get_controller() == bot_player and _mummu_wipe_shelve_credit(victim) > 0:
+							plan["mummu_shelve_setup"] = card.uid
+							break
 				if brew_short:
 					# The stock cannot pay this cast yet: tag it so the
 					# brew is submitted first and the next pass replays the
@@ -5648,6 +5692,143 @@ func _mummu_shelve_funds_summon(mana: int) -> bool:
 		return false
 	return _get_best_affordable_hand_creature(mana) != null
 
+# What shelving this own card through Entropic Force gains over letting a
+# planned wipe destroy it: the card banks into the deck instead of the
+# graveyard and Mummu pockets its level minus one in mana. Zero when Mummu
+# cannot act, the card is not a legal Entropic Force target, or a destruction
+# replacement already recovers the card somewhere better than the deck bottom.
+func _mummu_wipe_shelve_credit(target: Card) -> int:
+	if target == null or target.get_controller() != bot_player \
+			or target.is_face_down or target.current_zone == null \
+			or not target.current_zone.is_board_zone():
+		return 0
+	if target.has_method("get_self_graveyard_replacement_zone"):
+		var replacement: Zone = target.get_self_graveyard_replacement_zone(game_manager, false, true, false)
+		if replacement != null and not replacement.is_board_zone():
+			# A hand recovery (Draug Revenant and friends) beats a deck-bottom
+			# shelf; let the wipe take the card and keep Mummu's activation.
+			return 0
+	var god := _find_player_god()
+	if god == null or not (god is Mummu) or not god.can_activate(game_manager) \
+			or game_manager.is_immune_to_source(target, god):
+		return 0
+	@warning_ignore("integer_division")
+	var credit := ECON_CARD_VALUE / 2
+	if game_manager.can_player_gain_mana_now(bot_player):
+		credit += CardStrategy.mana_gain_value(self, maxi(0, target.get_effective_level() - 1))
+	return credit
+
+# Own board cards the planned wipe would destroy that Mummu should shelve
+# first, derived from the same doomed list the wipe scoring charges.
+func _mummu_wipe_shelve_targets(wipe: Card) -> Array[Card]:
+	var targets: Array[Card] = []
+	if wipe == null:
+		return targets
+	for doomed: Card in CardStrategy.removal_targets(self, wipe, null):
+		if doomed.get_controller() == bot_player and _mummu_wipe_shelve_credit(doomed) > 0:
+			targets.append(doomed)
+	return targets
+
+# The wipe line's own doomed cards leave through Entropic Force before the
+# sweep resolves: submit the next profitable shelf, or {} when none remain.
+func _next_mummu_wipe_shelve_command(wipe_uid: String) -> Dictionary:
+	var god := _find_player_god()
+	if god == null or not (god is Mummu):
+		return {}
+	var wipe := game_manager.get_card_by_uid(wipe_uid)
+	if wipe == null:
+		return {}
+	for target in _mummu_wipe_shelve_targets(wipe):
+		return {"type": "god_ability", "god_uid": god.uid, "target_uid": target.uid}
+	return {}
+
+# A prepared The Deluge only resolves off a summon event, so on a board where
+# the sweep nets more than the cheapest legal trigger, Mummu plays a throwaway
+# body and answers his own summon. Own cards the sweep would destroy but which
+# are worth more shelved leave through Entropic Force first: mummu_shelve_setup
+# submits those god abilities ahead of the summon, and the priority response
+# fires the prepared Deluge on the thinned board.
+func _plan_self_deluge(danger: int) -> Dictionary:
+	var deluge := _get_own_prepared_deluge()
+	if deluge == null or bot_player.has_summoned_this_turn:
+		return {}
+	var shelves := _mummu_wipe_shelve_targets(deluge)
+	var shelf_mana := 0
+	for target in shelves:
+		shelf_mana += maxi(0, target.get_effective_level() - 1)
+	var budget := bot_player.mana + shelf_mana
+	var activation := CardStrategy.activation_cost(self, deluge)
+	if activation > budget:
+		# The Deluge must stay payable after the trigger resolves; the shelf
+		# mana is already banked into the budget above.
+		return {}
+	# The wipe branch charges own doomed cards at full value and credits the
+	# Entropic Force alternative (main phase, action == null), so this base is
+	# the sweep's net on the pre-shelve board including every planned shelf.
+	var base := CardStrategy.effect_score(self, deluge, null, null)
+	if base <= 0:
+		return {}
+	var doomed_removed: Array = []
+	for doomed: Card in CardStrategy.removal_targets(self, deluge, null):
+		doomed_removed.append(doomed)
+	var best_trigger := {}
+	for zone in _get_open_summon_lane_candidates(bot_player):
+		for creature: Card in bot_player.hand_zone.cards:
+			if creature.sacrifice_cost > 0 or creature.discard_cost > 0 \
+					or creature.banish_cost > 0 or creature.shelve_cost > 0 \
+					or not (creature is CreatureCard) \
+					or not creature.can_be_played(game_manager, bot_player):
+				continue
+			var cost := _get_play_cost(creature, false)
+			if cost > budget - activation:
+				# The Deluge must stay payable after the trigger resolves.
+				continue
+			var command := _build_creature_play_command(creature, zone, Card.CreatureMode.DEFENSIVE, -1, false, budget)
+			if command.is_empty():
+				continue
+			# The summon event must fire, so the trigger stays face-up.
+			command["stealth"] = false
+			var trigger_loss := CardStrategy.value(self, creature) \
+				+ CardStrategy.mana_penalty(self, cost, budget)
+			if not best_trigger.is_empty() and trigger_loss >= int(best_trigger["loss"]):
+				continue
+			best_trigger = {"command": command, "loss": trigger_loss, "cost": cost}
+	if best_trigger.is_empty():
+		return {}
+	var line := base - int(best_trigger["loss"])
+	# The priority response will add the same follower-safety term over the
+	# whole doomed set (_score_priority_card), so the plan prices the wipe the
+	# way the prompt will.
+	if danger > 0 and not doomed_removed.is_empty():
+		line += _follower_safety_gain(danger, {"removed": doomed_removed},
+			budget - int(best_trigger["cost"]) - activation)
+	if line <= 0:
+		return {}
+	var plan := {"command": best_trigger["command"], "score": line}
+	if not shelves.is_empty():
+		plan["mummu_shelve_setup"] = deluge.uid
+	return plan
+
+func _get_own_prepared_deluge() -> TheDeluge:
+	if game_manager == null or bot_player == null:
+		return null
+	for hex: Card in game_manager.prepared_hexes:
+		if not (hex is TheDeluge) or hex.get_controller() != bot_player:
+			continue
+		if hex.is_muted or hex.is_activation_locked(game_manager) \
+				or _status_persists_to_next_turn(hex, "activation_locked"):
+			continue
+		# A hex prepared this turn cannot respond until the next upkeep.
+		if int(game_manager.prepared_hexes.get(hex, game_manager.turn_number)) >= game_manager.turn_number:
+			continue
+		# Special payment costs would fight the shelf sequence (the shelved
+		# bodies leave before the sweep resolves), so this line stays clean.
+		if hex.sacrifice_cost > 0 or hex.discard_cost > 0 \
+				or hex.shelve_cost > 0 or hex.banish_cost > 0:
+			continue
+		return hex as TheDeluge
+	return null
+
 # With Mummu leading, a temporary control effect is more than a one-turn
 # borrow: Entropic Force can end the control early by shelving the borrowed
 # card into its owner's deck, banking the level mana and denying the redeploy.
@@ -6144,6 +6325,16 @@ func _forecast_incoming_follower_loss(change: Dictionary = {}, this_turn: bool =
 	for attacker in attackers:
 		var attack_zone := destination if attacker == moved else attacker.current_zone
 		var attacker_aggressive := attacker.creature_mode == Card.CreatureMode.AGGRESSIVE or attacker.is_stealth
+		# A defensive frontline creature flips stance as a minor action and
+		# keeps its major action for the attack, so it can still threaten the
+		# followers next turn. The flip's mana is charged into the attack cost
+		# below, and the affordability check there gates the assumption.
+		var assumes_stance_flip := false
+		if not attacker_aggressive and not this_turn and attack_zone != null \
+				and attack_zone.zone_type == Zone.ZoneType.FRONTLINE \
+				and attacker.get_max_minor_creature_actions_per_turn() >= 1:
+			attacker_aggressive = true
+			assumes_stance_flip = true
 		if attacker == stance:
 			attacker_aggressive = not defensive
 		if attacker in removed or attacker == change.get("disable_attacker") or not CardStrategy.visible(self, attacker) \
@@ -6156,6 +6347,8 @@ func _forecast_incoming_follower_loss(change: Dictionary = {}, this_turn: bool =
 		if this_turn and not _can_attack_after_priority(attacker):
 			continue
 		var cost := game_manager.get_creature_action_mana_cost(attacker, "attack") + int(recruits.get(attacker, 0))
+		if assumes_stance_flip:
+			cost += game_manager.get_creature_action_mana_cost(attacker, "change stance")
 		if attacker == manifestation:
 			cost += int(champions_call["cost"])
 		if cost > budget:

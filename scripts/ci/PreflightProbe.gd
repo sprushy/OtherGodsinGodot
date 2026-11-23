@@ -132,6 +132,7 @@ func run() -> bool:
 	_check_bot_next_turn_lethal(failures)
 	_check_bot_mummu_entropic_force_economy(failures)
 	_check_bot_mummu_active_entropy(failures)
+	_check_bot_mummu_wipe_shelve_economy(failures)
 	_check_bot_sirens_song_follow_through(failures)
 	_check_bot_e2_abzu_sage_retrieval(failures)
 	_check_bot_entomb_save_ceiling(failures)
@@ -5789,6 +5790,113 @@ func _check_bot_mummu_active_entropy(failures: PackedStringArray) -> void:
 	suicide.target = enemy_mummu
 	if int(bot._estimate_attack_economy(suicide, null, 0, 0).get("mummu_entropy_value", 0)) >= 0:
 		failures.append("A recoil death to an enemy Mummu Active was not priced against the bot's draws")
+	bot.detach()
+
+# Mummu's Entropic Force pre-removes every own card a self-cast wipe would
+# destroy when the shelf (deck-bottom banking plus level-minus-one mana) beats
+# the graveyard death: the wipe line prices the shelf credit, the plan submits
+# the god abilities ahead of the sweep, and The Deluge resolves off a
+# calculated self-summon trigger under the same shelf-first ordering.
+func _check_bot_mummu_wipe_shelve_economy(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	player.followers = 40
+	opponent.followers = 40
+	player.mana = 8
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var mummu := Mummu.new()
+	mummu.card_owner = player
+	player.god_zone.add_card(mummu)
+	# The sweeps are clearly worth it: three huge enemy bodies die, and the
+	# only own casualties are low-level bodies the shelf converts into mana.
+	for index in range(3):
+		var brute := CreatureCard.new()
+		brute.card_name = "Fixture Enemy Brute %d" % index
+		brute.card_owner = opponent
+		brute.creature_mode = Card.CreatureMode.DEFENSIVE
+		brute.strength = 30
+		brute.resilience = 30
+		brute.level = 5
+		opponent.frontline_zones[index].add_card(brute)
+	var fodder := CreatureCard.new()
+	fodder.card_name = "Fixture Own Fodder"
+	fodder.card_owner = player
+	fodder.creature_mode = Card.CreatureMode.DEFENSIVE
+	fodder.strength = 2
+	fodder.resilience = 6
+	fodder.level = 3
+	player.frontline_zones[0].add_card(fodder)
+	var famine := Famine.new()
+	famine.card_owner = player
+	player.hand_zone.add_card(famine)
+	if bot._mummu_wipe_shelve_credit(fodder) <= 0:
+		failures.append("Mummu did not price a wipe-doomed own card as Entropic Force fuel")
+	if not bot._mummu_wipe_shelve_targets(famine).any(func(target: Card) -> bool: return target == fodder):
+		failures.append("Famine's doomed own card was not listed for Entropic Force shelving")
+	mummu.is_muted = true
+	if bot._mummu_wipe_shelve_credit(fodder) != 0 or not bot._mummu_wipe_shelve_targets(famine).is_empty():
+		failures.append("A muted Mummu still priced wipe-doomed own cards as shelf fuel")
+	mummu.is_muted = false
+	var wipe_plan := bot._get_best_strategy_action([], {}, 0)
+	if str(wipe_plan.get("command", {}).get("type", "")) != "cast_spell" \
+			or str(wipe_plan["command"].get("spell_uid", "")) != famine.uid \
+			or str(wipe_plan.get("mummu_shelve_setup", "")) != famine.uid:
+		failures.append("Famine's plan did not tag the Entropic Force shelf setup")
+	# Submission order: the shelf is submitted in the wipe plan's place, and
+	# the shelved body banks into the deck while Famine waits in hand.
+	var mana_before := player.mana
+	if not bot._submit_strategy_plan(wipe_plan):
+		failures.append("Famine's shelf setup did not submit through the strategy plan")
+	else:
+		var shelved := false
+		for _step in range(4):
+			for _advance in range(8):
+				manager.advance_priority()
+			if fodder.current_zone == player.deck_zone:
+				shelved = true
+				break
+		if not shelved or player.mana != mana_before + fodder.get_effective_level() - 1:
+			failures.append("Entropic Force did not bank the wipe-doomed own card for its mana")
+		bot._mana_econ_cache = {}
+	# The Deluge resolves off a calculated self-summon: the trigger is a cheap
+	# face-up hand summon, and the line still carries the shelf setup while
+	# Mummu can shelve the sweep's own doomed cards first.
+	var deluge := TheDeluge.new()
+	deluge.card_owner = player
+	deluge.is_prepared = true
+	deluge.is_face_down = true
+	player.reserve_zones[2].add_card(deluge)
+	game.prepared_hexes[deluge] = game.turn_number - 1
+	var fodder_two := CreatureCard.new()
+	fodder_two.card_name = "Fixture Own Fodder Two"
+	fodder_two.card_owner = player
+	fodder_two.creature_mode = Card.CreatureMode.DEFENSIVE
+	fodder_two.strength = 2
+	fodder_two.resilience = 6
+	fodder_two.level = 2
+	player.frontline_zones[1].add_card(fodder_two)
+	var cheap := CreatureCard.new()
+	cheap.card_name = "Fixture Trigger Body"
+	cheap.card_owner = player
+	cheap.strength = 1
+	cheap.resilience = 1
+	cheap.level = 1
+	cheap.mana_cost = 1
+	player.hand_zone.add_card(cheap)
+	var deluge_plan := bot._plan_self_deluge(0)
+	if deluge_plan.is_empty() or str(deluge_plan.get("command", {}).get("type", "")) != "play_creature" \
+			or str(deluge_plan["command"].get("card_uid", "")) != cheap.uid \
+			or bool(deluge_plan["command"].get("stealth", true)) \
+			or str(deluge_plan.get("mummu_shelve_setup", "")) != deluge.uid:
+		failures.append("The Deluge self-summon line was not planned with a face-up trigger and shelf setup")
 	bot.detach()
 
 # A Siren's Song steal is only worth casting for lines the bot can actually
