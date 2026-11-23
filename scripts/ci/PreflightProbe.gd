@@ -131,6 +131,7 @@ func run() -> bool:
 	_check_bot_pazuzu_drain_forecast(failures)
 	_check_bot_next_turn_lethal(failures)
 	_check_bot_mummu_entropic_force_economy(failures)
+	_check_bot_mummu_active_entropy(failures)
 	_check_bot_sirens_song_follow_through(failures)
 	_check_bot_e2_abzu_sage_retrieval(failures)
 	_check_bot_entomb_save_ceiling(failures)
@@ -1480,6 +1481,29 @@ func _check_ranked_bot_deck_generation(failures: PackedStringArray) -> void:
 		unique_ghost_signatures[signature] = true
 	if psychopompus_ghost_signatures.size() == 8 and unique_ghost_signatures.size() < 2:
 		failures.append("Ranked Hermes Psychopompus autofill Ghosts did not vary by seed")
+	for god_case in [
+		[NuskuFirebearer.new(), PracticeAutofillDeckFactory.NUSKU_MIN_ANCIENT_MAGICAL],
+		[ManannanMacLir.new(), PracticeAutofillDeckFactory.MANANNAN_MAC_LIR_MIN_TRISKELION_CREATURES],
+		[Odin.new(), PracticeAutofillDeckFactory.ODIN_MIN_RUNIC_ACTIVATORS],
+	]:
+		var required_god: GodCard = god_case[0]
+		var required_deck: Dictionary = factory.build_random_deck(4100 + int(god_case[1]), required_god.card_name, true)
+		if required_deck.is_empty() or factory._god_specific_regular_deficit(required_god, required_deck.get("cards", {})) != 0:
+			failures.append("Ranked %s autofill did not meet its god-specific card minimum" % required_god.card_name)
+	var odin := Odin.new()
+	var odin_deck := factory.build_random_deck(4400, odin.card_name, true)
+	if odin_deck.is_empty():
+		failures.append("Ranked bot generator did not produce an Odin deck")
+	else:
+		var odin_cards: Dictionary = (odin_deck.get("cards", {}) as Dictionary).duplicate(true)
+		odin_cards["Fires of Judgment"] = int(odin_cards.get("Fires of Judgment", 0)) + 1
+		var repaired_odin := factory.audit_ranked_bot_deck({
+			"god_name": odin.card_name,
+			"deck_name": "Preflight Odin Audit",
+			"cards": odin_cards,
+		})
+		if repaired_odin.is_empty() or (repaired_odin.get("cards", {}) as Dictionary).has("Fires of Judgment"):
+			failures.append("Odin deck audit did not remove culture-incompatible Fires of Judgment")
 	var thor := Thor.new()
 	for legendary in [false, true]:
 		# Circle of Rebirth only joins ranked decks with five Animal/Plant
@@ -5626,6 +5650,145 @@ func _check_bot_mummu_entropic_force_economy(failures: PackedStringArray) -> voi
 	var muted_score := BotCardStrategyScript.target_score(bot, song, borrowed)
 	if steal_score <= muted_score:
 		failures.append("Siren's Song steal did not gain value from Mummu's Entropic Force follow-up")
+	bot.detach()
+
+# Mummu, Active God's Entropy chooses Prime or Shelve for any card it
+# destroys. Prime is the default draw-lock: the victim rides its owner's
+# next draw, so a non-answer burns a fresh topdeck (worst against a thin
+# hand), while a stolen body recovers on top of the bot's own deck. Shelve
+# wins only when the victim's return would threaten Mummu in combat.
+# Combat projections price both sides of the choice, and Mummu's own death
+# never starts God Death because its removal reactivates the stored god.
+func _check_bot_mummu_active_entropy(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	player.followers = 40
+	opponent.followers = 40
+	player.mana = 5
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	# God Death pricing first, while no Active God shares the board: a
+	# stored-god manifestation death still bleeds followers, Mummu Active's
+	# does not because its removal reactivates the stored normal god.
+	var thor := ThorActive.new()
+	thor.card_owner = player
+	player.frontline_zones[0].add_card(thor)
+	if bot._combat_god_death_cost(player, [thor], 0) <= 0:
+		failures.append("A stored-god Active God death was not priced as God Death")
+	player.frontline_zones[0].remove_card(thor)
+	var mummu := MummuActive.new()
+	mummu.card_owner = player
+	player.frontline_zones[0].add_card(mummu)
+	if bot._combat_god_death_cost(player, [mummu], 0) != 0:
+		failures.append("Killing Mummu Active was priced as God Death")
+	# A non-answer body against a draw-starved opponent is pure lock fuel:
+	# prime it even though it is worthless, because the lock denies the
+	# fresh draw the answer would have been.
+	var junk := CreatureCard.new()
+	junk.card_name = "Fixture Junk Body"
+	junk.card_owner = opponent
+	junk.creature_mode = Card.CreatureMode.DEFENSIVE
+	junk.strength = 2
+	junk.resilience = 2
+	junk.level = 2
+	opponent.frontline_zones[0].add_card(junk)
+	if bot._choose_mummu_entropy_placement(mummu, junk) != MummuActive.ENTROPY_PRIME:
+		failures.append("Mummu Active did not prime a non-answer victim against a draw-starved opponent")
+	# A body that kills Mummu in combat comes back as a real threat on top
+	# of the deck, so shelve it instead of priming it.
+	var answer := CreatureCard.new()
+	answer.card_name = "Fixture Mummu Answer"
+	answer.card_owner = opponent
+	answer.creature_mode = Card.CreatureMode.DEFENSIVE
+	answer.strength = 40
+	answer.resilience = 40
+	answer.level = 7
+	opponent.frontline_zones[1].add_card(answer)
+	if bot._choose_mummu_entropy_placement(mummu, answer) != MummuActive.ENTROPY_SHELVE:
+		failures.append("Mummu Active primed a victim that answers Mummu in combat")
+	opponent.frontline_zones[1].remove_card(answer)
+	# A fat hand mutes the lock but never zeroes it: the primed non-answer
+	# keeps squatting on the topdeck and stays free information, so junk
+	# remains prime fuel while the denial itself fades with hand size.
+	var starved_lock := bot._mummu_prime_lock_value(opponent)
+	for _index in range(5):
+		var filler := CreatureCard.new()
+		filler.card_owner = opponent
+		opponent.hand_zone.add_card(filler)
+	var fat_lock := bot._mummu_prime_lock_value(opponent)
+	if fat_lock <= 0 or fat_lock >= starved_lock:
+		failures.append("Mummu Active's draw-lock value did not fade with hand size to a positive floor")
+	if bot._choose_mummu_entropy_placement(mummu, junk) != MummuActive.ENTROPY_PRIME:
+		failures.append("Mummu Active did not keep priming junk against a fat hand")
+	for card in opponent.hand_zone.cards.duplicate():
+		opponent.hand_zone.remove_card(card)
+	# A stolen body the opponent controls still belongs to the bot: priming
+	# returns it to the top of the bot's own deck instead of burying it.
+	var stolen := CreatureCard.new()
+	stolen.card_name = "Fixture Stolen Body"
+	stolen.card_owner = player
+	stolen.creature_mode = Card.CreatureMode.AGGRESSIVE
+	stolen.strength = 10
+	stolen.resilience = 10
+	stolen.level = 3
+	opponent.frontline_zones[2].add_card(stolen)
+	if bot._choose_mummu_entropy_placement(mummu, stolen) != MummuActive.ENTROPY_PRIME:
+		failures.append("Mummu Active did not prime its own stolen body back onto the deck")
+	opponent.frontline_zones[2].remove_card(stolen)
+	# Attack projections tag the entropy outcome: our Mummu killing a
+	# non-answer banks a positive draw-lock, and an enemy Mummu killing our
+	# junk — as a declared target or through a suicidal recoil — charges the
+	# bot for the locked draw.
+	var attack := CardAction.new()
+	attack.type = CardAction.Type.ATTACK
+	attack.source_player = player
+	attack.attacker = mummu
+	attack.target = junk
+	if int(bot._estimate_attack_economy(attack, null, 0, 0).get("mummu_entropy_value", 0)) <= 0:
+		failures.append("Mummu Active attacks did not price the entropy draw-lock")
+	var bot_junk := CreatureCard.new()
+	bot_junk.card_name = "Fixture Bot Junk"
+	bot_junk.card_owner = player
+	bot_junk.creature_mode = Card.CreatureMode.DEFENSIVE
+	bot_junk.strength = 2
+	bot_junk.resilience = 2
+	bot_junk.level = 2
+	player.frontline_zones[1].add_card(bot_junk)
+	var enemy_mummu := MummuActive.new()
+	enemy_mummu.card_owner = opponent
+	# Aggressive stance makes the recoil kill mutual: the chump dies to the
+	# counter-strength instead of bouncing off a defensive body.
+	enemy_mummu.creature_mode = Card.CreatureMode.AGGRESSIVE
+	opponent.frontline_zones[1].add_card(enemy_mummu)
+	var enemy_attack := CardAction.new()
+	enemy_attack.type = CardAction.Type.ATTACK
+	enemy_attack.source_player = opponent
+	enemy_attack.attacker = enemy_mummu
+	enemy_attack.target = bot_junk
+	if int(bot._estimate_attack_economy(enemy_attack, null, 0, 0).get("mummu_entropy_value", 0)) >= 0:
+		failures.append("An enemy Mummu Active kill was not priced against the bot's draws")
+	var chump := CreatureCard.new()
+	chump.card_name = "Fixture Bot Chump"
+	chump.card_owner = player
+	chump.creature_mode = Card.CreatureMode.AGGRESSIVE
+	chump.strength = 2
+	chump.resilience = 2
+	chump.level = 2
+	player.frontline_zones[2].add_card(chump)
+	var suicide := CardAction.new()
+	suicide.type = CardAction.Type.ATTACK
+	suicide.source_player = player
+	suicide.attacker = chump
+	suicide.target = enemy_mummu
+	if int(bot._estimate_attack_economy(suicide, null, 0, 0).get("mummu_entropy_value", 0)) >= 0:
+		failures.append("A recoil death to an enemy Mummu Active was not priced against the bot's draws")
 	bot.detach()
 
 # A Siren's Song steal is only worth casting for lines the bot can actually

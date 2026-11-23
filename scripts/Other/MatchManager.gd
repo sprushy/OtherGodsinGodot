@@ -110,6 +110,16 @@ var _active_command_pending_prompt_id: int = -1
 var _resolving_priority_choice_command: bool = false
 var _pending_ui_interactions: Array[Dictionary] = []
 var _queued_ui_interactions: Array[Dictionary] = []
+# Re-entrancy guards for the prompt-release and priority-advance funnels.
+# Command completion, prompt emission, and stack resolution legitimately nest
+# these funnels on the same call stack (e.g. a resolving action queues an event
+# that advances priority again). Deep nesting is bounded: beyond the limit the
+# re-entrant call is deferred to the next idle frame with a warning instead of
+# recursing, so a pathological prompt cycle (as seen with Gala-Tura's Water of
+# Life submissions) cannot spin the main thread and freeze the whole app.
+const MAX_SYNCHRONOUS_PROMPT_FLOW_DEPTH := 8
+var _release_next_queued_depth: int = 0
+var _advance_priority_depth: int = 0
 var _next_ui_interaction_id: int = 1
 var _priority_preferences_by_player: Dictionary = {}
 var _last_god_dialogue_msec_by_player: Dictionary = {}
@@ -536,6 +546,15 @@ func _queue_ui_interaction(
 	})
 
 func _release_next_queued_ui_interaction() -> void:
+	if _release_next_queued_depth >= MAX_SYNCHRONOUS_PROMPT_FLOW_DEPTH:
+		push_warning("[OG server flow] deferred deep queued-ui-interaction release (depth %d)" % _release_next_queued_depth)
+		call_deferred("_release_next_queued_ui_interaction")
+		return
+	_release_next_queued_depth += 1
+	_release_next_queued_ui_interaction_impl()
+	_release_next_queued_depth -= 1
+
+func _release_next_queued_ui_interaction_impl() -> void:
 	_prune_stale_ui_interactions_for_current_turn()
 	if not _pending_ui_interactions.is_empty():
 		return
@@ -3495,6 +3514,15 @@ func advance_priority() -> void:
 	_advance_authoritative_priority()
 
 func _advance_authoritative_priority() -> void:
+	if _advance_priority_depth >= MAX_SYNCHRONOUS_PROMPT_FLOW_DEPTH:
+		push_warning("[OG server flow] deferred deep priority advance (depth %d)" % _advance_priority_depth)
+		call_deferred("_advance_authoritative_priority")
+		return
+	_advance_priority_depth += 1
+	_advance_authoritative_priority_impl()
+	_advance_priority_depth -= 1
+
+func _advance_authoritative_priority_impl() -> void:
 	_log_authoritative_flow_state("priority_advance:start")
 	_prune_stale_ui_interactions_for_current_turn()
 	if _authoritative_stack_resolution_pending \

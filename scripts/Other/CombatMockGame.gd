@@ -618,6 +618,10 @@ var _nusku_active_core_flame_panel: Control = null
 var _pending_gala_tura: Card = null
 var _pending_gala_tura_selected: Array[Card] = []
 var _queued_gala_tura_prompt_targets: Array[Card] = []
+# Consecutive failed submissions for the current Water of Life prompt. After
+# two rejections the overlay rebuild loop stops so a permanently rejected
+# choice cannot strand the player (and the match) in a retry cycle.
+var _gala_tura_submit_failure_count: int = 0
 var _pending_sharur_escape_card: Card = null
 var _pending_sharur_escape_reason: String = ""
 var _active_wheel_of_fire_prompt: WheelOfFire = null
@@ -7637,6 +7641,7 @@ func _do_update_ui(expected_generation: int = -1) -> void:
 	_refresh_observer_perspective_button()
 	_restore_active_raven_prime_prompt_overlay()
 	_resync_raven_prime_prompts_from_match_state()
+	_resync_gala_tura_prompt_from_match_state()
 	_sync_heavy_snow_weather_visuals()
 	_sync_drought_weather_visuals()
 	# Hand redraws append new controls; the shelving dialog must keep input priority.
@@ -15022,6 +15027,45 @@ func _resync_raven_prime_prompts_from_match_state() -> void:
 					int(entry.get("prompt_id", -1))
 				)
 
+# Same dead-lock insurance as the raven prime resync above, for Gala-Tura's
+# Water of Life destroyed choice: a pending choice blocks every other command,
+# and a full-state refresh can hide the overlay while the choice is still
+# authoritative. Rebuild it from the pending interaction list on every UI
+# refresh (local authoritative games only; the server re-sends prompts to
+# networked clients with its broadcasts).
+func _resync_gala_tura_prompt_from_match_state() -> void:
+	if _is_observer_mode or game_manager == null or match_manager == null:
+		return
+	if _game_finished or _match_reconnect_waiting:
+		return
+	if _is_networked_client:
+		return
+	if _pending_gala_tura != null or _gala_tura_submit_failure_count >= 2:
+		return
+	var local_seat := -1
+	if network_manager != null:
+		local_seat = int(network_manager.local_player_index)
+	if local_seat < 0 or local_seat >= game_manager.players.size():
+		return
+	var local_player := game_manager.players[local_seat]
+	for entry in match_manager.get_pending_ui_interaction_entries():
+		if entry.get("player", null) != local_player:
+			continue
+		if str(entry.get("type", "")) != "gala_tura_destroyed":
+			continue
+		var data: Dictionary = entry.get("data", {})
+		var gala_tura := game_manager.get_card_by_uid(str(data.get("source_uid", ""))) as GalaTura
+		if gala_tura == null:
+			return
+		_pending_gala_tura = gala_tura
+		_pending_gala_tura_selected.clear()
+		_queued_gala_tura_prompt_targets = _resolve_prompt_payload_targets(data)
+		_gala_tura_submit_failure_count = 0
+		# Defer the overlay build: this resync runs inside the UI refresh, and
+		# _show_gala_tura_prompt refreshes the UI itself.
+		call_deferred("_show_gala_tura_prompt")
+		return
+
 func _get_card_zone_label(card: Card) -> String:
 	if card == null or card.current_zone == null:
 		return ""
@@ -21011,6 +21055,7 @@ func _queue_gala_tura_destroyed_prompt(card: GalaTura, prompt_targets: Array = [
 	_pending_gala_tura = card
 	_pending_gala_tura_selected.clear()
 	_queued_gala_tura_prompt_targets = targets.duplicate()
+	_gala_tura_submit_failure_count = 0
 	_show_gala_tura_prompt()
 
 func _show_gala_tura_prompt() -> void:
@@ -21050,11 +21095,19 @@ func _show_gala_tura_prompt() -> void:
 			_hide_gala_tura_prompt()
 			update_ui()
 			return
-		_set_action_label_text("Could not submit the match decision. Please try again.")
+		_gala_tura_submit_failure_count += 1
 		# _submit_overlay_multi_select closes this overlay after the callback
 		# returns, so rebuild it on the next idle frame to keep the decision
-		# retryable instead of stranding the player with a dead overlay.
-		call_deferred("_show_gala_tura_prompt")
+		# retryable instead of stranding the player with a dead overlay. Stop
+		# after repeated rejections: a permanently refused choice must not put
+		# the player in a rebuild/retry cycle. If the server still has the
+		# prompt pending, the UI refresh resync re-offers it instead.
+		if _gala_tura_submit_failure_count < 2:
+			_set_action_label_text("Could not submit the match decision. Please try again.")
+			call_deferred("_show_gala_tura_prompt")
+			update_ui()
+			return
+		_set_action_label_text("Could not submit the match decision. The Water of Life choice was refused; it will return if it is still pending.")
 		update_ui()
 
 	var on_decline := func() -> void:
@@ -21066,8 +21119,13 @@ func _show_gala_tura_prompt() -> void:
 			_hide_gala_tura_prompt()
 			update_ui()
 			return
-		_set_action_label_text("Could not submit the match decision. Please try again.")
-		call_deferred("_show_gala_tura_prompt")
+		_gala_tura_submit_failure_count += 1
+		if _gala_tura_submit_failure_count < 2:
+			_set_action_label_text("Could not submit the match decision. Please try again.")
+			call_deferred("_show_gala_tura_prompt")
+			update_ui()
+			return
+		_set_action_label_text("Could not submit the match decision. The Water of Life choice was refused; it will return if it is still pending.")
 		update_ui()
 
 	_show_card_selection_overlay(
@@ -21288,6 +21346,7 @@ func _hide_gala_tura_prompt() -> void:
 	_pending_gala_tura = null
 	_pending_gala_tura_selected.clear()
 	_queued_gala_tura_prompt_targets.clear()
+	_gala_tura_submit_failure_count = 0
 
 func _resolve_foolish_optimism_prompt(
 	card: FoolishOptimism,

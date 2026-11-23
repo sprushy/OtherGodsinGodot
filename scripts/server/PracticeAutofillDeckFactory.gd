@@ -5,12 +5,16 @@ const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
 const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
 const BotCardStrategyScript = preload("res://scripts/bots/BotCardStrategy.gd")
 const BotSideboardPolicyScript = preload("res://scripts/bots/BotSideboardPolicy.gd")
+const BotSideboardRatingsScript = preload("res://scripts/bots/BotSideboardRatings.gd")
 
 const DEFAULT_REGULAR_CARD_COUNT := 40
 const MAX_POWERS := 3
 const MAX_BUILD_ATTEMPTS := 32
 const MAX_RANDOM_PICK_ATTEMPTS := 256
 const HERMES_PSYCHOPOMPUS_MIN_GHOSTS := 4
+const NUSKU_MIN_ANCIENT_MAGICAL := 6
+const MANANNAN_MAC_LIR_MIN_TRISKELION_CREATURES := 5
+const ODIN_MIN_RUNIC_ACTIVATORS := 4
 const KEY_OF_SOLOMON_MIN_SOURCES := 2
 const KEY_OF_SOLOMON_MIN_TARGETS := 4
 const VISION_OF_TARTARUS_MIN_VOID_SOURCES := 3
@@ -266,6 +270,147 @@ func _seed_psychopompus_ghosts(
 		push_warning("[PracticeAutofillDeckFactory] Psychopompus autofill seeded only %d Ghosts" % seeded)
 	return seeded
 
+# Repairs god-specific ranked deck minimums by swapping the worst
+# survey-rated non-required regular cards for randomly chosen cards that
+# support the god's core ability. The deck size is preserved for full lists.
+func _enforce_god_specific_regular_minimums(
+	cards: Dictionary,
+	god: GodCard,
+	rng: RandomNumberGenerator
+) -> void:
+	var attempts := 0
+	while attempts < MAX_RANDOM_PICK_ATTEMPTS:
+		attempts += 1
+		if _god_specific_regular_deficit(god, cards) <= 0:
+			return
+		var needs_swap := _count_regular_cards(cards) >= DEFAULT_REGULAR_CARD_COUNT
+		var victim_name := ""
+		var victim_count := 0
+		if needs_swap:
+			victim_name = _choose_god_specific_swap_victim(cards, god)
+			if victim_name.is_empty():
+				return
+			victim_count = int(cards.get(victim_name, 0))
+			if victim_count <= 0:
+				return
+			if victim_count <= 1:
+				cards.erase(victim_name)
+			else:
+				cards[victim_name] = victim_count - 1
+		var candidates := _get_regular_candidates(god, cards, false, true).filter(
+			func(card: Card) -> bool: return _matches_god_specific_regular_requirement(god, card)
+		)
+		if candidates.is_empty():
+			if needs_swap and victim_count > 0:
+				cards[victim_name] = victim_count
+			return
+		var chosen: Card = candidates[rng.randi_range(0, candidates.size() - 1)]
+		cards[chosen.card_name] = int(cards.get(chosen.card_name, 0)) + 1
+
+func _god_specific_regular_deficit(god: GodCard, cards: Dictionary) -> int:
+	var required_count := 0
+	if god is NuskuFirebearer:
+		required_count = NUSKU_MIN_ANCIENT_MAGICAL
+	elif god is ManannanMacLir:
+		required_count = MANANNAN_MAC_LIR_MIN_TRISKELION_CREATURES
+	elif god is Odin:
+		required_count = ODIN_MIN_RUNIC_ACTIVATORS
+	else:
+		return 0
+	var current_count := 0
+	for raw_name in cards:
+		var template: Card = _cards_by_name.get(str(raw_name), null)
+		if template == null or template.is_god or template.is_power:
+			continue
+		if _matches_god_specific_regular_requirement(god, template):
+			current_count += int(cards[raw_name])
+	return maxi(0, required_count - current_count)
+
+func _matches_god_specific_regular_requirement(god: GodCard, card: Card) -> bool:
+	if god is NuskuFirebearer:
+		return _is_ancient_spell_or_charm(card)
+	if god is ManannanMacLir:
+		return _is_triskelion_creature(card)
+	if god is Odin:
+		return _is_odin_runic_activator(card)
+	return false
+
+func _is_ancient_spell_or_charm(card: Card) -> bool:
+	return card != null \
+		and str(card.culture).strip_edges().nocasecmp_to("Ancient") == 0 \
+		and (card.card_type == Card.CardType.SPELL or card.card_type == Card.CardType.CHARM)
+
+func _is_triskelion_creature(card: Card) -> bool:
+	return card != null \
+		and card.card_type == Card.CardType.CREATURE \
+		and str(card.culture).strip_edges() == "Triskelion"
+
+func _is_odin_runic_activator(card: Card) -> bool:
+	return card != null \
+		and (card.has_type("Runic") or str(card.card_name).to_lower().contains("of odin"))
+
+# Chooses the lowest-survey-rated regular card that does not already satisfy
+# the god-specific requirement. Ratings come from the ladder card audit, and
+# name order is only a deterministic tie-breaker.
+func _choose_god_specific_swap_victim(cards: Dictionary, god: GodCard) -> String:
+	var victims: Array[Dictionary] = []
+	for raw_name in cards:
+		var card_name := str(raw_name)
+		var template: Card = _cards_by_name.get(card_name, null)
+		if template == null or template.is_god or template.is_power:
+			continue
+		if _matches_god_specific_regular_requirement(god, template):
+			continue
+		if not _removing_card_preserves_support(cards, card_name, god):
+			continue
+		victims.append({
+			"name": card_name,
+			"rating": BotSideboardRatingsScript.rating_for(card_name),
+		})
+	if victims.is_empty():
+		return ""
+	victims.sort_custom(func(first: Dictionary, second: Dictionary) -> bool:
+		if int(first["rating"]) != int(second["rating"]):
+			return int(first["rating"]) < int(second["rating"])
+		return str(first["name"]).naturalnocasecmp_to(str(second["name"])) < 0
+	)
+	return str(victims[0]["name"])
+
+func _removing_card_preserves_support(cards: Dictionary, victim_name: String, god: GodCard) -> bool:
+	var trial_cards: Dictionary = cards.duplicate(true)
+	var victim_count := int(trial_cards.get(victim_name, 0))
+	if victim_count <= 0:
+		return false
+	if victim_count <= 1:
+		trial_cards.erase(victim_name)
+	else:
+		trial_cards[victim_name] = victim_count - 1
+	for raw_name in trial_cards:
+		var card_name := str(raw_name)
+		if card_name == god.card_name:
+			continue
+		var template: Card = _cards_by_name.get(card_name, null)
+		if template != null and not _has_deckbuilding_requirements(template, trial_cards, god):
+			return false
+	return true
+
+# Fires of Judgment moving to Ancient is the live example: a stale Patriarch
+# list can contain cards that are no longer culture-legal. Drop them before
+# support pruning and quota repair so the auditor can rebuild a legal list.
+func _remove_culture_incompatible_cards(cards: Dictionary, god: GodCard) -> void:
+	if god == null or not god.uses_culture_locked_deckbuilding():
+		return
+	var names_to_remove: Array[String] = []
+	for raw_name in cards:
+		var card_name := str(raw_name)
+		if card_name == god.card_name:
+			continue
+		var template: Card = _cards_by_name.get(card_name, null)
+		if template != null and not _is_card_compatible_with_god(template, god):
+			names_to_remove.append(card_name)
+	for card_name in names_to_remove:
+		cards.erase(card_name)
+
 func _fill_regular_cards_for_god(
 	deck_cards: Dictionary,
 	god: GodCard,
@@ -419,6 +564,10 @@ func audit_ranked_bot_deck(deck: Dictionary) -> Dictionary:
 	var cards: Dictionary = audited.get("cards", {}).duplicate(true)
 	if cards.is_empty():
 		return {}
+	_remove_culture_incompatible_cards(cards, god)
+	var reinforcements: Dictionary = audited.get("reinforcements", {}).duplicate(true)
+	_remove_culture_incompatible_cards(reinforcements, god)
+	audited["reinforcements"] = reinforcements
 	# Remove ineligible cards until the remaining deck no longer has dangling
 	# support relationships (e.g. a payoff removed with its last enabler).
 	for _pass in range(6):
@@ -435,6 +584,7 @@ func audit_ranked_bot_deck(deck: Dictionary) -> Dictionary:
 			break
 	var rng := RandomNumberGenerator.new()
 	rng.seed = absi(hash(str(audited.get("god_name", "")) + JSON.stringify(audited.get("cards", {}))))
+	_enforce_god_specific_regular_minimums(cards, god, rng)
 	# Restore the standard forty-card non-power portion after pruning.
 	var regular_count := _count_regular_cards(cards)
 	var legendary_count := _count_legendary_cards(cards)

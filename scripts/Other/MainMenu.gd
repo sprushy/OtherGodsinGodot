@@ -205,6 +205,10 @@ var _below_top_50_bot_hosting := false
 # True while volunteer bot-match hosting runs best-of-three series with bot
 # sidedecking instead of single games.
 var _bo3_bot_hosting := false
+# True while debug god-specific hosting continuously runs matches featuring
+# _god_bot_hosting_name.
+var _god_bot_hosting := false
+var _god_bot_hosting_name := ""
 # True while the default "host one bot match on sign in" mode is active. It
 # keeps exactly one bot match running and recurs when it finishes, but gives way
 # whenever the player needs the space to play or spectate.
@@ -3106,9 +3110,9 @@ func _build_seek_tabs() -> void:
 	if OS.is_debug_build():
 		_host_god_bot_match_button = Button.new()
 		_host_god_bot_match_button.name = "HostGodBotMatchButton"
-		_host_god_bot_match_button.text = "Host God Bot Match"
-		_host_god_bot_match_button.tooltip_text = "Debug only: host a bot match featuring a specific god."
-		_host_god_bot_match_button.pressed.connect(_open_god_bot_match_picker)
+		_host_god_bot_match_button.text = "Host God Bot Matches"
+		_host_god_bot_match_button.tooltip_text = "Debug only: continuously host bot matches featuring a specific god."
+		_host_god_bot_match_button.pressed.connect(_on_host_god_bot_matches_pressed)
 		seek_row_bottom.add_child(_host_god_bot_match_button)
 	_apply_seek_action_button_sizing()
 	# Bot league architecture quarantined: do not build its UI surface.
@@ -3270,6 +3274,7 @@ func _on_host_bot_match_pressed(top_50: bool = false) -> void:
 	_top_50_bot_hosting = top_50
 	_below_top_50_bot_hosting = false
 	_bo3_bot_hosting = false
+	_god_bot_hosting = false
 	_request_continuous_bot_match()
 
 func _on_host_below_top_50_bot_matches_pressed() -> void:
@@ -3283,6 +3288,7 @@ func _on_host_below_top_50_bot_matches_pressed() -> void:
 	_top_50_bot_hosting = false
 	_below_top_50_bot_hosting = true
 	_bo3_bot_hosting = false
+	_god_bot_hosting = false
 	_request_continuous_bot_match()
 
 func _on_host_bo3_bot_matches_pressed() -> void:
@@ -3294,7 +3300,14 @@ func _on_host_bo3_bot_matches_pressed() -> void:
 	_top_50_bot_hosting = false
 	_below_top_50_bot_hosting = false
 	_bo3_bot_hosting = true
+	_god_bot_hosting = false
 	_request_continuous_bot_match()
+
+func _on_host_god_bot_matches_pressed() -> void:
+	if _bot_match_hosting_enabled and _god_bot_hosting:
+		_on_stop_hosting_bot_matches_pressed()
+		return
+	_open_god_bot_match_picker()
 
 func _on_stop_hosting_bot_matches_pressed() -> void:
 	_stop_local_bot_match_worker()
@@ -3345,7 +3358,7 @@ func _request_continuous_bot_match(max_slots: int = -1) -> void:
 	if effective_max >= 0:
 		open_slots = mini(open_slots, effective_max)
 	for _slot in range(open_slots):
-		_request_local_bot_match(true)
+		_request_local_bot_match(true, "", _god_bot_hosting_name if _god_bot_hosting else "")
 	_update_host_bot_match_button()
 
 func _schedule_continuous_bot_match_retry(delay_seconds: float = 15.0) -> void:
@@ -3495,9 +3508,9 @@ func _start_selected_bot_match() -> void:
 		_host_bot_gauntlet_opponents.clear()
 	_request_local_bot_match(false, bot_id)
 
-## Debug-only picker that hosts a volunteer bot match featuring a specific god.
-## The lobby seats a ladder bot of that god (or builds a fresh one) and pairs it
-## with a normal opponent.
+## Debug-only picker that continuously hosts volunteer bot matches featuring a
+## specific god. The lobby seats a ladder bot of that god (or builds a fresh
+## one) and pairs it with a normal opponent.
 func _open_god_bot_match_picker() -> void:
 	if lobby_client == null or not lobby_client.is_authenticated():
 		status_label.text = "Sign in to host a god-specific bot match."
@@ -3512,7 +3525,7 @@ func _open_god_bot_match_picker() -> void:
 	if not is_instance_valid(_god_bot_match_dialog):
 		_god_bot_match_dialog = AcceptDialog.new()
 		_god_bot_match_dialog.title = "Choose a God"
-		_god_bot_match_dialog.dialog_text = "Select a god to feature in the hosted bot match."
+		_god_bot_match_dialog.dialog_text = "Select a god to feature in the hosted bot matches."
 		_god_bot_match_option = OptionButton.new()
 		_god_bot_match_dialog.add_child(_god_bot_match_option)
 		add_child(_god_bot_match_dialog)
@@ -3526,14 +3539,22 @@ func _start_selected_god_bot_match() -> void:
 	if _god_bot_match_option == null or _god_bot_match_option.selected < 0 \
 			or _god_bot_match_option.selected >= _god_bot_match_names.size():
 		return
-	_request_local_bot_match(false, "", _god_bot_match_names[_god_bot_match_option.selected])
+	_god_bot_hosting_name = _god_bot_match_names[_god_bot_match_option.selected]
+	_bot_match_hosting_enabled = true
+	_default_bot_hosting = false
+	_top_50_bot_hosting = false
+	_below_top_50_bot_hosting = false
+	_bo3_bot_hosting = false
+	_god_bot_hosting = true
+	_request_continuous_bot_match()
 
 func _update_host_bot_match_button() -> void:
 	if not is_instance_valid(_host_bot_match_button):
 		return
 	var signed_in := lobby_client != null and lobby_client.is_authenticated()
 	var regular_hosting := _bot_match_hosting_enabled and not _default_bot_hosting \
-		and not _top_50_bot_hosting and not _below_top_50_bot_hosting and not _bo3_bot_hosting
+		and not _top_50_bot_hosting and not _below_top_50_bot_hosting and not _bo3_bot_hosting \
+		and not _god_bot_hosting
 	var top_50_hosting := _bot_match_hosting_enabled and _top_50_bot_hosting
 	var below_top_50_hosting := _bot_match_hosting_enabled and _below_top_50_bot_hosting
 	var bo3_hosting := _bot_match_hosting_enabled and _bo3_bot_hosting
@@ -3572,9 +3593,11 @@ func _update_host_bot_match_button() -> void:
 	if is_instance_valid(_host_god_bot_match_button):
 		# Same debug-hosting capability gate as the Rank 51+ button: the lobby
 		# only accepts god-specific requests from debug clients or admins.
-		_host_god_bot_match_button.visible = OS.is_debug_build() and signed_in \
-			and lobby_client.can_host_below_top_50_bot_matches
-		_host_god_bot_match_button.disabled = not has_capacity
+		var can_host_god := signed_in and lobby_client.can_host_below_top_50_bot_matches
+		var god_hosting := _bot_match_hosting_enabled and _god_bot_hosting
+		_host_god_bot_match_button.visible = OS.is_debug_build() and can_host_god
+		_host_god_bot_match_button.text = "Stop God Bot Hosting" if god_hosting else "Host God Bot Matches"
+		_host_god_bot_match_button.disabled = not god_hosting and (not can_host_god or capacity <= 0)
 
 func _get_local_bot_match_capacity() -> int:
 	if OS.get_name() not in ["Windows", "macOS", "Linux"] or OS.get_processor_count() < 4:
@@ -3951,6 +3974,8 @@ func _stop_local_bot_match_worker() -> void:
 	_default_bot_hosting = false
 	_top_50_bot_hosting = false
 	_below_top_50_bot_hosting = false
+	_god_bot_hosting = false
+	_god_bot_hosting_name = ""
 	_watch_next_local_bot_match_pending = false
 	if is_instance_valid(_bot_match_retry_timer):
 		_bot_match_retry_timer.stop()
@@ -3993,6 +4018,7 @@ func _maybe_start_default_bot_hosting() -> void:
 	_default_bot_hosting = true
 	_top_50_bot_hosting = false
 	_below_top_50_bot_hosting = false
+	_god_bot_hosting = false
 	_bot_match_hosting_enabled = true
 	# Host exactly one match at a time by default; it recurs when it finishes.
 	_request_continuous_bot_match(1)

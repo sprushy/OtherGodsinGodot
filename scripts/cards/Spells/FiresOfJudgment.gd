@@ -4,7 +4,7 @@ class_name FiresOfJudgment
 func _init() -> void:
 	super._init()
 	card_name = "Fires of Judgment"
-	culture = "Neutral"
+	culture = "Ancient"
 	card_types = ["Destruction", "Physical"]
 	level = 3
 	mana_cost = 4

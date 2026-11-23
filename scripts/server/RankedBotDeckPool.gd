@@ -161,13 +161,6 @@ func refresh(results: Array[Dictionary]) -> void:
 	_replayed_match_count = results.size()
 	_last_replayed_id = last_result_id
 
-func reset_replay_state() -> void:
-	# A saved pool may have been built from a different result stream (for
-	# example before results were split by best-of). Force the next refresh to
-	# replay its assigned results in full instead of resuming a stale cursor.
-	_replayed_match_count = -1
-	_last_replayed_id = ""
-
 func get_eliminated_bot_match_ids() -> Dictionary:
 	return _eliminated_bot_match_ids.duplicate()
 
@@ -979,7 +972,44 @@ func load_state(path: String) -> bool:
 	_replayed_match_count = int(loaded.get("replayed_match_count", -1))
 	_last_replayed_id = str(loaded.get("last_replayed_id", ""))
 	_assigned_names_by_list_id = (loaded.get("assigned_names", {}) as Dictionary).duplicate(true)
+	_audit_active_lists()
 	return true
+
+# Repairs ladder lists restored from saved state, which may have been written
+# under older deck rules. Lists created during replay are audited at creation
+# in _apply_result, so no refresh-path pass is needed. Quarantined bad bots and
+# community submissions are intentionally left untouched.
+func _audit_active_lists() -> void:
+	if not _deck_auditor.is_valid():
+		return
+	for god_name in _by_god:
+		var pool: Dictionary = _by_god[god_name]
+		var active_lists: Array = (pool.get("lists", []) as Array).duplicate()
+		var challenger: Dictionary = pool.get("challenger", {})
+		if not challenger.is_empty():
+			active_lists.append(challenger)
+		for list in active_lists:
+			_audit_active_list(list)
+
+func _audit_active_list(list: Dictionary) -> void:
+	if list.is_empty() or bool(list.get("is_community_bot", false)):
+		return
+	if not str(list.get("owner_name", "")).strip_edges().is_empty():
+		return
+	var audited: Dictionary = _deck_auditor.call({
+		"list_id": str(list.get("list_id", "")),
+		"deck_name": str(list.get("deck_name", "")),
+		"god_name": str(list.get("god_name", "")),
+		"cards": list.get("cards", {}).duplicate(true),
+		"reinforcements": list.get("reinforcements", {}).duplicate(true),
+		"special_setup": list.get("special_setup", {}).duplicate(true),
+	})
+	if audited.is_empty():
+		return
+	list["cards"] = (audited.get("cards", {}) as Dictionary).duplicate(true)
+	list["reinforcements"] = (audited.get("reinforcements", {}) as Dictionary).duplicate(true)
+	list["special_setup"] = (audited.get("special_setup", {}) as Dictionary).duplicate(true)
+	list["fingerprint"] = _fingerprint(list)
 
 func can_play_list(god_name: String, list_id: String) -> bool:
 	if list_id.is_empty():

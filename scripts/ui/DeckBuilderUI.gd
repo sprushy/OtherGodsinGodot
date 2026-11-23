@@ -61,7 +61,7 @@ var _all_cards: Array  = []        # template Card instances (read-only)
 var _deck: Dictionary  = {}        # card_name (String) -> count (int)
 var _reinforcements: Dictionary = {}
 var _editing_reinforcements: bool = false
-var _filter: String         = "All"
+var _filters: Array         = []     # selected type tabs; empty means "All"
 var _faction_filter: String = "All"
 var _level_filter: String = LEVEL_FILTER_ANY
 var _search_query: String = ""
@@ -400,16 +400,14 @@ func _build_top_bar(parent: Control) -> void:
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	inner.add_child(spacer)
 
-	var btn_group := ButtonGroup.new()
 	for label in ["All", "Gods", "Active Gods", "Powers", "Legendaries", "Creatures", "Equipment", "Charms", "Spells", "Structures", "Hexes"]:
 		var btn := Button.new()
 		btn.text = label
 		btn.toggle_mode = true
-		btn.button_group = btn_group
-		btn.button_pressed = (label == _filter)
+		btn.button_pressed = _filters.is_empty() if label == "All" else _filters.has(label)
 		btn.custom_minimum_size = Vector2(96 if label == "Legendaries" or label == "Active Gods" else 72, 32)
 		var captured_label: String = label
-		btn.pressed.connect(func() -> void: _set_filter(captured_label))
+		btn.pressed.connect(func() -> void: _toggle_filter(captured_label))
 		_filter_buttons[label] = btn
 		inner.add_child(btn)
 
@@ -1094,10 +1092,7 @@ func _rebuild_grid() -> void:
 func _matches_filter(card: Card) -> bool:
 	if card.is_single_player_card:
 		return false
-	if card is ActiveGodCard:
-		if _filter != "Active Gods":
-			return false
-	elif _filter == "Active Gods":
+	if card is ActiveGodCard and not _filters.has("Active Gods"):
 		return false
 
 	if _faction_filter != "All" and card.culture != _faction_filter:
@@ -1106,19 +1101,44 @@ func _matches_filter(card: Card) -> bool:
 		return false
 	if not _matches_search_query(card):
 		return false
-	match _filter:
-		"All":       return true
-		"Gods":      return card.is_god
-		"Active Gods": return card is ActiveGodCard
-		"Powers":    return card.is_power and not card.is_god
-		"Legendaries": return card.is_legendary and not card.is_god
-		"Creatures": return card.card_type == Card.CardType.CREATURE and not card.is_god
-		"Equipment": return card.card_type == Card.CardType.EQUIPMENT
-		"Charms":    return card.card_type == Card.CardType.CHARM
-		"Spells":    return card.card_type == Card.CardType.SPELL
-		"Structures":return card.card_type == Card.CardType.STRUCTURE
-		"Hexes":     return card.card_type == Card.CardType.HEX
-	return true
+	return _matches_type_filter(card)
+
+func _matches_type_filter(card: Card) -> bool:
+	if _filters.is_empty():
+		return true
+	for filter_name in _filters:
+		match filter_name:
+			"Gods":
+				if card.is_god:
+					return true
+			"Active Gods":
+				if card is ActiveGodCard:
+					return true
+			"Powers":
+				if card.is_power and not card.is_god:
+					return true
+			"Legendaries":
+				if card.is_legendary and not card.is_god:
+					return true
+			"Creatures":
+				if card.card_type == Card.CardType.CREATURE and not card.is_god:
+					return true
+			"Equipment":
+				if card.card_type == Card.CardType.EQUIPMENT:
+					return true
+			"Charms":
+				if card.card_type == Card.CardType.CHARM:
+					return true
+			"Spells":
+				if card.card_type == Card.CardType.SPELL:
+					return true
+			"Structures":
+				if card.card_type == Card.CardType.STRUCTURE:
+					return true
+			"Hexes":
+				if card.card_type == Card.CardType.HEX:
+					return true
+	return false
 
 func _matches_level_filter(card: Card) -> bool:
 	if _level_filter == LEVEL_FILTER_ANY:
@@ -4747,10 +4767,15 @@ func _try_handle_deck_row_drag_input(event: InputEvent) -> bool:
 			return true
 	return false
 
-func _set_filter(new_filter: String) -> void:
+func _toggle_filter(filter_label: String) -> void:
 	_clear_selected_collection_card()
 	_set_collection_mode(COLLECTION_MODE_CARDS, false)
-	_filter = new_filter
+	if filter_label == "All":
+		_filters.clear()
+	elif _filters.has(filter_label):
+		_filters.erase(filter_label)
+	else:
+		_filters.append(filter_label)
 	_current_page = 0
 	_refresh_filter_button_states()
 	_rebuild_filtered_cards_cache()
@@ -5056,7 +5081,7 @@ func _rebuild_filtered_cards_cache() -> void:
 	_filtered_cards_cache.clear()
 	var selected_god := _get_selected_god_template()
 	for card in _all_cards:
-		if selected_god != null and card.is_god and _filter != "Gods":
+		if selected_god != null and card.is_god and not _filters.has("Gods"):
 			continue
 		if _matches_filter(card):
 			_filtered_cards_cache.append(card)
@@ -5375,7 +5400,7 @@ func _refresh_filter_button_states() -> void:
 	for label in _filter_buttons.keys():
 		var button = _filter_buttons.get(label)
 		if button is Button:
-			(button as Button).button_pressed = str(label) == _filter
+			(button as Button).button_pressed = _filters.is_empty() if str(label) == "All" else _filters.has(str(label))
 
 func _refresh_faction_button_states() -> void:
 	for label in _faction_buttons.keys():
@@ -5391,7 +5416,7 @@ func _refresh_level_filter_button_states() -> void:
 
 func _apply_guided_collection_view(filter_name: String) -> void:
 	_collection_mode = COLLECTION_MODE_CARDS
-	_filter = filter_name
+	_filters = [] if filter_name == "All" else [filter_name]
 	_faction_filter = "All"
 	_level_filter = LEVEL_FILTER_ANY
 	_current_page = 0

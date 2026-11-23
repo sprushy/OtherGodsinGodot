@@ -148,6 +148,12 @@ const TOP_TEN_NOTIFICATION_DEPTH := 10
 # something has actually changed since the last refresh.
 var _pool_dirty: bool = true
 var _pool_state_paths: Dictionary = {}
+# Per-format result buckets for the two bot pools. Maintained by appending only
+# newly recorded results, so the full history is split once instead of on every
+# pool refresh.
+var _pool_results_by_format := {1: [] as Array[Dictionary], 3: [] as Array[Dictionary]}
+var _pool_results_bucketed_count := 0
+var _pool_results_boundary_id := ""
 var _bot_self_play_format_index: int = 0
 
 # Room-list broadcast throttle — limits broadcasts to at most once per second so
@@ -3205,24 +3211,42 @@ func _refresh_ranked_bot_deck_pool() -> void:
 	var is_default_store: bool = not match_history_store.has_method("get_storage_file_name") \
 		or match_history_store.get_storage_file_name() == MatchHistoryStoreScript.DEFAULT_STORAGE_FILE_NAME
 	var community_bots := _load_community_bots_by_id()
-	var results_by_format := {1: [] as Array[Dictionary], 3: [] as Array[Dictionary]}
-	for result: Dictionary in match_history_store.get_bot_deck_results():
-		var best_of := int(result.get("best_of", 1))
-		var format := 3 if best_of == 3 else 1
-		(results_by_format[format] as Array[Dictionary]).append(result)
+	_update_pool_results_by_format(match_history_store.get_bot_deck_results())
 	for best_of in [1, 3]:
 		var bot_pool := _bot_pool(best_of)
 		if is_default_store and not _pool_state_paths.has(best_of):
 			var state_path := ServerPathsScript.get_server_data_file_path(_bot_pool_state_path(best_of))
 			_pool_state_paths[best_of] = state_path
-			if bot_pool.load_state(state_path):
-				# The saved cursor may describe a pre-split result stream.
-				bot_pool.reset_replay_state()
+			# The saved cursor resumes incrementally across restarts; refresh()
+			# validates it against the result stream (count + boundary match id)
+			# and full-replays only when the saved state describes a stale or
+			# mismatched stream (for example a pre-split combined cursor).
+			bot_pool.load_state(state_path)
 		bot_pool.sync_community_bots(community_bots)
-		var format_results: Array[Dictionary] = results_by_format[best_of]
+		var format_results: Array[Dictionary] = _pool_results_by_format[best_of]
 		bot_pool.refresh(format_results)
 		if is_default_store:
 			bot_pool.save_state(_pool_state_paths[best_of], format_results.size())
+
+# Splits the bot result stream into per-format buckets incrementally: the full
+# history is split exactly once, and only newly recorded results are appended
+# afterwards. If the store reordered its history (late-arriving worker
+# results), the boundary id no longer matches and the buckets re-split once so
+# both ladders stay consistent with finish order — mirroring the same cursor
+# validation RankedBotDeckPool.refresh applies to its replay.
+func _update_pool_results_by_format(results: Array[Dictionary]) -> void:
+	if _pool_results_bucketed_count > results.size() \
+			or (_pool_results_bucketed_count > 0 \
+			and str(results[_pool_results_bucketed_count - 1].get("match_id", "")) != _pool_results_boundary_id):
+		(_pool_results_by_format[1] as Array[Dictionary]).clear()
+		(_pool_results_by_format[3] as Array[Dictionary]).clear()
+		_pool_results_bucketed_count = 0
+	for index in range(_pool_results_bucketed_count, results.size()):
+		var result: Dictionary = results[index]
+		var format := 3 if int(result.get("best_of", 1)) == 3 else 1
+		(_pool_results_by_format[format] as Array[Dictionary]).append(result)
+	_pool_results_bucketed_count = results.size()
+	_pool_results_boundary_id = str(results.back().get("match_id", "")) if not results.is_empty() else ""
 
 func _load_community_bots_by_id() -> Dictionary:
 	var bots := {}

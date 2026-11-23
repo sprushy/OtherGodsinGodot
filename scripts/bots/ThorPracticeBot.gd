@@ -30,6 +30,9 @@ const COMBAT_ATTACK_SEARCH_WIDTH := 16
 const COMBAT_REMOVAL_SEARCH_WIDTH := 32
 const COMBAT_RESPONSE_SEARCH_WIDTH := 24
 const ECON_MANA_VALUE := 1000
+# Celestial Light converts one follower per grave card once Nusku, Active God
+# perishes, so declining Core Flame only enters consideration past this grave.
+const NUSKU_CELESTIAL_LIGHT_MIN_GRAVE := 12
 # God Death makes the enemy board's defensive value a countdown: blocking never
 # stops the 7/turn bleed, so combat that a removal unlocks from a locked board
 # is priced at double worth while the bot is the one bleeding.
@@ -2648,8 +2651,12 @@ func _score_champions_call_trade(
 	return loss
 
 func _combat_god_death_cost(player: Player, casualties: Array, damage: int, replaces_god: bool = false, starting_followers: int = -1) -> int:
-	if casualties.any(func(card: Card) -> bool: return card is ActiveGodCard and card.get_controller() == player) \
-			and _loses_last_god(player, casualties, replaces_god):
+	# Mummu, Active God reactivates the stored normal god when it leaves the
+	# field (MummuActive.on_removed), so its death never starts God Death:
+	# price it as the card alone instead of charging phantom follower bleed.
+	var god_deaths := casualties.filter(func(card: Card) -> bool:
+		return card is ActiveGodCard and not (card is MummuActive) and card.get_controller() == player)
+	if not god_deaths.is_empty() and _loses_last_god(player, god_deaths, replaces_god):
 		var before := player.followers if starting_followers < 0 else starting_followers
 		return ECON_CARD_VALUE + _score_follower_loss(player, GameManager.GOD_DEATH_FOLLOWER_LOSS, maxi(0, before - damage))
 	return 0
@@ -5070,6 +5077,8 @@ func _plan_deck_god_ability(danger: int, attacks: Array[Dictionary] = [], combat
 	var score := int(expected) - CardStrategy.mana_penalty(self, NuskuFirebearer.ACTIVATION_COST)
 	# Milling uses up future draws, particularly when the deck is already short.
 	score -= NuskuFirebearer.MILL_COUNT * (250 if population.size() <= 14 else 75)
+	# The milled cards also land in the grave, where several of our cards feed.
+	score += _well_of_fire_grave_fill_value(population, known_milled, values.size(), draw_count)
 	if score <= 0:
 		return {}
 	var plan := {"score": score, "command": {"type": "god_ability", "god_uid": god.uid}}
@@ -5086,6 +5095,143 @@ func _sample_avoids(population: int, excluded: int, count: int) -> float:
 	for index in range(count):
 		probability *= float(population - excluded - index) / float(population - index)
 	return probability
+
+func _well_of_fire_grave_fill_value(population: Array[Card], known_milled: Array[Card], unknown_population: int, milled_slots: int) -> int:
+	# The mill half of Well of Fire is not pure deck damage: the milled cards
+	# land in the grave where several of our cards feed. Like
+	# _crossing_grave_fill_value, every credit requires the spender to be
+	# actually ours right now, so this never becomes a blanket mill bonus.
+	var value := 0
+
+	# Tablet of Life needs an Ancient creature in the grave; one milled target
+	# is what unblocks a tablet stranded in hand.
+	var tablet: TabletOfLife = null
+	for hand_card in bot_player.hand_zone.cards:
+		if hand_card is TabletOfLife:
+			tablet = hand_card as TabletOfLife
+			break
+	if tablet != null and tablet.get_valid_targets(game_manager).is_empty():
+		var target_fuel := func(card: Card) -> bool:
+			return card != null and card.card_type == Card.CardType.CREATURE \
+				and not card.is_god and str(card.culture).strip_edges() == "Ancient"
+		value += int(_grave_fuel_hit_chance(target_fuel, population, known_milled, unknown_population, milled_slots) * ECON_CARD_VALUE / 2)
+
+	# Pictish Beast's Mana Boon counts grave beasts on every later reveal, so
+	# a milled beast still pays through a beast we hold or draw later. Half
+	# rate: the milled body is also a summon we will never get to make.
+	var beast_fuel := func(card: Card) -> bool: return card is PictishBeast
+	if _hand_has_fuel_card(beast_fuel) or _deck_has_fuel_card(beast_fuel, population):
+		var expected_beasts := minf(2.0, _expected_grave_fuel_count(beast_fuel, population, known_milled, unknown_population, milled_slots))
+		value += int(expected_beasts * PictishBeast.MANA_PER_BEAST * CardStrategy.MANA_VALUE / 2)
+
+	# Nergal Lion's Immolate prepares a Destruction card from the grave at
+	# 0 cost; a milled one is a free cast waiting on its Impact.
+	var lion := _find_nergal_lion()
+	if lion != null and lion.get_valid_immolate_targets(game_manager).is_empty():
+		var immolate_fuel := func(card: Card) -> bool:
+			return card != null \
+				and card.card_type in [Card.CardType.SPELL, Card.CardType.HEX, Card.CardType.CHARM] \
+				and lion._is_destruction_card(card) and lion._can_destroy_physical_card(card)
+		value += int(_grave_fuel_hit_chance(immolate_fuel, population, known_milled, unknown_population, milled_slots) * CardStrategy.MANA_VALUE)
+
+	# Celestial Light converts followers equal to the grave size when Nusku,
+	# Active God perishes after declining Core Flame, so grave growth also
+	# feeds that later play. Only buried cards count: the opponent's Well of
+	# Fire pick leaves for the hand. The flat half rate prices how far away
+	# the summon-decline-perish chain still is.
+	if opponent != null and opponent.followers_enabled and bot_player.followers_enabled \
+			and _owns_nusku_active(population):
+		var grave_growth := float(maxi(0, known_milled.size() + milled_slots - 1))
+		value += int(grave_growth * CardStrategy.FOLLOWER_VALUE / 2)
+	return value
+
+func _hand_has_fuel_card(fuel_check: Callable) -> bool:
+	for card in bot_player.hand_zone.cards:
+		if fuel_check.call(card):
+			return true
+	return false
+
+func _deck_has_fuel_card(fuel_check: Callable, population: Array[Card]) -> bool:
+	for card in population:
+		if fuel_check.call(card):
+			return true
+	return false
+
+func _find_nergal_lion() -> NergalLion:
+	for card in bot_player.hand_zone.cards:
+		if card is NergalLion:
+			return card as NergalLion
+	for zone in bot_player.frontline_zones + bot_player.reserve_zones:
+		for card in zone.cards:
+			if card is NergalLion and not card.is_face_down:
+				return card as NergalLion
+	return null
+
+func _owns_nusku_active(population: Array[Card]) -> bool:
+	for card in bot_player.hand_zone.cards:
+		if card is NuskuActive:
+			return true
+	for zone in bot_player.frontline_zones + bot_player.reserve_zones:
+		for card in zone.cards:
+			if card is NuskuActive:
+				return true
+	for card in population:
+		if card is NuskuActive:
+			return true
+	return false
+
+func _grave_fuel_hit_chance(fuel_check: Callable, population: Array[Card], known_milled: Array[Card], unknown_population: int, milled_slots: int) -> float:
+	# Chance at least one fuel card is milled: the known top slice is
+	# certain, the unknown remainder samples hypergeometrically.
+	for card in known_milled:
+		if fuel_check.call(card):
+			return 1.0
+	if unknown_population <= 0 or milled_slots <= 0:
+		return 0.0
+	var eligible := 0
+	for card in population:
+		if fuel_check.call(card) \
+				and bot_player.deck_zone.get_deck_placement(card) == Zone.DeckPlacement.UNKNOWN:
+			eligible += 1
+	if eligible <= 0:
+		return 0.0
+	return 1.0 - _sample_avoids(unknown_population, eligible, milled_slots)
+
+func _expected_grave_fuel_count(fuel_check: Callable, population: Array[Card], known_milled: Array[Card], unknown_population: int, milled_slots: int) -> float:
+	var count := 0.0
+	for card in known_milled:
+		if fuel_check.call(card):
+			count += 1.0
+	if unknown_population > 0 and milled_slots > 0:
+		var eligible := 0
+		for card in population:
+			if fuel_check.call(card) \
+					and bot_player.deck_zone.get_deck_placement(card) == Zone.DeckPlacement.UNKNOWN:
+				eligible += 1
+		count += float(eligible) * float(milled_slots) / float(unknown_population)
+	return count
+
+func _should_decline_nusku_core_flame(nusku: NuskuActive) -> bool:
+	# Declining Core Flame banks Celestial Light: when Nusku, Active God
+	# perishes, it converts followers equal to the grave size. Trade away the
+	# milled magical card only when that conversion is worth clearly more
+	# than a card in hand.
+	if nusku == null or opponent == null or bot_player == null:
+		return false
+	if nusku.card_owner != bot_player:
+		return false
+	if not opponent.followers_enabled or not bot_player.followers_enabled:
+		return false
+	if bot_player.graveyard_zone == null:
+		return false
+	var grave_size := bot_player.graveyard_zone.cards.size()
+	if grave_size < NUSKU_CELESTIAL_LIGHT_MIN_GRAVE:
+		return false
+	var conversion := _score_follower_loss(opponent, grave_size) \
+		+ CardStrategy.follower_gain(bot_player, grave_size)
+	# The payout still waits on the active god perishing, so weight it down.
+	@warning_ignore("integer_division")
+	return conversion * 3 / 5 > CardStrategy.CARD_VALUE * 2
 
 func _plan_odin_draw(danger: int, desperation: bool = false) -> Dictionary:
 	var god := _find_player_god() as Odin
@@ -5359,6 +5505,98 @@ func _is_destroyed_at_this_turns_end(card: Card) -> bool:
 	if card == null or not card.has_status_effect(TabletOfLife.DESTROY_AT_TURN_END_STATUS):
 		return false
 	return int(card.get_status_effect(TabletOfLife.DESTROY_AT_TURN_END_STATUS).get("expires_turn", -1)) <= game_manager.turn_number
+
+# --- Mummu, Active God Entropy ----------------------------------------------
+# Entropy lets the Mummu controller Prime or Shelve any card Mummu destroys.
+# The alternative to shelve is prime, never the graveyard, so the two
+# placements are compared directly. Prime is the default: the victim rides
+# its owner's next draw, burning a fresh topdeck (worst for a thin hand
+# desperate for answers), and a body that cannot answer Mummu only comes
+# back to be destroyed and re-primed. The lock still matters against a fat
+# hand, fading to a floor instead of zero. Shelve wins only when the
+# victim's return would threaten Mummu itself.
+
+# Prime's advantage over shelve: the draw-lock value minus the threat of
+# handing the card back on top of its owner's deck.
+func _mummu_prime_placement_delta(mummu: Card, victim: Card, owner: Player) -> int:
+	if victim == null or owner == null:
+		return 0
+	return _mummu_prime_lock_value(owner) - _mummu_prime_return_cost(mummu, victim)
+
+# The locked draw hurts most when the owner is topdecking for answers, but
+# it is never worthless: hands play out, the primed non-answer keeps
+# squatting on the topdeck, and the known card stays free information. The
+# denial fades with hand size down to a floor instead of reaching zero.
+func _mummu_prime_lock_value(owner: Player) -> int:
+	if owner == null or owner.hand_zone == null:
+		return 0
+	var hand := owner.hand_zone.cards.size()
+	@warning_ignore("integer_division")
+	var base := ECON_CARD_VALUE / 2
+	@warning_ignore("integer_division")
+	return maxi(base / 5, base * clampi(6 - hand, 1, 6) / 6)
+
+# What the victim is worth when it returns: only a genuine combat answer to
+# Mummu makes priming expensive. Bodies that cannot punch through Mummu
+# redeploy just to be destroyed and re-primed, so they price as pure lock.
+func _mummu_prime_return_cost(mummu: Card, victim: Card) -> int:
+	if mummu == null or victim == null or not CardStrategy.visible(self, victim):
+		return 0
+	if _would_destroy_target_in_battle(victim, mummu):
+		@warning_ignore("integer_division")
+		return _get_card_economic_value(victim) * 3 / 4
+	return 0
+
+# Entropy prompt from our Mummu Active: prime a stolen body back onto our
+# own deck, prime non-answers for the draw lock, shelve what answers Mummu.
+func _choose_mummu_entropy_placement(mummu: Card, victim: Card) -> String:
+	if victim == null:
+		return MummuActive.ENTROPY_PRIME
+	if victim.card_owner == bot_player:
+		return MummuActive.ENTROPY_PRIME
+	if _mummu_prime_placement_delta(mummu, victim, victim.card_owner) > 0:
+		return MummuActive.ENTROPY_PRIME
+	return MummuActive.ENTROPY_SHELVE
+
+# Entropy replaces the plain graveyard death for cards a Mummu Active
+# destroys in a projected combat — declared targets, interceptors, and
+# recoil-killed attackers all qualify. Tag the economy with the Mummu side's
+# best placement so attack, interception, and reply projections price the
+# lock (and the answer-denial shelve) from the right perspective.
+func _add_mummu_entropy_combat_value(action: CardAction, defender: Card, result: Dictionary) -> void:
+	if action == null or action.attacker == null:
+		return
+	var mummu: Card = null
+	var victims: Array[Card] = []
+	if action.attacker is MummuActive and not action.attacker.abilities_suppressed():
+		# Entropy fires for the declared target and for an interceptor that
+		# dies to the attack.
+		var defender_card := _get_attack_defender_card(action)
+		if defender_card != null and defender_card in result["casualties"] \
+				and defender_card.get_controller() != action.attacker.get_controller():
+			mummu = action.attacker
+			victims.append(defender_card)
+	if defender is MummuActive and not defender.abilities_suppressed() \
+			and action.attacker in result["casualties"] \
+			and action.attacker.get_controller() != defender.get_controller():
+		# Recoil kill: Mummu destroyed the attacking creature while defending.
+		mummu = defender
+		victims.append(action.attacker)
+	if mummu == null or victims.is_empty():
+		return
+	var mummu_side := mummu.get_controller()
+	var delta := 0
+	for victim: Card in victims:
+		if victim.card_owner == mummu_side:
+			# A stolen body returns to its true owner's deck top: recovery.
+			@warning_ignore("integer_division")
+			delta += ECON_CARD_VALUE / 4
+		else:
+			delta += _mummu_prime_placement_delta(mummu, victim, victim.card_owner)
+	if delta == 0:
+		return
+	result["mummu_entropy_value"] = int(result.get("mummu_entropy_value", 0)) \
+		+ (delta if mummu_side == bot_player else -delta)
 
 func _plan_defensive_attack(attacks: Array[Dictionary], danger: int) -> Dictionary:
 	var best := {}
@@ -9162,6 +9400,7 @@ func _estimate_projected_attack_economy(action: CardAction, stats: Dictionary, i
 					beasts.append(combatant)
 				result["reveal_bonus"] = int(result.get("reveal_bonus", 0)) + _estimate_reveal_trigger_value(combatant)
 		_add_expiring_combat_tokens(action, defender, result)
+		_add_mummu_entropy_combat_value(action, defender, result)
 		var stand_reward := _heroic_stand_combat_reward(action, defender, result)
 		if stand_reward > 0:
 			result["heroic_stand_reward"] = stand_reward
@@ -9846,6 +10085,9 @@ func _score_attack_economy(result: Dictionary, line: Dictionary = {}) -> int:
 	score += int(result.get("guanyu_counter_break", 0))
 	score += int(result.get("reveal_bonus", 0))
 	score += int(result.get("concealment_value", 0))
+	# Mummu, Active God's Entropy replaces a plain graveyard death with a
+	# prime draw-lock or a shelve denial, priced from the bot's perspective.
+	score += int(result.get("mummu_entropy_value", 0))
 	var bot_followers := int(line.get("bot_followers", bot_player.followers))
 	var opponent_followers := int(line.get("opponent_followers", opponent.followers))
 	var bot_loss := int(result.get("bot_followers_lost", 0)) - int(result.get("bot_followers_gained", 0))

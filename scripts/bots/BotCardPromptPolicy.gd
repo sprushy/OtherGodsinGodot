@@ -160,12 +160,19 @@ static func build_command(bot, type: String, data: Dictionary) -> Dictionary:
 		"mummu_entropy":
 			var victim_uid := str(data.get("victim_uid", ""))
 			var victim: Card = bot.game_manager.get_card_by_uid(victim_uid)
+			# Prime is the default draw-lock; shelve only when the victim
+			# would answer Mummu on return. A stolen body we destroyed
+			# primes back onto our own deck.
 			command.merge({
 				"type": "mummu_entropy_choice", "chosen_uid": victim_uid,
-				"placement": "prime" if victim != null and victim.card_owner == bot.bot_player else "shelve",
+				"placement": bot._choose_mummu_entropy_placement(source, victim),
 			})
 		"nusku_active_core_flame":
-			command.merge({"type": "nusku_active_core_flame_choice", "decline": false})
+			# Accepting mills and banks a magical card in hand; declining banks
+			# Celestial Light's grave-sized follower conversion for the perish.
+			var nusku_active := source as NuskuActive
+			var decline_core_flame: bool = nusku_active != null and bot._should_decline_nusku_core_flame(nusku_active)
+			command.merge({"type": "nusku_active_core_flame_choice", "decline": decline_core_flame})
 			if str(data.get("stage", "")) == "choose":
 				command["chosen_uid"] = _best_uid(bot, data, "target_uids", false)
 		"gala_tura_destroyed":
