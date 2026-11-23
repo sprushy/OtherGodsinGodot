@@ -782,7 +782,15 @@ func _score_priority_card(card: Card, action: CardAction, danger: int) -> Dictio
 		elif (card is Dromi or card is Gleipnir) and target != null and score > CardStrategy.BAD \
 				and CardStrategy.adds_attack_lock_next_turn(self, target):
 			score += _follower_safety_gain(danger, {"disable_attacker": target}, bot_player.mana - CardStrategy.activation_cost(self, card) + refund_gain)
-		score -= CardStrategy.sweeper_hold_value(card)
+		score -= maxi(CardStrategy.sweeper_hold_value(card), _inferno_hold_charge(card, action))
+		# Attack-punishing replies are worth the most against the biggest
+		# prospective attacker still to come this turn; charge the
+		# hold-for-bigger-fish trade into the fire-now decision.
+		if action != null and action.type == CardAction.Type.ATTACK \
+				and CardStrategy.combat_visible(self, action) \
+				and (card is Smite or card is VoidShield \
+					or (card is DivineLightning and target == action.attacker)):
+			score -= _attack_punish_hold_charge(card, action)
 		if score > int(best["score"]):
 			best = {"score": score, "target": target}
 	return best
@@ -1677,6 +1685,111 @@ func _get_own_protective_responses() -> Array[Card]:
 				and bot_player.mana >= game_manager.get_card_play_mana_cost(bot_player, card, false):
 			responses.append(card)
 	return responses
+
+# Attack-punishing replies (Smite / Void Shield / Divine Lightning) pay the
+# most against the largest prospective attacker, not the first one to
+# declare. While more ready enemies can still attack this turn, passing keeps
+# the reply banked for the bigger attack at the price of letting this one
+# resolve, so the fire-now score carries that trade: a small attacker can no
+# longer bait the reply out of the bot. A second copy of the same reply makes
+# holding free — fire one now, keep the other for the bigger fish.
+func _attack_punish_hold_charge(card: Card, action: CardAction) -> int:
+	if action == null or action.type != CardAction.Type.ATTACK or action.attacker == null \
+			or game_manager == null or opponent == null or bot_player == null \
+			or game_manager.current_player != opponent or not CardStrategy.combat_visible(self, action):
+		return 0
+	var bullets := 0
+	for zone in bot_player.frontline_zones + bot_player.reserve_zones:
+		for held in zone.cards:
+			if held.get_script() == card.get_script():
+				bullets += 1
+	for held in bot_player.hand_zone.cards:
+		if held.get_script() == card.get_script() \
+				and bot_player.mana >= game_manager.get_card_play_mana_cost(bot_player, held, false):
+			bullets += 1
+	if bullets > 1:
+		return 0
+	# Economy of letting this attack resolve: the price the hold option pays.
+	var combat := _score_attack_economy(_estimate_attack_economy(action, null, 0, 0))
+	var remaining := opponent.mana - game_manager.get_creature_action_mana_cost(action.attacker, "attack")
+	var destroys := not (card is VoidShield)
+	var best_future := 0
+	for attacker in _get_board_creatures(opponent):
+		if _has_committed_attack(attacker) or not _can_attack_after_priority(attacker) \
+				or attacker.current_zone not in opponent.frontline_zones \
+				or not CardStrategy.visible(self, attacker) \
+				or attacker.creature_mode != Card.CreatureMode.AGGRESSIVE \
+				or game_manager.get_creature_action_mana_cost(attacker, "attack") > remaining \
+				or not CardStrategy.can_remove_from_board(self, card, attacker, destroys):
+			continue
+		# The opponent picks the target, so price the reply against their best
+		# (worst-for-us) engagement among our reachable defenders.
+		var worst := 1 << 30
+		for defender in _get_board_creatures(bot_player):
+			if not game_manager.can_cards_engage_each_other(attacker, defender):
+				continue
+			var probe := CardAction.new()
+			probe.type = CardAction.Type.ATTACK
+			probe.source_player = opponent
+			probe.attacker = attacker
+			probe.target = defender
+			if not game_manager.can_card_respond_to_action(card, probe, bot_player):
+				continue
+			worst = mini(worst, _score_attack_economy(_estimate_attack_economy(probe, null, 0, 0)))
+		if worst >= (1 << 30):
+			continue
+		best_future = maxi(best_future, CardStrategy.value(self, attacker) - worst)
+	if best_future <= 0:
+		return 0
+	# The bigger attack is still the opponent's choice, and a declined attack
+	# leaves the reply banked anyway, so discount the future payoff by half.
+	@warning_ignore("integer_division")
+	return maxi(combat + best_future / 2, 0)
+
+# The Inferno re-fires on every future enemy attack, and its payoff grows
+# with the attacker's frontline, so a lone mediocre attacker must not bait it
+# out while the follower pool is healthy: the follower damage the kill
+# cancels is cheap at high totals, and the enemy frontline can only grow over
+# the coming turns. The charge gives back the health-blind share of the
+# avoided-follower-damage credit the generic response score paid (the same
+# urgency clamp _current_turn_removal_safety uses), then prices the prospect
+# of a later, bigger trigger: visible reserve bodies at half value (advancing
+# costs a turn), hidden bodies at the generic card price, and one expected
+# future deployment while the opponent can still field creatures. Both terms
+# scale down as the pool empties, so a threatened board still fires the wipe
+# to survive; a loaded frontline fires anyway, because the fire-now gain is
+# the whole frontline at once.
+func _inferno_hold_charge(card: Card, action: CardAction) -> int:
+	if not (card is TheInferno) or action == null or action.type != CardAction.Type.ATTACK \
+			or game_manager == null or opponent == null or bot_player == null \
+			or game_manager.current_player != opponent or not CardStrategy.combat_visible(self, action):
+		return 0
+	var before := _forecast_incoming_follower_loss({}, true)
+	var urgency := clampf(1.0 - float(bot_player.followers - before) / 100.0, 0.25, 1.0)
+	var hold_weight := clampf(1.0 - urgency, 0.0, 1.0)
+	if hold_weight <= 0.0:
+		return 0
+	# The follower-loss share of the avoided combat, isolated so a saved
+	# defender keeps full credit while the cheap-at-full-pool damage share is
+	# priced at what the health clamp says it is worth.
+	var attack_economy := _estimate_attack_economy(action, null, 0, 0)
+	var bot_after := maxi(0, bot_player.followers - (int(attack_economy.get("bot_followers_lost", 0)) - int(attack_economy.get("bot_followers_gained", 0))))
+	var follower_credit := maxi(0, -CardStrategy.follower_change_value(bot_player.followers, bot_after))
+	var charge := roundi(float(follower_credit) * hold_weight)
+	# Prospect of a later, bigger trigger. The opponent still chooses whether
+	# to load the frontline, so the prospect is taken at half.
+	var prospect := 0
+	for creature in _get_board_creatures(opponent):
+		if creature.current_zone == null or creature.current_zone not in opponent.reserve_zones:
+			continue
+		if CardStrategy.visible(self, creature):
+			prospect += int(float(CardStrategy.value(self, creature)) * 0.5)
+		else:
+			prospect += CardStrategy.CARD_VALUE / 4
+	if not opponent.deck_zone.cards.is_empty() or not opponent.hand_zone.cards.is_empty():
+		prospect += CardStrategy.CARD_VALUE / 2
+	charge += int(float(prospect) * hold_weight * 0.5)
+	return charge
 
 func _get_tonal_mastery_god(player: Player) -> TezcatlipocaTheSmokingMirror:
 	if player == null or player.god_zone.cards.is_empty() \

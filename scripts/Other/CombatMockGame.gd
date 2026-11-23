@@ -8827,6 +8827,10 @@ func _get_enemy_hand_overlay_rect() -> Rect2:
 	var overlay_y: float = local_top_left.y + ENEMY_HAND_OVERLAY_TOP_PADDING
 	return Rect2(Vector2(overlay_x, overlay_y), Vector2(overlay_width, dock_height))
 
+func _get_enemy_hand_overlay_global_rect() -> Rect2:
+	var local_rect := _get_enemy_hand_overlay_rect()
+	return get_global_transform() * local_rect
+
 func _get_enemy_hand_render_signature(enemy_player: Player, display_cards: Array[Card]) -> String:
 	if enemy_player == null:
 		return ""
@@ -9010,6 +9014,19 @@ func _layout_enemy_hand_overlay() -> void:
 			-ENEMY_HAND_CARD_HEIGHT + overlay_rect.size.y - 2.0 - absf(t) * 5.0
 		)
 		card_back.rotation_degrees = -t * ENEMY_HAND_PEEK_ROTATION
+		# The dock clips the peeked cards, so hover must only count on the
+		# visible slice of each card control, never the clipped portion.
+		var hand_vc := card_back as VisualCard
+		if hand_vc != null:
+			var visible_top: float = clampf(-card_back.position.y, 0.0, card_back.size.y)
+			var visible_bottom: float = clampf(overlay_rect.size.y - card_back.position.y, 0.0, card_back.size.y)
+			if visible_bottom <= visible_top:
+				hand_vc.set_hand_hover_hit_rect(Rect2())
+			else:
+				hand_vc.set_hand_hover_hit_rect(Rect2(
+					Vector2(0.0, visible_top),
+					Vector2(card_back.size.x, visible_bottom - visible_top)
+				))
 		if card_back.has_meta("mopsus_flip_in"):
 			card_back.remove_meta("mopsus_flip_in")
 			card_back.scale.x = 0.0
@@ -11831,6 +11848,11 @@ func _show_hand_hover_preview(vc: VisualCard) -> void:
 	if source_side == 0 or vc.card_data == null:
 		_hide_hand_hover_preview()
 		return
+	if source_side < 0 and not vc.contains_global_point(get_global_mouse_position()):
+		# The dock clips peeked enemy cards; a hover event that fired over the
+		# clipped, invisible portion of the card control must not show a preview.
+		_hide_hand_hover_preview()
+		return
 	if vc == _hand_hover_vc and _hand_hover_preview != null and is_instance_valid(_hand_hover_preview):
 		_position_hand_hover_preview()
 		return
@@ -12035,10 +12057,14 @@ func _find_hand_hover_card_at(global_pos: Vector2) -> VisualCard:
 func _find_hand_hover_card_in_list(cards: Array, global_pos: Vector2) -> VisualCard:
 	for i in range(cards.size() - 1, -1, -1):
 		var vc := _get_valid_visual_card(cards[i])
-		if vc != null \
-				and is_instance_valid(vc) \
-				and _get_live_hand_hover_source_side(vc) != 0 \
-				and vc.visible \
+		var source_side := _get_live_hand_hover_source_side(vc)
+		if source_side == 0:
+			continue
+		# The enemy hand dock clips its peeked cards; ignore hover that lands
+		# outside the visible dock strip so hidden card areas never pop the preview.
+		if source_side < 0 and not _get_enemy_hand_overlay_global_rect().grow(1.0).has_point(global_pos):
+			continue
+		if vc.visible \
 				and not vc.is_hand_interacting() \
 				and vc.contains_global_point(global_pos):
 			return vc
