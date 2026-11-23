@@ -489,6 +489,44 @@ func _check_deck_validator(failures: PackedStringArray) -> void:
 	)
 	if not bool(swap_result.get("is_valid", false)):
 		failures.append("legal Reinforcement resubmission with changed main-deck size failed validation: %s" % str(swap_result.get("error", "")))
+	# Your actual god can never sit in Reinforcements.
+	var god_side_result: Dictionary = validator.validate_deck(valid_deck, {}, {"Thor": 1})
+	if bool(god_side_result.get("is_valid", false)):
+		failures.append("deck validator accepted the God slot card in Reinforcements")
+	# Deck-legal (foreign) Active Gods follow normal Reinforcement rules: an
+	# Odin Patriarch deck may side out a foreign Norse Active God.
+	var odin_main := {
+		"Odin, the Allfather": 1,
+		"Thor, Active God": 1,
+		"Harii Warrior": 3,
+		"Harii Shaman": 3,
+		"Harii Fransiscan": 3,
+		"Valkyrie Warrior": 3,
+		"Skoll": 3,
+		"White Stag": 3,
+		"Wolf Cub": 3,
+		"Hrimgrimmnir": 3,
+		"Berserker": 3,
+		"Gullinbursti": 3,
+		"Muninn": 3,
+		"Again-Walker": 3,
+		"Hel-blar Draug": 3,
+		"Huginn": 1,
+	}
+	var odin_main_result: Dictionary = validator.validate_deck(odin_main, {}, {})
+	if not bool(odin_main_result.get("is_valid", false)):
+		failures.append("Odin deck with a foreign Active God in the main deck failed validation: %s" % str(odin_main_result.get("error", "")))
+	else:
+		var odin_main_cards: Dictionary = odin_main_result.get("cards", {})
+		var god_to_side_main: Dictionary = odin_main_cards.duplicate(true)
+		god_to_side_main["Thor, Active God"] = int(god_to_side_main.get("Thor, Active God", 1)) - 1
+		if int(god_to_side_main["Thor, Active God"]) <= 0:
+			god_to_side_main.erase("Thor, Active God")
+		var god_swap_result: Dictionary = validator.validate_reinforcement_swap(
+			odin_main_cards, {}, god_to_side_main, {"Thor, Active God": 1}
+		)
+		if not bool(god_swap_result.get("is_valid", false)):
+			failures.append("Reinforcement swap rejected siding out a deck-legal Active God: %s" % str(god_swap_result.get("error", "")))
 	var player := _new_fixture_player()
 	if not player.validate_deck(_cards_from_counts(valid_deck)):
 		failures.append("Player.validate_deck rejected a DeckValidator-valid deck")
@@ -711,6 +749,21 @@ func _check_network_payload_guards(failures: PackedStringArray) -> void:
 	unsupported_node.free()
 	if unsupported_reason.is_empty():
 		failures.append("network guard accepted an unsupported object payload")
+	var below_top_50_validation := LobbyProtocolScript.validate_request(LobbyProtocolScript.make_message(
+		LobbyProtocolScript.REQUEST_BOT_WORK,
+		{"below_top_50": true}))
+	if not below_top_50_validation.is_empty():
+		failures.append("lobby guard rejected a below-top-50 bot work request: %s" % below_top_50_validation)
+	for invalid_bot_work in [
+		{"top_50": true, "below_top_50": true},
+		{"bot_id": "owned_bot", "below_top_50": true},
+		{"below_top_50": "true"},
+	]:
+		var invalid_reason := LobbyProtocolScript.validate_request(LobbyProtocolScript.make_message(
+			LobbyProtocolScript.REQUEST_BOT_WORK,
+			invalid_bot_work))
+		if invalid_reason.is_empty():
+			failures.append("lobby guard accepted invalid below-top-50 bot work: %s" % JSON.stringify(invalid_bot_work))
 	var join_reason: String = network_manager.get_join_request_payload_rejection_reason(
 		{
 			"match_id": "probe",
@@ -1220,6 +1273,11 @@ func _check_bot_sideboarding(failures: PackedStringArray) -> void:
 
 	# Fresh ranked decks now ship a full, validator-legal sideboard.
 	var factory := PracticeAutofillDeckFactory.new()
+	# Your actual god can never be cut or sideboarded; deck-legal Active Gods
+	# are ordinary swappable cards.
+	var thor_god: Card = factory._cards_by_name.get("Thor", null)
+	if not BotSideboardPolicyScript._is_protected_main_deck_card(thor_god, {}):
+		failures.append("The God slot card must be protected from Reinforcement cuts")
 	var deck := factory.build_random_deck(4242, "Thor", true)
 	if deck.is_empty():
 		failures.append("Ranked bot generator produced no Thor deck for sideboard checks")
@@ -1231,18 +1289,22 @@ func _check_bot_sideboarding(failures: PackedStringArray) -> void:
 		var regular_count := 0
 		var power_count := 0
 		for card_name in deck.get("cards", {}):
+			var copies := int(deck["cards"][card_name])
 			var template: Card = factory._cards_by_name.get(str(card_name), null)
 			if template == null:
 				continue
 			if template.is_power:
-				power_count += 1
+				power_count += copies
 			elif not template.is_god:
-				regular_count += 1
+				regular_count += copies
 		var side_total := 0
 		for card_name in side:
 			side_total += int(side[card_name])
 		if side_total != DeckValidatorScript.get_reinforcement_limit(regular_count, power_count):
-			failures.append("Ranked bot Reinforcements did not fill the reinforcement limit")
+			failures.append("Ranked bot Reinforcements did not fill the reinforcement limit (%d of %d)" % [
+				side_total,
+				DeckValidatorScript.get_reinforcement_limit(regular_count, power_count),
+			])
 		if not bool(validator.validate_deck(deck.get("cards", {}), deck.get("special_setup", {}), side).get("is_valid", false)):
 			failures.append("Ranked bot Reinforcements failed combined validation")
 
@@ -1300,7 +1362,7 @@ func _check_bot_sideboarding(failures: PackedStringArray) -> void:
 	var fixture_side := {
 		"Runic Spellbreaker": 2,
 		"Banishment": 2,
-		"Earthquake": 2,
+		"Fires of Judgment": 2,
 		"Absence": 1,
 		"Smite": 2,
 	}
@@ -1364,7 +1426,7 @@ func _check_bot_sideboarding(failures: PackedStringArray) -> void:
 	var game := _new_fixture_game()
 	var opponent := _new_fixture_player()
 	opponent.player_name = "Observed Opponent"
-	var god_card = factory._cards_by_name.get("Odin", null)
+	var god_card = factory._cards_by_name.get("Odin, the Allfather", null)
 	if god_card != null:
 		opponent.god_zone.add_card(god_card)
 	var hidden_spell = factory._cards_by_name.get("Drought", null)
@@ -5997,6 +6059,19 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 		failures.append("Restricted bot self-play did not pair with a bot outside the first-seat restriction")
 	if not band_pair_pool.select_self_play_pair({"band_b": true}, band_pair_rng, restricted_first).is_empty():
 		failures.append("Restricted bot self-play replaced a busy eligible bot with an ineligible first bot")
+	var allowed_below_ids := {"band_a": true, "band_b": true}
+	var allowed_below_pair := band_pair_pool.select_self_play_pair(
+		{}, band_pair_rng, allowed_below_ids, allowed_below_ids, true
+	)
+	if allowed_below_pair.size() != 2 \
+			or not allowed_below_ids.has(str(allowed_below_pair[0].get("list_id", ""))) \
+			or not allowed_below_ids.has(str(allowed_below_pair[1].get("list_id", ""))):
+		failures.append("Below-top-50 bot self-play did not keep both bots inside the allowed pool")
+	var one_allowed_id := {"band_a": true}
+	if not band_pair_pool.select_self_play_pair(
+		{}, band_pair_rng, one_allowed_id, one_allowed_id, true
+	).is_empty():
+		failures.append("Below-top-50 bot self-play accepted a single bot instead of a full pair")
 	var result_dir := ServerPathsScript.get_server_data_file_path(storage_file).get_basename() + "_results"
 	DirAccess.remove_absolute(result_dir.path_join("%s.json" % session.match_id.sha256_text()))
 	for match_id in human_win_ids:

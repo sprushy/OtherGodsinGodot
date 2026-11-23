@@ -64,7 +64,7 @@ const GENERAL: Array[String] = [
 	"Sleep prevents a Creature from acting or intercepting. Wake removes Sleep.",
 	"A muted Power can't be unlocked or activated until the mute expires.",
 	"Dodge protects a Creature from attacks by slower Creatures.",
-	"Incorporeal Creatures can only fight with Spirits or Mages and have Sleep Immunity.",
+	"Incorporeal Creatures can only fight with Spirits or Mages and have Sleep and Poison Immunity.",
 	"Immortal prevents destruction. Check the card text when choosing how to deal with one.",
 	"Relock turns a Power face-down again. Reveal effects can trigger when a hidden card turns face-up.",
 	"Convert moves Followers from your opponent to you.",

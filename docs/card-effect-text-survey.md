@@ -92,7 +92,7 @@ Each entry gives proposed wording, an edit to make, or a reason to retain the ex
 | [Devastator Mech](../scripts/cards/Creatures/DevastatorMech.gd) | Leave the effect field empty. |
 | [Draug Revenant](../scripts/cards/Creatures/DraugRevenant.gd) | Use “Trollskap” alone if its existing hint stays accessible in the card’s detail and list views. The current sentence is already the keyword definition. |
 | [Durinn Secondborn](../scripts/cards/Creatures/DurinnSecondborn.gd) | “Add a Weapon from either Graveyard to your hand.” Keep the paid Impact header. |
-| [Edimmu](../scripts/cards/Creatures/Edimmu.gd) | Use “Incorporeal (Passive)” with the existing hint for both engagement directions and Sleep Immunity. Check the views that show plain text before dropping the reminder. |
+| [Edimmu](../scripts/cards/Creatures/Edimmu.gd) | Use “Incorporeal (Passive)” with the existing hint for both engagement directions and Sleep and Poison Immunity. Check the views that show plain text before dropping the reminder. |
 | [En-hedu-anna](../scripts/cards/Creatures/EnHeduAnna.gd) | Separate the God-power prerequisite, the three stat choices and the protection window. Clarify whose “next turn” ends the protection before rewording it. |
 | [Enki, Lord of Eridu](../scripts/cards/Creatures/EnkiLordOfEridu.gd) | Keep. “Friendly Mages are immune to Hexes” is already direct. |
 | [Enkidu](../scripts/cards/Creatures/Enkidu.gd) | Leave the effect field empty. |

@@ -61,7 +61,7 @@ const KEYWORD_HINTS = {
 	"Upkeep": "This effect happens during upkeep at the beginning of your turn.",
 	"Harbor": "Place a qualifying card under this card. Harbored cards are not on the field until returned.",
 	"Shift": "Switch this card between its listed forms.",
-	"Incorporeal": "Can only be engaged by Spirits or Mages. Can only engage Spirits or Mages. Sleep Immunity.",
+	"Incorporeal": "Can only be engaged by Spirits or Mages. Can only engage Spirits or Mages. Sleep and Poison Immunity.",
 	"Slay": "This effect triggers when this card destroys another creature in combat.",
 	"Slain": "This card was destroyed in combat and sent to the graveyard.",
 	"Trollskap": "If this card is destroyed by an effect, return it to your hand instead.",

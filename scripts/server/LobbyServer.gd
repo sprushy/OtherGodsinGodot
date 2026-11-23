@@ -872,6 +872,7 @@ func _complete_login_for_peer(
 		"supports_ladder_filter": true,
 		"can_see_players_online": OS.is_debug_build() or Engine.is_editor_hint() or bool(existing.get("is_admin", false)),
 		"can_host_top_50_bot_matches": _is_admin_account(existing),
+		"can_host_below_top_50_bot_matches": _can_host_below_top_50_bot_matches(existing),
 		"can_view_quarantined_bots": _is_admin_account(existing),
 		"room": room_snapshot,
 		"active_match_info": active_match_info,
@@ -942,6 +943,7 @@ func _handle_reconnect_request(peer_id: int, payload: Dictionary) -> void:
 		"supports_ladder_filter": true,
 		"can_see_players_online": OS.is_debug_build() or Engine.is_editor_hint() or bool(session.get("is_admin", false)),
 		"can_host_top_50_bot_matches": _is_admin_account(session),
+		"can_host_below_top_50_bot_matches": _can_host_below_top_50_bot_matches(session),
 		"can_view_quarantined_bots": _is_admin_account(session),
 		"room": room_snapshot,
 		"active_match_info": active_match_info,
@@ -1186,6 +1188,9 @@ func _handle_set_rank_badge(peer_id: int, payload: Dictionary) -> void:
 func _is_admin_account(session: Dictionary) -> bool:
 	return bool(session.get("is_admin", false)) and not str(session.get("account_id", "")).is_empty()
 
+func _can_host_below_top_50_bot_matches(session: Dictionary) -> bool:
+	return OS.is_debug_build() or Engine.is_editor_hint() or _is_admin_account(session)
+
 func _handle_request_bot_work(peer_id: int, payload: Dictionary = {}) -> void:
 	var session := _get_session_for_peer(peer_id)
 	if session.is_empty() or str(session.get("account_id", "")).is_empty():
@@ -1194,6 +1199,12 @@ func _handle_request_bot_work(peer_id: int, payload: Dictionary = {}) -> void:
 	if top_50 and not _is_admin_account(session):
 		_send_to_peer(peer_id, LobbyProtocolScript.BOT_WORK_RESULT, {
 			"job_id": "", "success": false, "message": "Only admins can host top 50 bot matches.",
+		})
+		return
+	var below_top_50 := bool(payload.get("below_top_50", false))
+	if below_top_50 and not _can_host_below_top_50_bot_matches(session):
+		_send_to_peer(peer_id, LobbyProtocolScript.BOT_WORK_RESULT, {
+			"job_id": "", "success": false, "message": "Only debug clients can host bot matches below the top 50.",
 		})
 		return
 	var busy := {}
@@ -1216,7 +1227,7 @@ func _handle_request_bot_work(peer_id: int, payload: Dictionary = {}) -> void:
 		return
 	# Serve pending league round-robin pairings first so volunteers play the
 	# scheduled tournament matches instead of random self-play pairs.
-	if not top_50 and not _pending_league_pairings.is_empty():
+	if not top_50 and not below_top_50 and not _pending_league_pairings.is_empty():
 		var pairing: Dictionary = _pending_league_pairings.pop_front()
 		var candidate_a := _validate_server_bot_deck(pairing["deck_a"])
 		var candidate_b := _validate_server_bot_deck(pairing["deck_b"])
@@ -1268,6 +1279,25 @@ func _handle_request_bot_work(peer_id: int, payload: Dictionary = {}) -> void:
 		deck_a = owned_bot
 		var available := _ranked_bot_deck_pool.select_deck(busy, _bot_deck_rng, 0)
 		deck_b = _validate_server_bot_deck(available) if not available.is_empty() else _build_fresh_bot_deck_submission()
+	elif below_top_50:
+		var below_ids := _get_bots_below_top_50_list_ids()
+		if below_ids.is_empty():
+			_send_to_peer(peer_id, LobbyProtocolScript.BOT_WORK_RESULT, {
+				"job_id": "", "success": false,
+				"message": "No bot match below the top 50 is available right now.",
+			})
+			return
+		var below_pair := _ranked_bot_deck_pool.select_self_play_pair(
+			busy, _bot_deck_rng, below_ids, below_ids, true
+		)
+		if below_pair.size() != 2:
+			_send_to_peer(peer_id, LobbyProtocolScript.BOT_WORK_RESULT, {
+				"job_id": "", "success": false,
+				"message": "No bot match below the top 50 is available right now.",
+			})
+			return
+		deck_a = _validate_server_bot_deck(below_pair[0])
+		deck_b = _validate_server_bot_deck(below_pair[1])
 	else:
 		var top_list_ids := _get_top_50_bot_list_ids() if top_50 else {}
 		var pair: Array[Dictionary] = []
@@ -2191,6 +2221,21 @@ func _get_top_50_bot_list_ids() -> Dictionary:
 			break
 	return list_ids
 
+# Complement of the top-bot pool: every matchmaking-eligible bot ranked below
+# the first TOP_BOT_HOSTING_LIMIT bots on the ladder.
+func _get_bots_below_top_50_list_ids() -> Dictionary:
+	var top_ids := _get_top_50_bot_list_ids()
+	var list_ids := {}
+	for row in _get_cached_ladder():
+		if not bool(row.get("is_bot", false)):
+			continue
+		var list_id := str(row.get("list_id", ""))
+		if list_id.is_empty() or bool(row.get("matchmaking_excluded", false)):
+			continue
+		if not top_ids.has(list_id):
+			list_ids[list_id] = true
+	return list_ids
+
 func _build_ladder_page(request: Dictionary, current_username: String = "") -> Dictionary:
 	var is_paged := request.has("request_id")
 	var quarantined_only := bool(request.get("quarantined_only", false))
@@ -2955,6 +3000,7 @@ func _get_reserved_fresh_bot_god_counts() -> Dictionary:
 func _validate_server_bot_deck(deck: Dictionary) -> Dictionary:
 	if deck.is_empty():
 		return {}
+	deck = deck.duplicate(true)
 	_ensure_server_bot_deck_factory()
 	var completed_deck: Dictionary = server_bot_deck_factory.complete_ranked_power_slots(deck)
 	if completed_deck.is_empty():

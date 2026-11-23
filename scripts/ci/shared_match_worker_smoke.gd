@@ -34,7 +34,13 @@ class VolunteerLobbyClient extends LobbyClient:
 	func is_authenticated() -> bool:
 		return true
 
-	func request_bot_work(_bot_id: String = "", _excluded_list_ids: Array = [], _top_50: bool = false) -> void:
+	func request_bot_work(
+		_bot_id: String = "",
+		_excluded_list_ids: Array = [],
+		_top_50: bool = false,
+		_best_of: int = 1,
+		_below_top_50: bool = false
+	) -> void:
 		pass
 
 	func report_bot_work_started(job_id: String, _turn_count: int = 0) -> void:

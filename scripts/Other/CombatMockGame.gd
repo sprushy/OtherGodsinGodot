@@ -20972,18 +20972,23 @@ func _show_gala_tura_prompt() -> void:
 			update_ui()
 			return
 		_set_action_label_text("Could not submit the match decision. Please try again.")
+		# _submit_overlay_multi_select closes this overlay after the callback
+		# returns, so rebuild it on the next idle frame to keep the decision
+		# retryable instead of stranding the player with a dead overlay.
+		call_deferred("_show_gala_tura_prompt")
 		update_ui()
 
 	var on_decline := func() -> void:
-		_hide_gala_tura_prompt()
 		if _submit_prompt_choice_command({
 			"type": "gala_tura_destroyed_choice",
 			"source_uid": gala_tura.uid,
 			"chosen_uids": [],
 		}):
+			_hide_gala_tura_prompt()
 			update_ui()
 			return
 		_set_action_label_text("Could not submit the match decision. Please try again.")
+		call_deferred("_show_gala_tura_prompt")
 		update_ui()
 
 	_show_card_selection_overlay(

@@ -465,7 +465,7 @@ Cards explain their own rules text, and keyword hints appear in card detail view
 - Search: look through your deck for a card, then shuffle.
 - Dodge: cannot be attacked by lower-speed Creatures.
 - **Reach** lets a Creature intercept regardless of position.
-- Incorporeal: has special engagement restrictions.
+- Incorporeal: can only engage or be engaged by Spirits or Mages, and is immune to Sleep and Poison.
 - Slay and Fatality are combat-destruction triggers.
 - Slain means a card was destroyed in combat and sent to the Graveyard. Combat destruction also includes cards sent to the Abyss by effects such as Asag's Class Rend.
 - Stone Skin prevents a creature from being Slain. Asag's Class Rend can still Void it in combat.

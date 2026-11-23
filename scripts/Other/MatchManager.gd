@@ -1844,6 +1844,7 @@ func _is_state_refresh_ui_interaction(interaction_type: String, interaction_data
 		or interaction_type.strip_edges() == "huginn_perish_prime" \
 		or interaction_type.strip_edges() == "muninn_perish_prime" \
 		or interaction_type.strip_edges() == "nusku_well_of_fire" \
+		or interaction_type.strip_edges() == "gala_tura_destroyed" \
 		or bool(interaction_data.get("_queue_priority_after_choice", false))
 
 func _log_authoritative_flow_state(context: String) -> void:

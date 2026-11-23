@@ -432,23 +432,33 @@ static func activation_cost(bot, card: Card) -> int:
 	return bot._get_play_cost(card, false)
 
 static func targets(bot, card: Card, action: CardAction = null) -> Array:
+	var choices: Array = []
 	if card is HexCard and action != null:
-		return bot.game_manager.get_priority_hex_targets(card, action)
-	if card is CharmCard and action != null:
-		return card.get_priority_targets(bot.game_manager, action)
-	if action != null and card.has_method("get_priority_field_targets"):
-		return card.get_priority_field_targets(bot.game_manager, action)
-	match key(card):
-		"BookOfLife":
-			return card.get_valid_hand_creatures()
-		"Absence":
-			var choices: Array = bot.opponent.god_zone.cards.duplicate()
-			for zone in bot.opponent.power_zones:
-				choices.append_array(zone.cards)
-			return choices
-	if card.has_method("get_valid_targets"):
-		return card.get_valid_targets(bot.game_manager)
-	return []
+		choices = bot.game_manager.get_priority_hex_targets(card, action)
+	elif card is CharmCard and action != null:
+		choices = card.get_priority_targets(bot.game_manager, action)
+	elif action != null and card.has_method("get_priority_field_targets"):
+		choices = card.get_priority_field_targets(bot.game_manager, action)
+	else:
+		match key(card):
+			"BookOfLife":
+				choices = card.get_valid_hand_creatures()
+			"Absence":
+				choices = bot.opponent.god_zone.cards.duplicate()
+				for zone in bot.opponent.power_zones:
+					choices.append_array(zone.cards)
+			_:
+				if card.has_method("get_valid_targets"):
+					choices = card.get_valid_targets(bot.game_manager)
+	if action != null:
+		# Only removal responses need this: buffs and other effects can still
+		# care about a body that another pending action will take away.
+		choices = choices.filter(func(candidate) -> bool:
+			if not (candidate is Card):
+				return true
+			return removal_targets(bot, card, candidate, action).is_empty() \
+				or not target_has_pending_removal(bot, candidate))
+	return choices
 
 static func best_target(bot, card: Card, choices: Array, action: CardAction = null) -> Card:
 	var best: Card = null
@@ -798,6 +808,19 @@ static func removal_targets(bot, source: Card, target: Card = null, action: Card
 			destroys = not source is BaneOfTheSvartalfar
 			victims = wipe_cards(bot, source)
 	return victims.filter(func(victim: Card) -> bool: return can_remove_from_board(bot, source, victim, destroys, targeted))
+
+# A target already named by a removal action waiting on the stack will be gone
+# (or bounced) before another response that targets it resolves. Stacking a
+# second copy there only burns the card, so priority scoring drops those targets.
+static func target_has_pending_removal(bot, target: Card) -> bool:
+	if target == null or bot == null or bot.game_manager == null:
+		return false
+	for pending: CardAction in bot.game_manager.action_stack:
+		if pending == null or pending.target != target:
+			continue
+		if not removal_targets(bot, pending.card, target, pending).is_empty():
+			return true
+	return false
 
 # Exorcism erases enemy actions that target the exorcised creature, but attack
 # actions carry no `card` and are never swept up by that rule. When a body on

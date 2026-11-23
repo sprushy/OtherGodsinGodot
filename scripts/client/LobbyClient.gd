@@ -92,6 +92,7 @@ var supports_ladder_pages: bool = false
 var supports_ladder_filter: bool = false
 var can_see_players_online: bool = false
 var can_host_top_50_bot_matches: bool = false
+var can_host_below_top_50_bot_matches: bool = false
 var can_view_quarantined_bots: bool = false
 var current_allow_friend_observers_to_see_cards: bool = true
 var current_active_match_info: Dictionary = {}
@@ -591,11 +592,19 @@ func request_bot_match_history(before_match_id: String = "") -> void:
 	if is_authenticated() and supports_bot_ladder:
 		_send_request(LobbyProtocolScript.REQUEST_BOT_MATCH_HISTORY, {"before_match_id": before_match_id})
 
-func request_bot_work(bot_id: String = "", excluded_list_ids: Array = [], top_50: bool = false, best_of: int = 1) -> void:
+func request_bot_work(
+	bot_id: String = "",
+	excluded_list_ids: Array = [],
+	top_50: bool = false,
+	best_of: int = 1,
+	below_top_50: bool = false
+) -> void:
 	if is_authenticated():
 		var payload := {"bot_id": bot_id, "excluded_list_ids": excluded_list_ids}
 		if top_50:
 			payload["top_50"] = true
+		if below_top_50:
+			payload["below_top_50"] = true
 		if best_of == 3:
 			payload["best_of"] = 3
 		_send_request(LobbyProtocolScript.REQUEST_BOT_WORK, payload)
@@ -764,6 +773,7 @@ func lobby_event(message: Dictionary) -> void:
 			supports_ladder_filter = bool(payload.get("supports_ladder_filter", false))
 			can_see_players_online = bool(payload.get("can_see_players_online", false))
 			can_host_top_50_bot_matches = bool(payload.get("can_host_top_50_bot_matches", false))
+			can_host_below_top_50_bot_matches = bool(payload.get("can_host_below_top_50_bot_matches", false))
 			can_view_quarantined_bots = bool(payload.get("can_view_quarantined_bots", false))
 			_cancel_initial_auth_request()
 			_cancel_auth_response_timeout()
@@ -792,6 +802,7 @@ func lobby_event(message: Dictionary) -> void:
 			supports_ladder_filter = bool(payload.get("supports_ladder_filter", false))
 			can_see_players_online = bool(payload.get("can_see_players_online", false))
 			can_host_top_50_bot_matches = bool(payload.get("can_host_top_50_bot_matches", false))
+			can_host_below_top_50_bot_matches = bool(payload.get("can_host_below_top_50_bot_matches", false))
 			can_view_quarantined_bots = bool(payload.get("can_view_quarantined_bots", false))
 			_cancel_initial_auth_request()
 			_cancel_auth_response_timeout()
@@ -1204,6 +1215,7 @@ func _clear_session_fields() -> void:
 	supports_ladder_filter = false
 	can_see_players_online = false
 	can_host_top_50_bot_matches = false
+	can_host_below_top_50_bot_matches = false
 	can_view_quarantined_bots = false
 	current_session_id = ""
 	current_reconnect_token = ""

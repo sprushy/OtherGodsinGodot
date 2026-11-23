@@ -109,7 +109,10 @@ never generically activated. Mana Guard submits an explicit amount based on
 visible frontline pressure and existing Guard; Oracle's Sight and Mana Guard
 are limited to one planned activation per bot turn. Duplicate bindings,
 pending Clay-Eaters targets, and existing Lamashatu/Berserker Mead buffs are
-avoided. Supported spells may be prepared when Drought requires it.
+avoided. Priority removal responses also skip a body already named by another
+removal waiting on the stack, so a second Divine Lightning is not aimed at a
+target the first copy is about to destroy. Supported spells may be prepared
+when Drought requires it.
 
 Complex random, movement-plan, alternate-form, and some multi-cost effects
 retain their existing prompt handling.

@@ -12,7 +12,7 @@ func _init() -> void:
 	resilience = 15
 	speed = 1
 	incorporeal = true
-	ability_text = "[b]Incorporeal[/b] ([b]Passive[/b]): Only Spirits or Mages can [b]Engage[/b] The Chained Ghost of Athens. The Chained Ghost of Athens can only [b]Engage[/b] Spirits or Mages. Sleep Immunity.\n[b]Clanking Chains[/b] ([b]Passive[/b]): While The Chained Ghost of Athens is face-up on the field, your opponent cannot activate creature abilities."
+	ability_text = "[b]Incorporeal[/b] ([b]Passive[/b]): Only Spirits or Mages can [b]Engage[/b] The Chained Ghost of Athens. The Chained Ghost of Athens can only [b]Engage[/b] Spirits or Mages. Sleep and Poison Immunity.\n[b]Clanking Chains[/b] ([b]Passive[/b]): While The Chained Ghost of Athens is face-up on the field, your opponent cannot activate creature abilities."
 	culture = "Olympic"
 	art_path = "res://images/card_art/creatures/the_chained_ghost_of_athens.png"
 

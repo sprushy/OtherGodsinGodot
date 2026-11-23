@@ -133,7 +133,7 @@ func validate_deck(
 		if bool(card.is_god):
 			return _result(
 				false,
-				"Reinforcements cannot contain Gods.",
+				"Gods cannot be placed in Reinforcements.",
 				sanitized_cards,
 				{"reinforcements": sanitized_reinforcements}
 			)

@@ -164,6 +164,7 @@ var _quarantined_bots_button: Button
 var _host_bot_match_button: Button
 var _host_bo3_bot_matches_button: Button
 var _host_top_50_bot_matches_button: Button
+var _host_below_top_50_bot_matches_button: Button
 var _host_another_bot_match_button: Button
 var _stop_hosting_bot_matches_button: Button
 var _host_own_bot_button: Button
@@ -186,6 +187,7 @@ var _my_bot_option: OptionButton
 var _choose_bot_gauntlet := false
 var _bot_match_hosting_enabled := false
 var _top_50_bot_hosting := false
+var _below_top_50_bot_hosting := false
 # True while volunteer bot-match hosting runs best-of-three series with bot
 # sidedecking instead of single games.
 var _bo3_bot_hosting := false
@@ -2994,6 +2996,14 @@ func _build_seek_tabs() -> void:
 	_host_top_50_bot_matches_button.pressed.connect(_on_host_bot_match_pressed.bind(true))
 	_host_top_50_bot_matches_button.hide()
 	_seek_action_row.add_child(_host_top_50_bot_matches_button)
+	if OS.is_debug_build():
+		_host_below_top_50_bot_matches_button = Button.new()
+		_host_below_top_50_bot_matches_button.name = "HostBelowTop50BotMatchesButton"
+		_host_below_top_50_bot_matches_button.text = "Host Bot Matches (Rank 51+)"
+		_host_below_top_50_bot_matches_button.tooltip_text = "Debug only: pair bots ranked 51st or lower on the bot ladder."
+		_host_below_top_50_bot_matches_button.pressed.connect(_on_host_below_top_50_bot_matches_pressed)
+		_host_below_top_50_bot_matches_button.hide()
+		_seek_action_row.add_child(_host_below_top_50_bot_matches_button)
 	_stop_hosting_bot_matches_button = Button.new()
 	_stop_hosting_bot_matches_button.text = "Stop Hosting Bot Matches"
 	_stop_hosting_bot_matches_button.pressed.connect(_on_stop_hosting_bot_matches_pressed)
@@ -3165,6 +3175,20 @@ func _on_host_bot_match_pressed(top_50: bool = false) -> void:
 	_bot_match_hosting_enabled = true
 	_default_bot_hosting = false
 	_top_50_bot_hosting = top_50
+	_below_top_50_bot_hosting = false
+	_bo3_bot_hosting = false
+	_request_continuous_bot_match()
+
+func _on_host_below_top_50_bot_matches_pressed() -> void:
+	if not OS.is_debug_build() or lobby_client == null or not lobby_client.can_host_below_top_50_bot_matches:
+		return
+	if _bot_match_hosting_enabled and _below_top_50_bot_hosting:
+		_on_stop_hosting_bot_matches_pressed()
+		return
+	_bot_match_hosting_enabled = true
+	_default_bot_hosting = false
+	_top_50_bot_hosting = false
+	_below_top_50_bot_hosting = true
 	_bo3_bot_hosting = false
 	_request_continuous_bot_match()
 
@@ -3175,6 +3199,7 @@ func _on_host_bo3_bot_matches_pressed() -> void:
 	_bot_match_hosting_enabled = true
 	_default_bot_hosting = false
 	_top_50_bot_hosting = false
+	_below_top_50_bot_hosting = false
 	_bo3_bot_hosting = true
 	_request_continuous_bot_match()
 
@@ -3263,7 +3288,13 @@ func _request_local_bot_match(continuous: bool, bot_id: String = "") -> void:
 	_update_host_bot_match_button()
 	status_label.text = "Requesting a bot match for this computer..."
 	var excluded: Array = _host_bot_gauntlet_opponents.keys() if not _host_bot_gauntlet_id.is_empty() else []
-	lobby_client.request_bot_work(bot_id, excluded, continuous and _top_50_bot_hosting, 3 if _bo3_bot_hosting else 1)
+	lobby_client.request_bot_work(
+		bot_id,
+		excluded,
+		continuous and _top_50_bot_hosting,
+		3 if _bo3_bot_hosting else 1,
+		continuous and _below_top_50_bot_hosting
+	)
 
 func _open_my_bot_picker(for_gauntlet: bool = false) -> void:
 	_choose_bot_gauntlet = for_gauntlet
@@ -3370,8 +3401,10 @@ func _update_host_bot_match_button() -> void:
 	if not is_instance_valid(_host_bot_match_button):
 		return
 	var signed_in := lobby_client != null and lobby_client.is_authenticated()
-	var regular_hosting := _bot_match_hosting_enabled and not _default_bot_hosting and not _top_50_bot_hosting and not _bo3_bot_hosting
+	var regular_hosting := _bot_match_hosting_enabled and not _default_bot_hosting \
+		and not _top_50_bot_hosting and not _below_top_50_bot_hosting and not _bo3_bot_hosting
 	var top_50_hosting := _bot_match_hosting_enabled and _top_50_bot_hosting
+	var below_top_50_hosting := _bot_match_hosting_enabled and _below_top_50_bot_hosting
 	var bo3_hosting := _bot_match_hosting_enabled and _bo3_bot_hosting
 	var capacity := _get_local_bot_match_capacity()
 	var local_match_count := _get_local_bot_match_count() + _pending_local_bot_match_modes.size()
@@ -3384,6 +3417,14 @@ func _update_host_bot_match_button() -> void:
 		_host_top_50_bot_matches_button.visible = signed_in and lobby_client.can_host_top_50_bot_matches
 		_host_top_50_bot_matches_button.text = "Stop Top 50 Hosting" if top_50_hosting else "Host Top 50 Bot Matches"
 		_host_top_50_bot_matches_button.disabled = not top_50_hosting and capacity <= 0
+	if is_instance_valid(_host_below_top_50_bot_matches_button):
+		var can_host_below := signed_in and lobby_client.can_host_below_top_50_bot_matches
+		_host_below_top_50_bot_matches_button.visible = OS.is_debug_build() and can_host_below
+		_host_below_top_50_bot_matches_button.text = "Stop Rank 51+ Hosting" \
+			if below_top_50_hosting else "Host Bot Matches (Rank 51+)"
+		_host_below_top_50_bot_matches_button.disabled = not below_top_50_hosting and (
+			not can_host_below or capacity <= 0
+		)
 	if is_instance_valid(_stop_hosting_bot_matches_button):
 		_stop_hosting_bot_matches_button.visible = _bot_match_hosting_enabled or local_match_count > 0 \
 			or not _local_bot_match_submitting.is_empty()
@@ -3768,6 +3809,7 @@ func _stop_local_bot_match_worker() -> void:
 	_bot_match_hosting_enabled = false
 	_default_bot_hosting = false
 	_top_50_bot_hosting = false
+	_below_top_50_bot_hosting = false
 	_watch_next_local_bot_match_pending = false
 	if is_instance_valid(_bot_match_retry_timer):
 		_bot_match_retry_timer.stop()
@@ -3808,6 +3850,7 @@ func _maybe_start_default_bot_hosting() -> void:
 		return
 	_default_bot_hosting = true
 	_top_50_bot_hosting = false
+	_below_top_50_bot_hosting = false
 	_bot_match_hosting_enabled = true
 	# Host exactly one match at a time by default; it recurs when it finishes.
 	_request_continuous_bot_match(1)

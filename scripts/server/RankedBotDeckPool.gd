@@ -826,7 +826,14 @@ func _find_list_by_id(pool: Dictionary, list_id: String) -> Dictionary:
 	return {}
 
 ## With a first-bot restriction, a single returned deck needs a fresh opponent.
-func select_self_play_pair(busy_list_ids: Dictionary, rng: RandomNumberGenerator, first_list_ids: Dictionary = {}) -> Array[Dictionary]:
+## `allowed_list_ids`, when non-empty, restricts both bots in the pair.
+func select_self_play_pair(
+	busy_list_ids: Dictionary,
+	rng: RandomNumberGenerator,
+	first_list_ids: Dictionary = {},
+	allowed_list_ids: Dictionary = {},
+	require_pair: bool = false
+) -> Array[Dictionary]:
 	var available: Array[Dictionary] = []
 	var eligible_first: Array[Dictionary] = []
 	for pool: Dictionary in _by_god.values():
@@ -834,11 +841,13 @@ func select_self_play_pair(busy_list_ids: Dictionary, rng: RandomNumberGenerator
 		if not pool["challenger"].is_empty():
 			lists.append(pool["challenger"])
 		for list: Dictionary in lists:
-			if not _is_quarantined_list(pool, list["list_id"]) \
+			var list_id := str(list["list_id"])
+			if not _is_quarantined_list(pool, list_id) \
 					and not bool(list.get("excluded_from_matchmaking", false)) \
-					and not busy_list_ids.has(list["list_id"]):
+					and not busy_list_ids.has(list_id) \
+					and (allowed_list_ids.is_empty() or allowed_list_ids.has(list_id)):
 				available.append(list)
-				if first_list_ids.has(list["list_id"]):
+				if first_list_ids.has(list_id):
 					eligible_first.append(list)
 	var restrict_first := not first_list_ids.is_empty()
 	if restrict_first and eligible_first.is_empty():
@@ -868,7 +877,9 @@ func select_self_play_pair(busy_list_ids: Dictionary, rng: RandomNumberGenerator
 	var candidates: Array = []
 	for gap in selected_gaps:
 		candidates.append_array(pairs_by_gap[gap])
-	if candidates.is_empty() or rng.randf() < EXPLORATION_CHANCE:
+	if candidates.is_empty():
+		return []
+	if rng.randf() < EXPLORATION_CHANCE and not require_pair:
 		if restrict_first:
 			return [eligible_first[rng.randi_range(0, eligible_first.size() - 1)].duplicate(true)]
 		return []
@@ -1163,7 +1174,7 @@ func _should_retire_early(list: Dictionary) -> bool:
 	var games_played := _get_played_match_count(list)
 	if games_played <= 0 or games_played > EARLY_RETIREMENT_GAMES:
 		return false
-	return 10 * int(list["losses"]) >= 7 * games_played
+	return 3 * int(list["losses"]) >= 2 * games_played
 
 func _retire_list(pool: Dictionary, list: Dictionary) -> void:
 	var list_id := str(list.get("list_id", ""))

@@ -381,10 +381,19 @@ static func plan_swap(
 				var cut_name := str(cut["name"])
 				var proposed_cards: Dictionary = cards.duplicate(true)
 				var proposed_side: Dictionary = side.duplicate(true)
+				# A swap moves cards between the main deck and the registered
+				# sideboard: the bring-in leaves the sideboard for the main
+				# deck, and the cut takes its place on the sideboard. The
+				# combined pool stays identical, which is exactly what
+				# validate_reinforcement_swap enforces.
+				proposed_side[bring_name] = int(proposed_side.get(bring_name, 0)) - 1
+				if int(proposed_side[bring_name]) <= 0:
+					proposed_side.erase(bring_name)
+				proposed_cards[bring_name] = int(proposed_cards.get(bring_name, 0)) + 1
 				proposed_cards[cut_name] = int(proposed_cards.get(cut_name, 1)) - 1
 				if int(proposed_cards[cut_name]) <= 0:
 					proposed_cards.erase(cut_name)
-				proposed_side[bring_name] = int(proposed_side.get(bring_name, 0)) + 1
+				proposed_side[cut_name] = int(proposed_side.get(cut_name, 0)) + 1
 				var validation: Dictionary = validator.validate_reinforcement_swap(
 					proposed_cards, proposed_side, proposed_cards, proposed_side, special_setup
 				)
