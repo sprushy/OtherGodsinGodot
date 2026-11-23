@@ -39,7 +39,8 @@ class VolunteerLobbyClient extends LobbyClient:
 		_excluded_list_ids: Array = [],
 		_top_50: bool = false,
 		_best_of: int = 1,
-		_below_top_50: bool = false
+		_below_top_50: bool = false,
+		_god_name: String = ""
 	) -> void:
 		pass
 

@@ -18560,7 +18560,7 @@ func _on_psychopompus_ability_requested(god: HermesPsychopompus, ability: String
 		HermesPsychopompus.CALL_OF_THE_CROSSING:
 			if god.can_summon_ghost(game_manager):
 				_show_card_selection_overlay(
-					"Choose a Ghost to summon (2 mana per level)", god.get_summonable_ghosts(),
+					"Choose a Ghost to summon (discard half its Level, min 1)", god.get_summonable_ghosts(),
 					_begin_psychopompus_summon_lane_selection.bind(god.uid), Callable(),
 					_get_selection_cursor_mode_for_source(god)
 				)
@@ -18578,8 +18578,62 @@ func _on_psychopompus_ability_requested(god: HermesPsychopompus, ability: String
 func _begin_psychopompus_summon_lane_selection(ghost: Card, god_uid: String) -> void:
 	var god := game_manager.get_card_by_uid(god_uid) as HermesPsychopompus
 	var live_ghost := game_manager.get_card_by_uid(ghost.uid)
-	if god == null or not god.can_summon_ghost(game_manager) or live_ghost not in god.get_summonable_ghosts():
+	if god == null or live_ghost == null or not god.can_summon_ghost(game_manager) \
+			or live_ghost not in god.get_summonable_ghosts():
 		_set_action_label_text("Call of the Crossing is no longer available for that Ghost.")
+		update_ui()
+		return
+	var on_discards_chosen := func(discards: Array[Card]) -> void:
+		_begin_psychopompus_summon_lane_selection_with_discards(god_uid, live_ghost.uid, discards)
+	_prompt_psychopompus_summon_discards(god, live_ghost, on_discards_chosen)
+
+func _prompt_psychopompus_summon_discards(
+	god: HermesPsychopompus, ghost: Card, on_complete: Callable,
+	on_cancel: Callable = Callable(), chosen: Array[Card] = []
+) -> void:
+	if god == null or ghost == null:
+		if on_cancel.is_valid():
+			on_cancel.call()
+		return
+	var discard_cost := god.get_ghost_discard_cost(ghost)
+	var selected := chosen.duplicate()
+	if selected.size() >= discard_cost:
+		if on_complete.is_valid():
+			on_complete.call(selected)
+		return
+	var choices := god.get_valid_ghost_discards()
+	for card in selected:
+		choices.erase(card)
+	if choices.is_empty():
+		_set_action_label_text("Cannot use Call of the Crossing: not enough cards in hand to discard.")
+		update_ui()
+		if on_cancel.is_valid():
+			on_cancel.call()
+		return
+	var on_choose_discard := func(selected_card: Card) -> void:
+		var next_selected := selected.duplicate()
+		next_selected.append(selected_card)
+		_prompt_psychopompus_summon_discards(god, ghost, on_complete, on_cancel, next_selected)
+	_show_card_selection_overlay(
+		"Choose discard %d of %d for Call of the Crossing" % [selected.size() + 1, discard_cost],
+		choices, on_choose_discard, on_cancel
+	)
+
+func _begin_psychopompus_summon_lane_selection_with_discards(
+	god_uid: String, ghost_uid: String, discards: Array[Card]
+) -> void:
+	var god := game_manager.get_card_by_uid(god_uid) as HermesPsychopompus
+	var live_ghost := game_manager.get_card_by_uid(ghost_uid)
+	if god == null or live_ghost == null or not god.can_summon_ghost(game_manager) \
+			or live_ghost not in god.get_summonable_ghosts():
+		_set_action_label_text("Call of the Crossing is no longer available for that Ghost.")
+		update_ui()
+		return
+	var discard_uids: Array[String] = []
+	for discard in discards:
+		discard_uids.append(discard.uid)
+	if discard_uids.size() != god.get_ghost_discard_cost(live_ghost):
+		_set_action_label_text("Call of the Crossing needs a valid hand discard.")
 		update_ui()
 		return
 
@@ -18589,7 +18643,8 @@ func _begin_psychopompus_summon_lane_selection(ghost: Card, god_uid: String) -> 
 		game_input.submit_action({
 			type = "god_ability", god_uid = god_uid,
 			ability = HermesPsychopompus.CALL_OF_THE_CROSSING, ghost_uid = live_ghost.uid,
-			zone_type = lane.zone_type, zone_index = lane.zone_index
+			zone_type = lane.zone_type, zone_index = lane.zone_index,
+			discard_uids = discard_uids
 		})
 	_begin_pending_click_selection(
 		HermesPsychopompus.CALL_OF_THE_CROSSING, god, validate_lane, confirm_lane,

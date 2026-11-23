@@ -17,7 +17,7 @@ func _init() -> void:
 	speed = 7
 	culture = "Olympic"
 	targets = true
-	ability_text = "[b]%s[/b] ([b]Once per turn[/b], 2 mana per Level): Summon a Ghost from your deck to an empty friendly lane in aggressive stance.\n[b]%s[/b] ([b]Once per turn[/b], X mana): Pay up to 1 mana for each Ghost in your Graveyard. Target creature gains +1 SPD per mana paid until end of turn." % [CALL_OF_THE_CROSSING, WINGS_OF_THE_DEPARTED]
+	ability_text = "[b]%s[/b] ([b]Once per turn[/b], discard half the Ghost's Level, min 1): Summon a Ghost from your deck to an empty friendly lane in aggressive stance.\n[b]%s[/b] ([b]Once per turn[/b], X mana): Pay up to 1 mana for each Ghost in your Graveyard. Target creature gains +1 SPD per mana paid until end of turn." % [CALL_OF_THE_CROSSING, WINGS_OF_THE_DEPARTED]
 	art_path = ART_PATH
 	art_variants = [ART_PATH, ALT_ART_PATH]
 	name_at_bottom = true
@@ -51,17 +51,56 @@ func get_activation_failure_reason(game_manager: GameManager) -> String:
 	if _was_ability_used_this_turn(game_manager, CALL_OF_THE_CROSSING) \
 			and _was_ability_used_this_turn(game_manager, WINGS_OF_THE_DEPARTED):
 		return card_name + " has already used both abilities this turn."
-	return "Call of the Crossing needs an affordable Ghost in your deck and an open lane. Wings of the Departed needs mana, a Ghost in your Graveyard, and a valid creature target."
+	return "Call of the Crossing needs a Ghost in your deck, enough cards in hand to discard, and an open lane. Wings of the Departed needs mana, a Ghost in your Graveyard, and a valid creature target."
 
-func get_summonable_ghosts(mana_budget: int = -1) -> Array[Card]:
+func get_summonable_ghosts() -> Array[Card]:
 	var ghosts: Array[Card] = []
-	if get_open_ghost_lanes().is_empty():
+	if card_owner == null or get_open_ghost_lanes().is_empty():
 		return ghosts
-	var available_mana := card_owner.mana if mana_budget < 0 else mana_budget
+	var available_discards := 0
+	if card_owner.hand_zone != null:
+		available_discards = card_owner.hand_zone.get_card_count()
 	for card in card_owner.deck_zone.get_unordered_deck_cards():
-		if _is_payable_deck_ghost(card, available_mana):
+		if _is_summonable_deck_ghost(card, available_discards):
 			ghosts.append(card)
 	return ghosts
+
+func get_ghost_discard_cost(ghost: Card) -> int:
+	if ghost == null:
+		return 0
+	return maxi(1, floori(maxi(0, ghost.get_effective_level()) / 2.0))
+
+func get_valid_ghost_discards() -> Array[Card]:
+	var choices: Array[Card] = []
+	if card_owner == null or card_owner.hand_zone == null:
+		return choices
+	for card in card_owner.hand_zone.cards:
+		if card != null and card != self:
+			choices.append(card)
+	return choices
+
+func get_ghost_discard_payment(game_manager: GameManager, command: Dictionary) -> Array[Card]:
+	var selected: Array[Card] = []
+	if game_manager == null:
+		return selected
+	var ghost := game_manager.get_card_by_uid(str(command.get("ghost_uid", "")))
+	var cost := get_ghost_discard_cost(ghost)
+	if cost <= 0:
+		return selected
+	var raw_uids: Variant = command.get("discard_uids")
+	if not raw_uids is Array:
+		return selected
+	var uids := raw_uids as Array
+	if uids.size() != cost:
+		return selected
+	var valid_discards := get_valid_ghost_discards()
+	for raw_uid in uids:
+		var discard := game_manager.get_card_by_uid(str(raw_uid))
+		if discard == null or discard not in valid_discards or discard in selected:
+			selected.clear()
+			return selected
+		selected.append(discard)
+	return selected
 
 func get_open_ghost_lanes() -> Array[Zone]:
 	var lanes: Array[Zone] = []
@@ -94,10 +133,12 @@ func get_ability_command_failure_reason(game_manager: GameManager, command: Dict
 			if _was_ability_used_this_turn(game_manager, CALL_OF_THE_CROSSING):
 				return CALL_OF_THE_CROSSING + " has already been used this turn."
 			var ghost := game_manager.get_card_by_uid(str(command.get("ghost_uid", "")))
-			if target != null or not _is_payable_deck_ghost(ghost, card_owner.mana):
-				return CALL_OF_THE_CROSSING + " needs an affordable Ghost in your deck."
+			if target != null or not _is_summonable_deck_ghost(ghost):
+				return CALL_OF_THE_CROSSING + " needs a Ghost in your deck."
 			if _get_ghost_summon_lane(command) == null:
 				return CALL_OF_THE_CROSSING + " needs an empty friendly lane."
+			if get_ghost_discard_payment(game_manager, command).size() != get_ghost_discard_cost(ghost):
+				return CALL_OF_THE_CROSSING + " needs %d card(s) in hand to discard." % get_ghost_discard_cost(ghost)
 		WINGS_OF_THE_DEPARTED:
 			if _was_ability_used_this_turn(game_manager, WINGS_OF_THE_DEPARTED):
 				return WINGS_OF_THE_DEPARTED + " has already been used this turn."
@@ -121,16 +162,22 @@ func activate_from_command(game_manager: GameManager, command: Dictionary) -> vo
 		return
 	if command["ability"] == CALL_OF_THE_CROSSING:
 		var ghost := game_manager.get_card_by_uid(str(command["ghost_uid"]))
-		var mana_cost_for_ghost := get_ghost_mana_cost(ghost)
+		var discards := get_ghost_discard_payment(game_manager, command)
+		var discard_cost := get_ghost_discard_cost(ghost)
+		if discards.size() != discard_cost:
+			game_manager.note_player_feedback(CALL_OF_THE_CROSSING + " needs a valid hand discard.")
+			return
+		for discard in discards:
+			card_owner.discard_card(discard)
 		if not game_manager.summon_creature_by_effect(
 			card_owner, ghost, _get_ghost_summon_lane(command), Card.CreatureMode.AGGRESSIVE,
-			false, false, self, false, false, true, false, mana_cost_for_ghost
+			false, false, self, false, false, true, true, 0
 		):
 			game_manager.note_player_feedback(CALL_OF_THE_CROSSING + " could not summon the chosen Ghost.")
 			return
 		_mark_ability_used(game_manager, CALL_OF_THE_CROSSING)
-		game_manager.note_player_feedback("%s summons %s for %d mana." % [
-			CALL_OF_THE_CROSSING, ghost.card_name, mana_cost_for_ghost
+		game_manager.note_player_feedback("%s discards %d card(s) to summon %s." % [
+			CALL_OF_THE_CROSSING, discard_cost, ghost.card_name
 		])
 		notify_power_activated(game_manager, ghost)
 		return
@@ -146,13 +193,13 @@ func activate_from_command(game_manager: GameManager, command: Dictionary) -> vo
 	])
 	notify_power_activated(game_manager, target)
 
-func get_ghost_mana_cost(ghost: Card) -> int:
-	return 2 * maxi(0, ghost.get_effective_level())
-
-func _is_payable_deck_ghost(ghost: Card, mana_budget: int) -> bool:
-	return ghost != null and ghost.current_zone == card_owner.deck_zone \
-		and ghost.is_creature_card() and ghost.has_type("Ghost") \
-		and get_ghost_mana_cost(ghost) <= mana_budget
+func _is_summonable_deck_ghost(ghost: Card, available_discards: int = -1) -> bool:
+	if ghost == null or card_owner == null or ghost.current_zone != card_owner.deck_zone \
+			or not ghost.is_creature_card() or not ghost.has_type("Ghost"):
+		return false
+	if available_discards < 0 and card_owner.hand_zone != null:
+		available_discards = card_owner.hand_zone.get_card_count()
+	return get_ghost_discard_cost(ghost) <= available_discards
 
 func _get_ghost_summon_lane(command: Dictionary) -> Zone:
 	if not (command.get("zone_type") is int) or not (command.get("zone_index") is int):

@@ -4919,7 +4919,7 @@ func _plan_defensive_stance(danger: int) -> Dictionary:
 
 func _plan_call_of_the_crossing(god: HermesPsychopompus, danger: int, attacks: Array[Dictionary], baseline: Dictionary, mana_budget: int, setup_cost: int = 0) -> Dictionary:
 	var best := {}
-	var ghosts := god.get_summonable_ghosts(mana_budget - setup_cost)
+	var ghosts := god.get_summonable_ghosts()
 	if ghosts.is_empty():
 		return best
 	var lanes := _get_open_summon_lane_candidates(bot_player, 1)
@@ -4928,9 +4928,16 @@ func _plan_call_of_the_crossing(god: HermesPsychopompus, danger: int, attacks: A
 	var can_attack_after_summon := not defensive and game_manager.turn_number > 1 \
 		and not game_manager.has_resolved_attack_this_turn and not game_manager.attack_restrictions.has(bot_player)
 	for ghost in ghosts:
-		var cost := setup_cost + god.get_ghost_mana_cost(ghost)
+		var discard_cost := god.get_ghost_discard_cost(ghost)
+		var discard_uids := _get_ghost_summon_discard_uids(discard_cost)
+		if discard_uids.size() != discard_cost:
+			continue
+		var cost := setup_cost
 		var mana_after_summon := mana_budget - cost
-		var value := CardStrategy.value(self, ghost) - CardStrategy.mana_penalty(self, cost, mana_budget)
+		var grave_fill := _crossing_grave_fill_value(god, discard_uids)
+		var value := _ghost_body_presence_value(ghost) \
+			- _get_hand_discard_value(discard_uids, mana_after_summon) \
+			- CardStrategy.mana_penalty(self, cost, mana_budget)
 		for lane in lanes:
 			var line := {}
 			if can_attack_after_summon and lane.zone_type == Zone.ZoneType.FRONTLINE \
@@ -4942,15 +4949,73 @@ func _plan_call_of_the_crossing(god: HermesPsychopompus, danger: int, attacks: A
 			var brew_first := _brew_enables_spend(int(line.get("mana_required", cost)))
 			var safety_mana := mana_after_summon if brew_first else mini(mana_budget, bot_player.mana) - cost
 			var safety := _follower_safety_gain(danger, {"summon": ghost, "zone": lane, "defensive_summons": defensive}, safety_mana)
-			var score := value + safety + maxi(0, combat_score - baseline_score)
+			var score := value + safety + maxi(0, combat_score - baseline_score) + grave_fill
 			var plan := {"score": score, "combat_score": combat_score, "lethal": bool(line.get("lethal", false)),
 				"brew_setup": brew_first, "command": {
 				"type": "god_ability", "god_uid": god.uid, "ability": HermesPsychopompus.CALL_OF_THE_CROSSING,
 				"ghost_uid": ghost.uid, "zone_type": lane.zone_type, "zone_index": lane.zone_index,
+				"discard_uids": discard_uids,
 			}}
 			if _is_better_strategy_plan(plan, best):
 				best = plan
 	return best
+
+func _get_ghost_summon_discard_uids(cost: int) -> Array[String]:
+	var discard_uids: Array[String] = []
+	var virtual_hand := bot_player.hand_zone.cards.duplicate()
+	for _index in range(cost):
+		var discard_card := _choose_lowest_priority_card(virtual_hand, discard_uids)
+		if discard_card == null:
+			discard_uids.clear()
+			return discard_uids
+		discard_uids.append(discard_card.uid)
+	return discard_uids
+
+func _get_hand_discard_value(discard_uids: Array[String], mana_left: int) -> int:
+	# Price the discard holistically as its opportunity cost: what the card could
+	# have been worth this turn. A body that could still be summoned loses its
+	# full board value (the same scale the summoned Ghost is priced on), so
+	# tossing an average body for a weaker one is a real trade, not a free one.
+	# A card that cannot be played loses only its discounted hand value.
+	var value := 0
+	for uid in discard_uids:
+		var card := game_manager.get_card_by_uid(uid)
+		if card == null:
+			continue
+		if card is CreatureCard and _get_play_cost(card, false) <= mana_left:
+			value += CardStrategy.value(self, card)
+		else:
+			value += _deck_card_hand_value(card, mana_left)
+	return value
+
+func _ghost_body_presence_value(ghost: Card) -> int:
+	# The Ghost's standing board value. An Incorporeal body with no Spirit or
+	# Mage to engage cannot use its strength offensively, so it is worth its
+	# presence and defence rather than its reach; the marginal combat term still
+	# credits any follower damage it can actually deal this turn.
+	var body := CardStrategy.value(self, ghost)
+	if ghost.incorporeal and not _incorporeal_has_matchup():
+		body -= CardStrategy._strength_reach_points(ghost.get_effective_strength())
+	return body
+
+func _incorporeal_has_matchup() -> bool:
+	for enemy in _get_board_creatures(opponent):
+		if CardStrategy.visible(self, enemy) and (enemy.has_type("Spirit") or enemy.has_type("Mage")):
+			return true
+	return false
+
+func _crossing_grave_fill_value(god: HermesPsychopompus, discard_uids: Array[String]) -> int:
+	# Discarding a Ghost fuels Wings of the Departed. Credit that grave fill only
+	# when the Hades aspect has a creature that could actually spend the speed.
+	if god.get_speed_targets(game_manager).is_empty():
+		return 0
+	var value := 0
+	for uid in discard_uids:
+		var card := game_manager.get_card_by_uid(uid)
+		if card != null and card.has_type("Ghost"):
+			@warning_ignore("integer_division")
+			value += CardStrategy.MANA_VALUE / 2
+	return value
 
 func _plan_deck_god_ability(danger: int, attacks: Array[Dictionary] = [], combat: Dictionary = {}, projected_mana: int = -1) -> Dictionary:
 	var god := _find_player_god()

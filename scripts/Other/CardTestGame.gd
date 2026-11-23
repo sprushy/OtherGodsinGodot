@@ -340,7 +340,7 @@ func load_hermes_dodge_test_scenario() -> void:
 	_add_test_hand_card(player2, Enkidu.new())
 
 	# Ghost/Spirit cards for Hermes Psychopompus: graveyard copies pay for Wings of the Departed,
-	# while deck copies are Call of the Crossing targets.
+	# while deck copies are Call of the Crossing targets paid for with hand discards.
 	_add_test_graveyard_card(player1, Edimmu.new())
 	_add_test_graveyard_card(player1, TheChainedGhostOfAthens.new())
 
@@ -378,7 +378,7 @@ func load_hermes_dodge_test_scenario() -> void:
 	action_label.text = (
 		"Choose an upkeep option, then cast Metamorphosis and search for Knight or Raven. "
 		+ "Reveal a reserve creature to see it gain the chosen typing. Cast Occult Singularity to remove the Aura. "
-		+ "Aspect Shift is locked in P1's first power slot: unlock for 4 to become Hermes Psychopompus, then use Call of the Crossing on a Ghost/Spirit in deck or Wings of the Departed with the Ghost/Spirit cards in your grave. Return to Form shifts back for 4. "
+		+ "Aspect Shift is locked in P1's first power slot: unlock for 4 to become Hermes Psychopompus, then use Call of the Crossing on a Ghost/Spirit in deck by discarding half its Level (min 1), or Wings of the Departed with the Ghost/Spirit cards in your grave. Return to Form shifts back for 4. "
 		+ "You can also use Hermes's Deceptive Speed to test Dodge against Gullinbursti. "
 		+ "On P1's next turn, attack P2's Followers with Enkidu to test Guardian. Then attack with Asaruludu to test Smite against Asaruludu himself."
 	)

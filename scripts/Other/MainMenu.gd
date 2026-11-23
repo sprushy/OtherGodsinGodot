@@ -176,7 +176,14 @@ var _host_another_bot_match_button: Button
 var _stop_hosting_bot_matches_button: Button
 var _host_own_bot_button: Button
 var _host_bot_gauntlet_button: Button
+var _host_god_bot_match_button: Button
+var _god_bot_match_dialog: AcceptDialog
+var _god_bot_match_option: OptionButton
+var _god_bot_match_names: Array[String] = []
 var _custom_bot_ids_pending: Array[String] = []
+# God names for pending debug god-specific bot match requests, kept parallel
+# to _custom_bot_ids_pending.
+var _custom_bot_gods_pending: Array[String] = []
 # Debug controls for the bot league feature (debug builds only).
 var _seed_bot_league_button: Button
 var _finalize_bot_league_button: Button
@@ -3096,6 +3103,13 @@ func _build_seek_tabs() -> void:
 	_host_bot_gauntlet_button.text = "Host Gauntlet for Your Bot"
 	_host_bot_gauntlet_button.pressed.connect(_open_my_bot_picker.bind(true))
 	seek_row_bottom.add_child(_host_bot_gauntlet_button)
+	if OS.is_debug_build():
+		_host_god_bot_match_button = Button.new()
+		_host_god_bot_match_button.name = "HostGodBotMatchButton"
+		_host_god_bot_match_button.text = "Host God Bot Match"
+		_host_god_bot_match_button.tooltip_text = "Debug only: host a bot match featuring a specific god."
+		_host_god_bot_match_button.pressed.connect(_open_god_bot_match_picker)
+		seek_row_bottom.add_child(_host_god_bot_match_button)
 	_apply_seek_action_button_sizing()
 	# Bot league architecture quarantined: do not build its UI surface.
 	pass
@@ -3345,7 +3359,7 @@ func _schedule_continuous_bot_match_retry(delay_seconds: float = 15.0) -> void:
 		add_child(_bot_match_retry_timer)
 	_bot_match_retry_timer.start(maxf(1.0, delay_seconds))
 
-func _request_local_bot_match(continuous: bool, bot_id: String = "") -> void:
+func _request_local_bot_match(continuous: bool, bot_id: String = "", god_name: String = "") -> void:
 	if lobby_client == null or not lobby_client.is_authenticated():
 		_bot_match_hosting_enabled = false if continuous else _bot_match_hosting_enabled
 		status_label.text = "Sign in to host a bot match."
@@ -3364,15 +3378,20 @@ func _request_local_bot_match(continuous: bool, bot_id: String = "") -> void:
 	_pending_local_bot_match_modes.append(continuous)
 	_pending_local_bot_match_best_of.append(3 if _bo3_bot_hosting else 1)
 	_custom_bot_ids_pending.append(bot_id)
+	_custom_bot_gods_pending.append(god_name)
 	_update_host_bot_match_button()
-	status_label.text = "Requesting a bot match for this computer..."
+	if god_name.is_empty():
+		status_label.text = "Requesting a bot match for this computer..."
+	else:
+		status_label.text = "Requesting a %s bot match for this computer..." % god_name
 	var excluded: Array = _host_bot_gauntlet_opponents.keys() if not _host_bot_gauntlet_id.is_empty() else []
 	lobby_client.request_bot_work(
 		bot_id,
 		excluded,
 		continuous and _top_50_bot_hosting,
 		3 if _bo3_bot_hosting else 1,
-		continuous and _below_top_50_bot_hosting
+		continuous and _below_top_50_bot_hosting,
+		god_name
 	)
 
 func _open_my_bot_picker(for_gauntlet: bool = false) -> void:
@@ -3476,6 +3495,39 @@ func _start_selected_bot_match() -> void:
 		_host_bot_gauntlet_opponents.clear()
 	_request_local_bot_match(false, bot_id)
 
+## Debug-only picker that hosts a volunteer bot match featuring a specific god.
+## The lobby seats a ladder bot of that god (or builds a fresh one) and pairs it
+## with a normal opponent.
+func _open_god_bot_match_picker() -> void:
+	if lobby_client == null or not lobby_client.is_authenticated():
+		status_label.text = "Sign in to host a god-specific bot match."
+		return
+	if _god_bot_match_names.is_empty():
+		var deck_factory := PracticeAutofillDeckFactoryScript.new()
+		_god_bot_match_names = deck_factory.get_ranked_god_names()
+		_god_bot_match_names.sort()
+	if _god_bot_match_names.is_empty():
+		status_label.text = "No ranked gods are available for a god-specific bot match."
+		return
+	if not is_instance_valid(_god_bot_match_dialog):
+		_god_bot_match_dialog = AcceptDialog.new()
+		_god_bot_match_dialog.title = "Choose a God"
+		_god_bot_match_dialog.dialog_text = "Select a god to feature in the hosted bot match."
+		_god_bot_match_option = OptionButton.new()
+		_god_bot_match_dialog.add_child(_god_bot_match_option)
+		add_child(_god_bot_match_dialog)
+		_god_bot_match_dialog.confirmed.connect(_start_selected_god_bot_match)
+	_god_bot_match_option.clear()
+	for god_name in _god_bot_match_names:
+		_god_bot_match_option.add_item(god_name)
+	_god_bot_match_dialog.popup_centered()
+
+func _start_selected_god_bot_match() -> void:
+	if _god_bot_match_option == null or _god_bot_match_option.selected < 0 \
+			or _god_bot_match_option.selected >= _god_bot_match_names.size():
+		return
+	_request_local_bot_match(false, "", _god_bot_match_names[_god_bot_match_option.selected])
+
 func _update_host_bot_match_button() -> void:
 	if not is_instance_valid(_host_bot_match_button):
 		return
@@ -3517,6 +3569,12 @@ func _update_host_bot_match_button() -> void:
 		_host_own_bot_button.visible = true
 	if is_instance_valid(_host_bot_gauntlet_button):
 		_host_bot_gauntlet_button.visible = true
+	if is_instance_valid(_host_god_bot_match_button):
+		# Same debug-hosting capability gate as the Rank 51+ button: the lobby
+		# only accepts god-specific requests from debug clients or admins.
+		_host_god_bot_match_button.visible = OS.is_debug_build() and signed_in \
+			and lobby_client.can_host_below_top_50_bot_matches
+		_host_god_bot_match_button.disabled = not has_capacity
 
 func _get_local_bot_match_capacity() -> int:
 	if OS.get_name() not in ["Windows", "macOS", "Linux"] or OS.get_processor_count() < 4:
@@ -3565,6 +3623,8 @@ func _on_local_bot_work_assigned(job: Dictionary) -> void:
 	if not _pending_local_bot_match_best_of.is_empty():
 		request_best_of = _pending_local_bot_match_best_of.pop_front()
 	var custom_bot_id: String = _custom_bot_ids_pending.pop_front() if not _custom_bot_ids_pending.is_empty() else ""
+	if not _custom_bot_gods_pending.is_empty():
+		_custom_bot_gods_pending.pop_front()
 	if (continuous and not _bot_match_hosting_enabled) or lobby_client == null or not lobby_client.is_authenticated():
 		if lobby_client != null:
 			lobby_client.cancel_bot_work(str(job.get("job_id", "")))
@@ -3711,6 +3771,8 @@ func _on_local_bot_work_result(job_id: String, success: bool, message: String) -
 			_pending_local_bot_match_best_of.pop_front()
 		if not _custom_bot_ids_pending.is_empty():
 			_custom_bot_ids_pending.pop_front()
+		if not _custom_bot_gods_pending.is_empty():
+			_custom_bot_gods_pending.pop_front()
 		if not _host_bot_gauntlet_id.is_empty():
 			_host_bot_gauntlet_id = ""
 			_host_bot_gauntlet_remaining = 0
@@ -3897,6 +3959,7 @@ func _stop_local_bot_match_worker() -> void:
 	_pending_local_bot_match_modes.clear()
 	_pending_local_bot_match_best_of.clear()
 	_custom_bot_ids_pending.clear()
+	_custom_bot_gods_pending.clear()
 	_bo3_bot_hosting = false
 	for match_id in _local_bot_match_submitting.keys():
 		if lobby_client != null:

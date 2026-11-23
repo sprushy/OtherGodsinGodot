@@ -115,6 +115,7 @@ func run() -> bool:
 	_check_aspect_shift(failures)
 	_check_bot_aspect_shift(failures)
 	_check_bot_call_of_the_crossing_safety(failures)
+	_check_bot_call_of_the_crossing_holistic(failures)
 	_check_bot_combat_mana_budget(failures)
 	_check_aphrodite_aspect_shift(failures)
 	_check_bot_violent_delights_upkeep(failures)
@@ -3672,13 +3673,17 @@ func _check_bot_hermes_speed(failures: PackedStringArray) -> void:
 	var ghost := Edimmu.new()
 	ghost.card_owner = player
 	player.deck_zone.add_card(ghost)
+	var discard := CreatureCard.new()
+	discard.card_owner = player
+	player.hand_zone.add_card(discard)
 	var summon := bot._plan_deck_god_ability(0)
 	if not bot._submit_strategy_plan(summon):
 		failures.append("Hermes Psychopompus did not submit Call of the Crossing")
 	for _step in range(8):
 		manager.advance_priority()
-	if ghost.current_zone not in player.frontline_zones or ghost.creature_mode != Card.CreatureMode.AGGRESSIVE or player.mana != 2:
-		failures.append("Call of the Crossing did not summon the bot's chosen Ghost in aggressive stance for twice its Level")
+	if ghost.current_zone not in player.frontline_zones or ghost.creature_mode != Card.CreatureMode.AGGRESSIVE \
+			or discard.current_zone != player.graveyard_zone or player.mana != 4:
+		failures.append("Call of the Crossing did not summon the bot's chosen Ghost for one hand discard")
 
 	attacker.speed = 2
 	opponent.followers = 15
@@ -3690,7 +3695,7 @@ func _check_bot_hermes_speed(failures: PackedStringArray) -> void:
 		failures.append("Hermes Psychopompus did not submit Wings of the Departed to outrun Void Shield")
 	for _step in range(8):
 		manager.advance_priority()
-	if attacker.get_effective_speed() != 4 or player.mana != 0:
+	if attacker.get_effective_speed() != 4 or player.mana != 2:
 		failures.append("Wings of the Departed did not give the bot's attacker the required +2 Speed for 2 mana")
 	bot.detach()
 
@@ -3877,7 +3882,10 @@ func _check_bot_aspect_shift(failures: PackedStringArray) -> void:
 	ghost.card_owner = player
 	player.deck_zone.add_card(ghost)
 	if not bot._plan_aspect_shift([], {}, 0, {}, player.mana).is_empty():
-		failures.append("Bot planned to shift with enough mana to unlock but too little to summon its Ghost")
+		failures.append("Bot planned to shift without a hand card to discard for its Ghost")
+	var discard := CreatureCard.new()
+	discard.card_owner = player
+	player.hand_zone.add_card(discard)
 	player.mana = 6
 	if not bot._take_main_phase_action() or not (player.god_zone.cards[0] is HermesPsychopompus):
 		failures.append("Bot did not unlock Aspect Shift for a lethal Ghost summon")
@@ -3885,8 +3893,8 @@ func _check_bot_aspect_shift(failures: PackedStringArray) -> void:
 		failures.append("Bot did not follow through with Call of the Crossing after shifting")
 	for _step in range(8):
 		manager.advance_priority()
-	if ghost.current_zone not in player.frontline_zones or player.mana != 0:
-		failures.append("Shifting and summoning the bot's Ghost did not resolve for the combined 6 mana")
+	if ghost.current_zone not in player.frontline_zones or discard.current_zone != player.graveyard_zone or player.mana != 2:
+		failures.append("Shifting and discarding for the bot's Ghost did not resolve for the 4-mana unlock")
 
 	# Empty graveyard means the Hades aspect cannot outrun the prepared shield.
 	player.mana = 6
@@ -3969,6 +3977,9 @@ func _check_bot_call_of_the_crossing_safety(failures: PackedStringArray) -> void
 	var ghost := Edimmu.new()
 	ghost.card_owner = player
 	player.deck_zone.add_card(ghost)
+	var discard := CreatureCard.new()
+	discard.card_owner = player
+	player.hand_zone.add_card(discard)
 	var sap := Sap.new()
 	sap.card_owner = player
 	sap.is_face_down = true
@@ -3982,16 +3993,18 @@ func _check_bot_call_of_the_crossing_safety(failures: PackedStringArray) -> void
 	var manager := _new_fixture_match(game)
 	var bot := _new_fixture_bot()
 	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
-	var crossing := shift.make_hades_aspect() as HermesPsychopompus
-	player.mana = shift.get_unlock_mana_cost(game) + crossing.get_ghost_mana_cost(ghost)
+	player.mana = shift.get_unlock_mana_cost(game)
 	var danger := bot._forecast_incoming_follower_loss()
 	if danger != 0 or bot._forecast_incoming_follower_loss({"mana_left": 0}) < player.followers:
 		failures.append("Call of the Crossing fixture did not have a lethal Champion's Call stopped by Sap")
 	elif not bot._plan_aspect_shift([], {}, danger, {}, player.mana).is_empty():
 		failures.append("Bot planned to shift and summon without leaving mana for Sap against Champion's Call")
 	player.mana += game.get_prepared_card_activation_mana_cost(player, sap)
-	var funded := bot._plan_aspect_shift([], {}, bot._forecast_incoming_follower_loss(), {}, player.mana)
-	if funded.get("command", {}).get("power_uid") != shift.uid:
+	# Already Psychopompus: the summon costs no mana, only a hand discard, so it is
+	# worth taking even while keeping Sap's mana reserved against Champion's Call.
+	var crossing := shift.make_hades_aspect() as HermesPsychopompus
+	var funded := bot._plan_call_of_the_crossing(crossing, bot._forecast_incoming_follower_loss(), [], {}, player.mana)
+	if funded.get("command", {}).get("ghost_uid") != ghost.uid:
 		failures.append("Bot passed up Call of the Crossing with mana left for Sap against Champion's Call")
 
 	var sap_cost := game.get_prepared_card_activation_mana_cost(player, sap)
@@ -4056,6 +4069,51 @@ func _check_bot_call_of_the_crossing_safety(failures: PackedStringArray) -> void
 	var use_sap := bot._build_creature_play_command(recruit, zone, Card.CreatureMode.DEFENSIVE, 0, true)
 	if protect_blocker.get("sacrifice_uids", []) != [fodder.uid] or use_sap.get("sacrifice_uids", []) != [blocker.uid]:
 		failures.append("Summon sacrifice selection did not keep the blocker when the summon spent Sap's mana")
+	bot.detach()
+
+func _check_bot_call_of_the_crossing_holistic(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.setup_game()
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	var hermes := Hermes.new()
+	hermes.card_owner = player
+	player.god_zone.add_card(hermes)
+	var shift := AspectShift.new()
+	shift.card_owner = player
+	player.power_zones[0].add_card(shift)
+	var ghost := Edimmu.new()
+	ghost.card_owner = player
+	player.deck_zone.add_card(ghost)
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var crossing := shift.make_hades_aspect() as HermesPsychopompus
+	player.mana = 5
+	# Attacks already resolved and no Spirit/Mage to engage: Incorporeal Edimmu is
+	# a do-nothing body this turn, so the discard's opportunity cost decides the
+	# trade. Tossing an average playable body for it is poor.
+	game.has_resolved_attack_this_turn = true
+	var average := CreatureCard.new()
+	average.card_owner = player
+	average.strength = 10
+	average.resilience = 10
+	player.hand_zone.add_card(average)
+	if not bot._plan_call_of_the_crossing(crossing, 0, [], {}, player.mana).is_empty():
+		failures.append("Call of the Crossing tossed an average body for a do-nothing Incorporeal Ghost")
+	# The same Ghost is worth a genuinely weak discard, and can actually fight
+	# once attacks are open: the trade depends on the discard and the result.
+	player.hand_zone.remove_card(average)
+	var weak := CreatureCard.new()
+	weak.card_owner = player
+	player.hand_zone.add_card(weak)
+	game.has_resolved_attack_this_turn = false
+	var worth := bot._plan_call_of_the_crossing(crossing, 0, [], {}, player.mana)
+	if worth.get("command", {}).get("ghost_uid") != ghost.uid:
+		failures.append("Call of the Crossing passed up a weak discard into a fighting Ghost")
 	bot.detach()
 
 func _check_bot_combat_mana_budget(failures: PackedStringArray) -> void:

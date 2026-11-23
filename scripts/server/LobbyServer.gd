@@ -1228,6 +1228,12 @@ func _handle_request_bot_work(peer_id: int, payload: Dictionary = {}) -> void:
 			"job_id": "", "success": false, "message": "Only debug clients can host bot matches below the top 50.",
 		})
 		return
+	var requested_god := str(payload.get("god_name", "")).strip_edges()
+	if not requested_god.is_empty() and not _can_host_below_top_50_bot_matches(session):
+		_send_to_peer(peer_id, LobbyProtocolScript.BOT_WORK_RESULT, {
+			"job_id": "", "success": false, "message": "Only debug clients can host god-specific bot matches.",
+		})
+		return
 	var busy := {}
 	var excluded_list_ids: Array = payload.get("excluded_list_ids", [])
 	for list_id in excluded_list_ids:
@@ -1249,7 +1255,7 @@ func _handle_request_bot_work(peer_id: int, payload: Dictionary = {}) -> void:
 	# Serve pending league round-robin pairings first so volunteers play the
 	# scheduled tournament matches instead of random self-play pairs.
 	var pending_index := -1
-	if not top_50 and not below_top_50:
+	if not top_50 and not below_top_50 and requested_god.is_empty():
 		for index in range(_pending_league_pairings.size()):
 			if int((_pending_league_pairings[index] as Dictionary).get("best_of", 1)) == best_of:
 				pending_index = index
@@ -1327,6 +1333,22 @@ func _handle_request_bot_work(peer_id: int, payload: Dictionary = {}) -> void:
 			return
 		deck_a = _validate_server_bot_deck(below_pair[0])
 		deck_b = _validate_server_bot_deck(below_pair[1])
+	elif not requested_god.is_empty():
+		# Debug god-specific hosting: seat a ladder bot of the requested god
+		# first, then pair it with any eligible opponent. When the ladder has
+		# no usable pair, fall back to freshly built decks of that god so the
+		# match still runs.
+		var god_list_ids := _get_bot_list_ids_for_god(requested_god, best_of)
+		var god_pair: Array[Dictionary] = []
+		if not god_list_ids.is_empty():
+			god_pair = _bot_pool(best_of).select_self_play_pair(busy, _bot_deck_rng, god_list_ids, {}, true)
+		if god_pair.size() == 2:
+			deck_a = _validate_server_bot_deck(god_pair[0])
+			deck_b = _validate_server_bot_deck(god_pair[1])
+		if deck_a.is_empty():
+			deck_a = _build_fresh_bot_deck_submission({}, best_of, requested_god)
+		if deck_b.is_empty():
+			deck_b = _build_fresh_bot_deck_submission({requested_god: 1}, best_of, requested_god)
 	else:
 		var top_list_ids := _get_top_50_bot_list_ids(best_of) if top_50 else {}
 		var pair: Array[Dictionary] = []
@@ -1341,11 +1363,16 @@ func _handle_request_bot_work(peer_id: int, payload: Dictionary = {}) -> void:
 		elif not top_50 or not deck_a.is_empty():
 			deck_b = _build_fresh_bot_deck_submission({str(deck_a.get("god_name", "")): 1}, best_of)
 	if deck_a.is_empty() or deck_b.is_empty():
+		var unavailable_message := "No bot match is available for this computer right now."
+		if top_50:
+			unavailable_message = "No top 50 bot match is available right now."
+		elif not requested_god.is_empty():
+			unavailable_message = "No %s bot match is available right now." \
+				% RankedBotDeckPoolScript.display_god_name(requested_god)
 		_send_to_peer(peer_id, LobbyProtocolScript.BOT_WORK_RESULT, {
 			"job_id": "",
 			"success": false,
-			"message": "No top 50 bot match is available right now." if top_50 \
-				else "No bot match is available for this computer right now.",
+			"message": unavailable_message,
 		})
 		return
 	for deck in [deck_a, deck_b]:
@@ -2309,6 +2336,23 @@ func _get_bots_below_top_50_list_ids(best_of: int = 1) -> Dictionary:
 			list_ids[list_id] = true
 	return list_ids
 
+# Every matchmaking-eligible ladder bot whose main god matches the requested
+# name. Used by debug god-specific bot hosting.
+func _get_bot_list_ids_for_god(god_name: String, best_of: int = 1) -> Dictionary:
+	var list_ids := {}
+	if god_name.is_empty():
+		return list_ids
+	for row in _get_cached_ladder(best_of):
+		if not bool(row.get("is_bot", false)):
+			continue
+		var list_id := str(row.get("list_id", ""))
+		if list_id.is_empty() or bool(row.get("matchmaking_excluded", false)):
+			continue
+		var main_gods: Array = row.get("main_gods", [])
+		if main_gods.has(god_name):
+			list_ids[list_id] = true
+	return list_ids
+
 func _build_ladder_page(request: Dictionary, current_username: String = "") -> Dictionary:
 	var is_paged := request.has("request_id")
 	var quarantined_only := bool(request.get("quarantined_only", false))
@@ -3044,11 +3088,16 @@ func _busy_bot_list_ids() -> Dictionary:
 				busy[list_id] = true
 	return busy
 
-func _build_fresh_bot_deck_submission(extra_reserved: Dictionary = {}, best_of: int = 1) -> Dictionary:
+func _build_fresh_bot_deck_submission(extra_reserved: Dictionary = {}, best_of: int = 1, forced_god_name: String = "") -> Dictionary:
 	_ensure_server_bot_deck_factory()
 	_refresh_ranked_bot_deck_pool()
 	_server_bot_seed_counter += 1
 	var deck_seed := int(Time.get_unix_time_from_system()) + _server_bot_seed_counter
+	if not forced_god_name.is_empty():
+		# Debug god-specific hosting needs a deck of exactly this god, not the
+		# underrepresented-god preference used for regular fresh bots.
+		var forced_deck: Dictionary = server_bot_deck_factory.build_random_deck(deck_seed, forced_god_name, true)
+		return _validate_server_bot_deck(forced_deck)
 	var reserved := _get_reserved_fresh_bot_god_counts()
 	for god_name in extra_reserved:
 		reserved[god_name] = int(reserved.get(god_name, 0)) + int(extra_reserved[god_name])

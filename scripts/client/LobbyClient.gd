@@ -597,7 +597,8 @@ func request_bot_work(
 	excluded_list_ids: Array = [],
 	top_50: bool = false,
 	best_of: int = 1,
-	below_top_50: bool = false
+	below_top_50: bool = false,
+	god_name: String = ""
 ) -> void:
 	if is_authenticated():
 		var payload := {"bot_id": bot_id, "excluded_list_ids": excluded_list_ids}
@@ -607,6 +608,8 @@ func request_bot_work(
 			payload["below_top_50"] = true
 		if best_of == 3:
 			payload["best_of"] = 3
+		if not god_name.is_empty():
+			payload["god_name"] = god_name
 		_send_request(LobbyProtocolScript.REQUEST_BOT_WORK, payload)
 
 func request_seed_bot_league(count_per_god: int = 10) -> void:
