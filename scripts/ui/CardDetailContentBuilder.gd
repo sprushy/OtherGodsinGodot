@@ -559,6 +559,16 @@ static func build_board_popup_body(card: Card, viewer: Player, config: Dictionar
 				13,
 				Color(1.0, 0.78, 0.86)
 			))
+		if card.is_enslaved():
+			var enslaved_line := "Status: Enslaved"
+			var enslaver := card.get_controller()
+			if enslaver != null and enslaver.player_name != "":
+				enslaved_line += " (fighting for %s)" % enslaver.player_name
+			vbox.add_child(_make_label(
+				enslaved_line,
+				13,
+				Color(1.0, 0.6, 0.35)
+			))
 
 	if not is_hidden_card and not card.is_god:
 		vbox.add_child(_make_level_symbol_row(card, 13.0))

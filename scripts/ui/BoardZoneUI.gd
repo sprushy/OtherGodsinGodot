@@ -4258,6 +4258,16 @@ func _build_debuff_entry_from_status(card: Card, status: Dictionary) -> Dictiona
 			"preview_texture": BANE_OF_THE_SVARTALFAR_BADGE_TEXTURE if status_name == "petrified" else null,
 			"count": 1,
 		}
+	if status_name == "enslaved":
+		var enslaver_label := str(status.get("source", ""))
+		var tooltip := "Enslaved" + (" by " + enslaver_label if enslaver_label != "" else "")
+		tooltip += ": this creature fights for its enslaver. Removing this status (e.g. Exorcism) returns it to its owner."
+		return {
+			"key": "source:%s" % source_key,
+			"source_card": source_card,
+			"tooltip": tooltip,
+			"count": 1,
+		}
 	return {}
 
 func _build_debuff_entry_from_buff(buff: Dictionary) -> Dictionary:

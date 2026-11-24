@@ -91,6 +91,7 @@ func run() -> bool:
 	_check_bot_power_followthrough(failures)
 	_check_bot_follower_valuation(failures)
 	_check_bot_summon_and_intercept(failures)
+	_check_bot_berserker_rage_combo(failures)
 	_check_bot_interception_forecasts(failures)
 	_check_bot_prepare_and_reflect(failures)
 	_check_bot_namburbi_combat_ward(failures)
@@ -123,7 +124,7 @@ func run() -> bool:
 	_check_bot_combat_buff_value(failures)
 	_check_bot_jiang_counterstroke(failures)
 	_check_bot_reveal_defense(failures)
-	_check_bot_exorcism_doomed_source(failures)
+	_check_bot_exorcism_attached_sources(failures)
 	_check_bot_brew_funds_pyre_lethal(failures)
 	_check_bot_brew_funds_summon(failures)
 	_check_bot_brew_funds_unlock(failures)
@@ -2169,6 +2170,61 @@ func _check_bot_summon_and_intercept(failures: PackedStringArray) -> void:
 	player.followers = 8
 	if not bot._choose_interceptor(intercept).is_empty():
 		failures.append("Bot chose a losing interception that still allowed lethal follower damage")
+	bot.detach()
+
+func _check_bot_berserker_rage_combo(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 2
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+
+	var berserker := Berserker.new()
+	berserker.card_owner = player
+	player.hand_zone.add_card(berserker)
+	var threat := CreatureCard.new()
+	threat.card_owner = opponent
+	threat.card_name = "Preflight Rage Threat"
+	threat.strength = 26
+	threat.resilience = 20
+	threat.speed = 3
+	threat.creature_mode = Card.CreatureMode.AGGRESSIVE
+	opponent.frontline_zones[0].add_card(threat)
+	player.mana = 5
+	opponent.followers = 20
+
+	var summon := bot._plan_creature_summon()
+	var command: Dictionary = summon.get("command", {})
+	if command.get("card_uid") != berserker.uid or command.get("mode") != Card.CreatureMode.AGGRESSIVE:
+		failures.append("Bot did not summon Berserker aggressively to set up Rage against a 26-STR creature")
+
+	player.hand_zone.remove_card(berserker)
+	player.frontline_zones[0].add_card(berserker)
+	berserker.creature_mode = Card.CreatureMode.AGGRESSIVE
+	var candidates := bot._get_combat_candidates()
+	var baseline := bot._plan_combat(candidates)
+	var strategy := bot._get_best_strategy_action(candidates, baseline, 0)
+	var strategy_command: Dictionary = strategy.get("command", {})
+	if strategy_command.get("type") != "activate_card_ability" or strategy_command.get("source_uid") != berserker.uid:
+		failures.append("Bot did not activate Berserker Rage before attacking a 26-STR creature")
+
+	var guard_action := CardAction.new()
+	guard_action.type = CardAction.Type.ATTACK
+	guard_action.attacker = berserker
+	guard_action.source_player = player
+	guard_action.target = threat
+	var rage_stats := {
+		berserker: Vector3i(Berserker.RAGE_STR_BONUS, 0, 0),
+		ThorPracticeBot.PROJECTED_DESTRUCTION_GUARDS_KEY: [berserker],
+	}
+	var guarded := bot._estimate_raw_attack_economy(guard_action, rage_stats)
+	if threat not in guarded.get("casualties", []) or berserker in guarded.get("casualties", []):
+		failures.append("Projected Berserker Rage did not kill the 26-STR creature while preserving Berserker")
 	bot.detach()
 
 func _check_bot_interception_forecasts(failures: PackedStringArray) -> void:
@@ -5051,7 +5107,7 @@ func _check_bot_reveal_defense(failures: PackedStringArray) -> void:
 		failures.append("Bot failed to include Pictish Beast's Mana Boon in its defensive summon")
 	bot.detach()
 
-func _check_bot_exorcism_doomed_source(failures: PackedStringArray) -> void:
+func _check_bot_exorcism_attached_sources(failures: PackedStringArray) -> void:
 	var game := _new_fixture_game()
 	var player := _new_fixture_player()
 	var opponent := _new_fixture_player()
@@ -5099,24 +5155,24 @@ func _check_bot_exorcism_doomed_source(failures: PackedStringArray) -> void:
 
 	var exorcism := Exorcism.new()
 	exorcism.card_owner = player
-	if not BotCardStrategyScript.doomed_by_pending_attack(bot, priest, true):
-		failures.append("Bot did not recognize the Priest as doomed by the pending Nergal Lion attack")
-	var doomed_score := BotCardStrategyScript.target_score(bot, exorcism, gilgamesh)
-	if doomed_score <= 0:
-		failures.append("Bot found no value in Exorcism saving a creature from Dalkhu Break")
+	# A queued Dalkhu Break is a one-shot reveal, not an ongoing effect, so
+	# Exorcism gets no save credit for the creature and no destroyed-source
+	# credit for the Priest.
+	var queued_reveal_score := BotCardStrategyScript.target_score(bot, exorcism, gilgamesh)
+	if queued_reveal_score > 0:
+		failures.append("Bot still credits Exorcism against a queued Dalkhu Break it cannot negate")
 
 	lion.strength = 2
-	var surviving_source_score := BotCardStrategyScript.target_score(bot, exorcism, gilgamesh)
-	if surviving_source_score <= doomed_score:
-		failures.append("Bot still over-credits Exorcism for a Priest already dying in combat")
-	var priest_value := BotCardStrategyScript.value(bot, priest)
-	if priest_value > 0 and surviving_source_score - doomed_score < int(priest_value * 0.5):
-		failures.append("Bot stopped valuing the Priest Exorcism actually destroys")
+	if BotCardStrategyScript.target_score(bot, exorcism, gilgamesh) != queued_reveal_score:
+		failures.append("Bot's Exorcism score changed when the reveal source's combat fate changed")
 
-	game.action_stack.clear()
-	game.push_to_stack(reveal)
-	if BotCardStrategyScript.target_score(bot, exorcism, gilgamesh) != surviving_source_score:
-		failures.append("Bot's Exorcism score changed when the weak attacker was removed")
+	# Enemy hexes attached to the creature are ongoing sources Exorcism destroys.
+	var wheel := WheelOfFire.new()
+	wheel.card_owner = opponent
+	wheel.attached_target = gilgamesh
+	opponent.reserve_zones[0].add_card(wheel)
+	if BotCardStrategyScript.target_score(bot, exorcism, gilgamesh) <= 0:
+		failures.append("Bot stopped valuing the enemy hex Exorcism destroys as an attached source")
 
 func _check_bot_next_turn_lethal(failures: PackedStringArray) -> void:
 	var game := _new_fixture_game()

@@ -305,7 +305,7 @@ func resolve_titlacauan_choice(game_manager: GameManager, chosen_targets: Array[
 	for target in resolved_targets:
 		if target == null:
 			continue
-		if not game_manager.enslave_creature(target, get_controller()):
+		if not game_manager.enslave_creature(target, get_controller(), self):
 			return "%s failed to enslave %s." % [card_name, target.card_name]
 		enslaved_names.append(target.get_target_log_display_name(game_manager.get_feedback_viewer()))
 

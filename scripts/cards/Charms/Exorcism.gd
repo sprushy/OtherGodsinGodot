@@ -15,7 +15,7 @@ func _init() -> void:
 	mana_cost = 0
 	speed = 3
 	targets = true
-	ability_text = "Cannot be negated. Choose a friendly creature. Negate all effects on it except its own until the end of your next turn. As this resolves, also destroy enemy cards still targeting it."
+	ability_text = "Cannot be negated. Choose a friendly creature. Clear all ongoing effects except its own, negate ongoing effects until the end of your next turn, and destroy any attached sources."
 	artist = "Riccardo Zoppello"
 	art_path = ART_PATH
 
@@ -48,6 +48,7 @@ func resolve(game_manager: GameManager, target = null) -> void:
 		return
 
 	target.remove_status_effects_from_source_card(self, Card.EXTERNAL_EFFECT_NEGATION_STATUS)
+	var cleared_entries: Array = target.clear_external_ongoing_effects()
 	var expires_turn := _get_protection_expiry_turn(game_manager)
 	target.add_status_effect(
 		Card.EXTERNAL_EFFECT_NEGATION_STATUS,
@@ -60,10 +61,13 @@ func resolve(game_manager: GameManager, target = null) -> void:
 		}
 	)
 
-	var destroyed_cards := _destroy_opponent_targeters(game_manager, target)
+	var destroyed_cards := _destroy_attached_sources(game_manager, target)
 	var viewer: Player = game_manager.get_feedback_viewer()
 	var target_name: String = target.get_target_log_display_name(viewer)
-	var feedback: String = "%s exorcised %s, negating outside effects until the end of your next turn." % [card_name, target_name]
+	var feedback: String = "%s exorcised %s, clearing all ongoing effects and negating new ones until the end of your next turn." % [card_name, target_name]
+	var cleared_labels := _get_cleared_effect_labels(cleared_entries)
+	if not cleared_labels.is_empty():
+		feedback += " Cleared: " + ", ".join(cleared_labels) + "."
 	if not destroyed_cards.is_empty():
 		var names: Array[String] = []
 		for destroyed_card in destroyed_cards:
@@ -74,6 +78,39 @@ func resolve(game_manager: GameManager, target = null) -> void:
 	game_manager.note_player_feedback(feedback)
 	print(feedback)
 
+func _get_cleared_effect_labels(entries: Array) -> Array[String]:
+	var labels: Array[String] = []
+	var seen_status_names := {}
+	for entry_value in entries:
+		var entry := entry_value as Dictionary
+		if entry.is_empty():
+			continue
+		if entry.has("name"):
+			var status_name := str(entry.get("name", ""))
+			if status_name == "" or seen_status_names.has(status_name):
+				continue
+			seen_status_names[status_name] = true
+			labels.append(status_name.capitalize())
+			continue
+		var stat_parts: Array[String] = []
+		var str_change := int(entry.get("str", 0))
+		var res_change := int(entry.get("res", 0))
+		var spd_change := int(entry.get("spd", 0))
+		var lvl_change := int(entry.get("lvl", 0))
+		if str_change != 0:
+			stat_parts.append("%+d STR" % str_change)
+		if res_change != 0:
+			stat_parts.append("%+d RES" % res_change)
+		if spd_change != 0:
+			stat_parts.append("%+d SPD" % spd_change)
+		if lvl_change != 0:
+			stat_parts.append("%+d LVL" % lvl_change)
+		if not stat_parts.is_empty():
+			var stat_label := " ".join(stat_parts)
+			if stat_label not in labels:
+				labels.append(stat_label)
+	return labels
+
 func _get_protection_expiry_turn(game_manager: GameManager) -> int:
 	if game_manager == null:
 		return 0
@@ -81,36 +118,17 @@ func _get_protection_expiry_turn(game_manager: GameManager) -> int:
 		return game_manager.turn_number + 2
 	return game_manager.turn_number + 1
 
-func _destroy_opponent_targeters(game_manager: GameManager, target: Card) -> Array[Card]:
+# Ongoing effects are the enemy hexes still attached to the creature. Queued
+# one-shot actions (Dalkhu Break-style reveals, resolving spells) are not
+# ongoing effects, so they stay on the stack untouched.
+func _destroy_attached_sources(game_manager: GameManager, target: Card) -> Array[Card]:
 	var destroyed: Array[Card] = []
+	if game_manager == null:
+		return destroyed
 	var opponent := game_manager.get_opponent(card_owner)
 	if opponent == null:
 		return destroyed
 	var target_uid := str(target.uid).strip_edges()
-
-	for action in game_manager.action_stack.duplicate():
-		var source_card = action.card
-		if source_card == null or source_card == self:
-			continue
-		if source_card.card_owner != opponent:
-			continue
-		if not _action_targets_card(action, target, target_uid):
-			continue
-		# Actions carrying a deferred attack's completion chain (e.g. Askelladen's
-		# Tactical Retreat, which is queued while the attack waits for the retreat
-		# decision) must resolve and fizzle instead of being erased — erasing them
-		# would strand the deferred attack they complete.
-		var response_action = action.response_to
-		var action_completes_deferred_attack := response_action != null \
-			and response_action is CardAction \
-			and (response_action as CardAction).event_data.has("deferred_authoritative_completion_command")
-		if not action_completes_deferred_attack and action in game_manager.action_stack:
-			game_manager.action_stack.erase(action)
-		if source_card.current_zone != null and source_card.current_zone != source_card.card_owner.graveyard_zone:
-			game_manager.request_send_to_graveyard(source_card, func() -> void:
-				if game_manager.reached_public_destroyed_destination(source_card) and source_card not in destroyed:
-					destroyed.append(source_card)
-			, false, true)
 
 	for zone in opponent.frontline_zones + opponent.reserve_zones + opponent.power_zones:
 		for card in zone.cards.duplicate():
@@ -125,27 +143,6 @@ func _destroy_opponent_targeters(game_manager: GameManager, target: Card) -> Arr
 			, false, true)
 
 	return destroyed
-
-func _action_targets_card(action: CardAction, target: Card, target_uid: String = "") -> bool:
-	if action == null or target == null:
-		return false
-	if _same_card(action.target, target, target_uid):
-		return true
-	if action.target is Array:
-		for candidate in action.target:
-			if _same_card(candidate, target, target_uid):
-				return true
-	if _same_card(action.interceptor, target, target_uid):
-		return true
-	if _same_card(action.attacker, target, target_uid):
-		return true
-	var queued_command = action.event_data.get("queued_choice_command", {})
-	if queued_command is Dictionary:
-		for key in ["target_uid", "chosen_uid", "victim_uid"]:
-			var queued_uid := str((queued_command as Dictionary).get(key, "")).strip_edges()
-			if queued_uid != "" and queued_uid == target_uid:
-				return true
-	return false
 
 func _same_card(candidate, target: Card, target_uid: String = "") -> bool:
 	if not (candidate is Card) or target == null:

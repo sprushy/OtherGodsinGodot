@@ -396,6 +396,7 @@ var _creature_mode: CreatureMode = CreatureMode.DEFENSIVE
 var _board_leave_hooks_processed: bool = false
 
 const PARALYZED_STATUS := "paralyzed"
+const ENSLAVED_STATUS := "enslaved"
 const EXTERNAL_EFFECT_NEGATION_STATUS := "external_effect_negation"
 const ABILITY_NEGATED_STATUS := "ability_negated"
 const DESTROY_AFTER_COMBAT_STATUS := "destroy_after_combat"
@@ -609,7 +610,7 @@ func is_enslaved() -> bool:
 	return controller != null \
 		and card_owner != null \
 		and controller != card_owner \
-		and has_status_effect("enslaved")
+		and has_status_effect(ENSLAVED_STATUS)
 
 func has_status_effect(status_name: String) -> bool:
 	var normalized_name := status_name
@@ -1172,7 +1173,39 @@ func add_status_effect(
 		status[key] = extra_metadata[key]
 	active_statuses.append(status)
 	_sync_status_flags()
+	if status_name == EXTERNAL_EFFECT_NEGATION_STATUS:
+		clear_external_ongoing_effects()
 	_emit_visual_state_changed()
+
+# Ongoing-effect negation (e.g. Exorcism) clears everything it would suspend:
+# statuses and buffs applied by other cards (sleep, poison, paralysis,
+# enslavement, stat changes, ...) are removed outright instead of returning
+# when the negation expires. Enslaved creatures return to their owner's board
+# through the status removal path. Effects flagged allow_while_negated and the
+# card's own effects (source_card == self) are kept.
+func clear_external_ongoing_effects() -> Array:
+	var previous_status_count := active_statuses.size()
+	var previous_buff_count := active_buffs.size()
+	var removed_statuses: Array = active_statuses.filter(func(s):
+		return _is_external_effect_entry(s)
+	)
+	var removed_buffs: Array = active_buffs.filter(func(b):
+		return _is_external_effect_entry(b)
+	)
+	_restore_removed_status_side_effects(removed_statuses)
+	active_statuses = active_statuses.filter(func(s):
+		return not _is_external_effect_entry(s)
+	)
+	active_buffs = active_buffs.filter(func(b):
+		return not _is_external_effect_entry(b)
+	)
+	_sync_status_flags()
+	if active_statuses.size() != previous_status_count or active_buffs.size() != previous_buff_count:
+		_emit_visual_state_changed()
+	var removed: Array = []
+	removed.append_array(removed_statuses)
+	removed.append_array(removed_buffs)
+	return removed
 
 func remove_status_effects_by_name(status_name: String) -> void:
 	var normalized_name := status_name
@@ -1313,7 +1346,12 @@ func clear_board_leave_state() -> void:
 func _restore_removed_status_side_effects(statuses: Array) -> void:
 	for status_value in statuses:
 		var status := status_value as Dictionary
-		if status.is_empty() or status.get("restore_base_state_on_remove", false) != true:
+		if status.is_empty():
+			continue
+		if status.get("name", "") == ENSLAVED_STATUS:
+			_return_home_from_enslavement(status)
+			continue
+		if status.get("restore_base_state_on_remove", false) != true:
 			continue
 		if status.has("original_card_type"):
 			card_type = int(status.get("original_card_type")) as CardType
@@ -1325,6 +1363,26 @@ func _restore_removed_status_side_effects(statuses: Array) -> void:
 			speed = int(status.get("original_speed"))
 		if status.has("original_card_types"):
 			card_types = CardSubtypes.without_culture_labels(status["original_card_types"])
+
+# Removing the enslaved status sends the creature back to its owner's board.
+# Guarded to board zones so cards already leaving play (destroyed, bounced,
+# shelved) are not yanked back onto the board by their own cleanup.
+func _return_home_from_enslavement(status: Dictionary) -> void:
+	if card_owner == null:
+		return
+	if current_zone == null or not current_zone.is_board_zone():
+		return
+	var controller := get_controller()
+	if controller == null or controller == card_owner:
+		return
+	var game_manager_ref: GameManager = card_owner.game_manager
+	if game_manager_ref == null:
+		return
+	game_manager_ref.return_enslaved_creature_home(
+		self,
+		int(status.get("home_zone_type", -1)),
+		int(status.get("home_zone_index", -1))
+	)
 
 func _sync_status_flags() -> void:
 	var sleep_status: Dictionary = {}

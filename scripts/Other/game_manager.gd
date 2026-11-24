@@ -3920,7 +3920,7 @@ func get_enslave_failure_reason(creature: Card, new_controller: Player) -> Strin
 func can_enslave_creature(creature: Card, new_controller: Player) -> bool:
 	return get_enslave_failure_reason(creature, new_controller) == ""
 
-func enslave_creature(creature: Card, new_controller: Player) -> bool:
+func enslave_creature(creature: Card, new_controller: Player, source_card: Card = null) -> bool:
 	if not can_enslave_creature(creature, new_controller):
 		var reason := get_enslave_failure_reason(creature, new_controller)
 		if reason != "":
@@ -3929,9 +3929,53 @@ func enslave_creature(creature: Card, new_controller: Player) -> bool:
 	var destination := _find_creature_control_destination(new_controller, creature.current_zone.zone_type, creature.current_zone.zone_index)
 	if destination == null:
 		return false
+	var home_zone_type := creature.current_zone.zone_type
+	var home_zone_index := creature.current_zone.zone_index
 	new_controller.move_card(creature, destination)
-	creature.add_status_effect("enslaved", "Enslave", null, new_controller)
+	creature.add_status_effect(
+		"enslaved",
+		source_card.card_name if source_card != null else "Enslave",
+		source_card,
+		new_controller,
+		{
+			"home_zone_type": home_zone_type,
+			"home_zone_index": home_zone_index,
+		}
+	)
 	creature.reveal_from_stealth(self)
+	return true
+
+# Sends an enslaved creature back to its owner's board after its enslaved
+# status was removed or negated (e.g. Exorcism, Anointing Statue). Falls back
+# to the owner's hand when no board zone is open, matching the temporary
+# control return behavior.
+func return_enslaved_creature_home(creature: Card, home_zone_type: int = -1, home_zone_index: int = -1) -> bool:
+	if creature == null or creature.card_owner == null:
+		return false
+	if creature.current_zone == null or not creature.current_zone.is_board_zone():
+		return false
+	if creature.get_controller() == creature.card_owner:
+		return false
+	var resolved_home_zone_type := home_zone_type \
+		if home_zone_type >= 0 else creature.current_zone.zone_type
+	var resolved_home_zone_index := home_zone_index \
+		if home_zone_index >= 0 else creature.current_zone.zone_index
+	var destination := _find_creature_control_destination(
+		creature.card_owner,
+		resolved_home_zone_type,
+		resolved_home_zone_index
+	)
+	if destination == null:
+		creature.card_owner.move_card(creature, creature.card_owner.hand_zone)
+	else:
+		creature.card_owner.move_card(creature, destination)
+	creature.reveal_from_stealth(self)
+	var viewer: Player = get_feedback_viewer()
+	var creature_name: String = creature.get_target_log_display_name(viewer)
+	note_player_feedback("%s was freed from enslavement and returned to %s." % [
+		creature_name,
+		creature.card_owner.player_name
+	])
 	return true
 
 func get_temporary_control_failure_reason(creature: Card, new_controller: Player) -> String:

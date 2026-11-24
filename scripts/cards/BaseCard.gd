@@ -31,7 +31,7 @@ const KEYWORD_HINTS = {
 	"Mute": "A muted power cannot be unlocked or activated until the mute expires.",
 	"Shelve": "Send this card to the bottom of its owner's deck.",
 	"Convert": "Move followers from the opponent to you - they switch sides.",
-	"Enslave": "Take control of an opposing creature. It cannot use its abilities, but it can still attack and intercept.",
+	"Enslave": "Take control of an opposing creature. It cannot use its abilities, but it can still attack and intercept. Removing this status (e.g. Exorcism) returns the creature to its owner.",
 	"Mill": "Put a card from the top of a deck into the graveyard.",
 	"Engage": "Enter combat with another card, usually by attacking it or intercepting its attack.",
 	"Reach": "Can intercept regardless of position.",

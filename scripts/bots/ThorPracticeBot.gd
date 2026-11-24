@@ -30,6 +30,9 @@ const COMBAT_ATTACK_SEARCH_WIDTH := 16
 const COMBAT_REMOVAL_SEARCH_WIDTH := 32
 const COMBAT_RESPONSE_SEARCH_WIDTH := 24
 const ECON_MANA_VALUE := 1000
+# Stats dictionaries can carry projected combat guards as well as stat deltas.
+# The key is internal to bot forecasting and never reaches the engine.
+const PROJECTED_DESTRUCTION_GUARDS_KEY := "_projected_destruction_guards"
 # Wipes the bot casts in its own main phase, so Mummu can shelve every own
 # doomed card worth more banked than destroyed before the sweep resolves
 # (Bane of the Svartalfar petrifies instead of destroying and is excluded).
@@ -2163,6 +2166,26 @@ func _should_activate_prepared_mead_for_enki() -> bool:
 		return false
 	return bot_player.mana < mana_cost and bot_player.mana + MeadOfPoetry.MANA_GAIN >= mana_cost
 
+func _berserker_rage_extra_cost(creature: Card) -> int:
+	return Berserker.RAGE_ACTIVATION_COST + game_manager.get_creature_action_mana_cost(creature, "activate")
+
+func _can_project_berserker_rage(creature: Card, summon_zone: Zone, mana_after_summon: int) -> bool:
+	if not (creature is Berserker) or summon_zone == null or summon_zone not in bot_player.frontline_zones:
+		return false
+	if game_manager == null or game_manager.current_player != bot_player or creature.card_owner != bot_player:
+		return false
+	if creature.is_sleeping or creature.is_used or creature.abilities_suppressed_by_effects():
+		return false
+	if not game_manager.get_creature_ability_activation_block_reason(creature).is_empty():
+		return false
+	return mana_after_summon >= _berserker_rage_extra_cost(creature)
+
+func _berserker_rage_stats(creature: Card) -> Dictionary:
+	return {
+		creature: Vector3i(Berserker.RAGE_STR_BONUS, 0, 0),
+		PROJECTED_DESTRUCTION_GUARDS_KEY: [creature],
+	}
+
 func _plan_creature_summon(danger: int = -1, attacks: Array[Dictionary] = [], baseline: Dictionary = {}, removed_by_setup: Array = [], setup_cost: int = 0, setup: Dictionary = {}) -> Dictionary:
 	if game_manager == null or opponent == null:
 		return {}
@@ -2213,6 +2236,9 @@ func _plan_creature_summon(danger: int = -1, attacks: Array[Dictionary] = [], ba
 			var summon_cost := _get_play_cost(creature, false, summon_source)
 			if summon_source != null and summon_cost > available_mana:
 				continue
+			var rage_ready := _can_project_berserker_rage(creature, summon_zone, available_mana - summon_cost)
+			var rage_stats: Dictionary = _berserker_rage_stats(creature) if rage_ready else {}
+			var rage_cost := _berserker_rage_extra_cost(creature) if rage_ready else 0
 			var score := _score_creature_play_in_zone(
 				creature, summon_zone, available_mana, false, summon_source, removed_before_summon
 			)
@@ -2248,30 +2274,57 @@ func _plan_creature_summon(danger: int = -1, attacks: Array[Dictionary] = [], ba
 			@warning_ignore("integer_division")
 			var face_up_block_value := 0 if fenrir != null else _estimate_defensive_summon_value(creature, summon_zone) / 2
 			var reveal_value := _estimate_reveal_trigger_value(creature)
+			# A reveal-removal body with no (or only junk) targets on the board
+			# still banks its trigger: it can reveal later by attacking or by
+			# being attacked, so the hold option is worth a discounted card.
+			var banked_reveal_value := _banked_reveal_removal_value(creature)
+			var hold_reveal_value := maxi(reveal_value, banked_reveal_value)
 			var search_value := _estimate_summon_search_value(creature, available_mana - summon_cost, danger)
 			if prefer_stealth and creature is HariiJarl:
 				var warband_value := _estimate_harii_jarl_warband_value(creature)
 				score -= warband_value
 				search_value += warband_value
-			var reveal_defender := reveal_value > 0
+			var reveal_defender := hold_reveal_value > 0
 			var stealth_block_value := 0
 			if reveal_defender or prefer_stealth:
 				@warning_ignore("integer_division")
 				stealth_block_value = _estimate_defensive_summon_value(creature, summon_zone, true) / 2
 			var block_value := maxi(face_up_block_value, stealth_block_value)
+			var rage_attacks: Array[Dictionary] = []
+			if rage_ready and fenrir == null:
+				rage_attacks = _get_summon_attack_candidates(
+					creature, summon_zone, available_mana - rage_cost, rage_stats,
+					removed_before_summon, removed_by_setup, summon_source
+				)
+			var rage_opens_attack := false
+			for rage_attack in rage_attacks:
+				var rage_base: Dictionary = rage_attack.get("base", {})
+				if rage_attack.get("target") is Card and int(rage_base.get("opponent_cards_lost", 0)) > 0:
+					rage_opens_attack = true
+					break
 			var mode := _choose_creature_summon_mode(creature, enemies)
-			if (block_value > 0 or reveal_defender) and removed_by_setup.is_empty():
+			if rage_ready and rage_opens_attack:
+				mode = Card.CreatureMode.AGGRESSIVE
+			elif (block_value > 0 or reveal_defender) and removed_by_setup.is_empty():
 				mode = Card.CreatureMode.DEFENSIVE
 			var modes := [mode]
 			var summon_attacks: Array[Dictionary] = []
 			if fenrir == null:
-				summon_attacks = _get_summon_attack_candidates(creature, summon_zone, available_mana, {}, removed_before_summon, removed_by_setup, summon_source)
+				if rage_ready:
+					summon_attacks = rage_attacks
+				else:
+					summon_attacks = _get_summon_attack_candidates(creature, summon_zone, available_mana, {}, removed_before_summon, removed_by_setup, summon_source)
 			if prefer_stealth or danger > 0 or not summon_attacks.is_empty() or fenrir != null:
 				modes.append(Card.CreatureMode.DEFENSIVE if mode == Card.CreatureMode.AGGRESSIVE else Card.CreatureMode.AGGRESSIVE)
 			var mana_spent := setup_cost + summon_cost
-			var needs_brew := bool(setup.get("brew_setup", false)) or mana_spent > bot_player.mana
+			var needs_brew := bool(setup.get("brew_setup", false)) or mana_spent > bot_player.mana \
+				or (rage_ready and rage_opens_attack and bot_player.mana - summon_cost < rage_cost)
 			var summon_budget := available_mana if needs_brew else bot_player.mana - setup_cost
 			var mana_after_summon := summon_budget - summon_cost
+			if rage_ready:
+				# Rage is part of this line, so keep the post-summon safety
+				# budget honest about the mana the buff will spend.
+				mana_after_summon -= rage_cost
 			var aggressive_attacks := attacks + summon_attacks
 			for summon_mode in modes:
 				var defensive: bool = summon_mode == Card.CreatureMode.DEFENSIVE
@@ -2352,9 +2405,20 @@ func _plan_creature_summon(danger: int = -1, attacks: Array[Dictionary] = [], ba
 					var defensive_value := stealth_block_value if stealth and (reveal_defender or prefer_stealth) else block_after_impact
 					var candidate := score + (defensive_value if projected_defensive and removed_by_setup.is_empty() else 0) + attack_value
 					candidate += int(devour.get("value", 0)) + int(charge.get("value", 0))
+					if rage_ready and not projected_defensive and not summon_attacks.is_empty():
+						# The summon line assumes Rage is paid before the attack.
+						candidate -= CardStrategy.mana_penalty(self, rage_cost) + 1500
 					if returns_to_hand:
 						candidate -= _score_projected_card(creature)
 					if defensive and stealth and reveal_defender:
+						# The hold keeps the trigger banked: price the option
+						# (banked floor included), not just the best current target.
+						candidate += hold_reveal_value
+					elif stealth and not projected_defensive and uses_recruit:
+						# A hidden body that swings reveals in combat and spends
+						# the trigger on the best current target. The attack
+						# projection prices the attacker as the revealed form and
+						# drops that value, so credit the realized spend here.
 						candidate += reveal_value
 					if not stealth:
 						candidate += search_value
@@ -2442,7 +2506,8 @@ func _plan_creature_summon(danger: int = -1, attacks: Array[Dictionary] = [], ba
 							"casualty": casualty_cost,
 							"entry": entry_penalty,
 							"pay": prior_payment_penalty - int(command.get("payment_penalty", 0)),
-							"reveal": reveal_value if defensive and stealth and reveal_defender else 0,
+							"reveal": hold_reveal_value if defensive and stealth and reveal_defender
+									else reveal_value if stealth and not projected_defensive and uses_recruit else 0,
 							"search": search_value if not stealth else 0,
 							"lethal": lethal,
 							"candidate": candidate,
@@ -3323,10 +3388,16 @@ func _get_best_strategy_action(attacks: Array[Dictionary], attack: Dictionary, d
 			if card is Berserker:
 				# Rage is a combat buff with a sleep cost; only flip a fight
 				# with it (the attack planner sees the live buff afterwards).
-				var rage_score := CardStrategy.combat_gain(self, card, Berserker.RAGE_STR_BONUS, 0, null, 0, 0) - 1500
+				var rage_gain := CardStrategy.combat_gain(self, card, Berserker.RAGE_STR_BONUS, 0, null, 0, 0)
+				var rage_score := rage_gain - 1500
 				rage_score -= CardStrategy.mana_penalty(self, Berserker.RAGE_ACTIVATION_COST) + action_tax * _mana_rate()
 				if rage_score > 0:
-					var rage_plan := {"command": {"type": "activate_card_ability", "source_uid": card.uid}, "score": rage_score}
+					var rage_plan := {
+						"command": {"type": "activate_card_ability", "source_uid": card.uid},
+						"score": rage_score,
+						"combat_score": int(attack.get("score", 0)) + rage_gain,
+						"combined_setup": true,
+					}
 					if _is_better_strategy_plan(rage_plan, best_plan):
 						best_plan = rage_plan
 				continue
@@ -9758,6 +9829,12 @@ func _estimate_projected_attack_economy(action: CardAction, stats: Dictionary, i
 					var beasts: Array = result.get_or_add("mana_boon_sources", [])
 					beasts.append(combatant)
 				result["reveal_bonus"] = int(result.get("reveal_bonus", 0)) + _estimate_reveal_trigger_value(combatant)
+				# Swinging with a hidden reveal-removal body spends the banked
+				# trigger even when no target exists yet. Charge the forgone
+				# bank so a followers poke cannot cash a Dalkhu Break trap for
+				# nothing; an attacking reveal with a real target still nets
+				# its value minus the discounted banked floor.
+				result["reveal_bonus"] = int(result.get("reveal_bonus", 0)) - _banked_reveal_removal_value(combatant)
 		_add_expiring_combat_tokens(action, defender, result)
 		_add_mummu_entropy_combat_value(action, defender, result)
 		var stand_reward := _heroic_stand_combat_reward(action, defender, result)
@@ -10002,6 +10079,21 @@ func _reveal_removal_mana_value(source: Card, target: Card) -> int:
 		return CardStrategy.mana_gain_value(self, MasmassuPriest.DEMON_SPIRIT_MANA_GAIN)
 	return 0
 
+# A reveal-removal body (Dalkhu Break / Drown Below) whose trigger has no
+# worthwhile target yet is a banked removal, not a dead trigger: the body can
+# reveal later by attacking or by being attacked, and the controller picks
+# that timing. Price the held option at a discounted card so hiding and
+# holding competes with spending the body on an early poke. Callers must
+# still max this against the spend-now value from _estimate_reveal_trigger_value;
+# a target worth a full card makes holding worth exactly that card.
+func _banked_reveal_removal_value(card: Card) -> int:
+	if card == null or card.abilities_suppressed_by_effects() \
+			or card.has_veil_of_night() \
+			or not (card is MasmassuPriest or card is Grindylow):
+		return 0
+	@warning_ignore("integer_division")
+	return ECON_CARD_VALUE * 3 / 4
+
 func _estimate_reveal_trigger_value(card: Card) -> int:
 	if card.abilities_suppressed_by_effects():
 		return 0
@@ -10102,6 +10194,7 @@ func _estimate_raw_attack_economy(action: CardAction, stats: Dictionary, project
 	# risk of her follow-up Enslave counts only when HER attack is the one
 	# making the bot-side creature die in combat.
 	var her_attack := acting_player == opponent
+	var projected_guards: Array = stats.get(PROJECTED_DESTRUCTION_GUARDS_KEY, [])
 	var attacker_stats: Vector3i = stats.get(attacker, Vector3i.ZERO)
 	var partner_stats: Vector3i = stats.get(partner, Vector3i.ZERO)
 	var defender_stats: Vector3i = stats.get(defender, Vector3i.ZERO)
@@ -10119,7 +10212,7 @@ func _estimate_raw_attack_economy(action: CardAction, stats: Dictionary, project
 		return result
 	if defender.is_petrified() or defender.card_type == Card.CardType.STRUCTURE:
 		if attacker_strength > defender.get_effective_resilience(defender_stats.y):
-			_add_combat_casualty(result, attacker, defender, her_attack)
+			_add_combat_casualty(result, attacker, defender, her_attack, projected_guards)
 		return result
 	if defender.card_type != Card.CardType.CREATURE:
 		return result
@@ -10129,38 +10222,45 @@ func _estimate_raw_attack_economy(action: CardAction, stats: Dictionary, project
 	if defender_mode == Card.CreatureMode.AGGRESSIVE:
 		var defender_strength := _get_vision_adjusted_strength(defender, defender_stats.x, attacker)
 		if attacker_strength > defender_strength:
-			_add_combat_casualty(result, attacker, defender, her_attack)
+			_add_combat_casualty(result, attacker, defender, her_attack, projected_guards)
 			var defender_damage_strength := game_manager._get_giants_disdain_damage_stat(defender, attackers, defender_strength)
 			_add_follower_loss_to_economy(result, defender.get_controller(), attacker_strength - defender_damage_strength, damage_source)
 		elif defender_strength > attacker_strength:
-			_add_combat_casualty(result, defender, attacker, her_attack)
-			_add_combat_casualty(result, defender, partner, her_attack)
+			_add_combat_casualty(result, defender, attacker, her_attack, projected_guards)
+			_add_combat_casualty(result, defender, partner, her_attack, projected_guards)
 			var attacker_damage_strength := game_manager._get_giants_disdain_damage_stat(attacker, opposing_cards, attacker_strength - support_strength)
 			attacker_damage_strength += game_manager._get_giants_disdain_damage_stat(partner, opposing_cards, support_strength)
 			_add_follower_loss_to_economy(result, acting_player, defender_strength - attacker_damage_strength, defender)
 		else:
-			_add_combat_casualty(result, defender, attacker, her_attack)
-			_add_combat_casualty(result, defender, partner, her_attack)
-			_add_combat_casualty(result, attacker, defender, her_attack)
+			_add_combat_casualty(result, defender, attacker, her_attack, projected_guards)
+			_add_combat_casualty(result, defender, partner, her_attack, projected_guards)
+			_add_combat_casualty(result, attacker, defender, her_attack, projected_guards)
 		return result
 
 	var attack_strength_vs_defense := _get_vision_adjusted_strength_vs_defense(attacker, attacker_stats.x, defender)
 	attack_strength_vs_defense += _get_vision_adjusted_strength_vs_defense(partner, partner_stats.x, defender)
 	var defender_resilience := defender.get_effective_resilience(defender_stats.y)
 	if attack_strength_vs_defense > defender_resilience:
-		_add_combat_casualty(result, attacker, defender, her_attack)
+		_add_combat_casualty(result, attacker, defender, her_attack, projected_guards)
 	else:
 		if attack_strength_vs_defense < defender_resilience:
 			_add_follower_loss_to_economy(result, acting_player, defender_resilience - attack_strength_vs_defense)
 			if defender.get_controller() != acting_player:
 				result["defensive_conversion_defender"] = defender
 		if game_manager._has_ferocious_defence(defender.get_controller()):
-			_add_combat_casualty(result, defender, attacker, her_attack)
-			_add_combat_casualty(result, defender, partner, her_attack)
+			_add_combat_casualty(result, defender, attacker, her_attack, projected_guards)
+			_add_combat_casualty(result, defender, partner, her_attack, projected_guards)
 	return result
 
-func _add_combat_casualty(result: Dictionary, killer: Card, victim: Card, her_attack: bool = false) -> void:
-	if victim == null or CardStrategy.destruction_guard(victim) or game_manager.is_warded_from_combat_destruction(victim, killer):
+func _add_combat_casualty(
+	result: Dictionary,
+	killer: Card,
+	victim: Card,
+	her_attack: bool = false,
+	projected_guards: Array = []
+) -> void:
+	if victim == null or victim in projected_guards or CardStrategy.destruction_guard(victim) \
+			or game_manager.is_warded_from_combat_destruction(victim, killer):
 		return
 	if not killer.can_destroy_combat_protected_creatures(victim):
 		var replacement: Zone = victim.get_self_graveyard_replacement_zone(game_manager, true, true, false) if victim is BaseCard else null

@@ -100,8 +100,9 @@ the Mighty is held when hidden field cards make its strongest-card result
 uncertain. Temporary control/resurrection is discounted. Combat and removal
 losses from a temporary steal are charged to the card's owner, so a borrowed
 body dying is the owner's loss and destroying it never counts as gaining a
-card. Exorcism counts lost
-outside buffs, and Book of Life discounts silencing known utility creatures.
+card. Exorcism counts destroyed attached enemy hexes and lost outside buffs,
+never queued one-shot reveals such as Dalkhu Break, and Book of Life discounts
+silencing known utility creatures.
 
 Automatic-response hexes honor `requires_priority_target_selection()` instead
 of requiring an irrelevant target UID for counterspells. Passive powers are
