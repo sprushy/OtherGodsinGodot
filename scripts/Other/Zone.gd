@@ -96,6 +96,11 @@ func shuffle_deck() -> void:
 		if gm.sfx_enabled:
 			ShuffleDeckSoundPlayerScript.play_sound()
 		gm.note_ui_sound_cue("shuffle_deck")
+	# A shuffle is the point where public deck knowledge is lost, so lingering
+	# public-reveal statuses on deck cards must not keep identifying them.
+	for card in cards:
+		if card != null and card.has_status_effect("publicly_revealed"):
+			card.remove_status_effects_by_name("publicly_revealed")
 	clear_deck_knowledge()
 	cards.shuffle()
 

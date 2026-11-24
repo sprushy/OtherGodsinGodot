@@ -107,9 +107,9 @@ func resolve_rally_choice(game_manager: GameManager, chosen_card: Card = null, s
 	var shelved_cards: Array[Card] = []
 	for card in top_cards:
 		if card == recruited_card:
+			controller.deck_zone.reveal_deck_card(card)
 			controller.move_card(card, controller.hand_zone)
 			card.card_owner = controller
-			controller.deck_zone.reveal_deck_card(card)
 			continue
 		if card.current_zone == controller.deck_zone:
 			# These cards were just revealed publicly, so the shelve keeps

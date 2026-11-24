@@ -15,6 +15,7 @@ const HERMES_PSYCHOPOMPUS_MIN_GHOSTS := 4
 const NUSKU_MIN_ANCIENT_MAGICAL := 6
 const MANANNAN_MAC_LIR_MIN_TRISKELION_CREATURES := 5
 const ODIN_MIN_RUNIC_ACTIVATORS := 4
+const CERNUNNOS_MIN_LEVEL_5_ANIMALS := 3
 const KEY_OF_SOLOMON_MIN_SOURCES := 2
 const KEY_OF_SOLOMON_MIN_TARGETS := 4
 const VISION_OF_TARTARUS_MIN_VOID_SOURCES := 3
@@ -124,6 +125,8 @@ func build_random_deck(seed_value: int, forced_god_name: String = "", ranked: bo
 			preloaded_regular_count = _count_regular_cards(deck_cards)
 		if not _fill_regular_cards_for_god(deck_cards, god, rng, ranked, preloaded_regular_count):
 			continue
+		if god is Cernunnos:
+			_enforce_god_specific_regular_minimums(deck_cards, god, rng, ranked)
 		var special_setup := {}
 		if TiamatThePrimordial.is_tiamat_god(god):
 			var brood_count := rng.randi_range(1, TiamatThePrimordial.POWER_SLOT_COUNT)
@@ -276,7 +279,8 @@ func _seed_psychopompus_ghosts(
 func _enforce_god_specific_regular_minimums(
 	cards: Dictionary,
 	god: GodCard,
-	rng: RandomNumberGenerator
+	rng: RandomNumberGenerator,
+	ranked: bool = true
 ) -> void:
 	var attempts := 0
 	while attempts < MAX_RANDOM_PICK_ATTEMPTS:
@@ -297,7 +301,7 @@ func _enforce_god_specific_regular_minimums(
 				cards.erase(victim_name)
 			else:
 				cards[victim_name] = victim_count - 1
-		var candidates := _get_regular_candidates(god, cards, false, true).filter(
+		var candidates := _get_regular_candidates(god, cards, false, ranked).filter(
 			func(card: Card) -> bool: return _matches_god_specific_regular_requirement(god, card)
 		)
 		if candidates.is_empty():
@@ -315,6 +319,8 @@ func _god_specific_regular_deficit(god: GodCard, cards: Dictionary) -> int:
 		required_count = MANANNAN_MAC_LIR_MIN_TRISKELION_CREATURES
 	elif god is Odin:
 		required_count = ODIN_MIN_RUNIC_ACTIVATORS
+	elif god is Cernunnos:
+		required_count = CERNUNNOS_MIN_LEVEL_5_ANIMALS
 	else:
 		return 0
 	var current_count := 0
@@ -333,6 +339,8 @@ func _matches_god_specific_regular_requirement(god: GodCard, card: Card) -> bool
 		return _is_triskelion_creature(card)
 	if god is Odin:
 		return _is_odin_runic_activator(card)
+	if god is Cernunnos:
+		return _is_level_5_or_higher_animal(card)
 	return false
 
 func _is_ancient_spell_or_charm(card: Card) -> bool:
@@ -348,6 +356,15 @@ func _is_triskelion_creature(card: Card) -> bool:
 func _is_odin_runic_activator(card: Card) -> bool:
 	return card != null \
 		and (card.has_type("Runic") or str(card.card_name).to_lower().contains("of odin"))
+
+func _is_level_5_or_higher_animal(card: Card) -> bool:
+	return card != null \
+		and card.card_type == Card.CardType.CREATURE \
+		and not card.is_god \
+		and not card.is_power \
+		and not (card is ActiveGodCard) \
+		and card.has_type("Animal") \
+		and card.level >= 5
 
 # Chooses the lowest-survey-rated regular card that does not already satisfy
 # the god-specific requirement. Ratings come from the ladder card audit, and
@@ -1150,6 +1167,8 @@ func _is_preferred_card_for_god(card: Card, god: GodCard) -> bool:
 			return card.has_type("Warrior") and card.culture == "Norse"
 		"Tezcatlipoca, the Smoking Mirror":
 			return card.has_type("Shapeshifter")
+		"Cernunnos":
+			return _is_level_5_or_higher_animal(card)
 		_:
 			return false
 

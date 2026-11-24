@@ -257,6 +257,14 @@ func move_card(card: Card, to_zone: Zone, deck_placement: Zone.DeckPlacement = Z
 		return
 	
 	var deck_identity_public: Variant = _get_deck_identity_public(card, from_zone, destination_zone, deck_placement)
+	# A deck card whose identity was legitimately public stays known when it
+	# reaches the hand, so it is drawn/added revealed rather than re-hidden.
+	var deck_card_was_publicly_known: bool = (
+		destination_zone == hand_zone
+		and from_zone != null
+		and from_zone.zone_type == Zone.ZoneType.DECK
+		and from_zone.is_deck_card_publicly_known(card)
+	)
 	if from_zone:
 		from_zone.remove_card(card)
 	elif not destination_zone.is_in_play_zone():
@@ -265,6 +273,14 @@ func move_card(card: Card, to_zone: Zone, deck_placement: Zone.DeckPlacement = Z
 	if destination_zone.is_in_play_zone():
 		card.reset_board_leave_hooks()
 	card_moved.emit(card, from_zone, destination_zone)
+	if deck_card_was_publicly_known and card.current_zone == hand_zone and not card.is_revealed_in_hand():
+		card.add_status_effect(
+			"revealed_in_hand",
+			"Public deck knowledge",
+			null,
+			self,
+			{"clear_on_card_move": true}
+		)
 	if leaving_play \
 			and destination_zone == card.card_owner.graveyard_zone \
 			and card.has_method("on_perish") \
@@ -359,7 +375,11 @@ func _get_deck_identity_public(card: Card, from_zone: Zone, to_zone: Zone, deck_
 	if deck_placement != Zone.DeckPlacement.PRIMED and deck_placement != Zone.DeckPlacement.SHELVED:
 		return null
 	if from_zone == null:
-		return false
+		# Cards outside normal zones (e.g. stored under Ananke's Binding) keep
+		# any public identity they already earned.
+		return card.is_revealed_to_all() \
+			or card.is_revealed_in_hand() \
+			or (card is PowerCard and (card as PowerCard).is_publicly_revealed)
 	match from_zone.zone_type:
 		Zone.ZoneType.GRAVEYARD, Zone.ZoneType.ABYSS:
 			# Graveyard and abyss contents are public to all players.

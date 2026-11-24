@@ -174,7 +174,7 @@ During the Upkeep window, you usually choose one of these resource options:
 - Gain 4 mana.
 - Click your deck to draw 1 card.
 
-Click either deck to inspect it in draw order. While you can choose **+1 card** during upkeep, right-click your deck to inspect it. Both players can see primed and shelved positions in the deck until it is shuffled. You always know your own primed and shelved cards; your opponent only sees a primed or shelved card's identity if it was public information when it entered the deck — for example, a face-up card on the field sent to the deck by Mummu or Askelladen's Tactical Retreat, or a card an effect explicitly revealed. Otherwise it appears face down, like the rest of the deck.
+Click either deck to inspect it in draw order. While you can choose **+1 card** during upkeep, right-click your deck to inspect it. Both players can see primed and shelved positions in the deck until it is shuffled. You always know your own primed and shelved cards; your opponent only sees a primed or shelved card's identity if it was public information when it entered the deck — for example, a face-up card on the field sent to the deck by Mummu or Askelladen's Tactical Retreat, or a card an effect explicitly revealed. Otherwise it appears face down, like the rest of the deck. Publicly known deck cards stay viewable until the deck is shuffled, and a known card that is drawn or added to hand is treated as revealed in hand.
 
 At the start of upkeep, you normally gain 1 automatic mana immediately, before choosing a resource option. Choosing mana then adds 4 more mana; choosing a card adds no further mana.
 
@@ -459,7 +459,7 @@ Cards explain their own rules text, and keyword hints appear in card detail view
 - Unlock: pay to turn on a Power.
 - Relock: turn an unlocked Power face-down again.
 - Resurrect: return a destroyed card from Graveyard to field.
-- Prime: put a card on top of a deck. Its identity is visible to a player only if it was already public information (revealed, or sent from a face-up card or public zone); otherwise the owner knows it alone.
+- Prime: put a card on top of a deck. Its identity is visible to a player only if it was already public information (revealed, or sent from a face-up card or public zone); otherwise the owner knows it alone. A publicly known primed or shelved card stays visible in the deck until it is shuffled, and stays revealed if it is drawn or added to hand.
 - Shelve: put a card on the bottom of its owner's deck.
 - Mill: put cards from the top of a deck into the Graveyard.
 - Search: look through your deck for a card, then shuffle.

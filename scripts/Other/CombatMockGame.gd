@@ -8902,20 +8902,28 @@ func _get_enemy_hand_overlay_display_cards(enemy_player: Player) -> Array[Card]:
 	var display_cards: Array[Card] = []
 	if enemy_player == null or enemy_player.hand_zone == null:
 		return display_cards
+	var revealed_cards: Array[Card] = []
+	var other_cards: Array[Card] = []
 	for card in enemy_player.hand_zone.cards:
 		if card == null:
 			continue
-		if _observer_reveals_bot_hands:
+		if _is_enemy_hand_card_revealed(card):
+			revealed_cards.append(card)
+		else:
+			other_cards.append(card)
+	# Known cards always show on the left of the hand, before any card backs.
+	for card in revealed_cards:
+		display_cards.append(card)
+	if _observer_reveals_bot_hands or _is_mopsus_hand_selection_active():
+		for card in other_cards:
 			display_cards.append(card)
-			continue
-		if _is_mopsus_hand_selection_active():
-			display_cards.append(card)
-			continue
-		if display_cards.size() < ENEMY_HAND_PEEK_MAX_CARDS:
-			display_cards.append(card)
-			continue
-		if card.is_revealed_in_hand() and card not in display_cards:
-			display_cards.append(card)
+		return display_cards
+	var remaining_peek_slots := maxi(0, ENEMY_HAND_PEEK_MAX_CARDS - display_cards.size())
+	for card in other_cards:
+		if remaining_peek_slots <= 0:
+			break
+		display_cards.append(card)
+		remaining_peek_slots -= 1
 	return display_cards
 
 func _make_enemy_hand_overlay_card(card: Card) -> Control:
@@ -11028,9 +11036,28 @@ func _get_hand_render_entries(
 	blot_valid_choices: Array[Card]
 ) -> Array[Dictionary]:
 	var entries: Array[Dictionary] = []
+	var revealed_hand_cards: Array[Card] = []
+	var other_hand_cards: Array[Card] = []
 	for card in hand_player.hand_zone.cards:
 		if _should_hide_hand_card(card):
 			continue
+		if card.is_revealed_in_hand():
+			revealed_hand_cards.append(card)
+		else:
+			other_hand_cards.append(card)
+	# Known cards always render on the left of the hand; relative order is
+	# preserved within each group.
+	for card in revealed_hand_cards:
+		entries.append({
+			"card": card,
+			"is_proxy": false,
+			"display_mana_cost": _get_hand_card_display_mana_cost(card),
+			"cost_adjustment_lines": _get_hand_card_cost_adjustment_lines(card),
+			"highlighted": false,
+			"blot_summonable": card in blot_valid_choices,
+			"blot_selected": card in _pending_blot_selected_creatures,
+		})
+	for card in other_hand_cards:
 		entries.append({
 			"card": card,
 			"is_proxy": false,

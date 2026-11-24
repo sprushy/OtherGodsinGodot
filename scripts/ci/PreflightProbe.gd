@@ -441,6 +441,8 @@ func _check_anankes_binding_timing(failures: PackedStringArray) -> void:
 	player.deck_zone.add_card(later)
 	player.mana = 2 * AnankesBinding.ACTIVATION_COST
 	binding.activate(game, chosen)
+	if not chosen.is_revealed_to_all():
+		failures.append("Ananke's Binding did not reveal the card it stored")
 	game._notify_controller_turn_end(player)
 	game.current_player = opponent
 	game._notify_controller_turn_end(opponent)
@@ -454,11 +456,19 @@ func _check_anankes_binding_timing(failures: PackedStringArray) -> void:
 	game._notify_controller_turn_end(player)
 	if chosen in binding.stored_cards or player.deck_zone.cards.front() != chosen:
 		failures.append("Ananke's Binding did not prime the chosen card at the end of the owner's next turn")
+	if player.deck_zone.get_deck_placement(chosen) != Zone.DeckPlacement.PRIMED \
+			or not player.deck_zone.is_deck_identity_public(chosen):
+		failures.append("Ananke's Binding did not keep the stored card's identity public when priming it")
 	if later not in binding.stored_cards or later in player.deck_zone.cards:
 		failures.append("Ananke's Binding primed the second card with the first card")
 	game._notify_controller_turn_end(player)
 	if later in binding.stored_cards or player.deck_zone.cards.front() != later:
 		failures.append("Ananke's Binding did not prime the second card on its own countdown")
+	player.deck_zone.shuffle_deck()
+	if chosen.is_revealed_to_all() or later.is_revealed_to_all() \
+			or player.deck_zone.is_deck_identity_public(chosen) \
+			or player.deck_zone.is_deck_identity_public(later):
+		failures.append("Shuffling did not clear Ananke's public reveal on stored cards")
 
 func _check_deck_validator(failures: PackedStringArray) -> void:
 	var validator = DeckValidatorScript.new()
@@ -960,6 +970,8 @@ func _check_public_deck_knowledge(failures: PackedStringArray) -> void:
 	if deck_owner.draw_card() != second or deck.get_primed_top_card() != first \
 			or deck.get_deck_placement(second) != Zone.DeckPlacement.UNKNOWN:
 		failures.append("Drawing a primed card did not expose the next primed card")
+	if second.is_revealed_in_hand():
+		failures.append("Drawing a privately primed card wrongly revealed it in hand")
 	deck.shelve_deck_card(first)
 	if deck.known_top_card != null or deck.get_known_deck_card(1) != shelved or deck.get_known_deck_card(2) != first:
 		failures.append("Shelving a primed card did not preserve public cards in bottom order")
@@ -992,6 +1004,8 @@ func _check_public_deck_knowledge(failures: PackedStringArray) -> void:
 		failures.append("A deck-sourced primed card leaked its identity to the opponent")
 	if BotCardStrategyScript.visible(bot, second) or not BotCardStrategyScript.visible(bot, grave_card):
 		failures.append("Bot visibility did not distinguish public from unknown deck cards")
+	if deck_owner.draw_card() != grave_card or not grave_card.is_revealed_in_hand():
+		failures.append("Drawing a publicly known deck card did not keep it revealed in hand")
 
 func _check_json_store_round_trip(failures: PackedStringArray) -> void:
 	var storage_path := "user://ci_preflight_json_store.json"
@@ -1487,11 +1501,23 @@ func _check_ranked_bot_deck_generation(failures: PackedStringArray) -> void:
 		[NuskuFirebearer.new(), PracticeAutofillDeckFactory.NUSKU_MIN_ANCIENT_MAGICAL],
 		[ManannanMacLir.new(), PracticeAutofillDeckFactory.MANANNAN_MAC_LIR_MIN_TRISKELION_CREATURES],
 		[Odin.new(), PracticeAutofillDeckFactory.ODIN_MIN_RUNIC_ACTIVATORS],
+		[Cernunnos.new(), PracticeAutofillDeckFactory.CERNUNNOS_MIN_LEVEL_5_ANIMALS],
 	]:
 		var required_god: GodCard = god_case[0]
 		var required_deck: Dictionary = factory.build_random_deck(4100 + int(god_case[1]), required_god.card_name, true)
 		if required_deck.is_empty() or factory._god_specific_regular_deficit(required_god, required_deck.get("cards", {})) != 0:
 			failures.append("Ranked %s autofill did not meet its god-specific card minimum" % required_god.card_name)
+	var cernunnos := Cernunnos.new()
+	for ranked_mode in [false, true]:
+		var cernunnos_deck := factory.build_random_deck(
+			4800 + int(ranked_mode), cernunnos.card_name, ranked_mode
+		)
+		if cernunnos_deck.is_empty() \
+				or factory._god_specific_regular_deficit(cernunnos, cernunnos_deck.get("cards", {})) != 0:
+			failures.append("Cernunnos autofill did not include three level 5 or higher Animals")
+	if factory._is_level_5_or_higher_animal(BrownBear.new()) \
+			or not factory._is_level_5_or_higher_animal(Afanc.new()):
+		failures.append("Cernunnos autofill Animal level threshold did not match level 5 or higher")
 	var odin := Odin.new()
 	var odin_deck := factory.build_random_deck(4400, odin.card_name, true)
 	if odin_deck.is_empty():

@@ -16,7 +16,7 @@ func _init() -> void:
 	mana_cost = UNLOCK_COST
 	culture = "Olympic"
 	card_types = ["Power", "Fate Manipulation"]
-	ability_text = "Pay %d mana: [b]Search[/b] a card and place it under Ananke's Binding. At the end of your next turn, [b]Prime[/b] it." % ACTIVATION_COST
+	ability_text = "Pay %d mana: [b]Search[/b] a card, [b]reveal[/b] it, and place it under Ananke's Binding. At the end of your next turn, [b]Prime[/b] it." % ACTIVATION_COST
 	art_path = ART_PATH
 
 func on_unlock(_game_manager: GameManager) -> void:
@@ -44,8 +44,21 @@ func activate(game_manager: GameManager, chosen_card: Card = null) -> void:
 
 	if not spend_activation_mana(ACTIVATION_COST, game_manager):
 		return
-	card_owner.deck_zone.cards.erase(chosen_card)
+	var was_publicly_known := chosen_card.is_revealed_to_all()
+	card_owner.deck_zone.remove_card(chosen_card)
 	card_owner.deck_zone.shuffle_deck()
+	if not was_publicly_known:
+		# The search result is public information while stored and when it is
+		# later primed; a shuffle of the returning deck is what clears it.
+		chosen_card.add_status_effect(
+			"publicly_revealed",
+			card_name,
+			self,
+			card_owner,
+			{}
+		)
+		if game_manager != null:
+			game_manager.notify_card_revealed_by_effect(chosen_card, self)
 	stored_cards.append(chosen_card)
 	_turns_until_return[chosen_card] = RETURN_DELAY_TURNS
 	_emit_visual_state_changed()
@@ -80,14 +93,17 @@ func on_deck_shuffled() -> void:
 func _prime_due_cards(due_cards: Array[Card], game_manager: GameManager) -> void:
 	if due_cards.is_empty():
 		return
+	var viewer: Player = game_manager.get_feedback_viewer() if game_manager != null else null
 	var primed_names: Array[String] = []
 	for card in due_cards:
 		stored_cards.erase(card)
 		_turns_until_return.erase(card)
 	for i in range(due_cards.size() - 1, -1, -1):
 		var card := due_cards[i]
-		primed_names.append(card.card_name)
-		card_owner.deck_zone.prime_card(card)
+		primed_names.append(card.get_target_log_display_name(viewer))
+		# Stored cards were publicly revealed, so priming keeps their identity
+		# known to both players until the deck is shuffled.
+		card_owner.deck_zone.prime_card(card, card.is_revealed_to_all())
 	print(card_name + ": " + str(due_cards.size()) + " stored card(s) placed on top of the deck.")
 	if game_manager != null:
 		var primed_label := ", ".join(primed_names)
