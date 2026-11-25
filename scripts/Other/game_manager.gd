@@ -2349,11 +2349,13 @@ func creature_attack(attacker: Card, target) -> void:
 	if not pay_creature_action_mana_cost(attacker, "attack"):
 		return
 
-	if attacker.is_stealth:
-		attacker.reveal_from_combat(self)
-		attacker.mark_combat_resilience_inferable()
-		if attacker.creature_mode == Card.CreatureMode.DEFENSIVE:
-			attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
+	# Attacking from stealth is the sequential line: the switch to Aggressive
+	# stance is a Minor Action (and reveals the creature, firing its Reveal
+	# triggers), then the attack itself spends the Major Action. The veil's
+	# combat concealment never applies because the reveal happens outside combat.
+	if attacker.is_stealth and not creature_change_mode(attacker, Card.CreatureMode.AGGRESSIVE):
+		note_player_feedback(attacker.card_name + " cannot switch to Aggressive stance to attack right now.")
+		return
 	var united_front_partner: Card = null
 	if attacker.has_method("get_united_front_partner_for_attack"):
 		united_front_partner = attacker.get_united_front_partner_for_attack(self)

@@ -4184,10 +4184,14 @@ func request_attack(attacker, target) -> bool:
 			return false
 
 	if attacker_card.is_stealth:
-		attacker_card.reveal_from_combat(game_manager)
-		attacker_card.mark_combat_resilience_inferable()
-		if attacker_card.creature_mode == Card.CreatureMode.DEFENSIVE:
-			attacker_card.creature_mode = Card.CreatureMode.AGGRESSIVE
+		# Attacking from stealth is the sequential line: the switch to
+		# Aggressive stance is a Minor Action (and reveals the creature,
+		# firing its Reveal triggers), then the attack spends the Major
+		# Action. The veil's combat concealment never applies because the
+		# reveal happens outside combat.
+		if not game_manager.creature_change_mode(attacker_card, Card.CreatureMode.AGGRESSIVE):
+			move_failed.emit(attacker_card.card_name + " cannot switch stance to attack right now.")
+			return false
 
 	selected_attacker = attacker_card
 	pending_attack_target = target_obj

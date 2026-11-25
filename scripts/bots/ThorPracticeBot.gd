@@ -6159,7 +6159,10 @@ func _has_clean_removal_attack(attacker: Card, target: Card, summon_zone: Zone =
 
 func _can_attack_after_priority(attacker: Card) -> bool:
 	# MatchManager.can_attack also checks whether priority is still resolving.
+	# A stealth attacker pays the sequential line: the change to Aggressive
+	# stance is a Minor Action before the attack's Major Action.
 	return game_manager.turn_number > 1 and attacker.can_take_major_creature_action() \
+		and (not attacker.is_stealth or attacker.can_take_minor_creature_action()) \
 		and not attacker.summoned_after_first_attack_this_turn and not game_manager.is_first_turn_attack_blocked_by_weather(attacker) \
 		and not attacker.is_sleeping and not attacker.is_paralyzed() and not attacker.has_status_effect("cannot_attack") \
 		and (not attacker.is_face_down or attacker.is_stealth)
@@ -9831,8 +9834,18 @@ func _estimate_projected_attack_economy(action: CardAction, stats: Dictionary, i
 			if combatant == null or combatant.get_controller() != bot_player \
 					or not (combatant.is_stealth or (combatant == defender and projected_defender_stealth)):
 				continue
+			if combatant.has_veil_of_night() and combatant != defender:
+				# The sequential stealth attack switched this attacker to
+				# Aggressive stance before combat, so it is revealed and its
+				# Reveal trigger fired like any reveal — no concealment credit.
+				if combatant.abilities_suppressed_by_effects():
+					continue
+				@warning_ignore("integer_division")
+				result["reveal_bonus"] = int(result.get("reveal_bonus", 0)) \
+					+ _estimate_reveal_trigger_value(combatant) - _banked_reveal_removal_value(combatant)
+				continue
 			if combatant.has_veil_of_night():
-				if combatant != defender and combatant not in result["casualties"] \
+				if combatant not in result["casualties"] \
 						and not combatant.is_publicly_identified(game_manager):
 					result["concealment_value"] = int(result.get("concealment_value", 0)) + VEIL_CONCEALMENT_VALUE
 				continue

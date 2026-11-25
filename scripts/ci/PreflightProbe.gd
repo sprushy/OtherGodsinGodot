@@ -3991,11 +3991,12 @@ func _check_aphrodite_aspect_shift(failures: PackedStringArray) -> void:
 	victim.creature_mode = Card.CreatureMode.DEFENSIVE
 	opponent.frontline_zones[1].add_card(victim)
 	game.creature_attack(attacker, victim)
-	if not attacker.is_stealth or not attacker.is_face_down or victim.current_zone != opponent.graveyard_zone:
-		failures.append("Veil of Night did not keep a hidden attacker concealed through combat")
-	if not attacker.is_combat_resilience_inferable() \
-			or "RES %d" % attacker.get_effective_resilience() not in attacker.get_public_combat_log_display_name():
-		failures.append("A Veil of Night attacker did not expose its inferable Resilience after combat")
+	# Attacking from stealth is the sequential line: the switch to Aggressive
+	# stance is a Minor Action that reveals the creature before combat, so the
+	# veil never conceals an attacker — only hidden defenders stay concealed.
+	if attacker.is_stealth or attacker.is_face_down or attacker.creature_mode != Card.CreatureMode.AGGRESSIVE \
+			or victim.current_zone != opponent.graveyard_zone:
+		failures.append("A stealth attack did not reveal through the Aggressive stance switch before combat")
 	player.followers = 100
 	GameState.apply_to_manager(GameState.serialize(game), game)
 	danger = bot._forecast_incoming_follower_loss()
@@ -4008,7 +4009,7 @@ func _check_aphrodite_aspect_shift(failures: PackedStringArray) -> void:
 	var restored_power := game.get_card_by_uid(power.uid) as AspectShift
 	var restored_attacker := game.get_card_by_uid(attacker.uid)
 	if not player.god_zone.cards[0] is AphroditeAreia or restored_power == null or not restored_power.is_face_down \
-			or restored_attacker == null or not restored_attacker.will_reveal_in_combat() or player.mana != 12:
+			or restored_attacker == null or not defender.will_reveal_in_combat() or player.mana != 12:
 		failures.append("Aspect Shift did not restore Aphrodite Areia and end Veil of Night after a state round trip")
 		return
 	var capture_target := game.get_card_by_uid(enemy.uid)
