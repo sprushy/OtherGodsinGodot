@@ -96,7 +96,7 @@ func _init() -> void:
 		if card == null:
 			continue
 		_cards_by_name[str(card.card_name)] = card
-		if card is GodCard and not (card is AphroditeSkotia):
+		if card is GodCard:
 			_gods.append(card as GodCard)
 	_build_restricted_equipment_lookup()
 

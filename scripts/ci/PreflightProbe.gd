@@ -1467,6 +1467,13 @@ func _check_bot_sideboarding(failures: PackedStringArray) -> void:
 
 func _check_ranked_bot_deck_generation(failures: PackedStringArray) -> void:
 	var factory := PracticeAutofillDeckFactory.new()
+	var skotia_name := AphroditeSkotia.new().card_name
+	if not factory.get_ranked_god_names().has(skotia_name):
+		failures.append("Aphrodite Skotia was missing from the ranked bot god pool")
+	for ranked: bool in [false, true]:
+		var skotia_deck := factory.build_random_deck(7600, skotia_name, ranked)
+		if int(skotia_deck.get("cards", {}).get(skotia_name, 0)) != 1:
+			failures.append("Bot generator did not produce an Aphrodite Skotia deck (ranked: %s)" % ranked)
 	var tez := TezcatlipocaTheSmokingMirror.new()
 	var tez_deck := factory.build_random_deck(1337, tez.card_name, true)
 	if int(tez_deck.get("cards", {}).get("Tonal Extraction", 0)) != 1:

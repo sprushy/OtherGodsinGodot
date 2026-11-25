@@ -70,6 +70,13 @@ const NAME_POOLS := {
 		"Spear of Desire", "Crimson Myrtle", "Spartan Rose", "War Bride",
 		"Thorn Kiss", "Beauty in Bronze", "Silken Aegis", "Rose Standard",
 	],
+	"Aphrodite Skotia": [
+		"Veil of Night", "Midnight Myrtle", "Rose of Erebus", "Moonless Kiss",
+		"Nocturne", "Shrouded Thorn", "Black Pearl", "Silent Embrace",
+		"Eclipse of Cythera", "Perfume of Shadows", "Obsidian Mirror", "Duskwoven Silk",
+		"Moon Behind the Veil", "Myrtle in Mourning", "Kiss of Asphodel", "Starlit Ambush",
+		"The Unseen Bride", "Rose Under Stone", "Hidden Garland", "The Dark Beloved",
+	],
 	"Hermes": [
 		"Winged Sandal", "Crossroads", "Golden Road", "Quickstep",
 		"Night Courier", "Herald", "Thief's Star", "Caduceus Run",
