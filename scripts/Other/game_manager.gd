@@ -3194,11 +3194,16 @@ func _combat_kill_routed_deferred(
 			and killer_controller != null \
 			and victim_controller != null \
 			and victim_controller != killer_controller
-		if killer != null and killer.has_method("on_kill") and not killer.abilities_suppressed() and victim_counts_as_creature_kill:
+		# Kill triggers require the victim to actually reach a destroyed
+		# destination (Graveyard, Abyss, or a removed token). Destination
+		# replacements such as Stone Skin keep the card on the field, so the
+		# victim was neither Slain nor destroyed for trigger purposes.
+		var victim_reached_destroyed_destination := victim != null and reached_public_destroyed_destination(victim)
+		if killer != null and killer.has_method("on_kill") and not killer.abilities_suppressed() and victim_counts_as_creature_kill and victim_reached_destroyed_destination:
 			killer.on_kill(self, victim)
-		if killer != null and killer.has_method("on_attack_target_destroyed") and not killer.abilities_suppressed() and victim_counts_as_attack_target_destroy:
+		if killer != null and killer.has_method("on_attack_target_destroyed") and not killer.abilities_suppressed() and victim_counts_as_attack_target_destroy and victim_reached_destroyed_destination:
 			killer.on_attack_target_destroyed(self, victim)
-		if victim_counts_as_attack_target_destroy:
+		if victim_counts_as_attack_target_destroy and victim_reached_destroyed_destination:
 			combat_destroy_events_this_turn.append({
 				"killer_owner": killer_controller,
 				"victim_owner": victim_controller,
@@ -3206,7 +3211,7 @@ func _combat_kill_routed_deferred(
 				"victim": victim,
 			})
 			_notify_player_god_visual_state_changed(killer_controller)
-		if killer != null and killer_controller != null and victim_controller != killer_controller and victim_counts_as_creature_kill:
+		if killer != null and killer_controller != null and victim_controller != killer_controller and victim_counts_as_creature_kill and victim_reached_destroyed_destination:
 			for zone in killer_controller.frontline_zones + killer_controller.reserve_zones:
 				for card in zone.cards:
 					if card in suppress_ally_kill_sources:
@@ -3820,11 +3825,16 @@ func _combat_kill_routed(
 			and killer_controller != null \
 			and victim_controller != null \
 			and victim_controller != killer_controller
-		if killer != null and killer.has_method("on_kill") and not killer.abilities_suppressed() and victim_counts_as_creature_kill:
+		# Kill triggers require the victim to actually reach a destroyed
+		# destination (Graveyard, Abyss, or a removed token). Destination
+		# replacements such as Stone Skin keep the card on the field, so the
+		# victim was neither Slain nor destroyed for trigger purposes.
+		var victim_reached_destroyed_destination := victim != null and reached_public_destroyed_destination(victim)
+		if killer != null and killer.has_method("on_kill") and not killer.abilities_suppressed() and victim_counts_as_creature_kill and victim_reached_destroyed_destination:
 			killer.on_kill(self, victim)
-		if killer != null and killer.has_method("on_attack_target_destroyed") and not killer.abilities_suppressed() and victim_counts_as_attack_target_destroy:
+		if killer != null and killer.has_method("on_attack_target_destroyed") and not killer.abilities_suppressed() and victim_counts_as_attack_target_destroy and victim_reached_destroyed_destination:
 			killer.on_attack_target_destroyed(self, victim)
-		if victim_counts_as_attack_target_destroy:
+		if victim_counts_as_attack_target_destroy and victim_reached_destroyed_destination:
 			combat_destroy_events_this_turn.append({
 				"killer_owner": killer_controller,
 				"victim_owner": victim_controller,
@@ -3832,7 +3842,7 @@ func _combat_kill_routed(
 				"victim": victim,
 			})
 			_notify_player_god_visual_state_changed(killer_controller)
-		if killer != null and killer_controller != null and victim_controller != killer_controller and victim_counts_as_creature_kill:
+		if killer != null and killer_controller != null and victim_controller != killer_controller and victim_counts_as_creature_kill and victim_reached_destroyed_destination:
 			for zone in killer_controller.frontline_zones + killer_controller.reserve_zones:
 				for card in zone.cards:
 					if card in suppress_ally_kill_sources:
@@ -4356,6 +4366,16 @@ func _send_to_graveyard_with_hook_resolved(
 			and card.has_method("get_self_graveyard_replacement_zone") and not card.abilities_suppressed() \
 			and not _is_watchbeast_active():
 		replacement_zone = card.get_self_graveyard_replacement_zone(self, combat_death, destruction, send_to_abyss)
+
+	# Stone Skin and Divine Resilience replace the Graveyard with the card's own
+	# zone, so it never left the field. Skip the leave/death hooks and the move:
+	# a same-zone move_card re-appends the creature behind its equipped
+	# equipment, and board zones render cards[0] as the lane's occupant.
+	if replacement_zone != null and replacement_zone == card.current_zone:
+		match_statistics.cancel_destruction(card)
+		if continue_callback.is_valid():
+			continue_callback.call()
+		return true
 
 	card.process_board_leave_hooks(self)
 	if combat_death and card.has_method("on_death") and not card.post_field_abilities_suppressed():
