@@ -379,6 +379,7 @@ var _update_download_attempt: int = 0
 var _update_curl_process_id: int = 0
 var _update_curl_download_path: String = ""
 var _update_curl_fallback_started: bool = false
+var _update_curl_transport_label: String = ""
 var _update_now_button: Button = null
 var _update_open_button: Button = null
 var _update_support_button: Button = null
@@ -1745,7 +1746,7 @@ func _process(delta: float) -> void:
 	if _is_auto_updating and _update_download_request != null and is_instance_valid(_update_download_request):
 		_refresh_update_download_progress()
 	elif _is_auto_updating and _update_curl_process_id > 0:
-		_refresh_windows_curl_download_progress()
+		_refresh_curl_download_progress()
 	_poll_tutorial_coach()
 	if not _should_auto_refresh_seeks():
 		_seek_auto_refresh_elapsed = 0.0
@@ -1825,7 +1826,7 @@ func _set_update_download_progress(progress: float, duration: float = 0.0) -> vo
 		return
 	_set_startup_loading_progress(progress, duration)
 
-func _refresh_windows_curl_download_progress() -> void:
+func _refresh_curl_download_progress() -> void:
 	if not _has_update_download_status_target():
 		return
 	var downloaded := maxi(0, _get_file_size(_update_curl_download_path))
@@ -1839,9 +1840,10 @@ func _refresh_windows_curl_download_progress() -> void:
 		_set_update_download_progress(progress)
 		_set_update_download_status(
 			(
-				"Windows downloader: %s %d%% (%.1f / %.1f MB).\n"
+				"%s downloader: %s %d%% (%.1f / %.1f MB).\n"
 				+ "Keep Other Gods open until it restarts."
 			) % [
+				_update_curl_transport_label,
 				version_text,
 				percent,
 				float(downloaded) / BYTES_PER_MIB,
@@ -1851,9 +1853,9 @@ func _refresh_windows_curl_download_progress() -> void:
 	else:
 		_set_update_download_status(
 			(
-				"Windows downloader: %s (%.1f MB received).\n"
+				"%s downloader: %s (%.1f MB received).\n"
 				+ "Keep Other Gods open until it restarts."
-			) % [version_text, float(downloaded) / BYTES_PER_MIB]
+			) % [_update_curl_transport_label, version_text, float(downloaded) / BYTES_PER_MIB]
 		)
 
 func _on_environment_test_pressed() -> void:
@@ -5378,6 +5380,7 @@ func _dismiss_update_prompt() -> void:
 	_update_curl_process_id = 0
 	_update_curl_download_path = ""
 	_update_curl_fallback_started = false
+	_update_curl_transport_label = ""
 	_is_auto_updating = false
 	_android_install_permission_pending = false
 	_update_uses_startup_loading_bar = false
@@ -5441,6 +5444,7 @@ func _on_update_prompt_auto_update_pressed() -> void:
 	_update_curl_process_id = 0
 	_update_curl_download_path = ""
 	_update_curl_fallback_started = false
+	_update_curl_transport_label = ""
 	_last_logged_update_percent = -10
 	if _update_now_button != null and is_instance_valid(_update_now_button):
 		_update_now_button.disabled = true
@@ -5464,6 +5468,11 @@ func _on_update_prompt_auto_update_pressed() -> void:
 	if not preflight_failure.is_empty():
 		_on_auto_update_failed(preflight_failure)
 		return
+	if OS.get_name() == "macOS":
+		var placement_failure: String = MacOSSelfUpdaterScript.get_placement_error()
+		if not placement_failure.is_empty():
+			_on_auto_update_failed(placement_failure)
+			return
 	if _pending_update_download_sha256.is_empty():
 		if _pending_update_download_sha256_url.is_empty():
 			_on_auto_update_failed(
@@ -5603,8 +5612,10 @@ func _begin_auto_update_download() -> void:
 	var zip_path := OS.get_user_data_dir() + "/update_download.zip"
 	if OS.get_name() == "Android":
 		zip_path = AndroidSelfUpdaterScript.DOWNLOAD_PATH
-	if FileAccess.file_exists(zip_path):
-		DirAccess.remove_absolute(zip_path)
+		if FileAccess.file_exists(zip_path):
+			DirAccess.remove_absolute(zip_path)
+	# HTTPRequest opens/truncates the archive path itself. Only Android's cached
+	# installer needs an explicit reset here.
 	_set_update_download_progress(0.0)
 
 	_update_download_request = HTTPRequest.new()
@@ -5683,7 +5694,10 @@ func _retry_auto_update_download_or_fail(message: String, skip_builtin_retries: 
 	_update_download_request = null
 	if skip_builtin_retries or _update_download_attempt >= UPDATE_DOWNLOAD_MAX_ATTEMPTS:
 		if OS.get_name() == "Windows" and not _update_curl_fallback_started:
-			_begin_windows_curl_download(message)
+			_begin_curl_fallback_download(message, "windows_curl")
+			return
+		if OS.get_name() == "macOS" and not _update_curl_fallback_started:
+			_begin_curl_fallback_download(message, "macos_curl")
 			return
 		_on_auto_update_failed(message)
 		return
@@ -5695,17 +5709,20 @@ func _retry_auto_update_download_or_fail(message: String, skip_builtin_retries: 
 	if _is_auto_updating:
 		_begin_auto_update_download()
 
-func _begin_windows_curl_download(previous_failure: String) -> void:
+func _begin_curl_fallback_download(previous_failure: String, transport: String) -> void:
 	_update_curl_fallback_started = true
-	var curl_path := _resolve_windows_curl_path()
+	var platform_label := "Windows" if transport == "windows_curl" else "macOS"
+	_update_curl_transport_label = _download_transport_label(transport)
+	var curl_path := _resolve_curl_path(transport)
 	if curl_path.is_empty():
-		_write_update_log("download_fallback_unavailable reason=curl_missing")
+		_write_update_log("download_fallback_unavailable reason=curl_missing transport=%s" % transport)
 		_on_auto_update_failed(
-			"%s Windows' fallback downloader was not available." % previous_failure
+			"%s' fallback downloader was not available." % platform_label
 		)
 		return
-	var zip_path := OS.get_user_data_dir() + "/update_download_windows.zip"
-	var error_path := OS.get_user_data_dir() + "/update_download_windows_error.txt"
+	var platform_suffix := "windows" if transport == "windows_curl" else "macos"
+	var zip_path := OS.get_user_data_dir() + "/update_download_%s.zip" % platform_suffix
+	var error_path := OS.get_user_data_dir() + "/update_download_%s_error.txt" % platform_suffix
 	DirAccess.remove_absolute(zip_path)
 	DirAccess.remove_absolute(error_path)
 	var built_in_partial_path := OS.get_user_data_dir() + "/update_download.zip"
@@ -5719,13 +5736,12 @@ func _begin_windows_curl_download(previous_failure: String) -> void:
 		var resume_move_error := DirAccess.rename_absolute(built_in_partial_path, zip_path)
 		can_resume_partial = resume_move_error == OK
 		_write_update_log(
-			"download_fallback_resume bytes=%d moved=%s error=%d"
-			% [partial_size, str(can_resume_partial), resume_move_error]
+			"download_fallback_resume transport=%s bytes=%d moved=%s error=%d"
+			% [transport, partial_size, str(can_resume_partial), resume_move_error]
 		)
 	_update_curl_download_path = zip_path
 	_set_update_download_status(
-		"%s\nTrying Windows' built-in downloader..."
-		% previous_failure
+		"%s\nTrying %s's fallback downloader..." % [previous_failure, platform_label]
 	)
 	var args := PackedStringArray([
 		"--fail",
@@ -5761,15 +5777,16 @@ func _begin_windows_curl_download(previous_failure: String) -> void:
 	if _update_curl_process_id == -1:
 		_update_curl_process_id = 0
 		_write_update_log(
-			"download_fallback_failed reason=curl_launch_failed path=%s" % curl_path
+			"download_fallback_failed reason=curl_launch_failed transport=%s path=%s" % [transport, curl_path]
 		)
 		_on_auto_update_failed(
-			"%s Windows blocked its fallback downloader from starting." % previous_failure
+			"%s blocked its fallback downloader from starting." % platform_label
 		)
 		return
 	_write_update_log(
-		"download_started transport=windows_curl version=%s pid=%d expected_bytes=%d url=%s"
+		"download_started transport=%s version=%s pid=%d expected_bytes=%d url=%s"
 		% [
+			transport,
 			_pending_update_release_version,
 			_update_curl_process_id,
 			_pending_update_download_size,
@@ -5786,20 +5803,23 @@ func _begin_windows_curl_download(previous_failure: String) -> void:
 	var error_text := _read_update_text_file(error_path).replace("\r", " ").replace("\n", " ").strip_edges()
 	var downloaded_size := _get_file_size(zip_path)
 	_write_update_log(
-		"download_completed transport=windows_curl bytes=%d expected_bytes=%d error=%s"
-		% [downloaded_size, _pending_update_download_size, error_text.left(500)]
+		"download_completed transport=%s bytes=%d expected_bytes=%d error=%s"
+		% [transport, downloaded_size, _pending_update_download_size, error_text.left(500)]
 	)
-	var validation_failure := _validate_downloaded_update(zip_path, "windows_curl")
+	var validation_failure := _validate_downloaded_update(zip_path, transport)
 	if not validation_failure.is_empty():
 		if not error_text.is_empty():
-			validation_failure += " Windows reported: %s" % error_text.left(240)
+			validation_failure += " %s reported: %s" % [_update_curl_transport_label, error_text.left(240)]
 		_on_auto_update_failed(validation_failure)
 		return
 	DirAccess.remove_absolute(error_path)
 	_update_curl_download_path = ""
 	_apply_update_and_restart(zip_path)
 
-func _resolve_windows_curl_path() -> String:
+func _resolve_curl_path(transport: String) -> String:
+	if transport == "macos_curl":
+		var macos_curl_path := "/usr/bin/curl"
+		return macos_curl_path if FileAccess.file_exists(macos_curl_path) else ""
 	var windows_dir := OS.get_environment("WINDIR").strip_edges()
 	var candidates := PackedStringArray()
 	if not windows_dir.is_empty():
@@ -5839,8 +5859,11 @@ func _validate_downloaded_update(zip_path: String, transport: String) -> String:
 	return ""
 
 func _download_transport_label(transport: String) -> String:
-	if transport == "windows_curl":
-		return "Windows fallback"
+	match transport:
+		"windows_curl":
+			return "Windows fallback"
+		"macos_curl":
+			return "macOS fallback"
 	return "built-in"
 
 func _http_request_result_name(result: int) -> String:

@@ -6117,6 +6117,17 @@ func _check_bot_sirens_song_follow_through(failures: PackedStringArray) -> void:
 		loan.creature_mode = Card.CreatureMode.DEFENSIVE
 		if bot._get_mode_switch_score(loan, bot._get_board_creatures(opponent)) <= 0:
 			failures.append("Bot refused to flip a defensive borrowed body aggressive before returning it")
+		# A borrowed body's ability belongs to the controller, not the owner,
+		# so priority/response windows must be attributed to the controller.
+		var stack_size_before := game.action_stack.size()
+		manager._queue_authoritative_magical_action(CardAction.Type.ABILITY, loan, null, Callable())
+		if game.action_stack.size() != stack_size_before + 1:
+			failures.append("Ability queue did not push the borrowed body action")
+		else:
+			var queued_action := game.action_stack.back() as CardAction
+			if queued_action.source_player != player:
+				failures.append("Borrowed body ability was attributed to the owner instead of the controller")
+			game.action_stack.erase(queued_action)
 	bot.detach()
 
 func _check_bot_e2_abzu_sage_retrieval(failures: PackedStringArray) -> void:

@@ -9,6 +9,11 @@ existing location and reopens it. If replacement or reopening fails, the helper
 restores the previous app and records the reason in `update.log` and
 `update_failure.txt` in the Godot user data folder.
 
+The app placement is checked before the download, and after the built-in
+downloader exhausts its retries macOS uses `/usr/bin/curl` as a fallback. The
+fallback resumes when a usable partial download is still present. The helper
+reports unpacking and verification stages while Godot is still open.
+
 This update path needs no Sparkle secrets. The release workflow publishes
 `OtherGods-macos.zip.sha256` and checks the bundle version against the release
 tag. Failed updates display the reason in the game, with retry, download-page,
@@ -17,9 +22,9 @@ required update. Apps running from App Translocation or a read-only location
 must first be moved to a writable Applications folder and reopened.
 
 `python3 scripts/tests/macos_self_update_test.py` checks replacement, version and
-signature rejection, waiting for game exit, and rollback without opening an app.
-CI runs it on macOS using the native extraction and signature tools. Other hosts
-substitute those tools to test the shell transaction.
+signature rejection, waiting for game exit, staged progress, and rollback without
+opening an app. CI runs it on macOS using the native extraction and signature
+tools. Other hosts substitute those tools to test the shell transaction.
 
 ## Optional Release Secrets
 

@@ -3162,7 +3162,13 @@ func _queue_authoritative_magical_action(
 		return
 	var action := CardAction.new()
 	action.type = action_type as CardAction.Type
-	action.source_player = source_card.card_owner if source_card.card_owner != null else game_manager.current_player
+	# Temporary control (e.g. Siren's Song) can move a creature to another
+	# player's board, so the action belongs to its current controller.
+	var source_controller := source_card.get_controller()
+	if source_controller != null:
+		action.source_player = source_controller
+	else:
+		action.source_player = source_card.card_owner if source_card.card_owner != null else game_manager.current_player
 	action.card = source_card
 	action.target = target
 	action.response_to = response_to

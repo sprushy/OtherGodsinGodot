@@ -48,6 +48,11 @@ fail() {
     exit 1
 }
 
+stage() {
+    echo "macos_updater_stage: $1"
+    printf '%s\n' "stage:$1" > "$status"
+}
+
 case "$target" in
     /*.app) ;;
     *) fail 'Could not locate the installed Other Gods app bundle.' ;;
@@ -60,6 +65,7 @@ esac
 parent=$(dirname "$target")
 work=$(mktemp -d "$parent/.othergods-update.XXXXXX") || fail 'Cannot update this folder. Move Other Gods to a writable Applications folder and reopen it.'
 mkdir "$work/unpacked"
+stage unpacking
 /usr/bin/ditto -x -k "$archive" "$work/unpacked" || fail 'Could not unpack the downloaded macOS update.'
 set -- "$work/unpacked/"*.app
 [ "$#" -eq 1 ] && [ -d "$1" ] || fail 'The update archive must contain one app bundle.'
@@ -77,6 +83,7 @@ case "$executable" in
     ''|*/*|.|..) fail 'The update has an invalid executable name.' ;;
 esac
 [ -x "$new_app/Contents/MacOS/$executable" ] || fail 'The update is missing its executable or permissions.'
+stage verifying
 /usr/bin/codesign --verify --deep --strict "$new_app" || fail 'The downloaded app failed macOS signature verification.'
 echo "macos_updater_ready version=$version target=$target"
 printf 'ready\n' > "$status"

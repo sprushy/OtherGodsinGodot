@@ -139,6 +139,8 @@ class MacOSUpdaterTest(unittest.TestCase):
         self.assertTrue(self.open_log.exists())
         self.assertFalse(self.failure.exists())
         self.assertFalse(list(self.target.parent.glob(".othergods-update.*")))
+        self.assertIn("macos_updater_stage: unpacking", self.log.read_text())
+        self.assertIn("macos_updater_stage: verifying", self.log.read_text())
 
     def test_wrong_version_keeps_existing_app(self):
         self.make_app(self.new_app, "0.2.318")
@@ -191,7 +193,9 @@ class MacOSUpdaterTest(unittest.TestCase):
         process = self.start_update(pid_path.read_text().strip())
         try:
             deadline = time.monotonic() + 15
-            while not self.status.exists() and process.poll() is None and time.monotonic() < deadline:
+            while process.poll() is None and time.monotonic() < deadline:
+                if self.status.exists() and self.status.read_text().strip() == "ready":
+                    break
                 time.sleep(0.05)
             self.assertEqual(self.status.read_text().strip(), "ready")
             self.assertIsNone(process.poll())

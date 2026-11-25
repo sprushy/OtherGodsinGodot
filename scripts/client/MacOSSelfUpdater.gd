@@ -1,13 +1,43 @@
 extends RefCounted
 
 const SCRIPT_PATH := "res://scripts/client/macos_self_update.sh"
-const PREPARE_TIMEOUT_SECONDS := 300.0
+const PREPARE_TIMEOUT_SECONDS := 900.0
 
 static func get_app_bundle_path(executable_path: String) -> String:
 	var marker := executable_path.rfind(".app/Contents/MacOS/")
 	if marker < 0:
 		return ""
 	return executable_path.substr(0, marker + 4)
+
+# The install folder is expensive to discover only after a ~1 GB download, so
+# report the same placement problems the shell helper enforces before it starts.
+static func get_placement_error() -> String:
+	var target := get_app_bundle_path(OS.get_executable_path())
+	if target.is_empty():
+		return "Could not locate the installed Other Gods app bundle."
+	if not target.ends_with(".app"):
+		return "Could not locate the installed Other Gods app bundle."
+	if target.contains("/AppTranslocation/"):
+		return "Move Other Gods to Applications and reopen it before updating."
+	if not FileAccess.file_exists(target.path_join("Contents/Info.plist")):
+		return "The installed app bundle is incomplete."
+	var parent := target.get_base_dir()
+	var probe := parent.path_join(
+		".othergods-update-preflight-%d-%d" % [OS.get_process_id(), Time.get_ticks_msec()]
+	)
+	var make_dir_error := DirAccess.make_dir_recursive_absolute(probe)
+	if make_dir_error != OK:
+		return "Cannot update this folder. Move Other Gods to a writable Applications folder and reopen it."
+	DirAccess.remove_absolute(probe)
+	return ""
+
+static func _stage_message(stage: String) -> String:
+	match stage:
+		"unpacking":
+			return "Unpacking the macOS update...\nOther Gods will restart automatically."
+		"verifying":
+			return "Verifying the unpacked macOS update...\nOther Gods will restart automatically."
+	return "Preparing and verifying the macOS update...\nOther Gods will restart automatically."
 
 # The helper stages and verifies the signed bundle while Godot stays open.
 # It replaces the app only after the caller receives "ready" and quits.
@@ -36,6 +66,7 @@ static func install(tree: SceneTree, archive_path: String, version: String, repo
 	if pid <= 0:
 		return "macOS could not start the automatic updater."
 	report.call("Preparing and verifying the macOS update...\nOther Gods will restart automatically.")
+	var last_stage := ""
 	var deadline := Time.get_ticks_msec() + int(PREPARE_TIMEOUT_SECONDS * 1000.0)
 	while Time.get_ticks_msec() < deadline:
 		if FileAccess.file_exists(status_path):
@@ -45,6 +76,11 @@ static func install(tree: SceneTree, archive_path: String, version: String, repo
 				await tree.process_frame
 				tree.quit()
 				return ""
+			if status.begins_with("stage:"):
+				var stage := status.trim_prefix("stage:")
+				if stage != last_stage:
+					last_stage = stage
+					report.call(_stage_message(stage))
 			if status.begins_with("error:"):
 				DirAccess.remove_absolute(failure_path)
 				return status.trim_prefix("error:")

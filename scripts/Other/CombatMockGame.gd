@@ -15936,10 +15936,15 @@ func _submit_or_queue_card_ability_by_uid(card_uid: String, option: Dictionary =
 func _queue_targeted_ability_action(source_card: Card, target: Card) -> void:
 	if source_card == null or target == null:
 		return
+	# Temporary control can move a creature to another player's board, so its
+	# ability responses belong to the controller rather than the owner.
+	var ability_responder := source_card.get_controller()
+	if ability_responder == null:
+		ability_responder = source_card.card_owner
 	var should_submit_priority_ability := game_manager != null \
 		and not game_manager.action_stack.is_empty() \
 		and source_card.has_method("can_respond_to_priority_action") \
-		and game_manager.can_card_respond_to_priority(source_card, source_card.card_owner)
+		and game_manager.can_card_respond_to_priority(source_card, ability_responder)
 	if should_submit_priority_ability:
 		game_input.submit_action({type = "play_priority_ability", source_uid = source_card.uid, target_uid = target.uid})
 		return

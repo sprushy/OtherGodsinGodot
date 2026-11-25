@@ -787,7 +787,12 @@ func can_card_respond_to_action(card: Card, top: CardAction, player: Player = nu
 	if card == null or not is_instance_valid(card) or top == null:
 		return false
 	var responding_player := player if player != null else priority_player
-	if responding_player == null or card.card_owner != responding_player:
+	# Temporary control can move a creature to another player's board, so its
+	# ability responses belong to the controller rather than the owner.
+	var responding_card_player := card.get_controller()
+	if responding_card_player == null:
+		responding_card_player = card.card_owner
+	if responding_player == null or responding_card_player != responding_player:
 		return false
 	if not _can_hand_card_respond_to_priority(card, top):
 		return false
@@ -4661,7 +4666,10 @@ func _push_frontline_entry_event(card: Card) -> void:
 	action.type = CardAction.Type.EVENT
 	action.event_name = "frontline_entry"
 	action.card = card
-	action.source_player = card.card_owner
+	# Temporary control can move a creature to another player's frontline, so
+	# the entry event belongs to the card's current controller.
+	var controller := card.get_controller()
+	action.source_player = controller if controller != null else card.card_owner
 	if not _has_priority_responses_for_action(action):
 		return
 	push_to_stack(action)
