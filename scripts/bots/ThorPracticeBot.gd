@@ -6865,11 +6865,17 @@ func _project_attack(candidate: Dictionary, removed: Array = [], occupied_zone: 
 	var score := _score_attack_economy(result, line)
 	var unavailable: Array = removed + line.get("blocked", [])
 	var guaranteed_mana := _combat_mana_gain(result, unavailable) if not line.is_empty() else 0
+	# An unmodelled hidden reply normally vetoes the whole attack. A known win
+	# is different: declining it only lets the opponent answer or remove the
+	# attacker, so an unknown interceptor must not erase a confirmed lethal.
+	var base_is_lethal := bool(result.get("bot_wins", false)) and not bool(result.get("opponent_wins", false))
 	for interceptor in candidate["replies"]:
 		if interceptor in removed:
 			continue
 		var reply := _account_for_projected_scavenge_lane(candidate["replies"][interceptor], occupied_zone)
 		if reply.is_empty():
+			if base_is_lethal:
+				continue
 			return {}
 		if interceptor is TheInferno:
 			reply = _account_for_projected_inferno(reply, removed, occupied_zone, recruit, mana_left)

@@ -268,8 +268,6 @@ static func build_command(bot, type: String, data: Dictionary) -> Dictionary:
 				"type": "apply_advanced_building_techniques", "power_uid": str(data.get("power_uid", "")),
 				"structure_uid": str(data.get("structure_uid", "")), "mana_to_spend": mana_to_spend,
 			}
-		"aphrodite_enslave":
-			command.merge({"type": "aphrodite_enslave_choice", "confirm": false})
 		"habrok_breakout":
 			var target_uids: Array = data.get("target_uids", [])
 			command.merge({

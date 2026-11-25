@@ -515,7 +515,6 @@ var _pending_advanced_building_techniques_prompt_data: Dictionary = {}
 var _pending_freyja_active_prompt_data: Dictionary = {}
 var _pending_nergal_lion_prompt_data: Dictionary = {}
 var _pending_nusku_well_of_fire_prompt_data: Dictionary = {}
-var _pending_aphrodite_prompt_source_uid: String = ""
 var _awaiting_altar_void_payment: bool = false
 var _altar_pending_power: AltarOfDreams = null
 var _altar_void_targets_chosen: Array[Card] = []
@@ -662,6 +661,10 @@ var _pending_doorway_continue: Callable = Callable()
 var _executing_stack_action: bool = false
 var _visual_linger_depth: int = 0
 var _visual_linger_input_blocker: Control = null
+# A badge click during visual linger is remembered and replayed as soon as the
+# input block lifts, instead of being silently swallowed. Only one is held;
+# a later click replaces it. The replayed handler revalidates the action.
+var _queued_badge_replay: Callable = Callable()
 
 # Board-creature drag state (managed here for reliability)
 var _bdrag_card: Card = null
@@ -15682,6 +15685,15 @@ func _sync_visual_linger_input_blocker() -> void:
 		# Use the normal refresh so Card Test also updates its turn perspective
 		# before restoring controls; syncing buttons alone can use the old viewer.
 		update_ui.call_deferred()
+	if not should_block:
+		_flush_queued_badge_replay()
+
+func _flush_queued_badge_replay() -> void:
+	if not _queued_badge_replay.is_valid() or _is_visual_linger_active():
+		return
+	var replay_action := _queued_badge_replay
+	_queued_badge_replay = Callable()
+	replay_action.call()
 
 func _begin_visual_linger() -> void:
 	_visual_linger_depth += 1
@@ -15697,10 +15709,14 @@ func _await_visual_linger() -> void:
 	_end_visual_linger()
 
 func _reject_badge_click_while_locked(card: Card, replay_action: Callable, permits_priority_response: bool = false) -> bool:
-	if _is_visual_linger_active():
-		return true
+	# Legal at-speed responses belong to the current priority window even while
+	# cosmetic presentation is still settling.
 	if permits_priority_response and _is_card_usable_for_priority(card):
 		return false
+	if _is_visual_linger_active():
+		if replay_action.is_valid():
+			_queued_badge_replay = replay_action
+		return true
 	return _reject_non_priority_action_if_blocked(replay_action, "use " + _get_card_name_safe(card, "that card"))
 
 func _get_card_payment_failure_text(card: Card, prepared: bool = false) -> String:
@@ -18186,7 +18202,7 @@ func _on_god_card_pressed(card: Card) -> void:
 		game_input.submit_action({type = "god_ability", god_uid = god_uid})
 		return
 	if card is AphroditeAreia:
-		_begin_aphrodite_badge_activation(card as AphroditeAreia)
+		_begin_aphrodite_target_selection(card as AphroditeAreia)
 	elif _god_ability_should_use_selection_overlay(card):
 		var targets: Array = card.get_valid_targets(game_manager)
 		if targets.is_empty():
@@ -25840,13 +25856,6 @@ func _show_demiurge_prompt(spell) -> void:
 	panel.offset_top = -70
 	panel.offset_bottom = 70
 
-func _offer_aphrodite_enslave_badge_prompt(god: AphroditeAreia) -> void:
-	if god == null:
-		return
-	_pending_aphrodite_prompt_source_uid = str(god.uid)
-	_set_action_label_text(god.card_name + " - Violent Delights ready: click the ability badge on your god to choose an enemy creature to enslave.")
-	update_ui()
-
 func _show_absence_mode_prompt(spell: Absence, target: Card) -> void:
 	_hide_absence_mode_prompt()
 	_pending_absence_spell = spell
@@ -27532,23 +27541,6 @@ func _on_absence_cancel_pressed() -> void:
 	_set_action_label_text("Cancelled Absence.")
 	update_ui()
 
-func _clear_aphrodite_badge_prompt() -> void:
-	_pending_aphrodite_prompt_source_uid = ""
-
-func _begin_aphrodite_badge_activation(god: AphroditeAreia) -> void:
-	if god == null or game_manager == null:
-		return
-	if not _pending_aphrodite_prompt_source_uid.is_empty() and god.uid != _pending_aphrodite_prompt_source_uid:
-		_pending_aphrodite_prompt_source_uid = ""
-	if not _pending_aphrodite_prompt_source_uid.is_empty():
-		# A serialized post-combat offer is pending and blocks other commands,
-		# so consume it with a confirm first. The validated-move/networked
-		# followup paths then start the target selection.
-		if _submit_prompt_choice_command({"type": "aphrodite_enslave_choice", "source_uid": god.uid, "confirm": true}):
-			_pending_aphrodite_prompt_source_uid = ""
-		return
-	_begin_aphrodite_target_selection(god)
-
 func _begin_aphrodite_target_selection(god: AphroditeAreia) -> void:
 	if god == null or game_manager == null:
 		awaiting_god_ability_target = false
@@ -28356,7 +28348,6 @@ func _dismiss_transient_prompts(clear_required_prompts: bool = true) -> void:
 	_hide_breidablik_prompt()
 	_hide_e2_abzu_prompt()
 	_hide_divine_caprice_prompt()
-	_clear_aphrodite_badge_prompt()
 	if not preserve_raven_prime_prompts:
 		_hide_blot_sacrifice_prompt()
 	_hide_deucalion_prompt()
@@ -28839,18 +28830,6 @@ func _on_match_move_validated(move: Dictionary) -> void:
 				])
 			else:
 				_set_action_label_text("En-hedu-anna resolved Exaltation.")
-		"aphrodite_enslave_choice":
-			var god := game_manager.get_card_by_uid(str(move.get("source_uid", ""))) as AphroditeAreia
-			if god == null or not _is_player_local(god.card_owner):
-				return
-			var confirmed := bool(move.get("confirm", false))
-			if confirmed:
-				if not _is_networked_client:
-					_begin_aphrodite_target_selection(god)
-			else:
-				awaiting_god_ability_target = false
-				god_ability_source = null
-				_set_action_label_text("Declined Aphrodite Areia.")
 		"hati_moon_hunt":
 			_set_action_label_text("Moon Hunt resolved. Hati was summoned.")
 		"attack":
@@ -28971,7 +28950,6 @@ func _submit_prompt_choice_command(command: Dictionary) -> bool:
 	if submitted:
 		if str(command.get("type", "")) == "nusku_well_of_fire_choice":
 			_well_of_fire_timeout_choice.clear()
-		_apply_client_prompt_submission_followup(command)
 		# The server drives authoritative resolution for networked clients and
 		# authoritative hosts, so the client must clear its own stack-paused
 		# state now. Without this the paused flag stays engaged and blocks all
@@ -28980,15 +28958,6 @@ func _submit_prompt_choice_command(command: Dictionary) -> bool:
 		if _stack_resolution_paused:
 			_resume_after_deferred_resolution(_consume_resolution_feedback(action_label.text))
 	return submitted
-
-func _apply_client_prompt_submission_followup(command: Dictionary) -> void:
-	if not _is_networked_client or game_manager == null \
-			or command.get("type") != "aphrodite_enslave_choice" \
-			or not bool(command.get("confirm", false)):
-		return
-	var god := game_manager.get_card_by_uid(str(command.get("source_uid", ""))) as AphroditeAreia
-	if god != null:
-		_begin_aphrodite_target_selection(god)
 
 func _submit_network_command(command: Dictionary) -> bool:
 	# Compatibility shim for older prompt code paths; current flow uses
@@ -29061,10 +29030,6 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 				_show_habrok_breakout_prompt(card, str(data.get("prompt_text", "")), data.get("target_uids", []))
 		"hati_moon_hunt":
 			_show_hati_prompt(game_manager.get_card_by_uid(data.get("source_uid", "")) as Hati)
-		"aphrodite_enslave":
-			var god := game_manager.get_card_by_uid(data.get("source_uid", "")) as AphroditeAreia
-			if god != null:
-				_offer_aphrodite_enslave_badge_prompt(god)
 		"book_of_life":
 			var spell := game_manager.get_card_by_uid(data.get("source_uid", "")) as BookOfLife
 			if spell != null:
@@ -31248,10 +31213,6 @@ func _apply_ui_interaction(event_data: Dictionary) -> void:
 				_show_habrok_breakout_prompt(card, str(payload.get("prompt_text", "")), payload.get("target_uids", []))
 		"hati_moon_hunt":
 			_show_hati_prompt(game_manager.get_card_by_uid(payload.get("source_uid", "")) as Hati)
-		"aphrodite_enslave":
-			var god := game_manager.get_card_by_uid(payload.get("source_uid", "")) as AphroditeAreia
-			if god != null:
-				_offer_aphrodite_enslave_badge_prompt(god)
 		"book_of_life":
 			var spell := game_manager.get_card_by_uid(payload.get("source_uid", "")) as BookOfLife
 			if spell != null:

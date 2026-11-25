@@ -5,6 +5,11 @@ const ServerPathsScript = preload("res://scripts/server/ServerPaths.gd")
 const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
 const LISTS_PER_GOD := 14
 const EARLY_RETIREMENT_GAMES := 60
+# During the first 20 games, quarantine as soon as a bot's actual win rate
+# (draws count as games but not wins) falls below 55%.
+const EARLY_QUARANTINE_MAX_GAMES := 20
+const EARLY_QUARANTINE_WIN_RATE_NUMERATOR := 11
+const EARLY_QUARANTINE_WIN_RATE_DENOMINATOR := 20
 const EXPLORATION_CHANCE := 0.20
 # How many of the worst bots per god are kept as quarantined bad bots for
 # forced matchmaking (Iron V and post-loss Iron/Bronze pairing).
@@ -1257,6 +1262,9 @@ func _should_retire_early(list: Dictionary) -> bool:
 	var games_played := _get_played_match_count(list)
 	if games_played <= 0 or games_played > EARLY_RETIREMENT_GAMES:
 		return false
+	if games_played <= EARLY_QUARANTINE_MAX_GAMES:
+		return EARLY_QUARANTINE_WIN_RATE_DENOMINATOR * int(list["wins"]) \
+			< EARLY_QUARANTINE_WIN_RATE_NUMERATOR * games_played
 	return 3 * int(list["losses"]) >= 2 * games_played
 
 func _retire_list(pool: Dictionary, list: Dictionary) -> void:

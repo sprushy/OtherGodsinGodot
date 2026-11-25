@@ -3842,6 +3842,11 @@ func _observe_local_bot_match(session_id: String, match_id: String) -> void:
 		"status": "active",
 		"server_mode": "in_process_host",
 		"is_ranked": bool(entry.get("is_ranked", false)),
+		# The host's direct public endpoint as bounced to the reflector. A punch
+		# spectator's client alternates retries between the reflector relay and
+		# this endpoint when the relay never comes up.
+		"spectate_direct_host_ip": spectate_ip,
+		"spectate_direct_host_port": spectate_port,
 		"series": {},
 		"reconnect_window_seconds": 0,
 		"waiting_for_reconnect": false,

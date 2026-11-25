@@ -100,6 +100,7 @@ func run() -> bool:
 	_check_bot_warding_stone_summon_forecast(failures)
 	_check_bot_doorway_grave_denial(failures)
 	_check_bot_fenrir_summon(failures)
+	_check_bot_fenrir_creature_lethal(failures)
 	_check_bot_wolf_master(failures)
 	_check_bot_main_phase_combat_order(failures)
 	_check_bot_hyena_stealth_attack(failures)
@@ -2874,6 +2875,80 @@ func _check_bot_fenrir_summon(failures: PackedStringArray) -> void:
 			failures.append("Fenrir's resolved Devour did not produce the projected lethal attack")
 	bot.detach()
 
+func _check_bot_fenrir_creature_lethal(failures: PackedStringArray) -> void:
+	# A Devour-buffed Fenrir must take the same-turn kill on a creature body:
+	# killing an aggressive defender sends the excess STR to Followers. This
+	# mirrors a live match where Fenrir reached 46/46 off The White Serpent and
+	# then sat in defensive stance while Garm stayed on the opponent's board.
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	player.mana = 6
+	opponent.followers = 26
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var fenrir := Fenrir.new()
+	fenrir.card_owner = player
+	player.hand_zone.add_card(fenrir)
+	for index in range(fenrir.sacrifice_cost):
+		var payment := CreatureCard.new()
+		payment.card_owner = player
+		payment.creature_mode = Card.CreatureMode.AGGRESSIVE
+		player.reserve_zones[index].add_card(payment)
+	var prey := CreatureCard.new()
+	prey.card_owner = opponent
+	prey.level = 4
+	prey.strength = 26
+	prey.resilience = 26
+	prey.speed = 3
+	prey.creature_mode = Card.CreatureMode.AGGRESSIVE
+	opponent.frontline_zones[0].add_card(prey)
+	var garm := GarmWatchdogOfHel.new()
+	garm.card_owner = opponent
+	garm.creature_mode = Card.CreatureMode.AGGRESSIVE
+	opponent.frontline_zones[1].add_card(garm)
+	var hidden := CreatureCard.new()
+	hidden.card_owner = opponent
+	hidden.level = 9
+	hidden.strength = 1
+	hidden.resilience = 80
+	hidden.creature_mode = Card.CreatureMode.DEFENSIVE
+	hidden.is_face_down = true
+	opponent.reserve_zones[0].add_card(hidden)
+	var summon := bot._plan_creature_summon()
+	var command: Dictionary = summon.get("command", {})
+	if command.get("card_uid") != fenrir.uid or command.get("mode") != Card.CreatureMode.AGGRESSIVE \
+			or not bool(summon.get("lethal", false)):
+		failures.append("Bot passed up Devour-buffed Fenrir's lethal attack on an aggressive creature")
+	elif not bot._submit_strategy_plan(summon):
+		failures.append("Bot could not submit the projected creature-target lethal summon")
+	else:
+		for _step in range(8):
+			manager.advance_priority()
+		var attack := bot._plan_combat(bot._get_combat_candidates())
+		if fenrir.get_effective_strength() != 46 or fenrir.get_effective_resilience() != 46 \
+				or prey.current_zone != opponent.graveyard_zone or not bool(attack.get("lethal", false)):
+			failures.append("Fenrir's resolved Devour did not yield the projected creature-target lethal")
+		# The same hidden reply must still veto an ordinary, non-lethal swing.
+		opponent.followers = 200
+		var saw_nonlethal_candidate := false
+		for candidate: Dictionary in bot._get_combat_candidates():
+			if candidate["target"] != garm:
+				continue
+			saw_nonlethal_candidate = true
+			if not bot._project_attack(candidate).is_empty():
+				failures.append("Bot treated a hidden interceptor as harmless for a non-lethal attack")
+			break
+		if not saw_nonlethal_candidate:
+			failures.append("Bot did not project Fenrir's non-lethal attack on Garm")
+	bot.detach()
+
 func _check_bot_wolf_master(failures: PackedStringArray) -> void:
 	var game := _new_fixture_game()
 	var player := _new_fixture_player()
@@ -4365,6 +4440,31 @@ func _check_bot_violent_delights_upkeep(failures: PackedStringArray) -> void:
 	if str(bot._choose_upkeep_option(upkeep_zone).get("choice", "")) != "draw":
 		failures.append("Aphrodite planned to enslave a creature that would be destroyed in combat")
 	bot.detach()
+
+	player.mana = AphroditeAreia.ACTIVATION_COST
+	game._upkeep_resolved_turn = game.turn_number
+	opponent.reserve_zones[0].add_card(captive)
+	var sender := {"player_index": 0}
+	var attack := {"type": "request_attack", "attacker_uid": attacker.uid, "target_id": defender.uid}
+	if not manager.process_command(attack, sender):
+		failures.append("Violent Delights regression setup could not declare the qualifying attack")
+		return
+	for _step in range(8):
+		manager.advance_priority()
+	if defender.current_zone != opponent.graveyard_zone or not aphrodite.can_activate(game):
+		failures.append("Violent Delights did not become available after an authoritative combat kill")
+		return
+	if manager.get_pending_ui_interaction_count() != 0:
+		failures.append("Violent Delights left a blocking prompt after combat")
+		return
+	var enslave := {"type": "god_ability", "god_uid": aphrodite.uid, "target_uid": captive.uid}
+	if not manager.process_command(enslave, sender):
+		failures.append("Violent Delights rejected a valid target chosen directly after combat")
+		return
+	for _step in range(8):
+		manager.advance_priority()
+	if captive.get_controller() != player or not captive.is_enslaved() or player.mana != 0:
+		failures.append("Violent Delights did not capture the chosen creature for its mana cost")
 
 func _check_bot_shift_and_extraction(failures: PackedStringArray) -> void:
 	var game := _new_fixture_game()
@@ -6642,6 +6742,17 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 		var battle: Dictionary = recent["matches"][0]
 		if battle["players"][1]["name"] != "Odin: Test" or battle["battle"].get("turns") != 9:
 			failures.append("Self-play history lost the names or battle summary")
+	# The new 20-game threshold quarantines a bot on its first rated loss. Give
+	# the losing Thor seat an extra prior win so this still tests promotion.
+	var thor_seed := _bot_pool_result("thor_seed", "bot_win", {"Thor": 1, "Berserker": 3}, "win")
+	thor_seed["god_name"] = "Thor"
+	thor_seed["bot_name"] = "Thor: Bloodaxe"
+	var replay_results: Array[Dictionary] = []
+	for result: Dictionary in self_play_results:
+		if str(result.get("god_name", "")) == "Thor" and str(result.get("result", "")) == "loss":
+			replay_results.append(thor_seed)
+		replay_results.append(result)
+	self_play_results = replay_results
 	if (not RankedBotDeckPoolScript.can_self_play_pair({"stars": 14}, {"stars": 17})
 			or RankedBotDeckPoolScript.can_self_play_pair({"stars": 0}, {"stars": 90})
 			or RankedBotDeckPoolScript.can_self_play_pair({"stars": 14}, {"stars": 45})
@@ -6748,8 +6859,12 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 	else:
 		var odin: Dictionary = after_self_play["gods"][0]["lists"][0]
 		var after_thor: Dictionary = after_self_play["gods"][1]["lists"][0]
-		if odin["name"] != "Odin: Test" or odin["stars"] != 1 or after_thor["stars"] != 1:
-			failures.append("Self-play did not award the win or protect the losing bot at its rank floor")
+		if odin["name"] != "Odin: Test":
+			failures.append("Self-play winning bot name was %s" % str(odin["name"]))
+		if int(odin["stars"]) != 1:
+			failures.append("Self-play winning bot stars were %d" % int(odin["stars"]))
+		if int(after_thor["stars"]) != 2:
+			failures.append("Self-play losing bot stars were %d" % int(after_thor["stars"]))
 
 	var results: Array[Dictionary] = []
 	var list_capacity := RankedBotDeckPoolScript.LISTS_PER_GOD
@@ -6871,6 +6986,25 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 	if not early_summary["challenger"].is_empty() or not early_retirement_pool.can_play_list("Thor", "early_list_0") \
 			or not early_retirement_pool.get_deck_details("early_candidate").is_empty():
 		failures.append("The weaker challenger remained after matching the incumbent's game count")
+
+	var threshold_pool := RankedBotDeckPoolScript.new()
+	var early_quarantine_cases: Array[Dictionary] = [
+		{"wins": 1, "losses": 1, "draws": 0, "expected": true},
+		{"wins": 2, "losses": 1, "draws": 0, "expected": false},
+		{"wins": 10, "losses": 10, "draws": 0, "expected": true},
+		{"wins": 11, "losses": 9, "draws": 0, "expected": false},
+		{"wins": 11, "losses": 8, "draws": 1, "expected": false},
+		{"wins": 9, "losses": 9, "draws": 2, "expected": true},
+		{"wins": 11, "losses": 10, "draws": 0, "expected": false},
+		{"wins": 7, "losses": 14, "draws": 0, "expected": true},
+		{"wins": 20, "losses": 40, "draws": 0, "expected": true},
+		{"wins": 21, "losses": 42, "draws": 0, "expected": false},
+	]
+	for case: Dictionary in early_quarantine_cases:
+		if threshold_pool._should_retire_early(case) != bool(case["expected"]):
+			failures.append("Early quarantine threshold mismatch: %d-%d-%d" % [
+				int(case["wins"]), int(case["losses"]), int(case["draws"]),
+			])
 
 	var variety_results: Array[Dictionary] = []
 	for i in range(list_capacity):

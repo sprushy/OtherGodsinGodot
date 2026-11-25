@@ -26,6 +26,9 @@ const HOST_BOUNCE_TTL_SECONDS := 30.0
 const CLIENT_BOUNCE_TTL_SECONDS := 20.0
 const RELAY_SESSION_TTL_SECONDS := 45.0
 const RELAY_MAX_PACKET_BYTES := 2048
+## Minimum spacing between two relay_drop breadcrumbs for the same
+## session/reason/source triple, so a dead stream logs a trickle, not a flood.
+const RELAY_DROP_LOG_INTERVAL_MSEC := 5000
 
 var bound_port: int = 0
 
@@ -33,6 +36,7 @@ var _udp: PacketPeerUDP = null
 var _bounce_by_key: Dictionary = {}
 var _relay_sessions: Dictionary = {}
 var _relay_ready_printed: Dictionary = {}
+var _relay_drop_log_next_msec: Dictionary = {}
 
 static func make_marker(bounce_kind: String, match_id: String, observer_session_id: String = "") -> PackedByteArray:
 	var marker := {
@@ -295,13 +299,39 @@ func _expire_relay_sessions() -> void:
 			_relay_sessions.erase(key)
 			continue
 		if now_msec > int((session_variant as Dictionary).get("expires_msec", 0)):
+			var session: Dictionary = session_variant
+			print("Spectate breadcrumb role=reflector stage=relay_session_expired t=%d match=%s observer=%s host_set=%s client_set=%s" % [
+				now_msec,
+				str(session.get("match_id", "")),
+				str(session.get("observer", "")),
+				str(int((session.get("host", {}) as Dictionary).get("port", 0)) > 0),
+				str(int((session.get("client", {}) as Dictionary).get("port", 0)) > 0),
+			])
 			_relay_sessions.erase(key)
 			_relay_ready_printed.erase(key)
+
+## Rate-limited breadcrumb for relay traffic that was not forwarded, so a dead
+## spectate stream says why in the server log instead of timing out silently.
+func _log_relay_drop(reason: String, source: String, session_key: String = "") -> void:
+	var now_msec := Time.get_ticks_msec()
+	var log_key := "%s|%s|%s" % [session_key, reason, source]
+	if now_msec < int(_relay_drop_log_next_msec.get(log_key, 0)):
+		return
+	_relay_drop_log_next_msec[log_key] = now_msec + RELAY_DROP_LOG_INTERVAL_MSEC
+	if _relay_drop_log_next_msec.size() > MARKER_REGISTRY_LIMIT * 4:
+		_relay_drop_log_next_msec.clear()
+	var suffix := "" if session_key.is_empty() else " session=%s" % session_key
+	print("Spectate breadcrumb role=reflector stage=relay_drop t=%d source=%s reason=%s sessions=%d%s" % [
+		now_msec, source, reason, _relay_sessions.size(), suffix,
+	])
 
 func _forward_relay_packet(packet: PackedByteArray, source_ip: String, source_port: int) -> void:
 	if _udp == null or packet.is_empty() or packet.size() > RELAY_MAX_PACKET_BYTES:
 		return
 	var source := endpoint_key(source_ip, source_port)
+	var forwarded := false
+	var matched_session_key := ""
+	var matched_missing_side := ""
 	for key in _relay_sessions.keys():
 		var session_variant = _relay_sessions.get(key, null)
 		if not (session_variant is Dictionary):
@@ -316,13 +346,31 @@ func _forward_relay_packet(packet: PackedByteArray, source_ip: String, source_po
 		var host_endpoint := endpoint_key(str(host.get("ip", "")), int(host.get("port", 0)))
 		var client_endpoint := endpoint_key(str(client.get("ip", "")), int(client.get("port", 0)))
 		if host_endpoint == source:
+			matched_session_key = str(key)
 			# One host socket serves every spectator, so fan out to all of them.
-			if client_endpoint != source and int(client.get("port", 0)) > 0:
+			if int(client.get("port", 0)) <= 0:
+				matched_missing_side = "client"
+				continue
+			if client_endpoint != source:
 				_send_relay_packet(client, packet)
+				forwarded = true
 		elif client_endpoint == source:
-			if host_endpoint != source and int(host.get("port", 0)) > 0:
+			matched_session_key = str(key)
+			if int(host.get("port", 0)) <= 0:
+				matched_missing_side = "host"
+				continue
+			if host_endpoint != source:
 				_send_relay_packet(host, packet)
+				forwarded = true
 				return
+	if forwarded:
+		return
+	if matched_session_key.is_empty():
+		_log_relay_drop("unknown_source" if not _relay_sessions.is_empty() else "no_sessions", source)
+	elif not matched_missing_side.is_empty():
+		_log_relay_drop("missing_%s_endpoint" % matched_missing_side, source, matched_session_key)
+	else:
+		_log_relay_drop("loopback_self", source, matched_session_key)
 
 func _send_relay_packet(target: Dictionary, packet: PackedByteArray) -> void:
 	if _udp.set_dest_address(str(target.get("ip", "")), int(target.get("port", 0))) != OK:
@@ -422,6 +470,7 @@ func shutdown() -> void:
 	_bounce_by_key.clear()
 	_relay_sessions.clear()
 	_relay_ready_printed.clear()
+	_relay_drop_log_next_msec.clear()
 
 func _exit_tree() -> void:
 	shutdown()

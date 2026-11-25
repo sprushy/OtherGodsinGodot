@@ -1573,19 +1573,6 @@ func _finalize_resolved_action(action: CardAction) -> void:
 	if not _queued_ui_interactions.is_empty():
 		_release_next_queued_ui_interaction()
 	_continue_authoritative_stack_after_resolution()
-	if action != null and action.type == CardAction.Type.ATTACK:
-		_offer_aphrodite_after_combat()
-
-func _offer_aphrodite_after_combat() -> void:
-	if game_manager == null or game_manager.is_game_over \
-			or not _pending_ui_interactions.is_empty() or not _queued_ui_interactions.is_empty():
-		return
-	var player := game_manager.current_player
-	if player == null or player.god_zone.cards.is_empty():
-		return
-	var god := player.god_zone.cards[0] as AphroditeAreia
-	if god != null and god.can_activate(game_manager):
-		_emit_ui_interaction_for_player(player, "aphrodite_enslave", {"source_uid": god.uid})
 
 func _continue_authoritative_stack_after_resolution() -> void:
 	# Keep continuation centralized so direct and deferred resolution paths both drain the stack.
@@ -5967,19 +5954,6 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var eha_feedback := eha.resolve_exaltation_choice(game_manager, eha_option)
 			if eha_feedback.strip_edges() != "":
 				game_manager.note_player_feedback(eha_feedback)
-			move_validated.emit(command)
-			return true
-		"aphrodite_enslave_choice":
-			var source_uid: String = command.get("source_uid", "")
-			var god := game_manager.get_card_by_uid(source_uid) as AphroditeAreia
-			if god == null:
-				move_failed.emit("aphrodite_enslave_choice: god not found")
-				return false
-			var confirmed: bool = command.get("confirm", false)
-			if not confirmed:
-				move_validated.emit(command)
-				return true
-			# "Choose Target" part is handled by a subsequent god_ability command from the client
 			move_validated.emit(command)
 			return true
 		"first_sage_adapa_choice":

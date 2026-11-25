@@ -329,7 +329,8 @@ func _perform_reconnect(expected_serial: int) -> void:
 	if _match_completed or network_manager == null:
 		_is_reconnecting = false
 		return
-	_maybe_switch_spectate_retry_to_relay("reconnect")
+	if not _maybe_switch_spectate_retry_to_relay("reconnect"):
+		_maybe_switch_punch_spectate_retry_target("reconnect")
 	_spectate_breadcrumb("retry_dial", {"server": "%s:%d" % [_server_ip, _server_port], "mode": "reconnect"})
 	var reconnect_err: Error = network_manager.reconnect_client(_server_ip, _server_port)
 	if reconnect_err == OK:
@@ -372,7 +373,8 @@ func _perform_initial_connect_retry(expected_serial: int) -> void:
 	if _match_completed or network_manager == null:
 		_is_retrying_initial_connect = false
 		return
-	_maybe_switch_spectate_retry_to_relay("initial")
+	if not _maybe_switch_spectate_retry_to_relay("initial"):
+		_maybe_switch_punch_spectate_retry_target("initial")
 	_spectate_breadcrumb("retry_dial", {"server": "%s:%d" % [_server_ip, _server_port], "mode": "initial"})
 	var reconnect_err: Error = network_manager.reconnect_client(_server_ip, _server_port)
 	if reconnect_err == OK:
@@ -409,6 +411,54 @@ func _maybe_switch_spectate_retry_to_relay(mode: String) -> bool:
 	_match_info["match_port"] = relay_port
 	_spectate_breadcrumb("relay_fallback_dial", {
 		"mode": mode, "connect": "%s:%d" % [relay_ip, relay_port],
+	})
+	return true
+
+## A punch spectator alternates retries between the reflector relay and the
+## host's direct public endpoint. The host keeps punching the spectator's
+## reported endpoint at a low rate, so a later direct attempt can get through
+## even when the initial rendezvous probe did not — and a spectator primed
+## onto a verified-but-later-dead direct endpoint gets the relay as a second
+## path. One switch per retry pass: relay → direct → relay → …
+func _maybe_switch_punch_spectate_retry_target(mode: String) -> bool:
+	if not bool(_match_info.get("observer_mode", false)):
+		return false
+	if not bool(_match_info.get("spectate_via_punch", false)):
+		return false
+	var on_direct := bool(_match_info.get("spectate_direct_dial", false))
+	var direct_ip := str(_match_info.get("spectate_direct_host_ip", "")).strip_edges()
+	var direct_port := int(_match_info.get("spectate_direct_host_port", 0))
+	var direct_known := not direct_ip.is_empty() and direct_port > 0 and direct_port <= 65535
+	if not on_direct and direct_known \
+			and direct_ip == _server_ip and direct_port == _server_port:
+		# Primed straight onto the host endpoint (the rendezvous probe verified
+		# a reply) and that dial failed: try the reflector relay next.
+		on_direct = true
+	if on_direct:
+		var relay_ip := str(_match_info.get("spectate_relay_ip", "")).strip_edges()
+		var relay_port := int(_match_info.get("spectate_relay_port", 0))
+		if relay_ip.is_empty() or relay_port <= 0 or relay_port > 65535:
+			return false
+		if relay_ip == _server_ip and relay_port == _server_port:
+			return false
+		_server_ip = relay_ip
+		_server_port = relay_port
+		_match_info["spectate_direct_dial"] = false
+		_match_info["spectate_relay_dial"] = true
+		_spectate_breadcrumb("relay_fallback_dial", {
+			"mode": mode, "connect": "%s:%d" % [relay_ip, relay_port],
+		})
+		return true
+	if not direct_known:
+		return false
+	if direct_ip == _server_ip and direct_port == _server_port:
+		return false
+	_server_ip = direct_ip
+	_server_port = direct_port
+	_match_info["spectate_direct_dial"] = true
+	_match_info["spectate_relay_dial"] = false
+	_spectate_breadcrumb("direct_fallback_dial", {
+		"mode": mode, "connect": "%s:%d" % [direct_ip, direct_port],
 	})
 	return true
 
@@ -456,7 +506,8 @@ func _arm_connect_timeout_if_connecting() -> void:
 func _get_connect_attempt_timeout_seconds() -> float:
 	if bool(_match_info.get("observer_mode", false)) \
 			and (bool(_match_info.get("spectate_via_punch", false))
-				or bool(_match_info.get("spectate_relay_dial", false))):
+				or bool(_match_info.get("spectate_relay_dial", false))
+				or bool(_match_info.get("spectate_direct_dial", false))):
 		return PUNCH_SPECTATE_CONNECT_ATTEMPT_TIMEOUT_SECONDS
 	return CONNECT_ATTEMPT_TIMEOUT_SECONDS
 

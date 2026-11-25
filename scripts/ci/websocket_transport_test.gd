@@ -478,10 +478,36 @@ func _check_spectate_relay_fallback_selection() -> void:
 		"spectate_via_punch": true,
 		"spectate_relay_ip": "203.0.113.9",
 		"spectate_relay_port": 22346,
+		"spectate_direct_host_ip": "198.51.100.7",
+		"spectate_direct_host_port": 33872,
 	}, "198.51.100.7", 33872)
 	_check(not punch_client._maybe_switch_spectate_retry_to_relay("initial") \
 		and punch_client._server_ip == "198.51.100.7",
 		"punch assignments keep their relay-ready endpoint")
+	# A punch spectator alternates retries between the reflector relay and the
+	# host's direct public endpoint instead of hammering one dead endpoint.
+	# This client starts on the direct endpoint, so the first switch goes to
+	# the relay.
+	_check(punch_client._maybe_switch_punch_spectate_retry_target("initial"),
+		"punch spectator primed onto the direct endpoint falls back to the relay")
+	_check(punch_client._server_ip == "203.0.113.9" and punch_client._server_port == 22346,
+		"punch direct fallback dials the reflector endpoint")
+	_check(punch_client._maybe_switch_punch_spectate_retry_target("reconnect"),
+		"punch spectator returns to the direct endpoint after a failed relay attempt")
+	_check(punch_client._server_ip == "198.51.100.7" and punch_client._server_port == 33872,
+		"punch relay return dials the host's bounced public endpoint")
+	_check(punch_client._maybe_switch_punch_spectate_retry_target("reconnect"),
+		"punch spectator alternates again toward the relay")
+	var punch_no_direct := MatchClientScript.new(null, null, false, false, {
+		"observer_mode": true,
+		"match_id": "fallback-match",
+		"observer_session_id": "observer",
+		"spectate_via_punch": true,
+		"spectate_relay_ip": "203.0.113.9",
+		"spectate_relay_port": 22346,
+	}, "198.51.100.7", 33872)
+	_check(not punch_no_direct._maybe_switch_punch_spectate_retry_target("initial"),
+		"punch spectator without a direct endpoint stays on the relay")
 
 func _check_failed_lobby_transport_cleanup() -> void:
 	# Exercise the menu's cleanup from a real refused WebSocket connection.
