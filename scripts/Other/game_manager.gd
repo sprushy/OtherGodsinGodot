@@ -2486,7 +2486,20 @@ func can_intercept_attack(
 	var minimum_distance := 2 if mode == Card.CreatureMode.AGGRESSIVE else 1
 	if row_distance < minimum_distance and not defender.has_reach(protected_target):
 		return false
-	return defender.get_effective_speed(speed_delta) >= attack_speed \
+	var intercept_speed := defender.get_effective_speed(speed_delta)
+	var intercept_speed_override: Variant = defender.get_intercept_speed_override(protected_target)
+	if intercept_speed_override != null:
+		intercept_speed = int(intercept_speed_override)
+	# Hermes: your creatures cannot be intercepted by slower creatures. "Cannot"
+	# wins, so this also shuts out Reach and the ignore-Speed intercepts.
+	if intercept_speed < attack_speed and _player_has_active_hermes(attacker.get_controller()):
+		return false
+	# A face-up Defensive body steps in front of any attack. Stealth is face-down,
+	# so a hidden body still has to match the attack's Speed.
+	if mode == Card.CreatureMode.DEFENSIVE \
+			and not (defender.is_face_down or defender.is_stealth or defender.is_prepared):
+		return true
+	return intercept_speed >= attack_speed \
 		or defender.can_intercept_regardless_of_speed(protected_target) \
 		or _giants_disdain_applies_to_interception(defender, attacker)
 
@@ -2494,6 +2507,12 @@ func _giants_disdain_applies_to_interception(interceptor: Card, attacker: Card) 
 	return interceptor.has_type("Giant") \
 		and not attacker.has_type("Giant") \
 		and _has_giants_disdain(interceptor.get_controller())
+
+func _player_has_active_hermes(player: Player) -> bool:
+	if player == null or player.god_zone == null or player.god_zone.cards.is_empty():
+		return false
+	var god := player.god_zone.cards[0] as Hermes
+	return god != null and not god.abilities_suppressed() and not god.is_face_down and not god.is_sleeping
 
 func check_for_intercept(attacker: Card, defending_player: Player) -> Card:
 	print("	Checking for intercepts...")

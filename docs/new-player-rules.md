@@ -237,9 +237,9 @@ Some cards grant extra actions or use special action rules. The card text wins w
 
 Aggressive is the attacking stance. A Frontline Creature usually must be Aggressive to declare an attack. Aggressive Frontline Creatures can also intercept attacks aimed at Followers.
 
-Defensive is the blocking stance. Defensive Creatures use RES when attacked and are better at intercepting.
+Defensive is the blocking stance. Defensive Creatures use RES when attacked, and a face-up Defensive Creature can intercept regardless of Speed.
 
-Stealth is face-down Defensive mode. A Stealthed Creature is hidden from the opponent until revealed. A normal Stealth summon uses both the Creature's Minor Action and Major Action, so it is safer but more committal than a face-up summon.
+Stealth is face-down Defensive mode. A Stealthed Creature is hidden from the opponent until revealed. A normal Stealth summon uses both the Creature's Minor Action and Major Action, so it is safer but more committal than a face-up summon. A Stealthed Creature is not face-up, so it has to match an attack's Speed to intercept.
 
 Beginner rule of thumb:
 
@@ -322,7 +322,8 @@ Interception depends on protected target depth, interceptor row, stance, Speed, 
 Core interception rules:
 
 - Sleeping Creatures and Creatures with cannot-intercept statuses cannot intercept.
-- The interceptor must be at least as fast as the declared attack unless an ability lets it ignore Speed.
+- A face-up Defensive Creature can intercept regardless of Speed.
+- Any other interceptor must be at least as fast as the declared attack unless an ability lets it ignore Speed.
 - The interceptor must be able to engage the attacker. Incorporeal and similar restrictions still apply.
 - Aggressive interceptors require a deeper protected target than Defensive interceptors.
 - Frontline Aggressive Creatures can normally intercept attacks aimed at Followers or the God.
@@ -409,7 +410,7 @@ Speed appears on Creatures and on many reactive cards.
 Speed affects:
 
 - Whether a response is fast enough.
-- Whether a Creature can intercept an attacker.
+- Whether a Creature can intercept an attacker. A face-up Defensive Creature intercepts regardless of Speed.
 - Whether some attacks or abilities can target or engage a card.
 
 Fast cards are good at forcing action. Slow cards are often stronger once they resolve but easier to answer.

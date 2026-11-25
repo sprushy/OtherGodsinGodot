@@ -846,7 +846,7 @@ static func stat_changes(bot, card: Card, target: Card) -> Dictionary:
 				"spd": Lamashatu.SUCKLE_SPEED_BONUS,
 			}
 		"SevenLeagueBoots":
-			var old_base: int = target.speed - (1 if target.is_stealth else 0)
+			var old_base: int = target.speed
 			for equipment in target.equipment:
 				if equipment.has_method("get_speed_override_for_equipped_creature"):
 					var override_speed = equipment.get_speed_override_for_equipped_creature(target)

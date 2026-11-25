@@ -8,6 +8,6 @@ func _init() -> void:
 	card_name = "Aphrodite Skotia"
 	card_types = ["Love", "Sex", "War"]
 	culture = "Olympic"
-	ability_text = "[b]Veil of Night[/b]: Your hidden creatures have no speed penalty and are not revealed by combat."
+	ability_text = "[b]Veil of Night[/b]: Your stealth creatures may intercept regardless of speed and are not revealed by combat."
 	art_path = ART_PATH
 	name_at_bottom = true

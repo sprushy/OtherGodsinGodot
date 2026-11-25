@@ -22,8 +22,8 @@ func _init() -> void:
 func prevents_interception() -> bool:
 	return _unavoidable_strikes_is_active()
 
-func can_intercept_regardless_of_speed(_protected_target) -> bool:
-	return _unavoidable_strikes_is_active()
+func can_intercept_regardless_of_speed(protected_target) -> bool:
+	return _unavoidable_strikes_is_active() or super.can_intercept_regardless_of_speed(protected_target)
 
 func _unavoidable_strikes_is_active() -> bool:
 	return not (abilities_suppressed() or is_face_down or is_prepared)

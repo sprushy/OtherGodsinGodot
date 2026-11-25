@@ -3153,11 +3153,14 @@ func _estimate_defensive_summon_value(card: Card, zone: Zone, stealth: bool = fa
 	if card.current_zone == null or not card.current_zone.is_board_zone():
 		interceptor = _preview_summoned_creature(card, zone, stealth)
 	var targets: Array = [bot_player]
+	# Any friendly body is a candidate protected target: a face-up Defensive
+	# summon can step in front of any attack for an in-range ally, and a hidden
+	# or Aggressive one may still catch slower attacks. The per-attacker
+	# _can_intercept gate below decides row, stance, Speed, and reach.
 	for target in _get_board_creatures(bot_player):
 		if target == card or target in removed:
 			continue
-		if interceptor.has_reach(target) or interceptor.can_intercept_regardless_of_speed(target):
-			targets.append(target)
+		targets.append(target)
 	var speed_delta: int = stats.get(card, Vector3i.ZERO).z
 	var best_gain := 0
 	for attacker in _get_board_creatures(opponent):
@@ -7855,10 +7858,10 @@ func _should_summon_creature_stealthily(card: Card, zone: Zone, mode: Card.Creat
 		return true
 	if zone not in bot_player.frontline_zones:
 		return _prefers_stealth_summon(card)
-	# Stealth costs one speed. Preserve face-up speed when that difference could
-	# let this frontline body intercept a currently plausible enemy attack.
-	var face_up_speed := card.get_effective_speed()
-	var stealth_speed := card.get_effective_speed(-1)
+	# Stealth is face-down, so a hidden body loses the face-up Defensive intercept
+	# and has to match an attack's Speed. Stay face-up when a currently plausible
+	# enemy attack outruns this frontline body.
+	var speed := card.get_effective_speed()
 	if opponent == null:
 		return true
 	for enemy in _get_board_creatures(opponent):
@@ -7866,7 +7869,7 @@ func _should_summon_creature_stealthily(card: Card, zone: Zone, mode: Card.Creat
 				or enemy.has_status_effect("cannot_attack") or enemy.prevents_interception():
 			continue
 		var enemy_speed := enemy.get_effective_speed() + _opponent_hermes_speed_gain(enemy)
-		if enemy_speed <= stealth_speed or enemy_speed > face_up_speed:
+		if enemy_speed <= speed:
 			continue
 		if _can_attack_followers_safely(enemy) or _has_attackable_friendly_target(enemy):
 			return false

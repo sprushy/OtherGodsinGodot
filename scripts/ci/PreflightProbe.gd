@@ -2132,6 +2132,12 @@ func _check_card_interception_exceptions(failures: PackedStringArray) -> void:
 		if "Reach" not in CardDetailContentBuilder.extract_card_keywords(card):
 			failures.append("%s did not show the Reach keyword in its card details" % card.card_name)
 
+	# Patron's Hand intercepts at a fixed Speed 4 for your followers or humans.
+	var skimmer := CreatureCard.new()
+	skimmer.card_owner = opponent
+	skimmer.creature_mode = Card.CreatureMode.AGGRESSIVE
+	skimmer.speed = 4
+	opponent.frontline_zones[1].add_card(skimmer)
 	var thor := ThorActive.new()
 	thor.card_owner = player
 	thor.creature_mode = Card.CreatureMode.AGGRESSIVE
@@ -2139,9 +2145,11 @@ func _check_card_interception_exceptions(failures: PackedStringArray) -> void:
 	if manager._can_intercept(thor, attacker, player):
 		failures.append("Active Thor intercepted for followers from the reserve in aggressive stance")
 	player.move_card(thor, player.frontline_zones[2])
+	if manager._can_intercept(thor, attacker, player) or not manager._can_intercept(thor, skimmer, player):
+		failures.append("Active Thor did not intercept for followers at exactly Speed 4")
 	thor.creature_mode = Card.CreatureMode.DEFENSIVE
 	if not manager._can_intercept(thor, attacker, player) or not manager._can_intercept(thor, attacker, human):
-		failures.append("Active Thor could not intercept a faster attacker for followers or a Human in range")
+		failures.append("A face-up Defensive Thor could not intercept a faster attacker for followers or a Human in range")
 
 	var power := GiantsDisdain.new()
 	power.card_owner = player
@@ -2150,12 +2158,49 @@ func _check_card_interception_exceptions(failures: PackedStringArray) -> void:
 	var giant := GiantMasterArchitect.new()
 	giant.card_owner = player
 	giant.creature_mode = Card.CreatureMode.DEFENSIVE
+	# A face-up Defensive body intercepts regardless of Speed, so hide the Giant
+	# to leave Giant's Disdain as its only way past a faster attacker.
+	giant.is_stealth = true
+	giant.is_face_down = true
 	player.frontline_zones[3].add_card(giant)
 	if not manager._can_intercept(giant, attacker, human) or manager._can_intercept(giant, attacker, animal):
 		failures.append("Giant's Disdain did not bypass speed alone when intercepting a non-Giant")
 	attacker.card_types.append("Giant")
 	if manager._can_intercept(giant, attacker, human):
 		failures.append("Giant's Disdain bypassed the speed of an attacking Giant")
+
+	# A face-up Defensive body intercepts regardless of Speed. Stealth is face-down,
+	# and hiding no longer costs a creature any Speed.
+	var wall := CreatureCard.new()
+	wall.card_owner = player
+	wall.speed = 1
+	wall.creature_mode = Card.CreatureMode.DEFENSIVE
+	player.reserve_zones[2].add_card(wall)
+	if not manager._can_intercept(wall, attacker, player):
+		failures.append("A face-up Defensive creature did not intercept a faster attack")
+	wall.is_stealth = true
+	wall.is_face_down = true
+	if wall.get_effective_speed() != 1 or manager._can_intercept(wall, attacker, player):
+		failures.append("A stealth creature lost Speed or intercepted a faster attack without an ability")
+
+	# Hermes: your creatures cannot be intercepted by slower creatures.
+	var hermes := Hermes.new()
+	hermes.card_owner = player
+	player.god_zone.add_card(hermes)
+	var swift := CreatureCard.new()
+	swift.card_owner = player
+	swift.speed = 5
+	player.reserve_zones[4].add_card(swift)
+	var drudge := CreatureCard.new()
+	drudge.card_owner = opponent
+	drudge.speed = 4
+	drudge.creature_mode = Card.CreatureMode.DEFENSIVE
+	opponent.frontline_zones[2].add_card(drudge)
+	if manager._can_intercept(drudge, swift, opponent) or not manager._can_intercept(drudge, skimmer, opponent):
+		failures.append("Hermes did not block only slower creatures from intercepting")
+	hermes.is_muted = true
+	if not manager._can_intercept(drudge, swift, opponent):
+		failures.append("A muted Hermes still blocked a face-up Defensive interceptor")
 
 func _check_bot_summon_and_intercept(failures: PackedStringArray) -> void:
 	var game := _new_fixture_game()
@@ -2332,7 +2377,9 @@ func _check_bot_interception_forecasts(failures: PackedStringArray) -> void:
 	opponent.power_zones[0].add_card(power)
 	var giant := GiantMasterArchitect.new()
 	giant.card_owner = opponent
-	giant.creature_mode = Card.CreatureMode.DEFENSIVE
+	# Aggressive stance, so only Giant's Disdain can beat the faster attack: a
+	# face-up Defensive body would intercept regardless of Speed.
+	giant.creature_mode = Card.CreatureMode.AGGRESSIVE
 	opponent.frontline_zones[2].add_card(giant)
 	guard.creature_mode = Card.CreatureMode.AGGRESSIVE
 	var replies: Dictionary = bot._get_attack_candidates(guard, null)[0]["replies"]
@@ -2772,6 +2819,9 @@ func _check_bot_fenrir_summon(failures: PackedStringArray) -> void:
 	for index in range(fenrir.sacrifice_cost):
 		var payment := CreatureCard.new()
 		payment.card_owner = player
+		# Aggressive keeps these chumps out of interception range, so the
+		# incoming attack stays lethal before Fenrir's Devour resilience.
+		payment.creature_mode = Card.CreatureMode.AGGRESSIVE
 		player.reserve_zones[index].add_card(payment)
 	var prey := CreatureCard.new()
 	prey.card_owner = opponent
@@ -3870,21 +3920,23 @@ func _check_aphrodite_aspect_shift(failures: PackedStringArray) -> void:
 	player.reserve_zones[0].add_card(defender)
 	var enemy := CreatureCard.new()
 	enemy.card_owner = opponent
-	enemy.speed = 4
+	enemy.speed = 6
 	enemy.strength = 20
 	enemy.creature_mode = Card.CreatureMode.AGGRESSIVE
 	opponent.frontline_zones[0].add_card(enemy)
 	var danger := bot._forecast_incoming_follower_loss()
 	var shift := bot._plan_aspect_shift([], {}, danger, {}, player.mana)
-	if defender.get_effective_speed() != 3 or danger != player.followers \
+	# Hiding no longer costs Speed, so only Veil of Night lets the hidden body
+	# intercept this faster attack.
+	if defender.get_effective_speed() != 4 or manager._can_intercept(defender, enemy, player) \
+			or danger != player.followers \
 			or shift.get("command", {}).get("type") != "unlock_power" \
 			or player.god_zone.cards[0] != areia or not bot._take_main_phase_action():
 		failures.append("Bot did not shift Aphrodite to let a hidden defender intercept a lethal attack")
 		return
 	var skotia := player.god_zone.cards[0] as AphroditeSkotia
-	if skotia == null or defender.get_effective_speed() != 4 \
-			or not manager._can_intercept(defender, enemy, player) or player.mana != 16:
-		failures.append("Veil of Night did not remove the hidden defender's Speed penalty for interception")
+	if skotia == null or not manager._can_intercept(defender, enemy, player) or player.mana != 16:
+		failures.append("Veil of Night did not let a hidden defender intercept a faster attack")
 		return
 	var recruit := CreatureCard.new()
 	recruit.card_owner = player
@@ -3893,7 +3945,7 @@ func _check_aphrodite_aspect_shift(failures: PackedStringArray) -> void:
 			or bot._should_summon_creature_stealthily(defender, player.reserve_zones[1], Card.CreatureMode.DEFENSIVE):
 		failures.append("Bot did not adjust stealth summoning to Veil of Night and Reveal triggers")
 	skotia.is_muted = true
-	if defender.get_effective_speed() != 3 or not defender.will_reveal_in_combat():
+	if manager._can_intercept(defender, enemy, player) or not defender.will_reveal_in_combat():
 		failures.append("Muting Aphrodite Skotia did not suppress Veil of Night")
 	skotia.is_muted = false
 	game._begin_declared_combat(enemy, defender)

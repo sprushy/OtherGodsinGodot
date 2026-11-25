@@ -11,7 +11,7 @@ func _init() -> void:
 	level = 4
 	mana_cost = 2
 	sacrifice_cost = 0
-	speed = 3
+	speed = 2
 	resilience = 14
 	strength = 14
 	ability_text = "[b]Stone Skin[/b] ([b]Passive[/b]): Cannot be [b]Slain[/b]."

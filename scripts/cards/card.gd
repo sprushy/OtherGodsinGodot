@@ -811,8 +811,6 @@ func get_effective_speed(speed_delta: int = 0) -> int:
 	var base_speed = speed
 	var speed_override: Variant = null
 	var equipment_speed_bonus := 0
-	if is_stealth and not has_veil_of_night():
-		base_speed -= 1
 	for equip in equipment:
 		equipment_speed_bonus += equip.speed_modifier
 		if equip != null and equip.has_method("get_speed_override_for_equipped_creature"):
@@ -1641,8 +1639,15 @@ func remove_status_effects_with_flag(flag_name: String) -> void:
 func prevents_interception() -> bool:
 	return false
 
+# Veil of Night (Aphrodite Skotia): your stealth creatures may intercept
+# regardless of speed. Overrides chain here so a hidden body keeps it.
 func can_intercept_regardless_of_speed(_protected_target) -> bool:
-	return false
+	return is_stealth and has_veil_of_night()
+
+# Returns the fixed Speed this card intercepts at for `protected_target`, or
+# null when it intercepts at its own Speed.
+func get_intercept_speed_override(_protected_target) -> Variant:
+	return null
 
 func has_reach(_protected_target) -> bool:
 	return false

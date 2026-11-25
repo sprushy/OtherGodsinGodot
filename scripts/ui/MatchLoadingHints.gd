@@ -26,7 +26,7 @@ const GENERAL: Array[String] = [
 	"Each lane pairs a Frontline slot with the Reserve slot behind it. Position affects movement, Equipment, and card effects.",
 
 	"Check for interceptors before attacking. An eligible interceptor may step in and take the attack in place of the original target.",
-	"An interceptor needs to be at least as fast as the incoming attack.",
+	"A face-up Defensive Creature can intercept any attack. Other interceptors need to be at least as fast as the incoming attack.",
 	"A Defensive Creature in your Frontline can intercept attacks aimed at your Reserve as well as your Followers.",
 
 	"Defensive Creatures can intercept attacks on targets closer to their row.",

@@ -35,7 +35,7 @@ Each entry gives proposed wording, an edit to make, or a reason to retain the ex
 | Card | Recommendation |
 | --- | --- |
 | [Aphrodite Areia](../scripts/cards/Gods/AphroditeAreia.gd) | Lead with the combat destruction prerequisite. Keep “destroyed … in combat” so the condition retains its current scope. |
-| [Aphrodite Skotia](../scripts/cards/Gods/AphroditeSkotia.gd) | “Your hidden creatures keep their full SPD and stay hidden in combat.” |
+| [Aphrodite Skotia](../scripts/cards/Gods/AphroditeSkotia.gd) | “Your stealth creatures may intercept regardless of SPD and stay hidden in combat.” |
 | [Baldr](../scripts/cards/Gods/Baldr.gd) | “Blessed One (Upkeep): Gain 5 Followers.” Upkeep already supplies the timing. |
 | [Cernunnos](../scripts/cards/Gods/Cernunnos.gd) | “Animals of level 5 or higher get +2 STR and +2 SPD. Triskelion Animals can’t be Enslaved.” Keep the two groups explicit. |
 | [Dellingr, the Dayspring](../scripts/cards/Gods/DellingrTheDayspring.gd) | “Reveal an opposing card until end of turn. If it’s magical, it can’t activate this turn.” Keep the two time clauses adjacent. |

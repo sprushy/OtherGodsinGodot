@@ -3,6 +3,7 @@ class_name ThorActive
 
 const PASSIVE_SOURCE := "Thor Active - Patron's Hand"
 const LINKED_GOD_NAME := "Thor"
+const INTERCEPT_SPEED := 4
 const ART_PATH := "res://images/card_art/gods/ThorAIedit.png"
 
 func _init() -> void:
@@ -18,7 +19,7 @@ func _init() -> void:
 	culture = "Norse"
 	# flavor_text = "Thor steps onto the field and the human warbands rally around him."
 	flavor_text = ""
-	ability_text = "[b]Patron's Hand[/b] ([b]Passive[/b]): Can intercept for your followers or Human creatures regardless of speed. Other friendly Warriors on the field gain +5 STR and +5 RES. Follower damage inflicted by Thor is halved."
+	ability_text = "[b]Patron's Hand[/b] ([b]Passive[/b]): Can intercept for your followers or humans at speed %d. Other friendly Warriors on the field gain +5 STR and +5 RES. Follower damage inflicted by Thor is halved." % INTERCEPT_SPEED
 	art_path = ART_PATH
 	name_at_bottom = true
 	artist = "Ricarrdo Zoppello"
@@ -82,7 +83,11 @@ func _get_passive_cleanup_zones(player: Player) -> Array[Zone]:
 	zones.append_array(player.reserve_zones)
 	return zones
 
-func can_intercept_regardless_of_speed(protected_target) -> bool:
+# Patron's Hand: Thor intercepts for your followers or humans at a fixed Speed.
+func get_intercept_speed_override(protected_target) -> Variant:
+	return INTERCEPT_SPEED if _patrons_hand_covers(protected_target) else null
+
+func _patrons_hand_covers(protected_target) -> bool:
 	if abilities_suppressed():
 		return false
 	if current_zone == null or not current_zone.is_board_zone():

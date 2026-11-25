@@ -22,7 +22,7 @@ func _init() -> void:
 	art_variants = [ART_PATH, ALT_ART_PATH]
 
 func can_intercept_regardless_of_speed(protected_target) -> bool:
-	return has_reach(protected_target)
+	return has_reach(protected_target) or super.can_intercept_regardless_of_speed(protected_target)
 
 func has_reach(protected_target) -> bool:
 	if not _heavens_guard_is_active():
