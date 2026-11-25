@@ -602,7 +602,8 @@ static func _disable_durations(bot, target: Card, include_pending: bool = false)
 		_extend_disables(durations, ["activation_locked", Card.ABILITY_NEGATED_STATUS], duration)
 	if include_pending:
 		for pending: CardAction in bot.game_manager.action_stack:
-			if pending.target != target or pending in bot.game_manager.resolving_stack_actions:
+			if pending == null or not (pending.target is Card) or pending.target != target \
+					or pending in bot.game_manager.resolving_stack_actions:
 				continue
 			if pending.card is Dromi or pending.card is Gleipnir:
 				_extend_disables(durations, ["cannot_attack"], INF)
@@ -819,7 +820,7 @@ static func target_has_pending_removal(bot, target: Card) -> bool:
 	if target == null or bot == null or bot.game_manager == null:
 		return false
 	for pending: CardAction in bot.game_manager.action_stack:
-		if pending == null or pending.target != target:
+		if pending == null or not (pending.target is Card) or pending.target != target:
 			continue
 		if not removal_targets(bot, pending.card, target, pending).is_empty():
 			return true
