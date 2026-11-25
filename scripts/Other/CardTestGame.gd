@@ -253,7 +253,56 @@ func _setup_test_board() -> void:
 	load_featured_card_test_scenario()
 
 func load_featured_card_test_scenario() -> void:
-	load_pai_long_cursor_test_scenario()
+	load_thor_active_vs_gullinbursti_scenario()
+
+func load_thor_active_vs_gullinbursti_scenario() -> void:
+	_reset_test_match_state()
+	_add_test_god(player1, Thor.new())
+	_add_test_god(player2, Freyja.new())
+
+	# Thor, Active God stands alone in P1's frontline, aggressive stance —
+	# the Champion's Call default. Patron's Hand covers P1's followers and
+	# humans at Speed 4.
+	var thor_active := ThorActive.new()
+	_place_test_board_card(player1, player1.frontline_zones[2], thor_active, Card.CreatureMode.AGGRESSIVE)
+
+	# Gullinbursti alone for P2: Speed 4 with Dodge ("Cannot be attacked by
+	# slower creatures"). Intercepting is not attacking, so Thor Active
+	# (Speed 1, intercept at Speed 4) may still step in front of its attacks.
+	_place_test_board_card(player2, player2.frontline_zones[2], Gullinbursti.new(), Card.CreatureMode.AGGRESSIVE)
+
+	player1.spend_mana(player1.mana)
+	player1.gain_mana(20)
+	player2.spend_mana(player2.mana)
+	player2.gain_mana(20)
+	player1.followers = 100
+	player2.followers = 100
+	player1.followers_changed.emit(player1.followers)
+	player2.followers_changed.emit(player2.followers)
+	player1.has_summoned_this_turn = false
+	player2.has_summoned_this_turn = false
+
+	game_manager.current_player = player1
+	game_manager.other_player = player2
+	game_manager.feedback_viewer = player1
+	player1.is_turn_player = true
+	player2.is_turn_player = false
+	selected_card = null
+	selected_attacker = null
+	selected_interceptor = null
+	_test_turn_owner = player1
+	_test_turn_opponent = player2
+	game_manager.turn_number = 1
+	game_manager.start_turn()
+	_open_upkeep_choice_window()
+	action_label.text = (
+		"Thor Active vs Gullinbursti. Choose an upkeep option, then end the turn. "
+		+ "On P2's turn, attack P1's Followers with Gullinbursti: the Intercept? prompt should offer Thor, Active God, "
+		+ "because Dodge (\"cannot be attacked by slower creatures\") does not stop an interceptor. "
+		+ "Intercepting with Aggressive Thor is STR 40 vs STR 24, so Gullinbursti dies and Thor survives. "
+		+ "Gullinbursti may also attack Thor Active directly (Speed 4 vs Speed 1 passes Dodge on the attacker side)."
+	)
+	update_ui()
 
 func load_pai_long_cursor_test_scenario() -> void:
 	_reset_test_match_state()

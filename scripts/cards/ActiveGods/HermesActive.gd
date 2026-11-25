@@ -34,3 +34,9 @@ func can_be_engaged_by(source: Card) -> bool:
 	if source == null or not source.is_creature_card():
 		return true
 	return source.get_effective_speed() >= get_effective_speed()
+
+# Wingfoot ("Slower creatures cannot attack Hermes") restricts declaring an
+# attack against Hermes. Intercepting is not attacking, so a slower
+# interceptor may still step in front of Hermes's attack.
+func can_be_engaged_by_interceptor(source: Card) -> bool:
+	return super.can_be_engaged_by(source)

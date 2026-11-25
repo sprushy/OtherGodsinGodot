@@ -26,3 +26,9 @@ func can_be_engaged_by(source: Card) -> bool:
 	if source == null or not source.is_creature_card():
 		return true
 	return source.get_effective_speed() >= get_effective_speed()
+
+# Dodge ("Cannot be attacked by slower creatures") restricts declaring an
+# attack against Gullinbursti. An interceptor steps in front of the attack
+# without attacking Gullinbursti, so it does not dodge the interceptor.
+func can_be_engaged_by_interceptor(source: Card) -> bool:
+	return super.can_be_engaged_by(source)

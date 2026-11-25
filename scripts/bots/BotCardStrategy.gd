@@ -52,8 +52,11 @@ const BOARD_ABILITIES := ["Alu", "Lindwyrm", "Lamashatu", "ClayEaters", "Ancient
 	"Berserker", "EnHeduAnna", "GududPriest", "HariiShaman", "Isimud", "Mopsus", "SeventhSageUtuabzu", "WingedLion"]
 # Creatures whose face-up value stealth suppresses, so they must not be summoned
 # face-down. Card._abilities_disabled_by_hidden_state() turns every creature
-# ability off while is_stealth is set, and the engine gates impact/kill/death
-# hooks plus these self-gated passives on abilities_suppressed(). Printed
+# ability off while is_stealth is set, and the engine gates impact/kill hooks
+# plus these self-gated passives on abilities_suppressed(). Death hooks are the
+# exception as of the 2026-11-25 rules change: leaving play fires on_death,
+# [b]Destroyed[/b] triggers, and on_perish even while face-down, so a hidden
+# death no longer loses those payoffs. Printed
 # Impact triggers are protected generically by BaseCard.declares_impact_trigger()
 # in the bot's stealth gate, so this list is the backstop for those bodies and
 # the registry for kill/death/passive-only ones. Reveal-trigger

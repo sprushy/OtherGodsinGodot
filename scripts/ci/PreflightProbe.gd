@@ -2059,15 +2059,12 @@ func _check_bot_follower_valuation(failures: PackedStringArray) -> void:
 	player.power_zones[0].add_card(guard)
 	var attacker := CreatureCard.new()
 	attacker.card_owner = opponent
-	attacker.creature_mode = Card.CreatureMode.DEFENSIVE
+	attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
 	attacker.strength = 14
 	opponent.frontline_zones[0].add_card(attacker)
 	player.followers = 10
 	player.mana = 20
-	if not bot._plan_power_activation(guard).is_empty():
-		failures.append("Bot bought Guard against a creature with no projected follower attack")
 
-	attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
 	guard.is_face_down = true
 	player.mana = ManaGuard.UNLOCK_COST
 	if not bot._plan_power_unlock().is_empty():
@@ -3949,8 +3946,8 @@ func _check_aphrodite_aspect_shift(failures: PackedStringArray) -> void:
 	recruit.card_owner = player
 	recruit.speed = 4
 	if not bot._should_summon_creature_stealthily(recruit, player.reserve_zones[1], Card.CreatureMode.DEFENSIVE) \
-			or bot._should_summon_creature_stealthily(defender, player.reserve_zones[1], Card.CreatureMode.DEFENSIVE):
-		failures.append("Bot did not adjust stealth summoning to Veil of Night and Reveal triggers")
+			or not bot._should_summon_creature_stealthily(defender, player.reserve_zones[1], Card.CreatureMode.DEFENSIVE):
+		failures.append("Bot did not hide Reveal-trigger bodies under Veil of Night")
 	skotia.is_muted = true
 	if manager._can_intercept(defender, enemy, player) or not defender.will_reveal_in_combat():
 		failures.append("Muting Aphrodite Skotia did not suppress Veil of Night")

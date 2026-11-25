@@ -324,7 +324,7 @@ Core interception rules:
 - Sleeping Creatures and Creatures with cannot-intercept statuses cannot intercept.
 - A face-up Defensive Creature can intercept regardless of Speed.
 - Any other interceptor must be at least as fast as the declared attack unless an ability lets it ignore Speed.
-- The interceptor must be able to engage the attacker. Incorporeal and similar restrictions still apply.
+- The interceptor must be able to engage the attacker. Incorporeal and similar restrictions still apply. Restrictions phrased as "cannot be attacked" (such as Dodge or Wingfoot) do not stop interception, because intercepting is not attacking.
 - Aggressive interceptors require a deeper protected target than Defensive interceptors.
 - Frontline Aggressive Creatures can normally intercept attacks aimed at Followers or the God.
 - Frontline Defensive Creatures can normally intercept attacks aimed at the Reserve, Followers, or the God.

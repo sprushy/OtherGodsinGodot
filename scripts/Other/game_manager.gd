@@ -714,7 +714,9 @@ func can_interceptor_engage_attacker(interceptor: Card, attacker: Card) -> bool:
 		return false
 	if interceptor.has_method("can_engage") and not interceptor.can_engage(attacker):
 		return false
-	if attacker.has_method("can_be_engaged_by") and not attacker.can_be_engaged_by(interceptor):
+	# Intercepting engages the attacker without attacking it, so "cannot be
+	# attacked" restrictions (Dodge, Wingfoot) do not block the interceptor.
+	if attacker.has_method("can_be_engaged_by_interceptor") and not attacker.can_be_engaged_by_interceptor(interceptor):
 		return false
 	return true
 
@@ -2886,7 +2888,7 @@ func resolve_combat_with_continuation(
 			if continue_callback.is_valid():
 				continue_callback.call()
 			return false
-		if attacker.has_method("can_be_engaged_by") and not attacker.can_be_engaged_by(defender):
+		if attacker.has_method("can_be_engaged_by_interceptor") and not attacker.can_be_engaged_by_interceptor(defender):
 			print(attacker.card_name + " cannot be intercepted by " + defender.card_name + ".")
 			if continue_callback.is_valid():
 				continue_callback.call()
@@ -4387,7 +4389,7 @@ func _send_to_graveyard_with_hook_resolved(
 	var was_aerial := card.has_type("Aerial")
 	var replacement_zone: Zone = null
 	if class_rend_source == null and not (ignore_self_combat_replacement and combat_death) \
-			and card.has_method("get_self_graveyard_replacement_zone") and not card.abilities_suppressed() \
+			and card.has_method("get_self_graveyard_replacement_zone") and not card.abilities_suppressed_by_effects() \
 			and not _is_watchbeast_active():
 		replacement_zone = card.get_self_graveyard_replacement_zone(self, combat_death, destruction, send_to_abyss)
 
@@ -4416,7 +4418,7 @@ func _send_to_graveyard_with_hook_resolved(
 			continue_callback.call()
 		return true
 	if class_rend_source == null and not (ignore_self_combat_replacement and combat_death) \
-			and card.has_method("request_self_graveyard_replacement_choice") and not card.abilities_suppressed() \
+			and card.has_method("request_self_graveyard_replacement_choice") and not card.abilities_suppressed_by_effects() \
 			and not _is_watchbeast_active():
 		if card.request_self_graveyard_replacement_choice(
 			self,

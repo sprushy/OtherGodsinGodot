@@ -752,9 +752,11 @@ func abilities_suppressed_by_effects() -> bool:
 func post_field_abilities_suppressed() -> bool:
 	# Silence and generic ability negation only apply while the card remains in play.
 	# Use this gate for hooks that fire as the card leaves the field or from the graveyard.
+	# The hidden state is deliberately absent: dying face-down still fires the
+	# card's death hooks ([b]Destroyed[/b] triggers, on_death, on_perish), and a
+	# reveal-restore does not apply to a card that left play.
 	return is_enslaved() \
-		or is_petrified() \
-		or _abilities_disabled_by_hidden_state()
+		or is_petrified()
 
 func process_board_leave_hooks(game_manager: GameManager = null) -> void:
 	if _board_leave_hooks_processed:
@@ -1737,6 +1739,14 @@ func can_be_engaged_by_incorporeal_rules(source: Card) -> bool:
 # Returns false when this card is incorporeal and `target` is not a permitted engage target.
 func can_engage(target: Card) -> bool:
 	return can_engage_by_incorporeal_rules(target)
+
+# Engagement check for the interception window. Intercepting engages the
+# attacker without attacking it, so restrictions phrased as "cannot be
+# attacked" (Dodge, Wingfoot) do not apply here, while engagement-worded
+# restrictions (Incorporeal, Evasive) still do. Override to relax the
+# attack-only restrictions; the default keeps them.
+func can_be_engaged_by_interceptor(source: Card) -> bool:
+	return can_be_engaged_by(source)
 
 func can_engage_by_incorporeal_rules(target: Card) -> bool:
 	if not incorporeal:

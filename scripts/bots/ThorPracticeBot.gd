@@ -2414,11 +2414,14 @@ func _plan_creature_summon(danger: int = -1, attacks: Array[Dictionary] = [], ba
 						# The hold keeps the trigger banked: price the option
 						# (banked floor included), not just the best current target.
 						candidate += hold_reveal_value
-					elif stealth and not projected_defensive and uses_recruit:
+					elif stealth and not projected_defensive and uses_recruit \
+							and not creature.has_veil_of_night():
 						# A hidden body that swings reveals in combat and spends
 						# the trigger on the best current target. The attack
 						# projection prices the attacker as the revealed form and
 						# drops that value, so credit the realized spend here.
+						# Under Veil of Night the swing stays hidden and the
+						# trigger stays banked, so nothing is spent to credit.
 						candidate += reveal_value
 					if not stealth:
 						candidate += search_value
@@ -2704,7 +2707,8 @@ func _estimate_projected_summon_casualty_cost(
 		# interceptor takes the hit instead and the body stays hidden, so that
 		# path below correctly gets no credit.
 		if stealth and (creature is Grindylow or creature is MasmassuPriest) \
-				and not creature.abilities_suppressed_by_effects():
+				and not creature.abilities_suppressed_by_effects() \
+				and not creature.has_veil_of_night():
 			var reveal_target := _choose_combat_reveal_removal(
 				creature, _get_reveal_removal_targets(creature), action, result["casualties"]
 			)
@@ -7831,16 +7835,29 @@ func _build_creature_play_command(card: Card, zone: Zone, mode: Card.CreatureMod
 func _stealth_would_forfeit_value(card: Card) -> bool:
 	if card == null:
 		return false
-	if card.has_veil_of_night() and not card.abilities_suppressed_by_effects() \
-			and "[b]Reveal[/b]" in card.ability_text:
-		return true
+	# Reveal-trigger creatures are excluded on purpose (see BotCardStrategy):
+	# their payoff fires on the hidden-to-visible transition, and under Veil of
+	# Night hiding keeps it banked (a change-stance reveal, an opponent reveal,
+	# or the veil dropping all still fire it) while a face-up summon kills it
+	# outright. Face-up is the option that forfeits the value.
 	var card_key := CardStrategy.key(card)
-	if card_key in CardStrategy.BOARD_ABILITIES:
-		return true
 	if card.declares_impact_trigger() and not card.abilities_suppressed_by_effects():
 		if not card.has_method("get_valid_targets") or not card.get_valid_targets(game_manager).is_empty():
 			return true
 		return false
+	# Under Veil of Night the static face-up-value registries defer instead of
+	# forfeit: a change-stance reveal restores the hook, the veil keeps the
+	# hidden body intercepting regardless of Speed and unrevealed in combat,
+	# and targeted removal cannot touch it. Stay face-up only while the hook
+	# is live right now — an activated or targeted ability with legal targets
+	# — and hide freely once that payoff dries up.
+	if card.has_veil_of_night() and not card.abilities_suppressed_by_effects() \
+			and (card_key in CardStrategy.BOARD_ABILITIES or card_key in CardStrategy.STEALTH_SUPPRESSED_KEYS):
+		if not card.has_method("get_valid_targets"):
+			return false
+		return not card.get_valid_targets(game_manager).is_empty()
+	if card_key in CardStrategy.BOARD_ABILITIES:
+		return true
 	return card_key in CardStrategy.STEALTH_SUPPRESSED_KEYS
 
 func _prefers_stealth_summon(card: Card) -> bool:
@@ -10091,9 +10108,15 @@ func _reveal_removal_mana_value(source: Card, target: Card) -> int:
 # a target worth a full card makes holding worth exactly that card.
 func _banked_reveal_removal_value(card: Card) -> int:
 	if card == null or card.abilities_suppressed_by_effects() \
-			or card.has_veil_of_night() \
 			or not (card is MasmassuPriest or card is Grindylow):
 		return 0
+	# Under Veil of Night the body's own combat no longer reveals it, so the
+	# free cash-outs are gone; it still fires on a deliberate change-stance
+	# reveal, an opponent reveal, or once the veil drops, so keep half the
+	# bank instead of zeroing it.
+	if card.has_veil_of_night():
+		@warning_ignore("integer_division")
+		return ECON_CARD_VALUE * 3 / 8
 	@warning_ignore("integer_division")
 	return ECON_CARD_VALUE * 3 / 4
 
