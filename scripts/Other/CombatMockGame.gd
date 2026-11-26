@@ -32766,9 +32766,13 @@ func _get_player_god_name(player: Player) -> String:
 	return str(god_card.card_name).strip_edges()
 
 func _on_game_ended(winner: Player, loser: Player) -> void:
-	if (_is_networked_client or _is_real_network_host()) and _should_defer_game_result_for_series():
-		return
+	# Local bot challenges bind a real spectate socket, which makes this client
+	# a "real network host". The Bo3 series window must run before the
+	# networked-host deferral, or a bot challenge ends after one game with no
+	# Reinforcement screen and no result.
 	if _begin_local_bot_series_window(winner, loser):
+		return
+	if (_is_networked_client or _is_real_network_host()) and _should_defer_game_result_for_series():
 		return
 	_record_local_host_match_result(winner, loser)
 	if _is_local_bot_match():
@@ -32797,9 +32801,12 @@ func _begin_local_bot_series_window(winner: Player, loser: Player) -> bool:
 	if game_manager.game_end_reason == GameManager.GAME_END_REASON_MATCH_FORFEIT and winner_index >= 0:
 		# A forfeit ends the whole series immediately, mirroring the dedicated
 		# match server: award the remaining games and fall through to the
-		# normal result path.
+		# normal result path. Sync the known snapshot so the deferral check in
+		# _on_game_ended sees the series as complete and shows the result.
 		var forfeit_winner_session_id := str(match_session.player_session_ids[winner_index]).strip_edges()
 		match_session.series_wins_by_session[forfeit_winner_session_id] = match_session.games_to_win
+		_series_snapshot = match_session.get_series_snapshot().duplicate(true)
+		_current_match_info["series"] = _series_snapshot.duplicate(true)
 		return false
 	var snapshot: Dictionary = match_session.record_series_game_win(winner_index) \
 		if winner_index >= 0 else match_session.get_series_snapshot()

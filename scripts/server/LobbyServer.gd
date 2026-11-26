@@ -23,7 +23,6 @@ const RankedProgressionScript = preload("res://scripts/server/RankedProgression.
 const RankBadgeCatalog = preload("res://scripts/core/RankBadgeCatalog.gd")
 const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
 const ServerPathsScript = preload("res://scripts/server/ServerPaths.gd")
-const BotCardStrategyScript = preload("res://scripts/bots/BotCardStrategy.gd")
 const LOBBY_EVENT_TYPE := "__lobby_event__"
 const SEEK_TIMEOUT_SECONDS := 30 * 60
 const SEEK_TIMEOUT_CHECK_INTERVAL_SECONDS := 5.0
@@ -1849,27 +1848,6 @@ func _handle_submit_bot_deck(peer_id: int, payload: Dictionary) -> void:
 		_send_to_peer(peer_id, LobbyProtocolScript.BOT_DECK_SUBMISSION_RESULT, {
 			"success": false,
 			"message": str(validation.get("error", "This deck is not legal for bot matches.")),
-			"bot": {},
-		})
-		return
-	# Reject decks that contain cards the bot AI doesn't know how to play yet.
-	var catalog_all := CardCatalogScript.make_all_cards()
-	var unsupported_names: Array[String] = []
-	for card_name in (validation.get("cards", {}) as Dictionary).keys():
-		for catalog_card in catalog_all:
-			if catalog_card != null and str(catalog_card.card_name) == str(card_name):
-				if not BotCardStrategyScript.supports_ranked_deck_card(catalog_card):
-					unsupported_names.append(str(card_name))
-				break
-	if not unsupported_names.is_empty():
-		unsupported_names.sort()
-		var card_list := ", ".join(unsupported_names)
-		_send_to_peer(peer_id, LobbyProtocolScript.BOT_DECK_SUBMISSION_RESULT, {
-			"success": false,
-			"message": "Sorry — the bot AI doesn't know how to play %s yet. I'm working on it! Please try a deck without: %s." % [
-				"this card" if unsupported_names.size() == 1 else "these cards",
-				card_list,
-			],
 			"bot": {},
 		})
 		return

@@ -8,6 +8,7 @@ const BotSideboardPolicyScript = preload("res://scripts/bots/BotSideboardPolicy.
 const BotSideboardRatingsScript = preload("res://scripts/bots/BotSideboardRatings.gd")
 
 const DEFAULT_REGULAR_CARD_COUNT := 40
+const LEGENDARY_DECK_TARGET := 4 # DEFAULT_REGULAR_CARD_COUNT / 10, matches DeckValidator
 const MAX_POWERS := 3
 const MAX_BUILD_ATTEMPTS := 32
 const MAX_RANDOM_PICK_ATTEMPTS := 256
@@ -31,68 +32,13 @@ const VOID_SOURCE_CARD_NAMES := [
 	"Sixth Sage An-Enlilda",
 	"E2-abzu",
 ]
-const PROMPT_HEAVY_CARD_NAMES := {
-	"Aphrodite Areia": true,
-	"Blessed Knights": true,
-	"Tezcatlipoca, Active God": true,
-	"Nusku, Active God": true,
-	"Mummu, Active God": true,
-	"First Sage Adapa": true,
-	"Third Sage Enmedugga": true,
-	"Fourth Sage Enmegalamma": true,
-	"Sixth Sage An Enlilda": true,
-	"Lailoken": true,
-	"Masmassu Priest": true,
-	"Rally the Troops": true,
-	"Terror": true,
-	"Huginn": true,
-	"Muninn": true,
-	"Fenrir": true,
-	"Harii Jarl": true,
-	"Durinn, Secondborn": true,
-	"Kur Jara": true,
-	"Hunting Tactics": true,
-	"Foolish Optimism": true,
-	"Gugalanna, Bull of Heaven": true,
-	"Freyja, Active God": true,
-	"Giant Master Architect": true,
-	"Pai Long, Autumn King": true,
-	"Nergal Lion": true,
-	"Gala Tura": true,
-	"Gawain": true,
-	"Tatzelwurm": true,
-	"Byggvir": true,
-	"Humbaba the Terrible": true,
-	"Ragnarok": true,
-	"Apollyon's Demiurge": true,
-	"Wolf Adolescent": true,
-	"Advanced Building Techniques": true,
-}
-const SAFE_NON_CREATURE_CARD_NAMES := {
-	"Accelerated Fate": true,
-	"Call of the Valkyrie": true,
-	"Void Shield": true,
-	"Mead of Poetry": true,
-	"Divine Lightning": true,
-	"Fall of the Mighty": true,
-	"Key of Solomon": true,
-	"Vision of Tartarus": true,
-	"Tonal Extraction": true,
-}
-
 var _validator := DeckValidatorScript.new()
 var _all_cards: Array[Card] = []
 var _gods: Array[GodCard] = []
 var _cards_by_name: Dictionary = {}
-var _prompt_heavy_lookup: Dictionary = {}
-var _safe_non_creature_lookup: Dictionary = {}
 var _restricted_equipment_lookup: Dictionary = {}
 
 func _init() -> void:
-	for prompt_name in PROMPT_HEAVY_CARD_NAMES.keys():
-		_prompt_heavy_lookup[CardCatalogScript.to_lookup_key(str(prompt_name))] = true
-	for safe_name in SAFE_NON_CREATURE_CARD_NAMES.keys():
-		_safe_non_creature_lookup[CardCatalogScript.to_lookup_key(str(safe_name))] = true
 	_all_cards = CardCatalogScript.make_all_cards()
 	for card in _all_cards:
 		if card == null:
@@ -188,8 +134,8 @@ func build_hunting_tactics_deck() -> Dictionary:
 			deck_cards[forced_name] = int(HUNTING_TACTICS_DECK_FORCED_CARDS[forced_name])
 		if not _fill_regular_cards_for_god(deck_cards, god, rng):
 			continue
-		# Guarantee Hunting Tactics occupies a power slot even though it is in
-		# the prompt-heavy exclusion list for the normal autofill path.
+		# Hunting Tactics is seeded above so this smoke deck always exercises
+		# that power regardless of how the filler would otherwise roll.
 		var validation := _validator.validate_deck(deck_cards)
 		if bool(validation.get("is_valid", false)):
 			return {
@@ -282,7 +228,8 @@ func _enforce_god_specific_regular_minimums(
 	cards: Dictionary,
 	god: GodCard,
 	rng: RandomNumberGenerator,
-	ranked: bool = true
+	ranked: bool = true,
+	sideboard: Dictionary = {}
 ) -> void:
 	var attempts := 0
 	while attempts < MAX_RANDOM_PICK_ATTEMPTS:
@@ -304,7 +251,48 @@ func _enforce_god_specific_regular_minimums(
 			else:
 				cards[victim_name] = victim_count - 1
 		var candidates := _get_regular_candidates(god, cards, false, ranked).filter(
-			func(card: Card) -> bool: return _matches_god_specific_regular_requirement(god, card)
+			func(card: Card) -> bool: return _matches_god_specific_regular_requirement(god, card) \
+				and _combined_copy_room(card, cards, sideboard) > 0
+		)
+		if candidates.is_empty():
+			if needs_swap and victim_count > 0:
+				cards[victim_name] = victim_count
+			return
+		var chosen: Card = candidates[rng.randi_range(0, candidates.size() - 1)]
+		cards[chosen.card_name] = int(cards.get(chosen.card_name, 0)) + 1
+
+# The 12% legendary sprinkle is stochastic, so top up best-effort after the
+# main fill and during ranked audits instead of settling for fewer than the
+# validator's four-legendary allowance.
+func _enforce_legendary_minimum(
+	cards: Dictionary,
+	god: GodCard,
+	rng: RandomNumberGenerator,
+	ranked: bool = true,
+	sideboard: Dictionary = {}
+) -> void:
+	var attempts := 0
+	while attempts < MAX_RANDOM_PICK_ATTEMPTS:
+		attempts += 1
+		if _count_regular_legendary_cards(cards) >= LEGENDARY_DECK_TARGET:
+			return
+		var needs_swap := _count_regular_cards(cards) >= DEFAULT_REGULAR_CARD_COUNT
+		var victim_name := ""
+		var victim_count := 0
+		if needs_swap:
+			victim_name = _choose_legendary_swap_victim(cards, god)
+			if victim_name.is_empty():
+				return
+			victim_count = int(cards.get(victim_name, 0))
+			if victim_count <= 0:
+				return
+			if victim_count <= 1:
+				cards.erase(victim_name)
+			else:
+				cards[victim_name] = victim_count - 1
+		var candidates := _get_regular_candidates(god, cards, true, ranked).filter(
+			func(card: Card) -> bool: return _has_deckbuilding_requirements(card, cards, god) \
+				and _combined_copy_room(card, cards, sideboard) > 0
 		)
 		if candidates.is_empty():
 			if needs_swap and victim_count > 0:
@@ -372,11 +360,19 @@ func _is_level_5_or_higher_animal(card: Card) -> bool:
 # the god-specific requirement. Ratings come from the ladder card audit, and
 # name order is only a deterministic tie-breaker.
 func _choose_god_specific_swap_victim(cards: Dictionary, god: GodCard) -> String:
+	return _choose_swap_victim(cards, god, false)
+
+func _choose_legendary_swap_victim(cards: Dictionary, god: GodCard) -> String:
+	return _choose_swap_victim(cards, god, true)
+
+func _choose_swap_victim(cards: Dictionary, god: GodCard, exclude_legendary: bool) -> String:
 	var victims: Array[Dictionary] = []
 	for raw_name in cards:
 		var card_name := str(raw_name)
 		var template: Card = _cards_by_name.get(card_name, null)
 		if template == null or template.is_god or template.is_power:
+			continue
+		if exclude_legendary and template.is_legendary:
 			continue
 		if _matches_god_specific_regular_requirement(god, template):
 			continue
@@ -442,7 +438,7 @@ func _fill_regular_cards_for_god(
 	var preferred_added := 0
 	var support_added := 0
 	while regular_count < DEFAULT_REGULAR_CARD_COUNT:
-		var only_legendary := legendary_count < mini(3, int(DEFAULT_REGULAR_CARD_COUNT / 10.0)) and rng.randf() < 0.12
+		var only_legendary := legendary_count < LEGENDARY_DECK_TARGET and rng.randf() < 0.12
 		var candidates := _get_regular_candidates(god, deck_cards, only_legendary, ranked)
 		if candidates.is_empty():
 			if only_legendary:
@@ -470,7 +466,7 @@ func _fill_regular_cards_for_god(
 		if ranked and chosen.card_type != Card.CardType.CREATURE:
 			copies_to_add = mini(copies_to_add, 10 - support_added)
 		copies_to_add = mini(copies_to_add, DEFAULT_REGULAR_CARD_COUNT - regular_count)
-		if chosen.is_legendary and legendary_count + copies_to_add > int(DEFAULT_REGULAR_CARD_COUNT / 10.0):
+		if chosen.is_legendary and legendary_count + copies_to_add > LEGENDARY_DECK_TARGET:
 			continue
 		deck_cards[chosen.card_name] = int(deck_cards.get(chosen.card_name, 0)) + copies_to_add
 		regular_count += copies_to_add
@@ -478,6 +474,7 @@ func _fill_regular_cards_for_god(
 			support_added += copies_to_add
 		if chosen.is_legendary:
 			legendary_count += copies_to_add
+	_enforce_legendary_minimum(deck_cards, god, rng, ranked)
 	return true
 
 func _build_tiamat_brood_setup(rng: RandomNumberGenerator, brood_count: int) -> Dictionary:
@@ -604,28 +601,35 @@ func audit_ranked_bot_deck(deck: Dictionary) -> Dictionary:
 			break
 	var rng := RandomNumberGenerator.new()
 	rng.seed = absi(hash(str(audited.get("god_name", "")) + JSON.stringify(audited.get("cards", {}))))
-	_enforce_god_specific_regular_minimums(cards, god, rng)
+	_enforce_god_specific_regular_minimums(cards, god, rng, true, reinforcements)
+	_enforce_legendary_minimum(cards, god, rng, true, reinforcements)
 	# Restore the standard forty-card non-power portion after pruning.
 	var regular_count := _count_regular_cards(cards)
-	var legendary_count := _count_legendary_cards(cards)
+	var legendary_count := _count_regular_legendary_cards(cards)
 	var attempts := 0
 	while regular_count < DEFAULT_REGULAR_CARD_COUNT and attempts < MAX_RANDOM_PICK_ATTEMPTS:
 		attempts += 1
 		var candidates: Array[Card] = []
 		for candidate in _get_regular_candidates(god, cards, false, true):
-			if _has_deckbuilding_requirements(candidate, cards, god):
+			if _has_deckbuilding_requirements(candidate, cards, god) \
+					and _combined_copy_room(candidate, cards, reinforcements) > 0:
 				candidates.append(candidate)
-		if candidates.is_empty() and legendary_count < int(DEFAULT_REGULAR_CARD_COUNT / 10.0):
+		if candidates.is_empty() and legendary_count < LEGENDARY_DECK_TARGET:
 			for candidate in _get_regular_candidates(god, cards, true, true):
-				if _has_deckbuilding_requirements(candidate, cards, god):
+				if _has_deckbuilding_requirements(candidate, cards, god) \
+						and _combined_copy_room(candidate, cards, reinforcements) > 0:
 					candidates.append(candidate)
 		if candidates.is_empty():
 			return {}
 		var chosen: Card = candidates[rng.randi_range(0, candidates.size() - 1)]
-		var added := mini(_get_copy_count_to_add(chosen, cards), DEFAULT_REGULAR_CARD_COUNT - regular_count)
+		var added := mini(
+			_get_copy_count_to_add(chosen, cards),
+			_combined_copy_room(chosen, cards, reinforcements)
+		)
+		added = mini(added, DEFAULT_REGULAR_CARD_COUNT - regular_count)
 		if chosen.is_legendary:
 			added = 1
-			if legendary_count + added > int(DEFAULT_REGULAR_CARD_COUNT / 10.0):
+			if legendary_count + added > LEGENDARY_DECK_TARGET:
 				continue
 		cards[chosen.card_name] = int(cards.get(chosen.card_name, 0)) + added
 		regular_count += added
@@ -771,8 +775,6 @@ func _ancient_repair_add_order(god: GodCard, combined: Dictionary) -> Array[Stri
 			continue
 		if template.card_type != Card.CardType.CREATURE or str(template.culture).strip_edges() != "Ancient":
 			continue
-		if not BotCardStrategyScript.supports_ranked_deck_card(template):
-			continue
 		if not _is_card_compatible_with_god(template, god):
 			continue
 		add_candidates.append({
@@ -892,8 +894,6 @@ func _is_sideboard_candidate(card: Card, god: GodCard, combined: Dictionary) -> 
 	# moment a swap brings them in, so bots keep them out entirely.
 	if card.is_legendary:
 		return false
-	if not BotCardStrategyScript.supports_ranked_deck_card(card):
-		return false
 	if int(combined.get(card.card_name, 0)) >= _max_copies(card):
 		return false
 	if not _is_card_compatible_with_god(card, god):
@@ -946,11 +946,13 @@ func _count_regular_cards(cards: Dictionary) -> int:
 			total += int(cards[name])
 	return total
 
-func _count_legendary_cards(cards: Dictionary) -> int:
+# DeckValidator counts only regular cards toward the legendary cap, so powers
+# such as Ragnarok must not consume one of the four regular-card slots.
+func _count_regular_legendary_cards(cards: Dictionary) -> int:
 	var total := 0
 	for name in cards:
 		var card: Card = _cards_by_name.get(str(name), null)
-		if card != null and card.is_legendary and not card.is_god:
+		if card != null and card.is_legendary and not card.is_god and not card.is_power:
 			total += int(cards[name])
 	return total
 
@@ -1229,11 +1231,7 @@ func _get_power_candidates(god: GodCard, deck_cards: Dictionary, ranked: bool = 
 	for template in _all_cards:
 		if template == null or not template.is_power or template.is_god:
 			continue
-		if ranked and not BotCardStrategyScript.supports_ranked_deck_card(template):
-			continue
 		var aphrodite_shift := template is AspectShift and god is AphroditeAreia
-		if not ranked and not aphrodite_shift and not _safe_non_creature_lookup.has(CardCatalogScript.to_lookup_key(str(template.card_name))):
-			continue
 		if int(deck_cards.get(template.card_name, 0)) >= 1:
 			continue
 		if not _is_card_compatible_with_god(template, god):
@@ -1258,8 +1256,6 @@ func _choose_power_for_god(candidates: Array[Card], god: GodCard, rng: RandomNum
 func _is_safe_regular_card(card: Card, god: GodCard, deck_cards: Dictionary, legendary_only: bool, ranked: bool = false) -> bool:
 	if card == null or card.is_god or card.is_power or card.is_single_player_card:
 		return false
-	if card is ActiveGodCard and not ranked:
-		return false
 	if legendary_only and not card.is_legendary:
 		return false
 	if not legendary_only and card.is_legendary:
@@ -1270,15 +1266,7 @@ func _is_safe_regular_card(card: Card, god: GodCard, deck_cards: Dictionary, leg
 		return false
 	if card.card_name == "Vision of Tartarus" and not _vision_of_tartarus_has_void_sources(deck_cards):
 		return false
-	if ranked:
-		if not BotCardStrategyScript.supports_ranked_deck_card(card):
-			return false
-		if not _has_deckbuilding_requirements(card, deck_cards, god):
-			return false
-		return _is_card_compatible_with_god(card, god)
-	if _prompt_heavy_lookup.has(CardCatalogScript.to_lookup_key(str(card.card_name))):
-		return false
-	if card.card_type != Card.CardType.CREATURE and not _safe_non_creature_lookup.has(CardCatalogScript.to_lookup_key(str(card.card_name))):
+	if ranked and not _has_deckbuilding_requirements(card, deck_cards, god):
 		return false
 	return _is_card_compatible_with_god(card, god)
 
@@ -1334,6 +1322,15 @@ func _get_copy_count_to_add(card: Card, deck_cards: Dictionary) -> int:
 	if card.card_name == "Hyena Pack":
 		return remaining_copies
 	return 1
+
+# Reinforcements share the main deck's copy limit. Audit repairs must not add
+# a third/fourth main-deck copy when the sideboard already holds the remainder.
+func _combined_copy_room(card: Card, deck_cards: Dictionary, sideboard: Dictionary) -> int:
+	if card == null:
+		return 0
+	var combined_count := int(deck_cards.get(card.card_name, 0)) \
+		+ int(sideboard.get(card.card_name, 0))
+	return maxi(0, _max_copies(card) - combined_count)
 
 func _max_copies(card: Card) -> int:
 	if card == null:

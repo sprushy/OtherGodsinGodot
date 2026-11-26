@@ -96,18 +96,6 @@ static func key(card: Card) -> String:
 static func supported(card: Card) -> bool:
 	return key(card) in TACTICAL_CARDS
 
-static func supports_ranked_deck_card(card: Card) -> bool:
-	if card == null:
-		return false
-	if card is GodCard or card.card_type == Card.CardType.CREATURE:
-		return true
-	var id := key(card)
-	if card is PowerCard:
-		return card is AspectShift or id in ACTIVE_POWERS or id in PLANNED_POWERS or id in PASSIVE_POWERS or PASSIVE_TYPES.has(id) \
-			or id in ["SavingGrace", "Ragnarok", "CallOfTheValkyrie", "AllfathersSacrifice", "FerociousDefence", "TakeTheField", "TonalExtraction"]
-	return id in TACTICAL_CARDS or id in EQUIPMENT or id in STRUCTURES \
-		or id in ["BlotSacrifice", "KeyOfSolomon", "MeadOfPoetry", "WheelOfFire", "ApollyonsDemiurge", "DeucalionsInfants", "TheChangelingExchange"]
-
 static func visible(bot, card: Card) -> bool:
 	if card == null:
 		return false
@@ -1816,7 +1804,7 @@ static func wild_magic_gain(bot, spell: Card) -> int:
 	return roundi(known_chance * _wild_magic_card_gain(bot, first_known_magic) + (1.0 - known_chance) * unknown_gain)
 
 static func _wild_magic_card_gain(bot, card: Card) -> int:
-	if card is WildMagic or not supports_ranked_deck_card(card):
+	if card is WildMagic:
 		return 0
 	@warning_ignore("integer_division")
 	var gain: int = CARD_VALUE + bot._get_hand_value(card) * 30 - activation_cost(bot, card) * 400 * marginal_mana_value(bot) / 1000
