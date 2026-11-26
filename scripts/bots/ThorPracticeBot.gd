@@ -6478,7 +6478,7 @@ func _forecast_incoming_follower_loss(change: Dictionary = {}, this_turn: bool =
 				var interceptor_stance := interceptor if interceptor in summons else stance
 				replies[interceptor] = _forecast_incoming_combat(action, interceptor_stance, (defensive and interceptor == stance) or (defensive_summons and interceptor in summons), projected_stealth, removed, stats)
 			attack_lines.append({"attacker": attacker, "target": target, "replies": replies, "barriers": barriers, "cost": cost})
-	var exposure := 0 if this_turn else _aphrodite_exposure_pulse()
+	var exposure := 0 if this_turn else _aphrodite_exposure_pulse(removed)
 	if attack_lines.is_empty():
 		return mini(followers, upkeep_loss + exposure)
 	var guard := int(change.get("guard", bot_player.guard))
@@ -6986,6 +6986,10 @@ func _plan_combat(candidates: Array[Dictionary], removed: Array = [], committed:
 	var best_is_lethal := false
 	var available_mana := (bot_player.mana if projected_mana < 0 else projected_mana) - mana_spent
 	var enslave_targets := _get_projected_violent_delights_targets(available_mana)
+	# The opponent Aphrodite's Violent Delights is standing danger when her
+	# upkeep-funded turn can pay for it: a combat line that kills her unlock
+	# enabler or trades away her kill/enslave pool denies that swing.
+	var standing_enslave_exposure := _opponent_aphrodite_enslave_exposure(removed)
 	var frontier: Array[Dictionary] = [{
 		"score": 0, "mana": available_mana, "min_mana": available_mana, "attackers": [], "removed": removed,
 		"spent_hexes": [],
@@ -7010,8 +7014,10 @@ func _plan_combat(candidates: Array[Dictionary], removed: Array = [], committed:
 						and int(extended["mana"]) >= AphroditeAreia.ACTIVATION_COST:
 					capture = _score_violent_delights_attack(attack, enslave_targets, removed, occupied_zone)
 				# Compare the capture with continuing combat from this same attack.
-				if (lethal and not best_is_lethal) or (lethal == best_is_lethal and score + capture > best_score):
-					best_score = score + capture
+				var denial := _opponent_aphrodite_denial_gain(extended["removed"], standing_enslave_exposure)
+				var credit := capture + denial
+				if (lethal and not best_is_lethal) or (lethal == best_is_lethal and score + credit > best_score):
+					best_score = score + credit
 					best_is_lethal = lethal
 					best = {
 						"attacker": extended["attacker"], "target": extended["target"], "score": best_score,
@@ -10411,7 +10417,7 @@ func _opponent_freyja_reanimate_discount(victim: Card) -> int:
 # OWN turn (the guard's combat events clear every turn start). If her Aphrodite
 # could pay and a target remains, the forecast should expect to lose part of
 # that creature's value.
-func _opponent_aphrodite_enslavement_risk(dying_victim: Card) -> int:
+func _opponent_aphrodite_enslavement_risk(dying_victim: Card, removed: Array = []) -> int:
 	if opponent == null or game_manager == null:
 		return 0
 	var god := _find_opponent_god()
@@ -10421,7 +10427,8 @@ func _opponent_aphrodite_enslavement_risk(dying_victim: Card) -> int:
 		return 0
 	var best := 0
 	for creature in _get_board_creatures(bot_player):
-		if creature == dying_victim or not CardStrategy.visible(self, creature) or creature.is_face_down:
+		if creature == dying_victim or creature in removed \
+				or not CardStrategy.visible(self, creature) or creature.is_face_down:
 			continue
 		if not god.is_valid_activation_target(creature):
 			continue
@@ -10446,8 +10453,8 @@ func _creature_kill_barrier(creature: Card) -> int:
 # Whether her visible stack can kill this creature next turn: a board attacker
 # that can strike it, or a visible hand pull whose summon + attack tax fits the
 # budget and clears the barrier.
-func _visible_stack_can_kill(creature: Card, budget: int) -> bool:
-	for attacker in _get_creature_attackers_next_turn(creature, []):
+func _visible_stack_can_kill(creature: Card, budget: int, removed: Array = []) -> bool:
+	for attacker in _get_creature_attackers_next_turn(creature, removed):
 		if attacker != null and attacker.get_effective_strength() > _creature_kill_barrier(creature):
 			return true
 	for card in opponent.hand_zone.cards:
@@ -10465,8 +10472,8 @@ func _visible_stack_can_kill(creature: Card, budget: int) -> bool:
 # needs a combat kill on one of my bodies plus 5 mana for Violent Delights;
 # the freed creature is the real loss. (_forecast_incoming_follower_loss
 # reports physical followers.)
-func _aphrodite_exposure_pulse() -> int:
-	var exposure := _opponent_aphrodite_enslave_exposure()
+func _aphrodite_exposure_pulse(removed: Array = []) -> int:
+	var exposure := _opponent_aphrodite_enslave_exposure(removed)
 	if exposure <= 0:
 		return 0
 	@warning_ignore("integer_division")
@@ -10475,8 +10482,10 @@ func _aphrodite_exposure_pulse() -> int:
 # Whole-board exposure estimate for the user-facing scenario where the combo
 # lives behind a creature in hand: her hand is invisible, so when no visible
 # stack kills any of my bodies the budget-bounded worst case counts — the
-# standard summon-strength bound may well still produce the killer.
-func _opponent_aphrodite_enslave_exposure() -> int:
+# standard summon-strength bound may well still produce the killer. The
+# removed list lets forecasts re-price the combo after a contemplated line
+# kills her unlock enabler or clears the kill/enslave pool.
+func _opponent_aphrodite_enslave_exposure(removed: Array = []) -> int:
 	if opponent == null or game_manager == null:
 		return 0
 	var aphrodite := _find_opponent_god() as AphroditeAreia
@@ -10490,7 +10499,8 @@ func _opponent_aphrodite_enslave_exposure() -> int:
 		return 0
 	var exposure := 0
 	for creature in _get_board_creatures(bot_player):
-		if creature == null or creature.is_face_down or not CardStrategy.visible(self, creature):
+		if creature == null or creature in removed or creature.is_face_down \
+				or not CardStrategy.visible(self, creature):
 			continue
 		if not aphrodite.is_valid_activation_target(creature):
 			continue
@@ -10499,10 +10509,23 @@ func _opponent_aphrodite_enslave_exposure() -> int:
 		var barrier := _creature_kill_barrier(creature)
 		if barrier <= 0:
 			continue
-		if _visible_stack_can_kill(creature, budget) \
+		if _visible_stack_can_kill(creature, budget, removed) \
 				or budget * ECON_FORECAST_SUMMON_STR_PER_MANA > barrier:
-			exposure = maxi(exposure, _opponent_aphrodite_enslavement_risk(creature))
+			exposure = maxi(exposure, _opponent_aphrodite_enslavement_risk(creature, removed))
 	return exposure
+
+# Value a combat line denies by breaking the opponent Aphrodite's standing
+# Violent Delights line: guaranteed casualties that kill her unlock enabler
+# or trade away her kill/enslave pool remove the swing she otherwise takes
+# for free on her upkeep-funded turn. The danger pulse prices the standing
+# combo at exposure / 50 pseudo-followers, so the denial credit uses the
+# same scale.
+func _opponent_aphrodite_denial_gain(removed: Array, standing_exposure: int) -> int:
+	if standing_exposure <= 0 or removed.is_empty():
+		return 0
+	@warning_ignore("integer_division")
+	return (standing_exposure - _opponent_aphrodite_enslave_exposure(removed)) \
+		* CardStrategy.FOLLOWER_VALUE / 50
 
 # Tactical Break value of a single tactic counter: every TACTIC_COUNTER_COST
 # counters destroy one board card, so one counter is a quarter of the best

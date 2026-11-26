@@ -32,6 +32,10 @@ var starting_creature_typings: Dictionary[String, Array] = {}
 var starting_deck_has_heroic_stand: bool = false
 var game_manager: GameManager = null
 var reserved_active_god: ActiveGodCard = null
+## Spectator viewers watching a bot self-play match see every hidden card as
+## though they controlled both seats. Never set on real players or on the
+## plain spectator viewers used for human-match privacy masking.
+var reveals_all_hidden_cards: bool = false
 
 var hand_zone: Zone
 var deck_zone: Zone
@@ -66,9 +70,11 @@ func get_index(manager: GameManager = null) -> int:
 		return -1
 	return manager.players.find(self)
 
-static func create_spectator_viewer() -> Player:
+static func create_spectator_viewer(reveal_all_hidden_cards: bool = false) -> Player:
 	# Spectators need a distinct identity for visibility without owning zones.
-	return Player.new(false)
+	var viewer := Player.new(false)
+	viewer.reveals_all_hidden_cards = reveal_all_hidden_cards
+	return viewer
 
 func _init(owns_zones: bool = true) -> void:
 	if owns_zones:

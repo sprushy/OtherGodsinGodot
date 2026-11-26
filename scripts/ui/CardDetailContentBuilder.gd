@@ -287,7 +287,8 @@ static func build_board_popup_body_from_game_state(
 	var is_hidden_card := not is_public_pile \
 		and (card.is_stealth or card.is_prepared or (card.is_face_down and not _is_public_power(card))) \
 		and card.get_controller() != viewer \
-		and not card.is_revealed_to_all()
+		and not card.is_revealed_to_all() \
+		and not _viewer_reveals_hidden_cards(viewer)
 	merged_config["is_hidden_card"] = is_hidden_card
 	merged_config["type_label"] = _get_card_type_label(card)
 	merged_config["game_manager"] = game_manager
@@ -338,6 +339,11 @@ static func build_board_popup_body_from_game_state(
 static func _is_public_power(card: Card) -> bool:
 	var power := card as PowerCard
 	return power != null and power.is_publicly_revealed
+
+static func _viewer_reveals_hidden_cards(viewer: Player) -> bool:
+	# Bot self-play spectators see every hidden card as though they
+	# controlled both seats.
+	return viewer != null and viewer.reveals_all_hidden_cards
 
 static func _get_card_type_label(card: Card) -> String:
 	if card == null:
@@ -394,7 +400,7 @@ static func _can_show_prepared_magical_cost(card: Card, viewer: Player) -> bool:
 		return false
 	if card.current_zone == null or not card.current_zone.is_board_zone():
 		return false
-	return card.get_controller() == viewer
+	return card.get_controller() == viewer or _viewer_reveals_hidden_cards(viewer)
 
 static func _get_prepared_magical_cost_player(card: Card) -> Player:
 	if card == null:

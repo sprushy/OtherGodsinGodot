@@ -167,11 +167,15 @@ func _reset_ambiguous_revealed_cards(moved_cards: Array[Card]) -> void:
 		reveal_group_counts[group_key] = int(reveal_group_counts.get(group_key, 0)) + 1
 
 	for card in moved_cards:
-		if card == null or not card.is_temporarily_revealed():
+		if card == null:
 			continue
 		var group_key := _get_reveal_anonymity_group(card)
-		if group_key != "" and int(reveal_group_counts.get(group_key, 0)) > 1:
+		if group_key == "" or int(reveal_group_counts.get(group_key, 0)) <= 1:
+			continue
+		if card.is_temporarily_revealed():
 			card.remove_status_effects_by_name("temporarily_revealed")
+		if card.is_combat_resilience_inferable():
+			card.remove_meta("combat_resilience_inferable")
 
 func _get_reveal_anonymity_group(card: Card) -> String:
 	if card == null or card.current_zone == null or not card.current_zone.is_board_zone():

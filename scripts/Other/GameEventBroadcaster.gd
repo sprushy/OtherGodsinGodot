@@ -21,6 +21,10 @@ var prompt_router = null
 var _action_log_event_id: int = 0
 var _ragnarok_grave_sources: Dictionary = {}
 var suppress_next_game_end: bool = false
+## Bot self-play matches have no human seats, and the host assigns every
+## spectator a full visible-player set. Their log/stack labels then name
+## hidden cards instead of masking them.
+var spectator_reveals_all_hidden_cards: bool = false
 
 func _init(gm: GameManager, mm: MatchManager, nm: Node, p_prompt_router = null) -> void:
 	game_manager = gm
@@ -979,7 +983,7 @@ func _viewer_for_player_index(player_index: int) -> Player:
 	if game_manager == null:
 		return null
 	if player_index == GameState.SPECTATOR_VIEWER_INDEX:
-		return Player.create_spectator_viewer()
+		return Player.create_spectator_viewer(spectator_reveals_all_hidden_cards)
 	if player_index < 0 or player_index >= game_manager.players.size():
 		return null
 	return game_manager.players[player_index]

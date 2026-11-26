@@ -515,6 +515,10 @@ func get_display_name_for_control(control: Control = null, prefer_ascii: bool = 
 func is_hidden_from_viewer(viewer: Player = null) -> bool:
 	if viewer == null:
 		return false
+	if viewer.reveals_all_hidden_cards:
+		# Bot self-play spectators watch with full information, as though
+		# they controlled every seat.
+		return false
 	var owner_game_manager := card_owner.game_manager if card_owner != null else null
 	if owner_game_manager != null and is_magical_card() and owner_game_manager._has_pending_stack_action_for_card(self) \
 			and not (is_stealth and has_veil_of_night()):

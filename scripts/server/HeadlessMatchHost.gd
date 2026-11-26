@@ -35,6 +35,16 @@ func attach(p_game_manager: GameManager, p_match_manager: MatchManager, p_prompt
 
 func configure_match_session(p_match_session) -> void:
 	match_session = p_match_session
+	_refresh_spectator_reveal_flag()
+
+## Bot self-play matches have no human seats and the host assigns every
+## spectator the full visible-player set, so spectator log labels name
+## hidden cards instead of masking them.
+func _refresh_spectator_reveal_flag() -> void:
+	if game_event_broadcaster == null:
+		return
+	game_event_broadcaster.spectator_reveals_all_hidden_cards = \
+		match_session != null and match_session.is_bot_self_play()
 
 func setup_transport(
 	parent: Node,
@@ -159,6 +169,7 @@ func enable_authoritative_broadcasts() -> void:
 	if network_manager == null or not _is_host or game_manager == null or match_manager == null:
 		return
 	game_event_broadcaster = GameEventBroadcaster.new(game_manager, match_manager, network_manager, prompt_router)
+	_refresh_spectator_reveal_flag()
 	if match_session == null:
 		if not network_manager.peer_connected.is_connected(_on_peer_connected):
 			network_manager.peer_connected.connect(_on_peer_connected)

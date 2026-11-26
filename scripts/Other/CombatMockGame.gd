@@ -204,7 +204,7 @@ var _is_local_hosted_bot_observer: bool = false
 var _local_bot_match_bot = null
 var _local_ranked_match_reported: bool = false
 var _local_series_validator = null
-var _observer_reveals_bot_hands: bool = false
+var _observer_reveals_bot_hidden_cards: bool = false
 var _observer_feedback_viewer: Player = null
 var selected_card: Card = null
 var selected_attacker: Card:
@@ -6591,9 +6591,12 @@ func start_game(
 	_current_match_info = match_info.duplicate(true)
 	_is_observer_mode = bool(match_info.get("observer_mode", false))
 	_is_local_hosted_bot_observer = _is_observer_mode and bool(match_info.get("local_volunteer_host", false))
-	_observer_reveals_bot_hands = _is_observer_mode and bool(match_info.get("is_bot_self_play", false))
+	# Bot self-play has no human seats: the observer sees every hidden card
+	# (hands, stealth creatures, prepared magic, powers) as though they
+	# controlled both players.
+	_observer_reveals_bot_hidden_cards = _is_observer_mode and bool(match_info.get("is_bot_self_play", false))
 	_observer_perspective_player_index = 0
-	_observer_feedback_viewer = Player.create_spectator_viewer() if _is_observer_mode else null
+	_observer_feedback_viewer = Player.create_spectator_viewer(_observer_reveals_bot_hidden_cards) if _is_observer_mode else null
 	if is_instance_valid(_action_log_shell):
 		_action_log_shell.visible = false
 	_restore_corner_action_button()
@@ -6840,7 +6843,7 @@ func _prepare_for_match_launch(status_message: String = "Connecting to match..."
 	player1 = null
 	player2 = null
 	_is_observer_mode = false
-	_observer_reveals_bot_hands = false
+	_observer_reveals_bot_hidden_cards = false
 	_observer_perspective_player_index = 0
 	_observer_feedback_viewer = null
 	selected_card = null
@@ -8815,12 +8818,12 @@ func _get_display_opponent() -> Player:
 func _get_enemy_hand_overlay_card_count(enemy_player: Player) -> int:
 	if enemy_player == null or enemy_player.hand_zone == null:
 		return 0
-	if _observer_reveals_bot_hands:
+	if _observer_reveals_bot_hidden_cards:
 		return enemy_player.hand_zone.cards.size()
 	return mini(enemy_player.hand_zone.cards.size(), ENEMY_HAND_PEEK_MAX_CARDS)
 
 func _get_enemy_hand_overlay_rect() -> Rect2:
-	var dock_height := ENEMY_HAND_CARD_HEIGHT + 8.0 if _observer_reveals_bot_hands else ENEMY_HAND_DOCK_HEIGHT
+	var dock_height := ENEMY_HAND_CARD_HEIGHT + 8.0 if _observer_reveals_bot_hidden_cards else ENEMY_HAND_DOCK_HEIGHT
 	if center_panel == null:
 		return Rect2(Vector2.ZERO, Vector2(180.0, dock_height))
 	var center_rect: Rect2 = center_panel.get_global_rect()
@@ -8917,7 +8920,7 @@ func _get_enemy_hand_overlay_display_cards(enemy_player: Player) -> Array[Card]:
 	# Known cards always show on the left of the hand, before any card backs.
 	for card in revealed_cards:
 		display_cards.append(card)
-	if _observer_reveals_bot_hands or _is_mopsus_hand_selection_active():
+	if _observer_reveals_bot_hidden_cards or _is_mopsus_hand_selection_active():
 		for card in other_cards:
 			display_cards.append(card)
 		return display_cards
@@ -8932,7 +8935,7 @@ func _get_enemy_hand_overlay_display_cards(enemy_player: Player) -> Array[Card]:
 func _make_enemy_hand_overlay_card(card: Card) -> Control:
 	var selectable := _is_mopsus_hand_selection_target(card)
 	var selected: bool = card != null and card.uid in _pending_mopsus_selected_uids
-	if _observer_reveals_bot_hands or _is_enemy_hand_card_revealed(card) or selected:
+	if _observer_reveals_bot_hidden_cards or _is_enemy_hand_card_revealed(card) or selected:
 		var revealed_card := _make_enemy_hand_overlay_revealed_card(card)
 		if selectable or selected:
 			revealed_card.modulate = Color(0.72, 1.3, 0.72, 1.0)
@@ -17872,9 +17875,13 @@ func _is_legal_ability_zone_target(zone: Zone) -> bool:
 			and zone.zone_owner == _pending_raven_storm_priority_card.card_owner and zone.cards.is_empty()
 	if _pending_wolf_master_summon != null:
 		return zone.zone_owner == game_manager.current_player and zone.cards.is_empty()
-	return _has_pending_click_selection() \
-		and zone in match_manager.pending_click_selection_valid_targets \
-		and match_manager.pending_click_selection_validator.call(zone)
+	if not _has_pending_click_selection():
+		return false
+	# Card-only selections can store an Array[Card], which rejects a Zone lookup.
+	for target in match_manager.pending_click_selection_valid_targets:
+		if target is Zone and target == zone:
+			return match_manager.pending_click_selection_validator.call(zone)
+	return false
 
 func _on_empty_zone_pressed(zone: Zone) -> void:
 	if _game_finished:
@@ -31690,7 +31697,7 @@ func _apply_full_state(data: Dictionary) -> void:
 				game_manager.feedback_viewer = game_manager.players[local_idx]
 		elif _is_observer_mode:
 			if _observer_feedback_viewer == null:
-				_observer_feedback_viewer = Player.create_spectator_viewer()
+				_observer_feedback_viewer = Player.create_spectator_viewer(_observer_reveals_bot_hidden_cards)
 			game_manager.feedback_viewer = _observer_feedback_viewer
 			_clamp_observer_perspective_index()
 			_refresh_observer_perspective_button()

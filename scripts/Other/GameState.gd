@@ -31,7 +31,7 @@ static func serialize(gm: GameManager, viewer_player_index: int = -1, visible_pl
 	for raw_index in visible_player_indices:
 		visible_lookup[int(raw_index)] = true
 	if viewer_player_index == SPECTATOR_VIEWER_INDEX:
-		viewer = Player.create_spectator_viewer()
+		viewer = Player.create_spectator_viewer(_spectator_visible_set_covers_all_players(gm, visible_lookup))
 	elif viewer_player_index >= 0 and viewer_player_index < gm.players.size():
 		viewer = gm.players[viewer_player_index]
 	var data := {
@@ -107,6 +107,18 @@ static func serialize(gm: GameManager, viewer_player_index: int = -1, visible_pl
 		data.players.append(pdata)
 
 	return data
+
+## A spectator whose visible-player set covers every seat is watching with full
+## information (bot self-play hosts always assign the full set). Their viewer
+## then also unmasks hidden-card labels in the serialized action stack; zone
+## card visibility is already governed by reveal_private_cards.
+static func _spectator_visible_set_covers_all_players(gm: GameManager, visible_lookup: Dictionary) -> bool:
+	if gm.players.is_empty():
+		return false
+	for i in gm.players.size():
+		if not bool(visible_lookup.get(i, false)):
+			return false
+	return true
 
 static func _serialize_deck(deck: Zone, hide_unknown: bool, private_peek_count: int) -> Array:
 	var result := []

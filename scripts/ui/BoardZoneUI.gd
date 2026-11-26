@@ -1021,6 +1021,11 @@ func _get_viewer_player() -> Player:
 		return null
 	return game_manager.get_feedback_viewer()
 
+func _viewer_reveals_hidden_cards(viewer: Player) -> bool:
+	# Bot self-play spectators see every hidden board card as though they
+	# controlled both seats.
+	return viewer != null and viewer.reveals_all_hidden_cards
+
 func _is_public_power(card: Card) -> bool:
 	return card is PowerCard and ((card as PowerCard).is_publicly_revealed or card.is_revealed_to_all() or not card.is_face_down)
 
@@ -1518,7 +1523,7 @@ func _get_power_status_cost_text(card: Card) -> String:
 	var power_card := card as PowerCard
 	if power_card.is_face_down:
 		var viewer := _get_viewer_player()
-		if viewer == null or power_card.get_controller() != viewer:
+		if viewer == null or (power_card.get_controller() != viewer and not _viewer_reveals_hidden_cards(viewer)):
 			return ""
 		var unlock_cost_text: String = power_card.get_unlock_display_cost_shorthand(game_manager, true)
 		if unlock_cost_text.is_empty():
@@ -1625,7 +1630,7 @@ func _add_power_lock_overlay(overlay: Control, card: Card) -> void:
 	if _is_public_power(card) or card.is_temporarily_revealed():
 		return
 	var viewer := _get_viewer_player()
-	var culture_is_known := viewer != null and card.get_controller() == viewer
+	var culture_is_known := viewer != null and (card.get_controller() == viewer or _viewer_reveals_hidden_cards(viewer))
 	_add_power_lock_texture_overlay(overlay, card, culture_is_known)
 	_add_power_cost_badge(overlay, card)
 
@@ -2411,7 +2416,7 @@ func _add_white_serpent_medicine_badge(overlay: Control, card: Card) -> void:
 		return
 	var serpent := card as TheWhiteSerpent
 	var viewer := _get_viewer_player()
-	var can_view_stealth := not card.is_stealth or card.get_controller() == viewer or card.is_temporarily_revealed()
+	var can_view_stealth := not card.is_stealth or card.get_controller() == viewer or card.is_temporarily_revealed() or _viewer_reveals_hidden_cards(viewer)
 	if card.is_face_down or card.is_prepared or not can_view_stealth:
 		return
 
@@ -2459,7 +2464,7 @@ func _add_creature_ability_badge(overlay: Control, card: Card) -> void:
 	if texture == null:
 		return
 	var viewer := _get_viewer_player()
-	var can_view_stealth := not card.is_stealth or card.get_controller() == viewer or card.is_temporarily_revealed()
+	var can_view_stealth := not card.is_stealth or card.get_controller() == viewer or card.is_temporarily_revealed() or _viewer_reveals_hidden_cards(viewer)
 	if card.is_face_down or card.is_prepared or not can_view_stealth:
 		return
 
@@ -2504,7 +2509,7 @@ func _add_board_card_custom_ability_badge(overlay: Control, card: Card) -> void:
 	if texture == null:
 		return
 	var viewer := _get_viewer_player()
-	var can_view_stealth := not card.is_stealth or card.get_controller() == viewer or card.is_temporarily_revealed()
+	var can_view_stealth := not card.is_stealth or card.get_controller() == viewer or card.is_temporarily_revealed() or _viewer_reveals_hidden_cards(viewer)
 	if card.is_face_down or card.is_prepared or not can_view_stealth:
 		return
 
@@ -2657,7 +2662,8 @@ func _get_locked_take_the_field_preview(card: Card) -> Card:
 	if not _hovered or not (card is TakeTheField) or not card.is_face_down:
 		return null
 	var viewer := _get_viewer_player()
-	if viewer == null or card.card_owner == null or card.get_controller() != viewer:
+	if viewer == null or card.card_owner == null \
+			or (card.get_controller() != viewer and not _viewer_reveals_hidden_cards(viewer)):
 		return null
 	return _get_hover_summoned_active_god(card)
 
@@ -4133,7 +4139,7 @@ func _add_tiamat_brood_slot_art(overlay: Control) -> void:
 	if not _is_tiamat_power_creature_stack_revealed():
 		var viewer := _get_viewer_player()
 		var slot_card := zone.cards[0]
-		var culture_is_known := viewer != null and slot_card != null and slot_card.get_controller() == viewer
+		var culture_is_known := viewer != null and slot_card != null and (slot_card.get_controller() == viewer or _viewer_reveals_hidden_cards(viewer))
 		_add_power_lock_texture_overlay(overlay, slot_card, culture_is_known)
 
 func _on_tiamat_brood_card_clicked(slot_card: Card) -> void:
@@ -4143,7 +4149,7 @@ func _is_tiamat_power_creature_stack_revealed() -> bool:
 	if zone == null:
 		return false
 	var viewer := _get_viewer_player()
-	if owning_player != null and viewer != null and owning_player == viewer:
+	if owning_player != null and viewer != null and (owning_player == viewer or _viewer_reveals_hidden_cards(viewer)):
 		return true
 	for slot_card in zone.cards:
 		if slot_card != null and slot_card.is_temporarily_revealed():
@@ -4401,7 +4407,8 @@ func _is_stealth_hidden_from_viewer(card: Card) -> bool:
 	var viewer := _get_viewer_player()
 	return card.get_controller() != viewer \
 		and not card.is_revealed_to_all() \
-		and not card.is_temporarily_revealed()
+		and not card.is_temporarily_revealed() \
+		and not _viewer_reveals_hidden_cards(viewer)
 
 func _get_hover_attack_preview_target(card: Card):
 	if card == null:
@@ -4815,7 +4822,7 @@ func _is_hidden_board_card_for_priority_visuals(card: Card) -> bool:
 	if not (card.is_face_down or card.is_stealth or card.is_prepared):
 		return false
 	var viewer := _get_viewer_player()
-	return card.get_controller() != viewer and not card.is_revealed_to_all()
+	return card.get_controller() != viewer and not card.is_revealed_to_all() and not _viewer_reveals_hidden_cards(viewer)
 
 func _should_suppress_priority_response_visuals() -> bool:
 	var scene_root := _get_targeting_scene_root()
@@ -5322,7 +5329,7 @@ func _refresh_display() -> void:
 		var face_down_viewer := _get_viewer_player()
 		var can_render_stealth_creature_normally := card.card_type == Card.CardType.CREATURE \
 			and card.is_stealth \
-			and (card.get_controller() == face_down_viewer or card.is_revealed_to_all())
+			and (card.get_controller() == face_down_viewer or card.is_revealed_to_all() or _viewer_reveals_hidden_cards(face_down_viewer))
 		var is_stack_magical_preview := game_manager != null \
 			and card.is_magical_card() \
 			and game_manager._has_pending_stack_action_for_card(card)
@@ -5338,7 +5345,7 @@ func _refresh_display() -> void:
 			fd_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 			add_child(fd_overlay)
 			var revealed_face_down_card := (card is PowerCard and (card as PowerCard).is_publicly_revealed) or card.is_revealed_to_all()
-			var is_own_hidden_card := card.get_controller() == face_down_viewer and (
+			var is_own_hidden_card := (card.get_controller() == face_down_viewer or _viewer_reveals_hidden_cards(face_down_viewer)) and (
 				card.is_stealth
 				or card.is_power
 				or card.is_prepared
@@ -5346,6 +5353,7 @@ func _refresh_display() -> void:
 			var use_prepared_magical_cover := card.is_prepared \
 				and card.is_magical_card() \
 				and card.get_controller() != face_down_viewer \
+				and not _viewer_reveals_hidden_cards(face_down_viewer) \
 				and not revealed_face_down_card
 			var show_revealed_card_art := revealed_face_down_card and card.art_path != ""
 			var active_god_preview := _get_locked_take_the_field_preview(card)
@@ -5425,7 +5433,7 @@ func _refresh_display() -> void:
 			if active_god_preview != null:
 				_add_take_the_field_preview_badges(fd_overlay, active_god_preview)
 			_add_publicly_identified_card_affordance(fd_overlay, card)
-			if card.get_controller() == face_down_viewer and card.is_prepared and card.is_magical_card():
+			if (card.get_controller() == face_down_viewer or _viewer_reveals_hidden_cards(face_down_viewer)) and card.is_prepared and card.is_magical_card():
 				_add_speed_badge(fd_overlay, card)
 				_add_prepared_magical_mana_badge(fd_overlay, card)
 			if _is_card_attacking_on_stack(card) or _is_card_intercepting_on_stack(card) or _is_card_selected_attacker(card) or _is_card_selected_interceptor(card):
@@ -5691,7 +5699,7 @@ func _refresh_display() -> void:
 		var show_public_stealth := card.is_stealth and card.is_temporarily_revealed()
 		if card.is_stealth:
 			var stealth_viewer := _get_viewer_player()
-			var is_own := card.get_controller() == stealth_viewer
+			var is_own := card.get_controller() == stealth_viewer or _viewer_reveals_hidden_cards(stealth_viewer)
 			var tex_path := card.art_path if (is_own or show_public_stealth) and card.art_path != "" else "res://images/cardbackAI.png"
 			var tex: Texture2D = UITextureCacheScript.get_texture(tex_path)
 			if tex:
@@ -5735,7 +5743,7 @@ func _refresh_display() -> void:
 		_add_e2_abzu_badges(card_overlay, card)
 
 		_add_sleep_affordance(card_overlay, card)
-		if not card.is_stealth or card.get_controller() == board_viewer or card.is_temporarily_revealed():
+		if not card.is_stealth or card.get_controller() == board_viewer or card.is_temporarily_revealed() or _viewer_reveals_hidden_cards(board_viewer):
 			_add_equipment_affordances(card_overlay, card)
 			_add_binding_affordances(card_overlay, card)
 			_add_boon_affordances(card_overlay, card)
@@ -5757,7 +5765,7 @@ func _refresh_display() -> void:
 		vbox.add_child(stats_spacer)
 
 		var has_hover_stat_badge := false
-		var is_own_stealth_faceup := card.is_stealth and (card.get_controller() == board_viewer or card.is_temporarily_revealed())
+		var is_own_stealth_faceup := card.is_stealth and (card.get_controller() == board_viewer or card.is_temporarily_revealed() or _viewer_reveals_hidden_cards(board_viewer))
 		if card.card_type == Card.CardType.CREATURE and not card.is_god and (not card.is_stealth or is_own_stealth_faceup):
 			var eff_str := card.get_effective_strength()
 			var eff_res := card.get_effective_resilience()
@@ -5930,7 +5938,7 @@ func _add_creature_action_symbols(overlay: Control, card: Card, has_hover_stat_b
 	if overlay == null or card == null or card.card_type != Card.CardType.CREATURE:
 		return
 	var viewer := _get_viewer_player()
-	var can_view_stealth := not card.is_stealth or card.get_controller() == viewer or card.is_temporarily_revealed()
+	var can_view_stealth := not card.is_stealth or card.get_controller() == viewer or card.is_temporarily_revealed() or _viewer_reveals_hidden_cards(viewer)
 	if card.is_face_down or card.is_prepared or not can_view_stealth:
 		return
 	var symbols := BoardZoneUI.get_creature_action_symbol_entries(card)
@@ -6167,7 +6175,7 @@ func _gui_input(event: InputEvent) -> void:
 				return
 			# Pin the info popup on right-click for any visible card
 			var viewer := _get_viewer_player()
-			if not card.is_face_down or card.get_controller() == viewer or _is_public_power(card) or card.is_revealed_to_all():
+			if not card.is_face_down or card.get_controller() == viewer or _is_public_power(card) or card.is_revealed_to_all() or _viewer_reveals_hidden_cards(viewer):
 				_pinned = true
 				_hide_ability_popup()
 				_show_ability_popup()
@@ -6367,7 +6375,7 @@ func _should_show_hover_popup_for_card(card: Card, viewer: Player) -> bool:
 		return false
 	if not card.is_face_down:
 		return true
-	if card.get_controller() == viewer or _is_public_power(card) or card.is_revealed_to_all():
+	if card.get_controller() == viewer or _is_public_power(card) or card.is_revealed_to_all() or _viewer_reveals_hidden_cards(viewer):
 		return true
 	if card.is_prepared and card.is_magical_card():
 		return true
@@ -6464,7 +6472,8 @@ func _show_ability_popup() -> void:
 	var popup_viewer_shared := _get_viewer_player()
 	var is_hidden_card_shared := (card.is_stealth or card.is_prepared or (card.is_face_down and not _is_public_power(card))) \
 		and card.get_controller() != popup_viewer_shared \
-		and not card.is_revealed_to_all()
+		and not card.is_revealed_to_all() \
+		and not _viewer_reveals_hidden_cards(popup_viewer_shared)
 
 	var effect_lines_shared: Array[String] = []
 	var equipment_lines_shared: Array[String] = []
