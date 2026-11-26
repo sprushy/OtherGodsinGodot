@@ -1349,15 +1349,59 @@ static func namburbi_response_gain(bot, ward: NamburbiApotropaeon, action: CardA
 		gain += namburbi_saved_creature_value(bot, creature)
 	return gain
 
-static func namburbi_preparation_score(bot, ward: NamburbiApotropaeon) -> int:
-	var game: GameManager = bot.game_manager
-	var opponent: Player = bot.opponent
-	if game == null or opponent == null or bot.bot_player == null:
+# An opposing effect aimed at the prepared ward itself still has one good answer:
+# bank the ward before the charm dies. The response resolves first (LIFO) and the
+# turn-long creature protection outlives its source card, so the gain is whatever
+# creature loss the rest of the turn can still threaten.
+static func namburbi_banked_ward_gain(bot, ward: NamburbiApotropaeon, action: CardAction) -> int:
+	if bot == null or ward == null or action == null or bot.game_manager == null \
+			or bot.bot_player == null or bot.opponent == null:
 		return 0
-	var projected_mana := opponent.mana \
-		+ game.get_automatic_upkeep_mana_gain(opponent, game.turn_number + 1) \
-		+ game.get_effective_upkeep_mana_gain(game.get_base_upkeep_mana_gain(), opponent)
+	if not _namburbi_action_targets_ward(bot, ward, action):
+		return 0
+	if bot.game_manager.has_turn_destruction_ward(bot.bot_player) \
+			and bot.game_manager.has_turn_follower_loss_prevention(bot.bot_player):
+		return 0
+	if bot.game_manager.action_stack.any(func(pending: CardAction) -> bool:
+		return pending.card is NamburbiApotropaeon and pending.source_player == bot.bot_player
+	):
+		return 0
+	if not ward.can_activate_prepared(bot.game_manager, action):
+		return 0
+	# On the bot's own turn only its own attack lines can still lose creatures.
+	if bot.game_manager.current_player == bot.bot_player:
+		return bot._forecast_own_attack_casualty_threat()
+	# On the opponent's turn the remaining threats are attacks not yet made and
+	# destruction the opponent can still time themselves.
+	var uncounted: Array[Card] = []
+	return bot._forecast_namburbi_combat_threat(ward, bot.opponent.mana, uncounted, true) \
+			+ namburbi_remaining_destruction_threat(bot, bot.opponent.mana)
+
+static func _namburbi_action_targets_ward(bot, ward: Card, action: CardAction) -> bool:
+	if action == null or ward == null:
+		return false
+	var source: Card = action.card
+	if source == null:
+		return false
+	var source_player := source.get_controller()
+	if source_player == null:
+		source_player = source.card_owner
+	if source_player == null or source_player == bot.bot_player:
+		return false
+	if not can_remove_from_board(bot, source, ward, true, true):
+		return false
+	if action.target == ward:
+		return true
+	return action.target is Array and ward in action.target
+
+# Visible opposing cards the given mana budget can still pay for. Shared by the
+# next-turn preparation forecast and the this-turn banked-ward forecast so both
+# price the same candidate pool.
+static func namburbi_affordable_sources(bot, opponent: Player, mana_budget: int) -> Array[Card]:
 	var sources: Array[Card] = []
+	if bot == null or bot.game_manager == null or opponent == null or mana_budget < 0:
+		return sources
+	var game: GameManager = bot.game_manager
 	for raw_source in game.get_field_cards(opponent) + opponent.hand_zone.cards:
 		var source := raw_source as Card
 		if source == null or not visible(bot, source):
@@ -1369,9 +1413,75 @@ static func namburbi_preparation_score(bot, ward: NamburbiApotropaeon) -> int:
 			continue
 		var cost := game.get_prepared_card_activation_mana_cost(opponent, source) if source.is_prepared \
 			else game.get_card_play_mana_cost(opponent, source, false)
-		if cost > projected_mana:
+		if cost > mana_budget:
 			continue
 		sources.append(source)
+	return sources
+
+# Destruction the opponent can still time themselves with their remaining mana
+# this turn. Reactive hexes that only answer the bot's own plays (The Inferno and
+# its attack-triggered kin) cannot fire before a ward banked on the opponent's
+# turn expires, so only self-timed sources are priced.
+static func namburbi_remaining_destruction_threat(bot, enemy_mana: int) -> int:
+	var game: GameManager = bot.game_manager
+	var opponent: Player = bot.opponent
+	if game == null or opponent == null or bot.bot_player == null or enemy_mana <= 0:
+		return 0
+	var best_per_creature: Dictionary = {}
+	for source in namburbi_affordable_sources(bot, opponent, enemy_mana):
+		if not _opponent_can_time_destruction_this_turn(bot, source):
+			continue
+		_record_best_destruction_threat(bot, source, null, best_per_creature)
+		# Targeted destruction needs a concrete target before the ward
+		# predicate can prove the creature is endangered.
+		for creature in bot._get_board_creatures(bot.bot_player):
+			_record_best_destruction_threat(bot, source, creature, best_per_creature)
+	var threat := 0
+	for value in best_per_creature.values():
+		threat += int(value)
+	return threat
+
+static func _record_best_destruction_threat(bot, source: Card, target: Card, best_per_creature: Dictionary) -> void:
+	for doomed in namburbi_saved_creatures(bot, source, target):
+		var value := namburbi_saved_creature_value(bot, doomed)
+		var card_id := doomed.get_instance_id()
+		if value > int(best_per_creature.get(card_id, 0)):
+			best_per_creature[card_id] = value
+
+static func _opponent_can_time_destruction_this_turn(bot, source: Card) -> bool:
+	if source == null or bot.opponent == null:
+		return false
+	# Spells and charms are cast (or fired in a window any cast opens) on the
+	# owner's own turn, so their timing is fully self-controlled.
+	if source.card_type == Card.CardType.SPELL or source.card_type == Card.CardType.CHARM:
+		return true
+	if not source.is_prepared or not source is HexCard:
+		return false
+	# A prepared hex only fires in a trigger window. The window the opponent
+	# can always open themselves this turn is their own attack declaration;
+	# hexes that only answer the bot's plays cannot fire before a ward banked
+	# on the opponent's turn expires.
+	var action := CardAction.new()
+	action.type = CardAction.Type.ATTACK
+	action.source_player = bot.opponent
+	for raw_attacker in bot._get_board_creatures(bot.opponent):
+		var attacker := raw_attacker as Card
+		if attacker == null or attacker.current_zone not in bot.opponent.frontline_zones:
+			continue
+		action.attacker = attacker
+		if source.has_method("can_respond_to_action") and source.can_respond_to_action(action):
+			return true
+	return false
+
+static func namburbi_preparation_score(bot, ward: NamburbiApotropaeon) -> int:
+	var game: GameManager = bot.game_manager
+	var opponent: Player = bot.opponent
+	if game == null or opponent == null or bot.bot_player == null:
+		return 0
+	var projected_mana := opponent.mana \
+		+ game.get_automatic_upkeep_mana_gain(opponent, game.turn_number + 1) \
+		+ game.get_effective_upkeep_mana_gain(game.get_base_upkeep_mana_gain(), opponent)
+	var sources := namburbi_affordable_sources(bot, opponent, projected_mana)
 	var saved: Array[Card] = []
 	for source in sources:
 		for creature in namburbi_saved_creatures(bot, source):
@@ -1465,7 +1575,14 @@ static func effect_score(bot, card: Card, target: Card = null, action: CardActio
 				return BAD
 			# A response that saves a creature has already paid for itself; the
 			# generic CARD_VALUE write-off would turn a real save into a pass.
-			return namburbi_response_gain(bot, card as NamburbiApotropaeon, action) - mana_penalty(bot, activation_cost(bot, card))
+			# The banked branch covers the ward itself being destroyed: the
+			# charm resolves first, so its turn protection outlives the card.
+			var ward := card as NamburbiApotropaeon
+			var ward_gain := maxi(
+				namburbi_response_gain(bot, ward, action),
+				namburbi_banked_ward_gain(bot, ward, action),
+			)
+			return ward_gain - mana_penalty(bot, activation_cost(bot, card))
 		"HeroicStand":
 			if not bot.game_manager.can_player_gain_mana_now(bot.bot_player) \
 					or card.get_qualified_creatures(bot.game_manager).is_empty():

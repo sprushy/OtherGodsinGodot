@@ -6775,7 +6775,7 @@ func _forecast_namburbi_combat(ward: NamburbiApotropaeon, action: CardAction) ->
 		return _estimate_attack_economy(action, null, 0, 0)
 	)
 
-func _forecast_namburbi_combat_threat(ward: NamburbiApotropaeon, enemy_mana: int, already_counted: Array[Card]) -> int:
+func _forecast_namburbi_combat_threat(ward: NamburbiApotropaeon, enemy_mana: int, already_counted: Array[Card], require_ready: bool = false) -> int:
 	var best := 0
 	var defenders := _get_board_creatures(bot_player)
 	var action := CardAction.new()
@@ -6785,6 +6785,11 @@ func _forecast_namburbi_combat_threat(ward: NamburbiApotropaeon, enemy_mana: int
 				or attacker.creature_mode != Card.CreatureMode.AGGRESSIVE \
 				or _status_persists_to_next_turn(attacker, "sleep") or _status_persists_to_next_turn(attacker, "cannot_attack") \
 				or game_manager.get_creature_action_mana_cost(attacker, "attack") > enemy_mana:
+			continue
+		# This-turn threats only count attackers that have not already spent
+		# their attack this turn.
+		if require_ready and (attacker.summoned_after_first_attack_this_turn \
+				or not attacker.can_take_major_creature_action()):
 			continue
 		action.attacker = attacker
 		if not ward.can_respond_to_action(action, game_manager):
@@ -6797,6 +6802,50 @@ func _forecast_namburbi_combat_threat(ward: NamburbiApotropaeon, enemy_mana: int
 			if defender in _estimate_raw_attack_economy(action, {})["casualties"]:
 				best = maxi(best, CardStrategy.namburbi_saved_creature_value(self, defender))
 	return best
+
+# Creature casualties the bot's own remaining attack lines could still take this
+# turn: a ward banked in response stays live for those attacks, so this is the
+# own-turn value of firing the charm before it is destroyed.
+func _forecast_own_attack_casualty_threat() -> int:
+	if game_manager == null or bot_player == null or opponent == null:
+		return 0
+	var defenders: Array[Card] = []
+	for raw_card in game_manager.get_field_cards(opponent):
+		var field_card := raw_card as Card
+		if field_card != null and field_card.card_type == Card.CardType.CREATURE \
+				and CardStrategy.visible(self, field_card):
+			defenders.append(field_card)
+	if defenders.is_empty():
+		return 0
+	var best_per_creature: Dictionary = {}
+	var action := CardAction.new()
+	action.type = CardAction.Type.ATTACK
+	action.source_player = bot_player
+	for attacker in _get_attack_ready_creatures():
+		action.attacker = attacker
+		for defender in defenders:
+			if not game_manager.can_cards_engage_each_other(attacker, defender, false):
+				continue
+			action.target = defender
+			var casualties: Array = _estimate_raw_attack_economy(action, {}).get("casualties", [])
+			for raw_casualty in casualties:
+				var casualty := raw_casualty as Card
+				if casualty == null or casualty.get_controller() != bot_player \
+						or casualty.card_type != Card.CardType.CREATURE:
+					continue
+				# _add_combat_casualty already drops guarded and warded bodies;
+				# what is left dies to the defender unless it cuts through
+				# combat protection, which the ward cannot stop.
+				if defender.can_destroy_combat_protected_creatures(casualty):
+					continue
+				var value := CardStrategy.namburbi_saved_creature_value(self, casualty)
+				var card_id := casualty.get_instance_id()
+				if value > int(best_per_creature.get(card_id, 0)):
+					best_per_creature[card_id] = value
+	var threat := 0
+	for value in best_per_creature.values():
+		threat += int(value)
+	return threat
 
 func _plan_namburbi_ward(attacks: Array[Dictionary], baseline: Dictionary) -> Dictionary:
 	if attacks.is_empty():

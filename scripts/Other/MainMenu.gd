@@ -1440,6 +1440,9 @@ func _apply_main_menu_text_sizing_recursive(root: Node) -> void:
 	if root == null:
 		return
 	for child in root.get_children():
+		# The deck summary uses its own font sizes to fit three lines inside the button.
+		if child == _multiplayer_deck_change_button:
+			continue
 		if child is Button:
 			var button := child as Button
 			if _is_primary_main_menu_button(button):
@@ -2401,6 +2404,7 @@ func _build_multiplayer_deck_controls() -> void:
 	menu_container.move_child(button, menu_insert_index)
 	_deck_picker_button = button
 
+	const FIELD_PADDING := 10.0
 	var field_button := Button.new()
 	field_button.name = "MultiplayerDeckChangeButton"
 	field_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -2419,13 +2423,13 @@ func _build_multiplayer_deck_controls() -> void:
 	var field_row := HBoxContainer.new()
 	field_row.name = "DeckFieldRow"
 	field_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	field_row.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	field_row.offset_left = 10
-	field_row.offset_top = 10
-	field_row.offset_right = -10
-	field_row.offset_bottom = -10
-	field_row.add_theme_constant_override("separation", 12)
 	field_button.add_child(field_row)
+	field_row.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	field_row.offset_left = FIELD_PADDING
+	field_row.offset_top = FIELD_PADDING
+	field_row.offset_right = -FIELD_PADDING
+	field_row.offset_bottom = -FIELD_PADDING
+	field_row.add_theme_constant_override("separation", 12)
 
 	var deck_label := Label.new()
 	deck_label.text = "Deck"
@@ -2445,6 +2449,7 @@ func _build_multiplayer_deck_controls() -> void:
 
 	var art := TextureRect.new()
 	art.custom_minimum_size = Vector2(48, 70)
+	art.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	art.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -2453,6 +2458,7 @@ func _build_multiplayer_deck_controls() -> void:
 
 	var summary_text := VBoxContainer.new()
 	summary_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	summary_text.alignment = BoxContainer.ALIGNMENT_CENTER
 	summary_text.add_theme_constant_override("separation", 2)
 	summary_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	selected_box.add_child(summary_text)
@@ -2461,7 +2467,8 @@ func _build_multiplayer_deck_controls() -> void:
 	summary_name.text = "No deck selected"
 	summary_name.add_theme_font_size_override("font_size", 17)
 	summary_name.add_theme_color_override("font_color", Color(0.94, 0.90, 0.78))
-	summary_name.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	summary_name.clip_text = true
+	summary_name.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	summary_name.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	summary_text.add_child(summary_name)
 	_multiplayer_deck_summary_name_label = summary_name
@@ -2470,7 +2477,8 @@ func _build_multiplayer_deck_controls() -> void:
 	summary_god.text = ""
 	summary_god.add_theme_font_size_override("font_size", 12)
 	summary_god.add_theme_color_override("font_color", Color(0.72, 0.78, 0.86))
-	summary_god.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	summary_god.clip_text = true
+	summary_god.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	summary_god.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	summary_text.add_child(summary_god)
 	_multiplayer_deck_summary_god_label = summary_god
