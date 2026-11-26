@@ -1358,6 +1358,56 @@ func _check_bot_sideboarding(failures: PackedStringArray) -> void:
 		if not varied:
 			failures.append("Bot Reinforcement derivation did not vary across decks")
 
+	# Tablet of Life audit repair: historical lists with unsupported tablets
+	# either gain six Ancient creatures (swapping the worst survey cards) or
+	# lose the tablets, and the repair is deterministic for a given list.
+	var tablet_fixture := {
+		"Thor": 1,
+		"Tablet of Life": 2,
+		"Alu": 2,
+		"Gallu": 2,
+		"Bearded Axe": 3,
+		"Blessed Knights": 3,
+		"Third Sage Enmedugga": 1,
+		"Wolf Cub": 3,
+		"Berserker": 3,
+		"Harii Warrior": 3,
+	}
+	var repaired_tablets := factory.audit_ranked_bot_deck({
+		"god_name": "Thor",
+		"deck_name": "Preflight Tablet Repair",
+		"cards": tablet_fixture,
+	})
+	if repaired_tablets.is_empty():
+		failures.append("Tablet of Life audit repair failed")
+	else:
+		var tablet_side: Dictionary = repaired_tablets.get("reinforcements", {})
+		var tablet_combined: Dictionary = (repaired_tablets.get("cards", {}) as Dictionary).duplicate(true)
+		for side_name in tablet_side.keys():
+			tablet_combined[str(side_name)] = int(tablet_combined.get(str(side_name), 0)) + int(tablet_side[side_name])
+		var kept_tablets := int(tablet_combined.get("Tablet of Life", 0))
+		var repaired_ancients := 0
+		for tablet_card_name in tablet_combined:
+			var tablet_template: Card = factory._cards_by_name.get(str(tablet_card_name), null)
+			if tablet_template != null and not tablet_template.is_god \
+					and tablet_template.card_type == Card.CardType.CREATURE \
+					and str(tablet_template.culture).strip_edges() == "Ancient":
+				repaired_ancients += int(tablet_combined[tablet_card_name])
+		if kept_tablets > 0 and repaired_ancients < 6:
+			failures.append("Audited bot deck kept Tablet of Life without six Ancient creatures")
+		if not bool(validator.validate_deck(
+				repaired_tablets.get("cards", {}),
+				repaired_tablets.get("special_setup", {}),
+				tablet_side).get("is_valid", false)):
+			failures.append("Tablet of Life audit repair produced an invalid deck")
+		var reaudited_tablets := factory.audit_ranked_bot_deck({
+			"god_name": "Thor",
+			"deck_name": "Preflight Tablet Repair",
+			"cards": tablet_fixture,
+		})
+		if JSON.stringify(reaudited_tablets.get("cards", {})) != JSON.stringify(repaired_tablets.get("cards", {})):
+			failures.append("Tablet of Life audit repair is not deterministic")
+
 	# Swap planning against a controlled fixture: a Thor shell whose worst
 	# survey cards are known, plus a hate sideboard.
 	var fixture_cards := {
@@ -1558,6 +1608,8 @@ func _check_ranked_bot_deck_generation(failures: PackedStringArray) -> void:
 		["Durinn Secondborn", {"Bearded Axe": 2}, false],
 		["Durinn Secondborn", {"Bearded Axe": 3}, true],
 		["Circle of Rebirth", {}, false],
+		["Tablet of Life", {}, false],
+		["Tablet of Life", {"Alu": 3, "Gallu": 3}, true],
 		["Sixth Sage An-Enlilda", {"E2-abzu": 1}, false],
 		["Sixth Sage An-Enlilda", {"E2-abzu": 2}, true],
 		["Key of Solomon", {}, false],

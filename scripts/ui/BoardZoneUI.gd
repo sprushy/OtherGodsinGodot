@@ -158,6 +158,14 @@ func _get_secondary_left_affordance_row_top(card: Card) -> float:
 		return badge_top + EquipmentCard.EQUIPPED_AFFORDANCE_SIZE.y + EQUIPMENT_AFFORDANCE_GAP
 	return badge_top
 
+func _get_left_debuff_row_top(card: Card) -> float:
+	# Left-column debuff badges stack below the equipment and boon rows so the
+	# left side keeps one predictable ladder of status affordances.
+	var badge_top := _get_secondary_left_affordance_row_top(card)
+	if not _get_boon_affordance_entries(card).is_empty():
+		badge_top += DEBUFF_BADGE_SIZE + DEBUFF_AFFORDANCE_GAP
+	return badge_top
+
 class StackTargetIndicator extends Control:
 	func _ready() -> void:
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -2228,9 +2236,67 @@ func _get_creature_ability_badge_right(card: Card) -> float:
 	var badge_right := -6.0
 	if card == null:
 		return badge_right
+	# Debuff badges move to the left column when they would crowd a visible
+	# ability badge (see _should_place_debuff_badges_on_left), so ability badges
+	# keep their anchored top-right corner whenever they are present. The shift
+	# below stays only as a fallback for ability badges the helper does not yet
+	# cover.
+	if _should_place_debuff_badges_on_left(card):
+		return badge_right
 	var debuff_entries := _get_debuff_affordance_entries(card)
 	badge_right -= float(debuff_entries.size()) * (DEBUFF_BADGE_SIZE + DEBUFF_AFFORDANCE_GAP)
 	return badge_right
+
+func _can_view_board_card_face(card: Card, viewer: Player) -> bool:
+	if card == null:
+		return false
+	if card.is_face_down or card.is_prepared:
+		return false
+	return not card.is_stealth or card.get_controller() == viewer \
+		or card.is_temporarily_revealed() or _viewer_reveals_hidden_cards(viewer)
+
+# Mirrors the display gates of the right-side creature ability badges (Nimue's
+# Entomb/Present pair, White Serpent's Medicine badge, and the generic creature
+# ability badge). Whenever one of them is visible, debuff badges move to the
+# left column instead of crowding that shared top-right corner.
+func _should_place_debuff_badges_on_left(card: Card) -> bool:
+	if card == null or card.card_type != Card.CardType.CREATURE or card.is_god:
+		return false
+	var viewer := _get_viewer_player()
+	var clickable := not _is_enemy and card.get_controller() == viewer
+	if card is Nimue:
+		var nimue := card as Nimue
+		var can_entomb := false
+		var can_present := false
+		if game_manager != null and game_manager.get_creature_ability_activation_block_reason(card).is_empty():
+			can_entomb = nimue.can_activate_entomb(game_manager)
+			can_present = nimue.can_activate_present(game_manager)
+		if _should_show_ability_badge_control(card, can_entomb, clickable) \
+				or _should_show_ability_badge_control(card, can_present, clickable):
+			return true
+	if card is TheWhiteSerpent and _can_view_board_card_face(card, viewer):
+		var medicine_ready := clickable and (
+			_is_card_usable_for_priority(card) if _is_priority_badge_filter_active() else (
+				game_manager != null
+				and game_manager.get_creature_ability_activation_block_reason(card).is_empty()
+				and (card as TheWhiteSerpent).can_activate_medicine(game_manager)
+			)
+		)
+		if _should_show_ability_badge_control(card, medicine_ready, clickable):
+			return true
+	if not _can_view_board_card_face(card, viewer) \
+			or _get_creature_ability_badge_texture(card) == null:
+		return false
+	var badge_ready = clickable and (
+		_is_card_usable_for_priority(card) if _is_priority_badge_filter_active() else (
+			game_manager != null
+			and game_manager.get_creature_ability_activation_block_reason(card).is_empty()
+			and card.has_method("can_activate")
+			and card.has_method("activate")
+			and card.can_activate(game_manager)
+		)
+	)
+	return _should_show_ability_badge_control(card, badge_ready, clickable)
 
 func _get_e2_abzu_badge_hover_text(mode: String) -> String:
 	match mode:
@@ -2416,8 +2482,7 @@ func _add_white_serpent_medicine_badge(overlay: Control, card: Card) -> void:
 		return
 	var serpent := card as TheWhiteSerpent
 	var viewer := _get_viewer_player()
-	var can_view_stealth := not card.is_stealth or card.get_controller() == viewer or card.is_temporarily_revealed() or _viewer_reveals_hidden_cards(viewer)
-	if card.is_face_down or card.is_prepared or not can_view_stealth:
+	if not _can_view_board_card_face(card, viewer):
 		return
 
 	var clickable := not _is_enemy and card.get_controller() == viewer
@@ -2464,8 +2529,7 @@ func _add_creature_ability_badge(overlay: Control, card: Card) -> void:
 	if texture == null:
 		return
 	var viewer := _get_viewer_player()
-	var can_view_stealth := not card.is_stealth or card.get_controller() == viewer or card.is_temporarily_revealed() or _viewer_reveals_hidden_cards(viewer)
-	if card.is_face_down or card.is_prepared or not can_view_stealth:
+	if not _can_view_board_card_face(card, viewer):
 		return
 
 	var clickable := not _is_enemy and card.get_controller() == viewer
@@ -2509,8 +2573,7 @@ func _add_board_card_custom_ability_badge(overlay: Control, card: Card) -> void:
 	if texture == null:
 		return
 	var viewer := _get_viewer_player()
-	var can_view_stealth := not card.is_stealth or card.get_controller() == viewer or card.is_temporarily_revealed() or _viewer_reveals_hidden_cards(viewer)
-	if card.is_face_down or card.is_prepared or not can_view_stealth:
+	if not _can_view_board_card_face(card, viewer):
 		return
 
 	var clickable := not _is_enemy and card.get_controller() == viewer
@@ -3688,8 +3751,17 @@ func _add_debuff_affordances(overlay: Control, card: Card) -> void:
 	if entries.is_empty():
 		return
 
-	var badge_top := 32.0 if _is_card_targeted_on_stack(card) else _get_badge_row_top()
-	var badge_right := -6.0
+	# Debuff badges share the top-right corner with ability badges. When an
+	# ability badge is visible on this card, the debuff badges move to the left
+	# column so the two groups never crowd each other.
+	var place_on_left := _should_place_debuff_badges_on_left(card)
+	var badge_top := _get_left_debuff_row_top(card) if place_on_left \
+			else (32.0 if _is_card_targeted_on_stack(card) else _get_badge_row_top())
+	# Left-column badges grow rightward from the left edge; right-column
+	# badges grow leftward from the right edge.
+	var badge_position := 6.0 if place_on_left else -6.0
+	var position_step := (DEBUFF_BADGE_SIZE + DEBUFF_AFFORDANCE_GAP) if place_on_left \
+			else -(DEBUFF_BADGE_SIZE + DEBUFF_AFFORDANCE_GAP)
 	for entry in entries:
 		var preview := _make_debuff_source_preview(entry)
 		if preview == null:
@@ -3700,15 +3772,20 @@ func _add_debuff_affordances(overlay: Control, card: Card) -> void:
 		if source_card != null or tooltip != "":
 			badge.mouse_filter = Control.MOUSE_FILTER_PASS
 			_connect_badge_hover(badge, tooltip, source_card)
-		badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-		badge.offset_left = badge_right - DEBUFF_BADGE_SIZE
+		if place_on_left:
+			badge.set_anchors_preset(Control.PRESET_TOP_LEFT)
+			badge.offset_left = badge_position
+			badge.offset_right = badge_position + DEBUFF_BADGE_SIZE
+		else:
+			badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+			badge.offset_left = badge_position - DEBUFF_BADGE_SIZE
+			badge.offset_right = badge_position
 		badge.offset_top = badge_top
-		badge.offset_right = badge_right
 		badge.offset_bottom = badge_top + DEBUFF_BADGE_SIZE
 		overlay.add_child(badge)
 		_flash_dromi_drain_badge(badge, entry)
 
-		badge_right -= DEBUFF_BADGE_SIZE + DEBUFF_AFFORDANCE_GAP
+		badge_position += position_step
 
 func _flash_dromi_drain_badge(badge: Control, entry: Dictionary) -> void:
 	var dromi := entry.get("source_card", null) as Dromi
@@ -3754,7 +3831,8 @@ func _add_publicly_identified_card_affordance(overlay: Control, card: Card) -> v
 	preview.offset_bottom = -2.0
 
 	var badge_right := -6.0
-	if card.card_type == Card.CardType.CREATURE and not card.is_god:
+	if card.card_type == Card.CardType.CREATURE and not card.is_god \
+			and not _should_place_debuff_badges_on_left(card):
 		var debuff_entries := _get_debuff_affordance_entries(card)
 		badge_right -= float(debuff_entries.size()) * (DEBUFF_BADGE_SIZE + DEBUFF_AFFORDANCE_GAP)
 	var badge_top := 32.0 if _is_card_targeted_on_stack(card) else _get_badge_row_top()

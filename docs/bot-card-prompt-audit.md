@@ -135,7 +135,14 @@ cards in the table. No new probe scripts or visual QA were added.
   losing attack. The bot avoids friendly, protected, already bound, and
   immovable targets, preserves
   profitable combat, and compares Wheel with Vision of Odin. Hidden creatures
-  use a generic value rather than their concealed stats.
+  use a generic value rather than their concealed stats. An awake aggressive
+  enemy frontline creature that can still declare is answered at the
+  declaration, not before: a pushback in an earlier window only costs the
+  attacker one step forward, while cancelling the declared attack also wastes
+  its spent major action and attack mana. The Wheel is spent before that
+  window only when the target cannot declare (attack lock, paralysis, or a
+  spent major action on the opponent's turn), since then our upkeep starts
+  advancing the bind before the creature can step forward again.
 - Stat effects share explicit strength, resilience, and speed projections for
   buff selection, priority responses, and one-response attack planning. Tactical
   Retreat is forecast only when projected speed, immunity, suppression, and

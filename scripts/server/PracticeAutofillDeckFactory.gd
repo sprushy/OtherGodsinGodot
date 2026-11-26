@@ -19,6 +19,8 @@ const CERNUNNOS_MIN_LEVEL_5_ANIMALS := 3
 const KEY_OF_SOLOMON_MIN_SOURCES := 2
 const KEY_OF_SOLOMON_MIN_TARGETS := 4
 const VISION_OF_TARTARUS_MIN_VOID_SOURCES := 3
+const TABLET_OF_LIFE_CARD_NAME := "Tablet of Life"
+const TABLET_OF_LIFE_MIN_ANCIENT_CREATURES := 6
 const VOID_SOURCE_CARD_NAMES := [
 	"Bit Meseri",
 	"Void Shield",
@@ -585,6 +587,7 @@ func audit_ranked_bot_deck(deck: Dictionary) -> Dictionary:
 	var reinforcements: Dictionary = audited.get("reinforcements", {}).duplicate(true)
 	_remove_culture_incompatible_cards(reinforcements, god)
 	audited["reinforcements"] = reinforcements
+	_repair_tablet_of_life_support(cards, reinforcements, god)
 	# Remove ineligible cards until the remaining deck no longer has dangling
 	# support relationships (e.g. a payoff removed with its last enabler).
 	for _pass in range(6):
@@ -680,6 +683,141 @@ func audit_ranked_bot_deck(deck: Dictionary) -> Dictionary:
 			side_seed
 		)
 	return audited
+
+# Tablet of Life only pays off behind a six-Ancient-creature core. Historical
+# ranked lists that predate the support rule are repaired deterministically:
+# the worst survey-rated regulars are swapped for the best available Ancient
+# creatures, and tablets are dropped only when no legal swap remains. The
+# combined main-deck and Reinforcement pool is what the support rule counts,
+# so a tablet sideboarded by an existing list is repaired by the same swap.
+func _repair_tablet_of_life_support(cards: Dictionary, reinforcements: Dictionary, god: GodCard) -> void:
+	var tablet_count := int(cards.get(TABLET_OF_LIFE_CARD_NAME, 0)) \
+		+ int(reinforcements.get(TABLET_OF_LIFE_CARD_NAME, 0))
+	if tablet_count <= 0:
+		return
+	var combined := cards.duplicate(true)
+	for side_name in reinforcements.keys():
+		combined[str(side_name)] = int(combined.get(str(side_name), 0)) + int(reinforcements[side_name])
+	var deficit := TABLET_OF_LIFE_MIN_ANCIENT_CREATURES - _count_ancient_creatures(combined)
+	if deficit <= 0:
+		return
+	var cut_order := _tablet_repair_cut_order(cards)
+	var add_order := _ancient_repair_add_order(god, combined)
+	for _swap in range(deficit):
+		var placed := false
+		for add_name in add_order:
+			var add_card: Card = _cards_by_name.get(add_name, null)
+			if add_card == null or int(combined.get(add_name, 0)) >= _max_copies(add_card):
+				continue
+			for cut_name in cut_order:
+				if not _tablet_swap_preserves_support(cards, cut_name, add_name, god):
+					continue
+				cards[cut_name] = int(cards.get(cut_name, 0)) - 1
+				if int(cards[cut_name]) <= 0:
+					cards.erase(cut_name)
+				cards[add_name] = int(cards.get(add_name, 0)) + 1
+				combined[cut_name] = int(combined.get(cut_name, 0)) - 1
+				combined[add_name] = int(combined.get(add_name, 0)) + 1
+				placed = true
+				break
+			if placed:
+				break
+		if not placed:
+			break
+	if TABLET_OF_LIFE_MIN_ANCIENT_CREATURES - _count_ancient_creatures(_combined_main_and_side_counts(cards, reinforcements)) > 0:
+		cards.erase(TABLET_OF_LIFE_CARD_NAME)
+		reinforcements.erase(TABLET_OF_LIFE_CARD_NAME)
+
+# Cut order for tablet support repair: lowest survey rating first, extra
+# copies of a rated card before lone copies, then name order for determinism.
+# Ancient creatures are never cut (they are the support being added), and
+# powers are kept out of the cut pool entirely.
+func _tablet_repair_cut_order(cards: Dictionary) -> Array[String]:
+	var cut_candidates: Array[Dictionary] = []
+	for raw_name in cards.keys():
+		var card_name := str(raw_name)
+		var template: Card = _cards_by_name.get(card_name, null)
+		if template == null or template.is_god or template.is_power:
+			continue
+		if card_name == TABLET_OF_LIFE_CARD_NAME:
+			continue
+		if template.card_type == Card.CardType.CREATURE and str(template.culture).strip_edges() == "Ancient":
+			continue
+		cut_candidates.append({
+			"name": card_name,
+			"copies": int(cards[card_name]),
+			"rating": BotSideboardRatingsScript.rating_for(card_name),
+		})
+	cut_candidates.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		if int(a["rating"]) != int(b["rating"]):
+			return int(a["rating"]) < int(b["rating"])
+		if int(a["copies"]) != int(b["copies"]):
+			return int(a["copies"]) > int(b["copies"])
+		return str(a["name"]) < str(b["name"]))
+	var order: Array[String] = []
+	for entry in cut_candidates:
+		order.append(str(entry["name"]))
+	return order
+
+# Add order for tablet support repair: best-ranked ranked-legal Ancient
+# creature first, with more copy room and then name order as tiebreakers so
+# the same list always audits to the same result.
+func _ancient_repair_add_order(god: GodCard, combined: Dictionary) -> Array[String]:
+	var add_candidates: Array[Dictionary] = []
+	for template in _all_cards:
+		if template == null or template.is_god or template.is_power or template.is_token:
+			continue
+		if template.is_legendary or template.is_single_player_card:
+			continue
+		if template.card_type != Card.CardType.CREATURE or str(template.culture).strip_edges() != "Ancient":
+			continue
+		if not BotCardStrategyScript.supports_ranked_deck_card(template):
+			continue
+		if not _is_card_compatible_with_god(template, god):
+			continue
+		add_candidates.append({
+			"name": str(template.card_name),
+			"rating": BotSideboardRatingsScript.rating_for(str(template.card_name)),
+			"room": maxi(0, _max_copies(template) - int(combined.get(str(template.card_name), 0))),
+		})
+	add_candidates.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		if int(a["rating"]) != int(b["rating"]):
+			return int(a["rating"]) > int(b["rating"])
+		if int(a["room"]) != int(b["room"]):
+			return int(a["room"]) > int(b["room"])
+		return str(a["name"]) < str(b["name"]))
+	var order: Array[String] = []
+	for entry in add_candidates:
+		order.append(str(entry["name"]))
+	return order
+
+# A repair swap must not strand any other card's support requirement. Tablet
+# of Life itself is skipped here because the repair's whole point is to bring
+# its support up to threshold across several swaps.
+func _tablet_swap_preserves_support(cards: Dictionary, victim_name: String, add_name: String, god: GodCard) -> bool:
+	var victim_count := int(cards.get(victim_name, 0))
+	if victim_count <= 0:
+		return false
+	var trial_cards: Dictionary = cards.duplicate(true)
+	if victim_count <= 1:
+		trial_cards.erase(victim_name)
+	else:
+		trial_cards[victim_name] = victim_count - 1
+	trial_cards[add_name] = int(trial_cards.get(add_name, 0)) + 1
+	for raw_name in trial_cards:
+		var card_name := str(raw_name)
+		if card_name == god.card_name or card_name == TABLET_OF_LIFE_CARD_NAME:
+			continue
+		var template: Card = _cards_by_name.get(card_name, null)
+		if template != null and not _has_deckbuilding_requirements(template, trial_cards, god):
+			return false
+	return true
+
+func _combined_main_and_side_counts(cards: Dictionary, side: Dictionary) -> Dictionary:
+	var combined := cards.duplicate(true)
+	for side_name in side.keys():
+		combined[str(side_name)] = int(combined.get(str(side_name), 0)) + int(side[side_name])
+	return combined
 
 ## Deterministically builds a Reinforcement (sideboard) pool for a finished
 ## deck. Fills up to the validator's reinforcement limit with ranked-legal
@@ -833,6 +971,8 @@ func _has_deckbuilding_requirements(card: Card, cards: Dictionary, god: GodCard)
 			return _count_card_type(cards, Card.CardType.EQUIPMENT) >= 3
 		"Circle of Rebirth":
 			return _count_matching_any(cards, ["Animal", "Plant"]) >= 5
+		"Tablet of Life":
+			return _count_ancient_creatures(cards) >= TABLET_OF_LIFE_MIN_ANCIENT_CREATURES
 		"Sixth Sage An-Enlilda":
 			return _count_ancient_dwelling_targets(cards) >= 2
 		"Robotic Footsoldier":
@@ -976,6 +1116,18 @@ func _count_matching_any(cards: Dictionary, tags: Array) -> int:
 			if candidate.has_type(str(tag)):
 				total += int(cards[name])
 				break
+	return total
+
+# Ancient-culture creatures (Tablet of Life's resurrection pool).
+func _count_ancient_creatures(cards: Dictionary) -> int:
+	var total := 0
+	for name in cards:
+		var candidate: Card = _cards_by_name.get(str(name), null)
+		if candidate == null or candidate.card_type != Card.CardType.CREATURE or candidate.is_god:
+			continue
+		if str(candidate.culture).strip_edges() != "Ancient":
+			continue
+		total += int(cards[name])
 	return total
 
 # Key of Solomon needs Animals to sacrifice and Demons in the grave/abyss to

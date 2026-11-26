@@ -2049,8 +2049,10 @@ func _plan_necoc_yaotl(god: TezcatlipocaTheSmokingMirror, attack: Dictionary, da
 	if not god.can_use_god_power(game_manager):
 		return {}
 	var command := {"type": "god_ability", "god_uid": god.uid}
+	if danger < 0:
+		danger = _forecast_incoming_follower_loss()
 	if god.can_resolve_necoc_yaotl_summon(game_manager):
-		return {"score": 16000, "command": command}
+		return _plan_necoc_yaotl_summon(god, command, danger)
 	var sacrifices := god.get_valid_targets(game_manager)
 	if sacrifices.is_empty():
 		return {}
@@ -2061,6 +2063,7 @@ func _plan_necoc_yaotl(god: TezcatlipocaTheSmokingMirror, attack: Dictionary, da
 	var spare_creatures := clampi(board_count - 1 - maxi(1, _board_creature_count(opponent)), 0, 3)
 	var payoff := 2200 + spare_creatures * 850 + stored_count * 450
 	var level_budget := god.get_necoc_yaotl_total_level()
+	var cash_payoff := 0
 	var steal_uids: Array[String] = []
 	var manifestation: TezcatlipocaActive = null
 	var open_summon_zones: Array[Zone] = []
@@ -2077,14 +2080,13 @@ func _plan_necoc_yaotl(god: TezcatlipocaTheSmokingMirror, attack: Dictionary, da
 		if not game_manager.can_pay_creature_summon_cost(bot_player, manifestation, god, false):
 			return {}
 		var mana_cost := game_manager.get_creature_summon_mana_cost(bot_player, manifestation, god, true)
-		# The Active God replaces the normal god's Tonal Mastery engine.
-		payoff = CardStrategy.value(self, manifestation) - 2000 - mana_cost * _mana_rate()
+		# The Active God replaces the normal god's Tonal Mastery engine. This
+		# price only counts when the store cashes the chain; when Titlacauan
+		# cannot collect yet, the summon plan below holds the manifestation
+		# back, so the store is plain banking instead.
+		cash_payoff = CardStrategy.value(self, manifestation) - 2000 - mana_cost * _mana_rate()
 		if steal_limit > 0:
-			for target in manifestation.get_valid_titlacauan_targets(game_manager):
-				if CardStrategy.visible(self, target):
-					steal_uids.append(target.uid)
-	if danger < 0:
-		danger = _forecast_incoming_follower_loss()
+			steal_uids = _titlacauan_target_uids(manifestation)
 	var attacker := attack.get("attacker") as Card
 	var partner := match_manager._get_declared_attack_partner(attacker)
 	var best_score := 0
@@ -2095,7 +2097,15 @@ func _plan_necoc_yaotl(god: TezcatlipocaTheSmokingMirror, attack: Dictionary, da
 		# enslavement or a borrowed creature returns to the opponent when the
 		# effect ends, so storing one forfeits nothing the bot keeps while
 		# permanently removing an opposing body. Those are priced at zero.
-		var score := payoff
+		var steals: Array[String] = []
+		if final_sacrifice and not steal_uids.is_empty():
+			# The final store only cashes the chain when Titlacauan can
+			# collect with the levels this store adds. Without a collectable
+			# theft the summon plan holds the manifestation back, so this
+			# store just parks the chain and is priced like the early stores.
+			steals = CardStrategy.budget_choices(self, steal_uids, level_budget + card.get_effective_level(), steal_limit, true)
+		var cash_in := final_sacrifice and not steals.is_empty()
+		var score := cash_payoff if cash_in else payoff
 		if card.card_owner == bot_player:
 			# Owned bodies pay the board-presence toll plus their forfeited
 			# value. The toll is a third of a card for the early stores —
@@ -2104,7 +2114,7 @@ func _plan_necoc_yaotl(god: TezcatlipocaTheSmokingMirror, attack: Dictionary, da
 			# the final store, which cashes the whole chain. Two lone bodies
 			# still never cover the toll.
 			@warning_ignore("integer_division")
-			var body_cost := ECON_CARD_VALUE if final_sacrifice else ECON_CARD_VALUE / 3
+			var body_cost := ECON_CARD_VALUE if cash_in else ECON_CARD_VALUE / 3
 			if card.is_token:
 				body_cost /= 2
 			var forfeit := maxi(0, _score_summon_sacrifice_candidate(card))
@@ -2119,14 +2129,12 @@ func _plan_necoc_yaotl(god: TezcatlipocaTheSmokingMirror, attack: Dictionary, da
 			@warning_ignore("integer_division")
 			score -= int(attack.get("score", 0)) / 2
 		var removed: Array[Card] = [card]
-		if not steal_uids.is_empty():
-			var stolen := CardStrategy.budget_choices(self, steal_uids, level_budget + card.get_effective_level(), steal_limit, true)
-			for uid in stolen:
-				var target := game_manager.get_card_by_uid(uid)
-				score += CardStrategy.value(self, target)
-				removed.append(target)
+		for uid in steals:
+			var target := game_manager.get_card_by_uid(uid)
+			score += CardStrategy.value(self, target)
+			removed.append(target)
 		var change := {"removed": removed}
-		if manifestation != null:
+		if cash_in:
 			# Frontline has priority. The exact lane within a row does not affect interception.
 			var zone := card.current_zone
 			if not open_summon_zones.is_empty() and (zone in bot_player.reserve_zones or open_summon_zones[0] in bot_player.frontline_zones):
@@ -2141,7 +2149,11 @@ func _plan_necoc_yaotl(god: TezcatlipocaTheSmokingMirror, attack: Dictionary, da
 				score -= entry_penalty + _score_follower_loss(bot_player, GameManager.GOD_DEATH_FOLLOWER_LOSS)
 		var safety_gain := _follower_safety_gain(danger, change, bot_player.mana)
 		var prevents_lethal := safety_gain >= ECON_CARD_VALUE * 30
-		if not final_sacrifice and (board_count <= 1 or danger >= bot_player.followers) and not prevents_lethal:
+		# The board-presence guard covers every store that is not cashing the
+		# chain, the final store included: parking the engine must never cost
+		# the bot its last defenders, because the banked state waits for free
+		# until the opponent commits something Titlacauan can buy.
+		if not cash_in and (board_count <= 1 or danger >= bot_player.followers) and not prevents_lethal:
 			continue
 		score += safety_gain
 		if score > best_score:
@@ -2151,6 +2163,68 @@ func _plan_necoc_yaotl(god: TezcatlipocaTheSmokingMirror, attack: Dictionary, da
 		return {}
 	command["target_uid"] = best_sacrifice.uid
 	return {"score": best_score, "command": command}
+
+# Titlacauan's candidate pool: opposing bodies the manifestation could
+# enslave and the bot can actually see. Level affordability is priced per
+# plan against the banked levels, since each pending store adds its own.
+func _titlacauan_target_uids(manifestation: TezcatlipocaActive) -> Array[String]:
+	var uids: Array[String] = []
+	if manifestation == null:
+		return uids
+	for target in manifestation.get_valid_titlacauan_targets(game_manager):
+		if CardStrategy.visible(self, target):
+			uids.append(target.uid)
+	return uids
+
+# Cashing the completed Necoc Yaotl chain. The Active God body plus
+# Titlacauan's enslavement within the banked levels is the engine's whole
+# payoff, so when the field offers bodies the bot can actually steal —
+# visible, affordable, and hostable in a lane that stays open after the
+# manifestation takes its own — the summon is taken at once: waiting only
+# risks the god being muted or the targets changing. When nothing
+# collectable is on the field, an empty opposing board being the common
+# case, summoning burns the banked levels for a body alone, so the
+# summon is held instead: the completed state under the god never
+# expires, the opponent must eventually commit bodies to contest the
+# board, and the same sacrifices then buy the body plus up to two
+# thefts. A theftless summon is still taken when the body itself is what
+# the position needs: a wall that keeps an incoming push from becoming
+# lethal, or an arrival attack that wins outright.
+func _plan_necoc_yaotl_summon(god: TezcatlipocaTheSmokingMirror, command: Dictionary, danger: int) -> Dictionary:
+	var forms := god.get_hover_summoned_active_gods()
+	if forms.is_empty() or not forms[0] is TezcatlipocaActive:
+		return {}
+	var manifestation := forms[0] as TezcatlipocaActive
+	# The manifestation itself consumes one of the currently open lanes.
+	var steal_limit := maxi(0, CardStrategy.open_spaces(bot_player) - 1)
+	var steal_uids := _titlacauan_target_uids(manifestation)
+	if not CardStrategy.budget_choices(self, steal_uids, god.get_necoc_yaotl_total_level(), steal_limit, true).is_empty():
+		return {"score": 16000, "command": command}
+	var open_summon_zones := god.get_champions_call_open_zones()
+	if open_summon_zones.is_empty() or not game_manager.can_pay_creature_summon_cost(bot_player, manifestation, god, false):
+		return {}
+	var zone := open_summon_zones[0]
+	# The theftless summon has no theft to win against a known entry answer,
+	# and the bank survives the wait, so hold until the answer is spent.
+	if _known_entry_response_penalty(manifestation, zone, false) > 0:
+		return {}
+	var mana_cost := game_manager.get_creature_summon_mana_cost(bot_player, manifestation, god, true)
+	if danger >= bot_player.followers:
+		var change := {"summon": manifestation, "zone": zone, "stance": manifestation, "defensive": game_manager._any_active_structure_forces_defensive_summon()}
+		var safety_gain := _follower_safety_gain(danger, change, bot_player.mana - mana_cost)
+		if safety_gain >= ECON_CARD_VALUE * 30:
+			return {"score": safety_gain, "command": command}
+	# An arrival attack that wins outright does not need the theft to pay.
+	var preview := _preview_board_creature(manifestation, zone) as ActiveGodCard
+	if zone.zone_type == Zone.ZoneType.FRONTLINE and game_manager.turn_number > 1 \
+			and not game_manager.has_resolved_attack_this_turn \
+			and not game_manager.attack_restrictions.has(bot_player) \
+			and not game_manager._any_active_structure_forces_defensive_summon() \
+			and not game_manager.is_first_turn_attack_blocked_by_weather(preview, true):
+		var line := _plan_combat(_get_attack_candidates(preview, null, true), [], null, mana_cost, zone)
+		if not line.is_empty() and bool(line.get("lethal", false)) and preview not in line.get("cleared", []):
+			return {"score": 16000 + int(line.get("score", 0)), "lethal": true, "command": command}
+	return {}
 
 func _should_activate_prepared_mead_for_enki() -> bool:
 	if game_manager == null or game_manager.current_player != bot_player:
@@ -9719,6 +9793,43 @@ func _choose_best_wheel_of_fire_target(wheel: WheelOfFire, targets: Array, actio
 			best_score = score
 	return best_target
 
+# Wheel of Fire timing gate: a pushback before the opponent commits anything
+# only costs the bound creature one step forward, and the attacker walks back
+# up and attacks anyway. Answering the declaration instead cancels the attack
+# outright — the spent major action, the attack mana, and the damage all
+# disappear while the creature lands in reserve — so an enemy frontline
+# creature that can still declare is worth more as a live answer than as an
+# early bind. The gate only shapes the activation decision: preparation
+# planning passes action == null and still sets the trap.
+func _wheel_holds_for_attack_declaration(target: Card, action: CardAction) -> bool:
+	if action == null:
+		return false
+	if target.current_zone == null or target.current_zone.zone_type != Zone.ZoneType.FRONTLINE:
+		return false
+	# Hidden creatures have no readable stance, so the old pricing stands.
+	if target.is_face_down or target.is_stealth:
+		return false
+	# The same awake aggressive signal the movement score uses to price an
+	# attack threat decides whether a declaration is worth waiting for.
+	if target.creature_mode != Card.CreatureMode.AGGRESSIVE or target.is_sleeping:
+		return false
+	# An attacker that cannot declare at all has no window worth waiting
+	# for: bind it now and start the upkeep grind instead.
+	if target.is_paralyzed() or target.has_status_effect("cannot_attack"):
+		return false
+	# On the opponent's turn a spent major action means no declaration is left
+	# to answer this turn, and our next upkeep advances the bind before the
+	# creature can step forward again. On our own turn the flag resets before
+	# their next attack, so it proves nothing and the Wheel still waits.
+	if game_manager.current_player == opponent and not target.can_take_major_creature_action():
+		return false
+	# Answering this very declaration is the payoff of holding, so the gate
+	# never defers past it. A United Front partner cannot be cancelled alone
+	# (the attack continues unless every attacker leaves the frontline), so
+	# the hold applies to that declaration too.
+	return not (action.type == CardAction.Type.ATTACK and action.united_front_partner == null \
+			and target == action.attacker)
+
 func _score_wheel_of_fire_target(wheel: WheelOfFire, target: Card, action: CardAction = null) -> int:
 	if wheel == null or target == null or target.get_controller() != opponent:
 		return -1000000
@@ -9733,6 +9844,8 @@ func _score_wheel_of_fire_target(wheel: WheelOfFire, target: Card, action: CardA
 			for card in zone.cards:
 				if card is WheelOfFire and card.attached_target == target and card._is_active():
 					return -1000000
+	if _wheel_holds_for_attack_declaration(target, action):
+		return -1000000
 	var score := _score_wheel_of_fire_movement(wheel, target)
 	if score <= 0:
 		return -1000000
