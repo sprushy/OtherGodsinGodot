@@ -2344,6 +2344,7 @@ func _plan_creature_summon(danger: int = -1, attacks: Array[Dictionary] = [], ba
 			if creature is Fenrir and game_manager._should_trigger_summon_impact(creature, creature.current_zone, summon_source):
 				fenrir = creature
 			var needs_attack := creature is RedCap
+			var forced_aggressive_summon := game_manager._any_active_structure_forces_aggressive_summon(removed_before_summon)
 			var prefer_stealth := _prefers_stealth_summon(creature)
 			@warning_ignore("integer_division")
 			var face_up_block_value := 0 if fenrir != null else _estimate_defensive_summon_value(creature, summon_zone) / 2
@@ -2358,7 +2359,8 @@ func _plan_creature_summon(danger: int = -1, attacks: Array[Dictionary] = [], ba
 				var warband_value := _estimate_harii_jarl_warband_value(creature)
 				score -= warband_value
 				search_value += warband_value
-			var reveal_defender := hold_reveal_value > 0
+			# A reveal bank needs a hidden entry, which the Colosseum forbids.
+			var reveal_defender := hold_reveal_value > 0 and not forced_aggressive_summon
 			var stealth_block_value := 0
 			if reveal_defender or prefer_stealth:
 				@warning_ignore("integer_division")
@@ -2402,7 +2404,8 @@ func _plan_creature_summon(danger: int = -1, attacks: Array[Dictionary] = [], ba
 			var aggressive_attacks := attacks + summon_attacks
 			for summon_mode in modes:
 				var defensive: bool = summon_mode == Card.CreatureMode.DEFENSIVE
-				var projected_defensive := defensive or game_manager._any_active_structure_forces_defensive_summon(removed_before_summon)
+				var projected_defensive := (defensive or game_manager._any_active_structure_forces_defensive_summon(removed_before_summon)) \
+						and not forced_aggressive_summon
 				if needs_attack and (projected_defensive or summon_attacks.is_empty()):
 					continue
 				var command := _build_creature_play_command(creature, summon_zone, summon_mode, payment_forecast, projected_defensive, summon_budget, summon_source)
@@ -3229,6 +3232,11 @@ func _estimate_defensive_summon_value(card: Card, zone: Zone, stealth: bool = fa
 		return 0
 	var interceptor := card
 	if card.current_zone == null or not card.current_zone.is_board_zone():
+		# The Colosseum forces new entries face-up aggressive, so a summon
+		# preview cannot promise defensive interception value. Board bodies
+		# keep their stance and are still valued below.
+		if game_manager._any_active_structure_forces_aggressive_summon(removed):
+			return 0
 		interceptor = _preview_summoned_creature(card, zone, stealth)
 	var targets: Array = [bot_player]
 	# Any friendly body is a candidate protected target: a face-up Defensive
@@ -3340,7 +3348,7 @@ func _get_best_strategy_action(attacks: Array[Dictionary], attack: Dictionary, d
 			# does not value a self-only ward.
 			continue
 		if card is HildskjalfThroneOfOdin or card is AnointingStatue or card is Gambanteinn \
-				or card is ShroudOfTheAncients or card is ApollyonsDemiurge:
+				or card is ShroudOfTheAncients or card is GorgonsStare or card is ApollyonsDemiurge:
 			var reading := _plan_special_card(card, attacks, attack, danger)
 			if _is_better_strategy_plan(reading, best_plan):
 				best_plan = reading
@@ -3744,6 +3752,9 @@ func _lindwyrm_devour_growth_value() -> int:
 
 func _plan_summoned_removal_ability(attacks: Array[Dictionary], baseline: Dictionary, danger: int) -> Dictionary:
 	var best := {}
+	# The Colosseum forces the entry face-up aggressive, so the body defends at
+	# STR instead of blocking behind RES.
+	var projected_defensive := not game_manager._any_active_structure_forces_aggressive_summon()
 	var zones: Array[Zone] = []
 	var front := _get_central_open_zone(bot_player.frontline_zones)
 	var reserve := _get_first_open_reserve_zone(bot_player)
@@ -3777,7 +3788,7 @@ func _plan_summoned_removal_ability(attacks: Array[Dictionary], baseline: Dictio
 				if removed.is_empty() or total_cost > bot_player.mana:
 					continue
 				var mana_after_ability := bot_player.mana - activation_cost - activation_tax
-				var command := _build_creature_play_command(creature, zone, Card.CreatureMode.DEFENSIVE, danger, true, mana_after_ability)
+				var command := _build_creature_play_command(creature, zone, Card.CreatureMode.DEFENSIVE, danger, projected_defensive, mana_after_ability)
 				if command.is_empty():
 					continue
 				command["stealth"] = false
@@ -3802,10 +3813,10 @@ func _plan_summoned_removal_ability(attacks: Array[Dictionary], baseline: Dictio
 					+ combat_score - int(baseline.get("score", 0))
 				var mana_left := bot_player.mana - total_cost
 				score += _follower_safety_gain(danger, {
-					"removed": removed, "summon": creature, "zone": zone, "stance": creature, "defensive": true,
+					"removed": removed, "summon": creature, "zone": zone, "stance": creature, "defensive": projected_defensive,
 				}, mana_left)
 				if not lethal:
-					score -= _estimate_projected_summon_casualty_cost(creature, zone, true, removed + opened.get("cleared", []), {}, false, mana_left)
+					score -= _estimate_projected_summon_casualty_cost(creature, zone, projected_defensive, removed + opened.get("cleared", []), {}, false, mana_left)
 				var plan := {
 					"command": command, "score": score, "combat_score": combat_score,
 					"lethal": lethal, "combined_setup": true,
@@ -4017,6 +4028,13 @@ func _plan_special_card(card: Card, attacks: Array[Dictionary], attack: Dictiona
 			return {}
 		var score := CardStrategy.effect_score(self, card)
 		return {"score": score, "command": {"type": "activate_prepared_hex", "hex_uid": card.uid}} if score > 0 else {}
+	if card is GorgonsStare:
+		# Proactive flip on the bot's own turn: petrify the opposing board
+		# once the disable value beats the card and its 1-mana activation.
+		if not card.can_activate_prepared(game_manager, bot_player):
+			return {}
+		var stare_score := CardStrategy.effect_score(self, card)
+		return {"score": stare_score, "command": {"type": "activate_prepared_hex", "hex_uid": card.uid}} if stare_score > 0 else {}
 	if card.is_face_down or card.abilities_suppressed() or card.is_activation_locked(game_manager) \
 			or int(_strategy_activation_turns.get(card.uid, -1)) == game_manager.turn_number:
 		return {}
@@ -4189,7 +4207,10 @@ func _choose_breidablik_return(source: Card, uids: Array) -> String:
 		var cost: int = source.get_activation_mana_cost(Breidablik.RETURN_MANA_COST, game_manager)
 		var score := _get_card_economic_value(priest) - CardStrategy.follower_gain(bot_player, followers * 2)
 		score -= CardStrategy.mana_penalty(self, cost)
-		score += _follower_safety_gain(danger, {"summon": priest, "zone": zone, "defensive_summons": true}, bot_player.mana - cost)
+		# The Colosseum forces the returned priest to re-enter face-up
+		# aggressive, so its blocking value only counts without one.
+		score += _follower_safety_gain(danger, {"summon": priest, "zone": zone,
+			"defensive_summons": not game_manager._any_active_structure_forces_aggressive_summon()}, bot_player.mana - cost)
 		if score > best:
 			best = score
 			uid = str(offered_uid)
@@ -7999,6 +8020,10 @@ func _stealth_would_forfeit_value(card: Card) -> bool:
 	return card_key in CardStrategy.STEALTH_SUPPRESSED_KEYS
 
 func _prefers_stealth_summon(card: Card) -> bool:
+	# The Colosseum forces face-up aggressive entries, so no body is a stealth
+	# candidate while its forcing is live.
+	if game_manager._any_active_structure_forces_aggressive_summon():
+		return false
 	# The summon planner treats any speed-1 body as a stealth candidate, so the
 	# suppression check must gate this too: never hide a card whose face-up
 	# hooks stealth would switch off.
@@ -8006,6 +8031,9 @@ func _prefers_stealth_summon(card: Card) -> bool:
 
 func _should_summon_creature_stealthily(card: Card, zone: Zone, mode: Card.CreatureMode) -> bool:
 	if card == null or zone == null or mode != Card.CreatureMode.DEFENSIVE:
+		return false
+	# The Colosseum forces face-up aggressive entries, so stealth is off.
+	if game_manager._any_active_structure_forces_aggressive_summon():
 		return false
 	if _stealth_would_forfeit_value(card):
 		return false
@@ -9672,6 +9700,11 @@ func _has_good_manifestation_attack(manifestation: Card, mode: Card.CreatureMode
 func _choose_creature_summon_mode(card: Card, opposing_creatures = null) -> Card.CreatureMode:
 	if card == null or card.card_type != Card.CardType.CREATURE:
 		return Card.CreatureMode.DEFENSIVE
+	# The Colosseum forces every creature to enter face-up aggressive, so a
+	# planned entry is an attacker: a requested defensive or stealth entry
+	# would still land aggressive and defend at STR.
+	if game_manager._any_active_structure_forces_aggressive_summon():
+		return Card.CreatureMode.AGGRESSIVE
 	var resolved_opposing: Array[Card] = _get_board_creatures(opponent) if opposing_creatures == null else opposing_creatures
 	var has_clean_kills := _count_clean_attack_targets_for(card, resolved_opposing) > 0
 	var ready_protection := _get_own_protective_responses().size() > 0

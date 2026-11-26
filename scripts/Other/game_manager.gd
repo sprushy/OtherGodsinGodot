@@ -1780,6 +1780,10 @@ func summon_creature_by_effect(
 	var from_zone := card.current_zone
 	player.move_card(card, target_zone)
 	card.is_prepared = false
+	var forced_aggressive_summon := _any_active_structure_forces_aggressive_summon()
+	if forced_aggressive_summon:
+		face_down = false
+		stealth = false
 	card.is_face_down = face_down
 	card.is_stealth = stealth
 	var resolved_mode: Card.CreatureMode = mode
@@ -1787,6 +1791,8 @@ func summon_creature_by_effect(
 		resolved_mode = Card.CreatureMode.DEFENSIVE
 	if resolved_mode == Card.CreatureMode.AGGRESSIVE and _any_active_structure_forces_defensive_summon():
 		resolved_mode = Card.CreatureMode.DEFENSIVE
+	if forced_aggressive_summon:
+		resolved_mode = Card.CreatureMode.AGGRESSIVE
 	card.creature_mode = resolved_mode
 	card.reset_creature_action_state()
 	if consume_turn_summon:
@@ -5273,11 +5279,51 @@ func is_followers_attack_blocked_by_active_structure(
 			return true
 	return false
 
-func _any_active_structure_forces_defensive_summon(removed: Array = []) -> bool:
+# Glitnir and the Colosseum silence each other while both stand: a defensive
+# forcing structure and an aggressive forcing structure cancel out, and neither
+# forcing applies again until the other leaves the field.
+func _any_raw_structure_forces_defensive_summon(removed: Array = []) -> bool:
 	for structure in _get_active_structures():
 		if structure not in removed and structure.has_method("forces_defensive_summon") and structure.forces_defensive_summon():
 			return true
 	return false
+
+func _any_raw_structure_forces_aggressive_summon(removed: Array = []) -> bool:
+	for structure in _get_active_structures():
+		if structure not in removed and structure.has_method("forces_aggressive_summon") and structure.forces_aggressive_summon():
+			return true
+	return false
+
+# Effective answers: each forcing only counts while the opposite forcing is not
+# also standing. Summon resolution, bots, and projections rely on these.
+func _any_active_structure_forces_defensive_summon(removed: Array = []) -> bool:
+	if _any_raw_structure_forces_aggressive_summon(removed):
+		return false
+	return _any_raw_structure_forces_defensive_summon(removed)
+
+func _any_active_structure_forces_aggressive_summon(removed: Array = []) -> bool:
+	if _any_raw_structure_forces_defensive_summon(removed):
+		return false
+	return _any_raw_structure_forces_aggressive_summon(removed)
+
+# The structure whose opposite forcing silences this one, or null while its
+# summon forcing is live. Works for a board structure being hovered and for a
+# hand card being considered for play, so hover text and bot planning agree.
+func get_structure_summon_forcing_silencer(structure: Card) -> StructureCard:
+	if structure == null:
+		return null
+	var wants_defensive: bool = structure.has_method("forces_defensive_summon") and structure.forces_defensive_summon()
+	var wants_aggressive: bool = structure.has_method("forces_aggressive_summon") and structure.forces_aggressive_summon()
+	if not wants_defensive and not wants_aggressive:
+		return null
+	for other in _get_active_structures():
+		if other == structure:
+			continue
+		if wants_defensive and other.has_method("forces_aggressive_summon") and other.forces_aggressive_summon():
+			return other
+		if wants_aggressive and other.has_method("forces_defensive_summon") and other.forces_defensive_summon():
+			return other
+	return null
 
 func _get_graveyard_replacement_sources(card: Card) -> Array[StructureCard]:
 	var structures: Array[StructureCard] = []

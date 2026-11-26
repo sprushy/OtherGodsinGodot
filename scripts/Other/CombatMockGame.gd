@@ -90,6 +90,7 @@ const PromptRouterScript = preload("res://scripts/server/PromptRouter.gd")
 const HeadlessMatchHostScript = preload("res://scripts/server/HeadlessMatchHost.gd")
 const MatchClientScript = preload("res://scripts/client/MatchClient.gd")
 const DefaultMatchSetupScript = preload("res://scripts/server/DefaultMatchSetup.gd")
+const InProcessGameInputScript = preload("res://scripts/Other/InProcessGameInput.gd")
 const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
 const MatchSessionScript = preload("res://scripts/server/MatchSession.gd")
 const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
@@ -743,6 +744,10 @@ var _reinforcement_hover_popup: Control = null
 var _reinforcement_hover_tile: Control = null
 var _series_snapshot: Dictionary = {}
 var _series_between_games_active: bool = false
+## True while a client-hosted human match (in-process lobby host or
+## player-hosted listen server) sits in its Bo3 between-games Reinforcement
+## phase, with the host client driving the series.
+var _network_host_series_phase_active: bool = false
 var _forfeit_button_default_text: String = ""
 var _forfeit_match_confirm_pending: bool = false
 var _observer_perspective_button: Button = null
@@ -6581,6 +6586,7 @@ func start_game(
 	_pending_forfeit_return_to_menu = false
 	_pending_post_game_return_to_menu = false
 	_series_between_games_active = false
+	_network_host_series_phase_active = false
 	_clear_deferred_turn_action_after_opponent_priority()
 	_handled_priority_prompt_keys.clear()
 	_clear_priority_prompt_command_context()
@@ -6605,7 +6611,6 @@ func start_game(
 	_last_god_dialogue_msec_by_player.clear()
 	game_manager = GameManager.new()
 	match_manager = MatchManager.new(game_manager)
-	match_manager.god_dialogue_sent.connect(_show_god_dialogue)
 	prompt_router = PromptRouterScript.new(game_manager)
 	headless_match_host = HeadlessMatchHostScript.new()
 	headless_match_host.attach(game_manager, match_manager, prompt_router)
@@ -6630,18 +6635,7 @@ func start_game(
 		match_client.peer_disconnected.connect(_on_peer_disconnected)
 	
 	print("MatchManager initialized: ", match_manager)
-	match_manager.action_resolved.connect(_on_match_action_resolved)
-	
-	# If we have a broadcaster, ui_interaction will come via network event instead
-	var use_broadcaster: bool = headless_match_host != null and headless_match_host.should_route_prompts_via_network()
-	if not use_broadcaster:
-		match_manager.request_ui_interaction.connect(_on_match_ui_interaction)
-	
-	match_manager.move_validated.connect(_on_match_move_validated)
-	match_manager.move_failed.connect(_on_match_move_failed)
-	match_manager.ui_refresh_requested.connect(_request_ui_refresh)
-	match_manager.targeting_started.connect(_on_match_targeting_started)
-	match_manager.targeting_ended.connect(_on_match_targeting_ended)
+	_connect_match_manager_ui_signals()
 
 	await get_tree().process_frame
 	var default_match_setup = DefaultMatchSetupScript.new()
@@ -6649,37 +6643,17 @@ func start_game(
 	player1 = match_players.get("player1", null)
 	player2 = match_players.get("player2", null)
 	_attach_local_bot_match_bot_if_needed(match_info, server_match_session)
-	if not game_manager.god_power_activated.is_connected(_on_god_power_activated):
-		game_manager.god_power_activated.connect(_on_god_power_activated)
-	if not game_manager.followers_converted.is_connected(_on_followers_converted):
-		game_manager.followers_converted.connect(_on_followers_converted)
-	game_manager.board_effect_requested.connect(_on_board_effect_requested)
-	game_manager.card_effect_requested.connect(_on_card_effect_requested)
-	game_manager.field_effect_requested.connect(_on_field_effect_requested)
-	if not game_manager.ascension_offered.is_connected(_on_ascension_offered):
-		game_manager.ascension_offered.connect(_on_ascension_offered)
-		game_manager.turn_upkeep_started.connect(_on_local_turn_upkeep_started)
-
-	player1.mana_changed.connect(_on_player_mana_changed)
-	player2.mana_changed.connect(_on_player_mana_changed)
-	player1.followers_changed.connect(_on_player_followers_changed)
-	player2.followers_changed.connect(_on_enemy_followers_changed)
-	_sync_follower_casualties_for_player(player1, player1.followers, false)
-	_sync_follower_casualties_for_player(player2, player2.followers, false)
-	player1.guard_changed.connect(_on_player_guard_changed)
-	player2.guard_changed.connect(_on_enemy_guard_changed)
-	game_manager.game_ended.connect(_on_game_ended)
+	_connect_game_and_player_ui_signals()
 
 	# Broadcaster: server-side only, sends full state to clients after each action
 	if headless_match_host != null and is_host:
 		headless_match_host.enable_authoritative_broadcasts()
 		game_event_broadcaster = headless_match_host.game_event_broadcaster
+		# Bo3 between-games submissions from networked players arrive as
+		# submit_reinforcements commands, which the host validates itself.
+		if not headless_match_host.series_command_received.is_connected(_on_series_command_received):
+			headless_match_host.series_command_received.connect(_on_series_command_received)
 
-	if not player1.card_moved.is_connected(_on_local_player_card_moved):
-		player1.card_moved.connect(_on_local_player_card_moved)
-	if not player2.card_moved.is_connected(_on_local_player_card_moved):
-		player2.card_moved.connect(_on_local_player_card_moved)
-	
 	for i in range(0):
 		print("Ãƒâ€šÃ‚Â  Drawing card ", i, " for P1")
 		player1.draw_card()
@@ -6772,6 +6746,55 @@ func _build_initial_match_players(default_match_setup, server_match_session = nu
 		match_players = default_match_setup.build_default_match(game_manager)
 	return match_players
 
+## MatchManager UI signal wiring shared by the initial match launch and the
+## in-place rebuild that starts the next game of a Bo3 series.
+func _connect_match_manager_ui_signals() -> void:
+	if match_manager == null:
+		return
+	match_manager.god_dialogue_sent.connect(_show_god_dialogue)
+	match_manager.action_resolved.connect(_on_match_action_resolved)
+	# If we have a broadcaster, ui_interaction will come via network event instead
+	var use_broadcaster: bool = headless_match_host != null and headless_match_host.should_route_prompts_via_network()
+	if not use_broadcaster:
+		match_manager.request_ui_interaction.connect(_on_match_ui_interaction)
+	match_manager.move_validated.connect(_on_match_move_validated)
+	match_manager.move_failed.connect(_on_match_move_failed)
+	match_manager.ui_refresh_requested.connect(_request_ui_refresh)
+	match_manager.targeting_started.connect(_on_match_targeting_started)
+	match_manager.targeting_ended.connect(_on_match_targeting_ended)
+
+## GameManager/Player UI signal wiring shared by the initial match launch and
+## the in-place rebuild that starts the next game of a Bo3 series. Must run
+## before enable_authoritative_broadcasts() so this script's game_ended
+## handler fires ahead of the broadcaster's; the between-games series window
+## relies on that ordering to suppress the game_ended broadcast.
+func _connect_game_and_player_ui_signals() -> void:
+	if game_manager == null or player1 == null or player2 == null:
+		return
+	if not game_manager.god_power_activated.is_connected(_on_god_power_activated):
+		game_manager.god_power_activated.connect(_on_god_power_activated)
+	if not game_manager.followers_converted.is_connected(_on_followers_converted):
+		game_manager.followers_converted.connect(_on_followers_converted)
+	game_manager.board_effect_requested.connect(_on_board_effect_requested)
+	game_manager.card_effect_requested.connect(_on_card_effect_requested)
+	game_manager.field_effect_requested.connect(_on_field_effect_requested)
+	if not game_manager.ascension_offered.is_connected(_on_ascension_offered):
+		game_manager.ascension_offered.connect(_on_ascension_offered)
+		game_manager.turn_upkeep_started.connect(_on_local_turn_upkeep_started)
+	player1.mana_changed.connect(_on_player_mana_changed)
+	player2.mana_changed.connect(_on_player_mana_changed)
+	player1.followers_changed.connect(_on_player_followers_changed)
+	player2.followers_changed.connect(_on_enemy_followers_changed)
+	_sync_follower_casualties_for_player(player1, player1.followers, false)
+	_sync_follower_casualties_for_player(player2, player2.followers, false)
+	player1.guard_changed.connect(_on_player_guard_changed)
+	player2.guard_changed.connect(_on_enemy_guard_changed)
+	game_manager.game_ended.connect(_on_game_ended)
+	if not player1.card_moved.is_connected(_on_local_player_card_moved):
+		player1.card_moved.connect(_on_local_player_card_moved)
+	if not player2.card_moved.is_connected(_on_local_player_card_moved):
+		player2.card_moved.connect(_on_local_player_card_moved)
+
 func _prepare_for_match_launch(status_message: String = "Connecting to match...") -> void:
 	_initial_state_sync_generation += 1
 	_pending_visual_game_result.clear()
@@ -6793,6 +6816,7 @@ func _prepare_for_match_launch(status_message: String = "Connecting to match..."
 	_pending_forfeit_return_to_menu = false
 	_pending_post_game_return_to_menu = false
 	_series_between_games_active = false
+	_network_host_series_phase_active = false
 	_temporary_full_control = false
 	_constant_full_control = false
 	_full_control_chord_latched = false
@@ -21644,7 +21668,35 @@ func _select_pending_creature_sacrifice(card: Card) -> void:
 		return
 	_selected_creature_summon_sacrifices.append(card)
 	_mark_pending_creature_summon_cost_paid()
+	_submit_summon_sacrifice_payment(card)
 	_continue_pending_creature_sacrifice_payment()
+
+## Multi-sacrifice summons commit each sacrifice the moment it is clicked so
+## the creature dies (and any triggers fire) immediately instead of waiting
+## for the full cost to be collected locally.
+func _submit_summon_sacrifice_payment(sacrificed: Card) -> void:
+	if _sacrifice_pending_card == null or game_manager == null or game_input == null:
+		return
+	var payment_index := maxi(0, _sacrifice_pending_card.sacrifice_cost - _sacrifice_remaining)
+	game_input.submit_action({
+		type = "sacrifice_summon_payment",
+		player_index = game_manager.players.find(game_manager.current_player),
+		summon_uid = _sacrifice_pending_card.uid,
+		sacrifice_uid = sacrificed.uid,
+		payment_index = payment_index,
+	})
+
+## Cancelling a half-paid summon leaves the already-sacrificed creatures dead;
+## tell the authority to forget the mapping so a retry cannot double-count.
+func _submit_summon_sacrifice_payment_cancel(summon_card: Card) -> void:
+	if summon_card == null or game_manager == null or game_input == null:
+		return
+	game_input.submit_action({
+		type = "sacrifice_summon_payment",
+		player_index = game_manager.players.find(game_manager.current_player),
+		summon_uid = summon_card.uid,
+		cancel = true,
+	})
 
 func _can_use_card_for_creature_sacrifice(card: Card) -> bool:
 	return card != null \
@@ -21698,6 +21750,17 @@ func _is_pending_creature_summon_payment_active() -> bool:
 	return _awaiting_creature_sacrifice or _awaiting_altar_void_payment \
 		or _awaiting_sacrifice_payment_choice or _awaiting_drag_sacrifice_zone
 
+## True while a click on a friendly board creature should resolve as a
+## sacrifice-target pick (summon payment, Altar of Dreams void, the
+## drag-sacrifice zone step, or Hati's Moon Hunt sacrifice/destination step).
+## These clicks must dispatch on press so the board drag gesture cannot
+## convert them into a drop and lose the selection.
+func _is_board_sacrifice_click_selection_active() -> bool:
+	return _awaiting_creature_sacrifice \
+		or _awaiting_altar_void_payment \
+		or _awaiting_drag_sacrifice_zone \
+		or _pending_hati_summon != null
+
 func _get_pending_summon_ghost_hand_card() -> Card:
 	if not _is_pending_creature_summon_payment_active():
 		return null
@@ -21715,6 +21778,9 @@ func _cancel_pending_creature_summon_payment() -> bool:
 		return false
 	var card := _sacrifice_pending_card
 	var card_name := card.card_name if card != null else "the summon"
+	var already_sacrificed := _awaiting_creature_sacrifice \
+		and card != null \
+		and _sacrifice_remaining < card.sacrifice_cost
 	_hide_sacrifice_payment_prompt()
 	_awaiting_creature_sacrifice = false
 	_awaiting_altar_void_payment = false
@@ -21725,7 +21791,11 @@ func _cancel_pending_creature_summon_payment() -> bool:
 	_sacrifice_pending_mode = ""
 	_sacrifice_remaining = 0
 	_clear_pending_creature_summon_payment_state()
-	_set_action_label_text("Cancelled " + card_name + " - it stays in your hand.")
+	if already_sacrificed:
+		_submit_summon_sacrifice_payment_cancel(card)
+		_set_action_label_text("Cancelled " + card_name + " - it stays in your hand. Creatures already sacrificed remain sacrificed.")
+	else:
+		_set_action_label_text("Cancelled " + card_name + " - it stays in your hand.")
 	update_ui()
 	return true
 
@@ -23159,10 +23229,14 @@ func _on_creature_drag_started(card: Card, from_zone: Zone) -> void:
 	if _has_pending_target_selection():
 		_on_board_card_pressed(card)
 		return
+	# Sacrifice-target clicks must resolve on press, like other target prompts.
+	# Board-creature drags convert to a drop gesture on any motion between
+	# press and release, which silently discarded the first click on a
+	# sacrificable creature whenever the mouse moved at all.
+	if _is_board_sacrifice_click_selection_active():
+		_on_board_card_pressed(card)
+		return
 	if _is_turn_choice_pending():
-		if _awaiting_creature_sacrifice or _awaiting_altar_void_payment:
-			_on_board_card_pressed(card)
-			return
 		_reject_pre_turn_action()
 		return
 	if awaiting_god_ability_target and god_ability_source != null:
@@ -28854,6 +28928,14 @@ func _on_match_move_validated(move: Dictionary) -> void:
 		"play_creature":
 			if not _is_networked_client:
 				_request_ui_refresh()
+		"sacrifice_summon_payment":
+			if not bool(move.get("cancel", false)):
+				var sacrificed_for_summon := game_manager.get_card_by_uid(str(move.get("sacrifice_uid", "")))
+				if sacrificed_for_summon != null:
+					_set_action_label_text(sacrificed_for_summon.card_name + " was sacrificed.")
+			if not _is_networked_client:
+				_request_ui_refresh()
+			return
 		"prepare_card":
 			var prepared_card := game_manager.get_card_by_uid(str(move.get("card_uid", "")))
 			if prepared_card != null and prepared_card.current_zone != null and prepared_card.current_zone.is_board_zone():
@@ -30590,6 +30672,9 @@ func _submit_reinforcement_changes() -> void:
 	if _is_local_bot_match() and _series_between_games_active:
 		_submit_local_bot_series_reinforcements()
 		return
+	if _is_real_network_host() and _series_between_games_active:
+		_submit_network_host_series_reinforcements()
+		return
 	var local_index := int(network_manager.local_player_index)
 	game_input.submit_action({
 		"type": "submit_reinforcements",
@@ -30972,6 +31057,16 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 				player_name = game_manager.players[player_idx].player_name
 			var reconnect_deadline := int(data.get("reconnect_deadline_unix", 0))
 			var seconds_remaining := maxi(0, reconnect_deadline - int(Time.get_unix_time_from_system()))
+			if _network_host_series_phase_active:
+				# Keep the between-games Reinforcement window interactive; the
+				# drop is surfaced in the window's status label instead of the
+				# full-screen reconnect wait overlay.
+				var window_note := "%s disconnected. Waiting for them to rejoin and lock in..." % player_name
+				if _reinforcement_status_label != null:
+					_reinforcement_status_label.text = window_note
+				_set_action_label_text(window_note)
+				update_ui()
+				return
 			var wait_message := "%s disconnected. Waiting up to %ds for reconnect..." % [player_name, seconds_remaining]
 			_set_match_reconnect_wait(true, wait_message)
 			_set_action_label_text(wait_message)
@@ -30983,6 +31078,8 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 				rejoined_name = game_manager.players[rejoined_idx].player_name
 			_set_match_reconnect_wait(false)
 			_set_action_label_text("%s rejoined the match." % rejoined_name)
+			if _network_host_series_phase_active and _reinforcement_status_label != null:
+				_reinforcement_status_label.text = "%s rejoined. Waiting for deck lock-ins..." % rejoined_name
 			update_ui()
 		"match_abandoned":
 			var reason := str(data.get("reason", "Match abandoned.")).strip_edges()
@@ -32772,6 +32869,11 @@ func _on_game_ended(winner: Player, loser: Player) -> void:
 	# Reinforcement screen and no result.
 	if _begin_local_bot_series_window(winner, loser):
 		return
+	# Client-hosted human matches (in-process lobby host or player-hosted
+	# listen server) have no dedicated match server to drive a Bo3 series, so
+	# this host client runs the between-games flow itself.
+	if _is_real_network_host() and _begin_network_host_series_window(winner, loser):
+		return
 	if (_is_networked_client or _is_real_network_host()) and _should_defer_game_result_for_series():
 		return
 	_record_local_host_match_result(winner, loser)
@@ -32927,6 +33029,309 @@ func _start_next_local_bot_series_game() -> void:
 
 func _relaunch_local_bot_series_game(match_info: Dictionary, match_session) -> void:
 	start_game(true, false, "127.0.0.1", 0, match_info, match_session)
+
+# ---------------------------------------------------------------------------
+# Client-hosted human Bo3 series (in-process lobby host / player-hosted
+# listen server). The dedicated match server drives its own series through
+# HeadlessMatchServer; when a client hosts the authoritative match there is
+# no such driver, so this host client records the series state, runs the
+# between-games Reinforcement phase for both seats, and rebuilds each next
+# game in place without rebinding the transport.
+# ---------------------------------------------------------------------------
+
+## Returns true when the between-games window took over and the caller must
+## not finish the match. On a series-ending game (or a match forfeit) the
+## snapshot is synced, the peers are told the series ended, and false is
+## returned so the normal result path runs exactly once.
+func _begin_network_host_series_window(winner: Player, loser: Player) -> bool:
+	if not _is_real_network_host() or not _should_defer_game_result_for_series():
+		return false
+	var match_session = headless_match_host.match_session if headless_match_host != null else null
+	if match_session == null or game_manager == null:
+		return false
+	var winner_index := game_manager.players.find(winner)
+	if game_manager.game_end_reason == GameManager.GAME_END_REASON_MATCH_FORFEIT and winner_index >= 0:
+		# A match forfeit ends the whole series immediately, mirroring the
+		# dedicated match server: award the remaining games, tell the peers,
+		# then fall through to the normal result path.
+		var forfeit_winner_session_id := str(match_session.player_session_ids[winner_index]).strip_edges()
+		match_session.series_wins_by_session[forfeit_winner_session_id] = match_session.games_to_win
+		_series_snapshot = match_session.get_series_snapshot().duplicate(true)
+		_current_match_info["series"] = _series_snapshot.duplicate(true)
+		_broadcast_network_host_series_ended(winner_index)
+		return false
+	var snapshot: Dictionary = match_session.record_series_game_win(winner_index) \
+		if winner_index >= 0 else match_session.get_series_snapshot()
+	_series_snapshot = snapshot.duplicate(true)
+	_current_match_info["series"] = _series_snapshot.duplicate(true)
+	if match_session.is_series_complete():
+		_broadcast_network_host_series_ended(winner_index)
+		return false
+	# The series continues: swap the result flow for the Reinforcement window.
+	headless_match_host.series_between_games = true
+	_network_host_series_phase_active = true
+	if game_event_broadcaster != null:
+		# Without this the game_ended broadcast would mark the opponent's
+		# match connection complete and drop their reconnect safety net.
+		game_event_broadcaster.suppress_next_game_end = true
+	var result_message := game_manager.get_game_result_message(winner, loser)
+	_send_network_host_reinforcement_phase(winner_index, result_message)
+	var host_session_id := _get_network_host_session_id(match_session)
+	var submission: Dictionary = match_session.player_decks_by_session.get(host_session_id, {})
+	_show_reinforcement_phase({
+		"winner_index": winner_index,
+		"series": snapshot.duplicate(true),
+		"result_message": result_message,
+		"cards": submission.get("cards", {}),
+		"reinforcements": submission.get("reinforcements", {}),
+		"is_ready": bool(match_session.reinforcement_ready_by_session.get(host_session_id, false)),
+	})
+	return true
+
+func _get_network_host_session_id(match_session) -> String:
+	if match_session == null or match_session.player_session_ids.is_empty():
+		return ""
+	var host_index := 0
+	if network_manager != null and int(network_manager.local_player_index) >= 0:
+		host_index = int(network_manager.local_player_index)
+	if host_index < 0 or host_index >= match_session.player_session_ids.size():
+		return ""
+	return str(match_session.player_session_ids[host_index]).strip_edges()
+
+## Sends the opponent their personalized Reinforcement phase payload (their
+## own deck submission; the host's cards never leave this client) and tells
+## spectators a game in the series ended.
+func _send_network_host_reinforcement_phase(winner_index: int, result_message: String) -> void:
+	if network_manager == null or headless_match_host == null or headless_match_host.match_session == null:
+		return
+	var match_session = headless_match_host.match_session
+	var local_index := clampi(int(network_manager.local_player_index), 0, 1)
+	var opponent_index := 1 - local_index
+	var opponent_session_id := str(match_session.player_session_ids[opponent_index]).strip_edges()
+	var submission: Dictionary = match_session.player_decks_by_session.get(opponent_session_id, {})
+	var peer_id := int(network_manager.player_peer_ids.get(opponent_index, -1))
+	if peer_id > 1:
+		network_manager.broadcast_event_to_peer(peer_id, "reinforcement_phase", {
+			"winner_index": winner_index,
+			"series": match_session.get_series_snapshot(),
+			"result_message": result_message,
+			"cards": submission.get("cards", {}),
+			"reinforcements": submission.get("reinforcements", {}),
+			"is_ready": bool(match_session.reinforcement_ready_by_session.get(opponent_session_id, false)),
+		})
+	for spectator_peer_id in network_manager.spectator_peer_ids:
+		network_manager.broadcast_event_to_peer(int(spectator_peer_id), "series_game_ended", {
+			"winner_index": winner_index,
+			"series": match_session.get_series_snapshot(),
+			"result_message": result_message,
+		})
+
+func _broadcast_network_host_reinforcement_readiness() -> void:
+	if network_manager == null or headless_match_host == null or headless_match_host.match_session == null:
+		return
+	var match_session = headless_match_host.match_session
+	var ready_count := 0
+	for session_id in match_session.player_session_ids:
+		if bool(match_session.reinforcement_ready_by_session.get(session_id, false)):
+			ready_count += 1
+	network_manager.broadcast_event_to_all("reinforcement_readiness", {
+		"ready_count": ready_count,
+		"player_count": match_session.player_session_ids.size(),
+		"series": match_session.get_series_snapshot(),
+	})
+
+## Tells the opponent and spectators the series is over. The host shows its
+## own result through the normal result path; the events let the client's
+## game_ended handling and the spectators' series view resolve the match.
+func _broadcast_network_host_series_ended(winner_index: int) -> void:
+	if network_manager == null or headless_match_host == null or headless_match_host.match_session == null:
+		return
+	var payload := {
+		"winner_index": winner_index,
+		"series": headless_match_host.match_session.get_series_snapshot(),
+		"result_message": _get_current_network_host_result_message(),
+	}
+	if game_manager != null:
+		var followers: Array = []
+		for player in game_manager.players:
+			followers.append(player.followers)
+		payload["followers"] = followers
+		payload["turn_number"] = game_manager.turn_number
+	network_manager.broadcast_event_to_all("series_ended", payload)
+
+func _get_current_network_host_result_message() -> String:
+	if game_manager != null and game_manager.is_game_over:
+		return game_manager.get_game_result_message()
+	return ""
+
+func _reject_network_host_series_command(peer_id: int, reason: String) -> void:
+	if network_manager == null or peer_id <= 0:
+		return
+	network_manager.broadcast_event_to_peer(peer_id, "command_rejected", {"reason": reason})
+
+## Validates and applies the opponent's submit_reinforcements command,
+## mirroring the dedicated server's series command handling.
+func _on_series_command_received(command: Dictionary, sender_info: Dictionary) -> void:
+	if not _network_host_series_phase_active or headless_match_host == null:
+		_reject_network_host_series_command(int(sender_info.get("peer_id", -1)), "Reinforcements can only be changed between games.")
+		return
+	var match_session = headless_match_host.match_session
+	if match_session == null:
+		return
+	var peer_id := int(sender_info.get("peer_id", -1))
+	var player_index := int(sender_info.get("player_index", -1))
+	if player_index < 0 or player_index >= match_session.player_session_ids.size():
+		_reject_network_host_series_command(peer_id, "Could not identify the series player.")
+		return
+	var proposed_cards = command.get("cards", {})
+	var proposed_reinforcements = command.get("reinforcements", {})
+	if not (proposed_cards is Dictionary) or not (proposed_reinforcements is Dictionary):
+		_reject_network_host_series_command(peer_id, "Submit both the main deck and Reinforcements.")
+		return
+	var session_id := str(match_session.player_session_ids[player_index]).strip_edges()
+	var registered_submission = match_session.registered_player_decks_by_session.get(session_id, {})
+	if not (registered_submission is Dictionary):
+		_reject_network_host_series_command(peer_id, "The registered deck could not be found.")
+		return
+	var special_setup = (registered_submission as Dictionary).get("special_setup", {})
+	var validation: Dictionary = _get_local_series_validator().validate_reinforcement_swap(
+		(registered_submission as Dictionary).get("cards", {}),
+		(registered_submission as Dictionary).get("reinforcements", {}),
+		proposed_cards as Dictionary,
+		proposed_reinforcements as Dictionary,
+		special_setup if special_setup is Dictionary else {}
+	)
+	if not bool(validation.get("is_valid", false)):
+		_reject_network_host_series_command(peer_id, str(validation.get("error", "That Reinforcement swap is not legal.")))
+		return
+	var current_submission = match_session.player_decks_by_session.get(session_id, {})
+	if not (current_submission is Dictionary):
+		current_submission = {}
+	var updated_submission := (current_submission as Dictionary).duplicate(true)
+	updated_submission["cards"] = validation.get("cards", {})
+	updated_submission["reinforcements"] = validation.get("reinforcements", {})
+	updated_submission["validation"] = validation.duplicate(true)
+	match_session.player_decks_by_session[session_id] = updated_submission
+	match_session.set_reinforcement_ready(session_id, true)
+	if network_manager != null:
+		network_manager.broadcast_event_to_peer(peer_id, "reinforcement_submission_accepted", {
+			"series": match_session.get_series_snapshot(),
+		})
+	_broadcast_network_host_reinforcement_readiness()
+	if match_session.all_reinforcement_submissions_ready():
+		call_deferred("_start_next_network_host_series_game")
+
+## The host's own Reinforcement lock-in. The host's input is in-process, so
+## its submission is validated and applied here instead of through the
+## network command path.
+func _submit_network_host_series_reinforcements() -> void:
+	if not _network_host_series_phase_active or headless_match_host == null:
+		return
+	var match_session = headless_match_host.match_session
+	if match_session == null:
+		return
+	var host_session_id := _get_network_host_session_id(match_session)
+	if host_session_id.is_empty():
+		return
+	var registered: Dictionary = match_session.registered_player_decks_by_session.get(host_session_id, {})
+	if registered.is_empty():
+		return
+	var special_setup = registered.get("special_setup", {})
+	var validation: Dictionary = _get_local_series_validator().validate_reinforcement_swap(
+		registered.get("cards", {}),
+		registered.get("reinforcements", {}),
+		_reinforcement_main_cards.duplicate(true),
+		_reinforcement_side_cards.duplicate(true),
+		special_setup if special_setup is Dictionary else {}
+	)
+	if not bool(validation.get("is_valid", false)):
+		_set_reinforcement_locked(false)
+		if _reinforcement_submit_button != null:
+			_reinforcement_submit_button.disabled = false
+		if _reinforcement_status_label != null:
+			_reinforcement_status_label.text = str(validation.get("error", "That Reinforcement swap is not legal."))
+		return
+	var current: Dictionary = match_session.player_decks_by_session.get(host_session_id, registered).duplicate(true)
+	current["cards"] = validation.get("cards", {})
+	current["reinforcements"] = validation.get("reinforcements", {})
+	match_session.player_decks_by_session[host_session_id] = current
+	match_session.set_reinforcement_ready(host_session_id, true)
+	_current_match_info["selected_deck_cards"] = (validation.get("cards", {}) as Dictionary).duplicate(true)
+	_current_match_info["selected_deck_reinforcements"] = (validation.get("reinforcements", {}) as Dictionary).duplicate(true)
+	_set_reinforcement_locked(true)
+	if _reinforcement_submit_button != null:
+		_reinforcement_submit_button.disabled = true
+	if _reinforcement_status_label != null:
+		_reinforcement_status_label.text = "Deck locked. Waiting for your opponent."
+	_broadcast_network_host_reinforcement_readiness()
+	if match_session.all_reinforcement_submissions_ready():
+		call_deferred("_start_next_network_host_series_game")
+
+## Rebuilds the authoritative game for the next series game in place. The
+## ENet/WebSocket transport must survive so the opponent's connection is not
+## dropped between games; only the game objects and the broadcaster are
+## rebuilt, mirroring the dedicated server's _start_next_series_game.
+func _start_next_network_host_series_game() -> void:
+	if not _network_host_series_phase_active or headless_match_host == null:
+		return
+	var match_session = headless_match_host.match_session
+	if match_session == null:
+		return
+	_network_host_series_phase_active = false
+	headless_match_host.series_between_games = false
+	match_session.begin_next_series_game()
+	_series_snapshot = match_session.get_series_snapshot().duplicate(true)
+	_current_match_info["series"] = _series_snapshot.duplicate(true)
+	_pending_visual_game_result.clear()
+	_ranked_match_result.clear()
+	_local_match_result_recorded = false
+	_clear_resolution_effects()
+	_upkeep_hint_pending_turn = -1
+	_upkeep_hint_pulse_turn = -1
+	_hide_reinforcement_overlay()
+	_hide_game_result_overlay()
+	_post_game_board_refresh_locked = false
+	_game_finished = false
+	_game_result_presented = false
+	_pending_forfeit_return_to_menu = false
+	_restore_corner_action_button()
+	_set_action_label_text("Next game starting...")
+	if game_event_broadcaster != null:
+		game_event_broadcaster.shutdown()
+		game_event_broadcaster = null
+	game_manager = GameManager.new()
+	match_manager = MatchManager.new(game_manager)
+	prompt_router = PromptRouterScript.new(game_manager)
+	headless_match_host.attach(game_manager, match_manager, prompt_router)
+	match_manager.network_manager = network_manager
+	_connect_match_manager_ui_signals()
+	var default_match_setup := DefaultMatchSetupScript.new()
+	var match_players: Dictionary = default_match_setup.build_match_from_session_decks(game_manager, match_session)
+	if match_players.is_empty():
+		push_warning("Could not build the next game in the Bo3 series.")
+		if network_manager != null:
+			network_manager.broadcast_event_to_all("match_abandoned", {
+				"reason": "The next game in the series could not be started.",
+			})
+		_cancel_match_locally("The next game in the series could not be started.")
+		return
+	player1 = match_players.get("player1", null)
+	player2 = match_players.get("player2", null)
+	_connect_game_and_player_ui_signals()
+	game_input = InProcessGameInputScript.new(match_manager)
+	if game_input != null and game_input.has_signal("submission_rejected"):
+		game_input.submission_rejected.connect(_on_game_input_submission_rejected)
+	headless_match_host.enable_authoritative_broadcasts()
+	game_event_broadcaster = headless_match_host.game_event_broadcaster
+	if not _is_networked_client and game_manager.players.size() > 0:
+		game_manager.feedback_viewer = game_manager.players[0]
+	_sync_priority_preferences_to_match(true)
+	network_manager.broadcast_event_to_all("series_game_started", {
+		"series": match_session.get_series_snapshot(),
+	})
+	game_manager.start_turn()
+	update_ui()
+	_open_upkeep_choice_window()
 
 func _report_local_bot_match_result(winner: Player, loser: Player) -> void:
 	if _local_ranked_match_reported or not local_ranked_match_ended.has_connections():

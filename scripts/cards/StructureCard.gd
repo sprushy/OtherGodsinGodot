@@ -48,3 +48,7 @@ func replaces_graveyard_send(_card: Card, _game_manager: GameManager) -> bool:
 # Override to return true if this structure forces all creatures to enter in defensive stance.
 func forces_defensive_summon() -> bool:
 	return false
+
+# Override to return true if this structure forces all creatures to enter face-up in aggressive stance.
+func forces_aggressive_summon() -> bool:
+	return false

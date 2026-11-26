@@ -28,6 +28,15 @@ const DELLINGR_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/Del
 const FREYJA_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/FreyjaReceiverOfTheSlainBadge.png")
 const BANE_OF_THE_SVARTALFAR_BADGE_TEXTURE := preload("res://images/card_art/spells/BaneofSvart.png")
 const GUAN_YU_TACTICAL_BREAK_BADGE_TEXTURE := preload("res://images/ability_badges/GuanYuTacticalBreakBadge.png")
+const TACTIC_TOKEN_TEXTURES: Array[Texture2D] = [
+	preload("res://images/ability_badges/TacticTokens1.png"),
+	preload("res://images/ability_badges/TacticTokens2.png"),
+	preload("res://images/ability_badges/TacticTokens3.png"),
+	preload("res://images/ability_badges/TacticTokens4.png"),
+	preload("res://images/ability_badges/TacticTokens5.png"),
+	preload("res://images/ability_badges/TacticTokens6.png"),
+	preload("res://images/ability_badges/TacticTokens7.png"),
+]
 const HERMES_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/HermesBadge.png")
 const HERMES_CALL_OF_THE_CROSSING_BADGE_TEXTURE := preload("res://images/ability_badges/HermesCallOfTheCrossingBadge.png")
 const MANNAN_MAC_LIR_ABILITY_BADGE_TEXTURE := preload("res://images/ability_badges/MannanBadge.png")
@@ -120,6 +129,7 @@ const GIDIM_ENSI_SLEEP_SOURCE := "Gidim Ensi Guardian"
 const SILENCE_DEBUFF_TEXTURE := preload("res://images/SilenceCursorPGN.png")
 const LEVEL_BADGE_TOP := -12.0
 const LEVEL_BADGE_BOTTOM := 12.0
+const TACTIC_TOKEN_BADGE_SIZE := 36.0
 const BADGE_ROW_GAP := 6.0
 const BADGE_ROW_TOP := LEVEL_BADGE_BOTTOM + BADGE_ROW_GAP + 31.0
 const GOD_ABILITY_BADGE_TOP_OFFSET := -22.0
@@ -148,9 +158,9 @@ func _get_badge_row_top() -> float:
 	return BADGE_ROW_TOP
 
 func _get_left_affordance_row_top(card: Card) -> float:
-	if card == null:
-		return _get_badge_row_top()
-	return 32.0 if card.is_sleeping else _get_badge_row_top()
+	if card != null and card.is_sleeping and _get_tactic_token_count(card) <= 0:
+		return 32.0
+	return _get_badge_row_top()
 
 func _get_secondary_left_affordance_row_top(card: Card) -> float:
 	var badge_top := _get_left_affordance_row_top(card)
@@ -1974,6 +1984,43 @@ func _get_tez_necoc_yaotl_total_level(card: Card) -> int:
 				total += sacrifice_card.get_effective_level()
 	return total
 
+func _get_tactic_token_count(card: Card) -> int:
+	return int(card.get("tactic_counters")) if "tactic_counters" in card else 0
+
+func _add_tactic_token_overlay(overlay: Control, card: Card) -> void:
+	var count := _get_tactic_token_count(card)
+	if count <= 0 or not _can_view_board_card_face(card, _get_viewer_player()):
+		return
+
+	var has_count_label := count > TACTIC_TOKEN_TEXTURES.size()
+	var tokens := TextureRect.new()
+	tokens.name = "TacticTokenOverlay"
+	tokens.texture = TACTIC_TOKEN_TEXTURES[0 if has_count_label else count - 1]
+	tokens.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	tokens.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	tokens.mouse_filter = Control.MOUSE_FILTER_PASS
+	tokens.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	# Clear the God slot's level and follower badges.
+	var is_god_slot := zone.zone_type == Zone.ZoneType.GOD_SLOT
+	tokens.offset_left = 24.0 if is_god_slot else 6.0
+	tokens.offset_top = 44.0 if is_god_slot else LEVEL_BADGE_BOTTOM
+	tokens.offset_right = tokens.offset_left + TACTIC_TOKEN_BADGE_SIZE
+	tokens.offset_bottom = tokens.offset_top + TACTIC_TOKEN_BADGE_SIZE
+	_connect_badge_hover(tokens, "1 Tactic Token" if count == 1 else "%d Tactic Tokens" % count)
+	overlay.add_child(tokens)
+
+	if has_count_label:
+		var count_label := Label.new()
+		count_label.text = "×%d" % count
+		count_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		count_label.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
+		count_label.add_theme_font_size_override("font_size", 13)
+		count_label.add_theme_constant_override("outline_size", 5)
+		count_label.add_theme_color_override("font_outline_color", Color.BLACK)
+		count_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		tokens.add_child(count_label)
+		count_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
 func _add_tez_tonal_mastery_badge(overlay: Control, card: Card) -> void:
 	if overlay == null or card == null or not _is_tez_tonal_mastery_card(card):
 		return
@@ -2099,6 +2146,8 @@ func _add_tez_sacrifice_badge(overlay: Control, card: Card) -> void:
 func _get_creature_ability_badge_texture(card: Card) -> Texture2D:
 	if card == null:
 		return null
+	if card is GuanYuActive:
+		return GUAN_YU_MANOEUVRE_BADGE_TEXTURE
 	if card.has_method("get_activation_label") and str(card.get_activation_label()) == "Shift":
 		return SHIFT_ABILITY_BADGE_TEXTURE
 	if card.card_name == "Berserker":
@@ -2151,8 +2200,6 @@ func _get_god_custom_ability_badge_texture(card: Card) -> Texture2D:
 		return FREYJA_ABILITY_BADGE_TEXTURE
 	if card.card_name == "Guan Yu":
 		return GUAN_YU_TACTICAL_BREAK_BADGE_TEXTURE
-	if card.card_name == "Guan Yu, Active God":
-		return GUAN_YU_MANOEUVRE_BADGE_TEXTURE
 	if card.card_name == "Fenrir":
 		return FENRIS_DEVOUR_BADGE_TEXTURE
 	if card.card_name == "Pai Long":
@@ -5607,6 +5654,7 @@ func _refresh_display() -> void:
 				_add_snow_v2_card_weather_overlay(god_overlay, card, true)
 				if show_god_followers_target_aura:
 					_add_attack_target_aura(god_overlay)
+				_add_tactic_token_overlay(god_overlay, card)
 
 				# VBoxContainer fills overlay via anchors; spacer pushes label to correct edge
 				var name_vbox := VBoxContainer.new()
@@ -5810,6 +5858,7 @@ func _refresh_display() -> void:
 		elif shows_aggressive_sword:
 			AggressiveSwordOverlay.ensure_on(card_overlay, AggressiveSwordOverlay.LAYOUT_STAT_UNDER)
 		_add_snow_v2_card_weather_overlay(card_overlay, card, card.is_god or card.card_type == Card.CardType.CREATURE)
+		_add_tactic_token_overlay(card_overlay, card)
 		_add_level_badge(card_overlay, card, Control.PRESET_TOP_LEFT, 6, LEVEL_BADGE_TOP, 54, LEVEL_BADGE_BOTTOM)
 		_add_token_badge(card_overlay, card, Control.PRESET_TOP_LEFT, 6, 28, 66, 46)
 		_add_turn_countdown_badge(card_overlay, card)

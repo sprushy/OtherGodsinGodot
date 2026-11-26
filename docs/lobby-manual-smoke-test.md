@@ -61,6 +61,54 @@ Expected:
 - Joiner sees the same room membership.
 - Both windows transition into `CombatMockGame`.
 
+## Bo3 Series Smoke
+
+Use this to verify the between-games Reinforcement (sideboard) phase for
+player-vs-player Bo3 matches hosted by a client. The dedicated match server
+drives its own series; client-hosted topologies (the in-process lobby host of
+a two-window local test, and the player-hosted listen server used for unrated
+seeks on a remote lobby) drive it from the host's window.
+
+### Setup
+
+- Two windows on one machine: one hosts the lobby, the other joins by IP and
+  room code, as in the basic smoke above.
+- Create a **Bo3 Unrated seek** (or Bo3 rated, on the local in-process lobby)
+  and ready up in both windows.
+
+### Steps
+
+1. Play game 1 until one player wins.
+2. Confirm **neither** window shows a match result; both open the
+   **Reinforcements** window with the series score (for example `Series 1–0`)
+   and game 1's result message.
+3. Drag cards between the main deck and Reinforcements in both windows, then
+   press `Lock In` in each.
+   - The first player to lock sees `Deck locked. Waiting for your opponent.`
+   - The second `Lock In` starts the next game: both windows reset to a
+     fresh board with the sideboarded decks, and the connection is **not**
+     re-established (no loading overlay).
+4. Confirm an illegal swap (for example moving a God or breaking copy limits)
+   is rejected with the reason shown in the window, and the window stays
+   unlocked so it can be corrected.
+5. Play game 2.
+   - If one player now has two wins, both windows show the final result
+     screen exactly once.
+   - If the series is 1–1, the Reinforcement window opens again for game 3.
+6. From either window, use `Forfeit Match` (confirm) mid-game: both windows
+   should end the whole series immediately with the match result.
+7. Confirm the spectator flow if a third window watches: it sees
+   `series_game_ended` between games and the final result at the end.
+
+### Pass Criteria
+
+- No Bo3 match ends after a single game.
+- Both players can sideboard between games and the next game starts only
+   after both lock in.
+- A completed series shows the result once, on both windows.
+- The opponent's main deck and Reinforcements are never visible in your
+   Reinforcement window (each window only shows its own submission).
+
 ## Client-Hosted Bot Match Spectator Smoke
 
 Use this for rated bot challenges hosted on a player's machine. The automated

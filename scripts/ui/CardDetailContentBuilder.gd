@@ -575,6 +575,14 @@ static func build_board_popup_body(card: Card, viewer: Player, config: Dictionar
 				13,
 				Color(1.0, 0.6, 0.35)
 			))
+		if game_manager != null and card.card_type == Card.CardType.STRUCTURE:
+			var forcing_silencer = game_manager.get_structure_summon_forcing_silencer(card)
+			if forcing_silencer != null:
+				vbox.add_child(_make_label(
+					"Status: Silenced until %s leaves the field" % forcing_silencer.card_name,
+					13,
+					Color(1.0, 0.78, 0.86)
+				))
 
 	if not is_hidden_card and not card.is_god:
 		vbox.add_child(_make_level_symbol_row(card, 13.0))

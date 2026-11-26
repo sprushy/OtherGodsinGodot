@@ -45,7 +45,7 @@ const TACTICAL_CARDS := [
 	"Banishment", "SpellDemolition", "Sap", "SepLemutti", "Smite", "VoidShield", "ObsidianReflection",
 	"TheInferno", "TheDeluge", "Dromi", "Gleipnir", "SapStrength", "VisionOfTartarus", "VisionOfOdin", "Hermes",
 	"Drought", "HeavySnow", "Storm", "SavingGrace", "JiangZiyaFisherOfKings", "ShroudOfTheAncients", "WildMagic",
-	"FairyBlast", "TheChangelingExchange", "CompelledByTheSecretName",
+	"FairyBlast", "TheChangelingExchange", "CompelledByTheSecretName", "GorgonsStare",
 ]
 const ACTIVE_POWERS := ["AcceleratedFate", "OraclesSight", "BerserkerMead", "MechFactory", "Palisade", "ManaGuard"]
 const BOARD_ABILITIES := ["Alu", "Lindwyrm", "Lamashatu", "ClayEaters", "AncientPyre", "Watchtower", "Gawain", "Beyla", "Nimue", "JiangZiyaFisherOfKings",
@@ -610,6 +610,16 @@ static func _disable_gain(bot, target: Card, values: Dictionary, duration: float
 		gain += float(values[restriction]) * maxf(0.0, proposed - _disable_weight(existing.get(restriction, 0.0)))
 	return roundi(gain)
 
+# Petrification (Bane of the Svartalfar, Gorgon's Stare) is priced as the full
+# "petrified" disable bundle on the authority's own status model: the body keeps
+# its resilience wall but cannot attack, intercept, move, act, or use abilities.
+static func petrify_disable_gain(bot, target: Card) -> int:
+	var amount := value(bot, target)
+	return _disable_gain(bot, target, {
+		"cannot_attack": amount * 0.3, "cannot_intercept": amount * 0.15, "cannot_move": amount * 0.1,
+		"activation_locked": amount * 0.09, Card.ABILITY_NEGATED_STATUS: amount * 0.06,
+	})
+
 static func adds_attack_lock_next_turn(bot, target: Card) -> bool:
 	return float(_disable_durations(bot, target, true).get("cannot_attack", 0.0)) <= 1.0
 
@@ -798,6 +808,12 @@ static func removal_targets(bot, source: Card, target: Card = null, action: Card
 		"TheInferno", "TheDeluge", "Earthquake", "FiresOfJudgment", "Famine", "OccultSingularity", "FalloftheMighty", "BaneOfTheSvartalfar":
 			targeted = false
 			destroys = not source is BaneOfTheSvartalfar
+			victims = wipe_cards(bot, source)
+		"GorgonsStare":
+			targeted = false
+			# Petrification disables the body instead of destroying it, so
+			# destruction guards and turn destruction wards do not apply.
+			destroys = false
 			victims = wipe_cards(bot, source)
 	return victims.filter(func(victim: Card) -> bool: return can_remove_from_board(bot, source, victim, destroys, targeted))
 
@@ -1252,6 +1268,8 @@ static func wipe_cards(bot, card: Card) -> Array:
 		if not visible(bot, target):
 			if id == "TheInferno" and target.current_zone in bot.opponent.frontline_zones:
 				result.append(target)
+			elif id == "GorgonsStare" and _is_hidden_gorgons_stare_victim(bot, target):
+				result.append(target)
 			continue
 		var doomed := false
 		match id:
@@ -1262,6 +1280,9 @@ static func wipe_cards(bot, card: Card) -> Array:
 			"FiresOfJudgment": doomed = card._is_doomed_card(target, bot.opponent)
 			"Famine": doomed = card._should_destroy(target)
 			"BaneOfTheSvartalfar": doomed = card._should_petrify(target)
+			"GorgonsStare": doomed = target.card_type == Card.CardType.CREATURE \
+				and not target.is_god \
+				and target.get_controller() == bot.opponent
 		if doomed:
 			result.append(target)
 	if id == "FalloftheMighty":
@@ -1270,6 +1291,17 @@ static func wipe_cards(bot, card: Card) -> Array:
 		# card can change which creatures the strength check dooms.
 		return card.get_strongest_creatures(bot.game_manager)
 	return result
+
+# Gorgon's Stare reveals before petrifying, so a hidden opposing creature is a
+# guaranteed victim without reading its identity. A hidden prepared card is a
+# spell, hex, or charm instead (is_prepared is state, not identity), so only
+# hidden stealth/face-down creatures count.
+static func _is_hidden_gorgons_stare_victim(bot, target: Card) -> bool:
+	if target == null or target.is_prepared:
+		return false
+	return target.current_zone != null \
+		and (target.current_zone in bot.opponent.frontline_zones
+			or target.current_zone in bot.opponent.reserve_zones)
 
 # Namburbi saves the whole body from opposing card destruction, not half of it.
 # Use the authority's own ward predicate so the bot prices exactly the actions
@@ -1576,16 +1608,13 @@ static func effect_score(bot, card: Card, target: Card = null, action: CardActio
 					or card.get_qualified_creatures(bot.game_manager).is_empty():
 				return BAD
 			gain = mana_gain_value(bot, HeroicStand.MANA_GAIN)
-		"TheInferno", "TheDeluge", "Earthquake", "FiresOfJudgment", "Famine", "OccultSingularity", "FalloftheMighty", "BaneOfTheSvartalfar":
+		"TheInferno", "TheDeluge", "Earthquake", "FiresOfJudgment", "Famine", "OccultSingularity", "FalloftheMighty", "BaneOfTheSvartalfar", "GorgonsStare":
 			gain = 0
 			var removed: Array = []
 			for doomed in removal_targets(bot, card, target, action):
 				var amount := value(bot, doomed)
-				if id == "BaneOfTheSvartalfar":
-					amount = _disable_gain(bot, doomed, {
-						"cannot_attack": amount * 0.3, "cannot_intercept": amount * 0.15, "cannot_move": amount * 0.1,
-						"activation_locked": amount * 0.09, Card.ABILITY_NEGATED_STATUS: amount * 0.06,
-					})
+				if id == "BaneOfTheSvartalfar" or id == "GorgonsStare":
+					amount = petrify_disable_gain(bot, doomed)
 				elif doomed.get_controller() == bot.opponent:
 					amount -= _debilitation_discount(bot, doomed) + _own_dromi_drain_loss(bot, doomed)
 					if id == "FalloftheMighty" and amount > 0 and _bot_can_safely_contain(bot, doomed):
@@ -1596,9 +1625,10 @@ static func effect_score(bot, card: Card, target: Card = null, action: CardActio
 				# A wipe the bot casts itself can be preceded by Mummu's
 				# Entropic Force: every own doomed card worth more shelved
 				# than destroyed banks into the deck and pockets level-1 mana
-				# before the sweep resolves (Bane petrifies instead of
-				# destroying, so nothing is saved by shelving ahead of it).
-				if action == null and id != "BaneOfTheSvartalfar" \
+				# before the sweep resolves (Bane and Gorgon's Stare petrify
+				# instead of destroying, so nothing is saved by shelving
+				# ahead of them).
+				if action == null and id != "BaneOfTheSvartalfar" and id != "GorgonsStare" \
 						and doomed.get_controller() == bot.bot_player:
 					gain += bot._mummu_wipe_shelve_credit(doomed)
 				removed.append(doomed)
@@ -2040,7 +2070,10 @@ static func structure_score(bot, structure: Card, excluded: Array = []) -> int:
 					# current stock so a saturated position values it less.
 					gain += mana_gain_value(bot, EriduCityOfSages.MANA_PER_MAGE * 3)
 		"GlitnirThePeaceful":
-			if bot.game_manager._any_active_structure_forces_defensive_summon():
+			var hall_arena_stands := bool(bot.game_manager._any_raw_structure_forces_aggressive_summon())
+			var hall_hall_stands := bool(bot.game_manager._any_raw_structure_forces_defensive_summon())
+			if hall_arena_stands and hall_hall_stands:
+				# Both forcings already stand silenced: a new hall changes nothing.
 				return BAD
 			# An established frontline can keep attacking while new enemies must change stance.
 			var friend_count := 0
@@ -2051,8 +2084,53 @@ static func structure_score(bot, structure: Card, excluded: Array = []) -> int:
 			for creature in bot._get_board_creatures(bot.opponent):
 				if visible(bot, creature) and creature.current_zone in bot.opponent.frontline_zones and creature.creature_mode == Card.CreatureMode.AGGRESSIVE:
 					enemy_count += 1
-			if friend_count > enemy_count and not bot.opponent.hand_zone.cards.is_empty():
+			if hall_arena_stands:
+				# Silencing is mutual: their arena keeps feeding their established
+				# attackers attack-ready entries while our own walls and stealth
+				# entries are stripped. When their attackers are already ahead,
+				# pay to cancel that state and bank the hall until their
+				# Colosseum leaves.
+				if enemy_count <= friend_count:
+					return BAD
+				gain = 4200 + mini(3, enemy_count - friend_count) * 1500
+			elif hall_hall_stands:
+				# A live hall already forces defensive entries; a second adds nothing.
+				return BAD
+			elif friend_count > enemy_count and not bot.opponent.hand_zone.cards.is_empty():
 				gain = 5500 + mini(3, friend_count - enemy_count) * 1800
+		"Colosseum":
+			var arena_arena_stands := bool(bot.game_manager._any_raw_structure_forces_aggressive_summon())
+			var arena_hall_stands := bool(bot.game_manager._any_raw_structure_forces_defensive_summon())
+			if arena_arena_stands and arena_hall_stands:
+				# Both forcings already stand silenced: a new arena changes nothing.
+				return BAD
+			var arena_friend_count := 0
+			var arena_enemy_count := 0
+			for creature in bot._get_board_creatures(bot.bot_player):
+				if creature.current_zone in bot.bot_player.frontline_zones and creature.creature_mode == Card.CreatureMode.AGGRESSIVE:
+					arena_friend_count += 1
+			for creature in bot._get_board_creatures(bot.opponent):
+				if visible(bot, creature) and creature.current_zone in bot.opponent.frontline_zones and creature.creature_mode == Card.CreatureMode.AGGRESSIVE:
+					arena_enemy_count += 1
+			if arena_hall_stands:
+				# Silencing is mutual: their hall keeps their established
+				# attackers swinging while our fresh entries waste a stance flip
+				# before they can join in. When their attackers are already
+				# ahead, pay to cancel that state and bank the arena until
+				# their Glitnir leaves.
+				if arena_enemy_count <= arena_friend_count:
+					return BAD
+				gain = 4200 + mini(3, arena_enemy_count - arena_friend_count) * 1500
+			elif arena_arena_stands:
+				# A live arena already forces aggressive entries; a second adds nothing.
+				return BAD
+			elif arena_friend_count > arena_enemy_count and not bot.opponent.hand_zone.cards.is_empty():
+				# Fresh enemies must arrive face-up aggressive: no stealth ambushes
+				# and no RES walls. They stay attack-ready, though, and the bot's
+				# own entries lose their defensive options too, so the arena pays at
+				# a discount to Glitnir when an established aggressive frontline
+				# already outnumbers the enemy's attackers.
+				gain = 4800 + mini(3, arena_friend_count - arena_enemy_count) * 1600
 		"SleepOfTheDuat":
 			# The chain value nets the board-wide sleep against both sides
 			# and adds the Altar of Dreams summon line the sleepers fuel,
@@ -2208,6 +2286,13 @@ static func preparation_score(bot, card: Card) -> int:
 		else:
 			for target in bot._get_board_creatures(bot.opponent):
 				gain = maxi(gain, target_score(bot, card, target))
+		return maxi(750, gain - CARD_VALUE - mana_penalty(bot, bot._get_play_cost(card, true)))
+	if id == "GorgonsStare":
+		# Petrify pricing, not destruction pricing: the stare buys out every
+		# opposing creature's attack, intercept, move, and ability at once.
+		var gain := 0
+		for target in wipe_cards(bot, card):
+			gain += petrify_disable_gain(bot, target)
 		return maxi(750, gain - CARD_VALUE - mana_penalty(bot, bot._get_play_cost(card, true)))
 	if id in ["SapStrength", "VisionOfTartarus"]:
 		return 1500

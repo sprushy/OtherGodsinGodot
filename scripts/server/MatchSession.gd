@@ -600,6 +600,19 @@ static func from_match_info(match_info: Dictionary) -> MatchSession:
 	session.host_reachable_ip = str(match_info.get("host_reachable_ip", "")).strip_edges()
 	session.host_reachable_port = int(match_info.get("host_reachable_port", 0))
 	session.host_bind_port = int(match_info.get("host_bind_port", int(match_info.get("match_port", 12345))))
+	# The lobby's match_info carries the series snapshot. Without restoring it,
+	# a player-hosted Bo3 session would silently fall back to Bo1 and the
+	# whole series would end after a single game.
+	var series_info = match_info.get("series", {})
+	if series_info is Dictionary and not (series_info as Dictionary).is_empty():
+		var series := series_info as Dictionary
+		session.configure_series_format(int(series.get("best_of", 1)))
+		session.series_game_number = int(series.get("game_number", session.series_game_number))
+		var series_wins = series.get("wins", [])
+		if series_wins is Array:
+			for player_index in range(mini((series_wins as Array).size(), session.player_session_ids.size())):
+				var win_session_id := str(session.player_session_ids[player_index]).strip_edges()
+				session.series_wins_by_session[win_session_id] = int((series_wins as Array)[player_index])
 	for resolved_session_id in tokens_by_session.keys():
 		session.player_match_tokens[resolved_session_id] = tokens_by_session[resolved_session_id]
 	session._ensure_player_match_tokens()

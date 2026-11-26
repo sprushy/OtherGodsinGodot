@@ -12,6 +12,7 @@ const KNOWN_COMMAND_TYPES := [
 	"play_card",
 	"prepare_card",
 	"play_creature",
+	"sacrifice_summon_payment",
 	"creature_move",
 	"equip_action",
 	"change_mode",
@@ -112,6 +113,8 @@ static func get_required_player(command: Dictionary, game_manager: GameManager, 
 			return _get_current_targeting_player(match_context)
 		"play_card", "prepare_card", "play_creature", "creature_move", "change_mode", "equip_action":
 			return _controller_from_uid(command, game_manager, "card_uid")
+		"sacrifice_summon_payment":
+			return _controller_from_uid(command, game_manager, "summon_uid")
 		"cast_spell":
 			return _controller_from_uid(command, game_manager, "spell_uid")
 		"blot_sacrifice_choice":
@@ -315,7 +318,7 @@ static func requires_resolved_upkeep(command: Dictionary) -> bool:
 
 static func requires_clear_stack_window(command_type: String) -> bool:
 	match command_type:
-		"select_attacker", "request_attack", "play_card", "prepare_card", "play_creature", "creature_move", "equip_action", "change_mode", "end_turn", "fifa_graveyard_buyback":
+		"select_attacker", "request_attack", "play_card", "prepare_card", "play_creature", "sacrifice_summon_payment", "creature_move", "equip_action", "change_mode", "end_turn", "fifa_graveyard_buyback":
 			return true
 		"cast_spell", "activate_prepared_hex", "god_ability", "activate_power", "unlock_power", "activate_divine_caprice", "cast_charm", "activate_card_ability", "mopsus_reveal_hand_card", "en_hedu_anna_exaltation":
 			return true

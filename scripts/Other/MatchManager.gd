@@ -88,6 +88,13 @@ var pending_blot_costs_paid: bool = false
 var pending_blot_display_zone: Zone = null
 var pending_blot_cast_command: Dictionary = {}
 
+# Summon sacrifice payments committed one click at a time for a hand creature
+# still waiting on its full sacrifice cost. Keyed by the summon card's uid;
+# each value lists the uids of creatures already sent to the Graveyard for
+# that summon. play_creature counts these toward the required cost instead of
+# demanding the same creatures still be on the board.
+var pending_summon_sacrifice_payments: Dictionary = {}
+
 var pending_divine_caprice_power: Card = null
 var pending_divine_caprice_selected_zone: Zone = null
 
@@ -176,6 +183,7 @@ func reset_runtime_state() -> void:
 	pending_blot_costs_paid = false
 	pending_blot_display_zone = null
 	pending_blot_cast_command.clear()
+	pending_summon_sacrifice_payments.clear()
 	pending_divine_caprice_power = null
 	pending_divine_caprice_selected_zone = null
 	pending_retreat_action = null
@@ -4308,6 +4316,16 @@ func _get_active_altar_of_dreams(player: Player) -> AltarOfDreams:
 			return altar
 	return null
 
+func _get_pending_summon_sacrifice_uids(summon_uid: String) -> Array[String]:
+	var uids: Array[String] = []
+	var raw = pending_summon_sacrifice_payments.get(str(summon_uid), [])
+	for entry in raw:
+		uids.append(str(entry))
+	return uids
+
+func _clear_pending_summon_sacrifice_payments(summon_uid: String) -> void:
+	pending_summon_sacrifice_payments.erase(str(summon_uid))
+
 func _resolve_authoritative_creature_summon_sacrifices(
 	sacrifices: Array[Card],
 	summoned_card: Card,
@@ -5061,6 +5079,9 @@ func _process_command_impl(command: Dictionary) -> bool:
 			for et_card in et_discard_validation.get("cards", []):
 				acting_player.discard_card(et_card)
 			move_validated.emit(command)
+			# Sacrifice payments are committed per click; an abandoned sequence
+			# must not carry pre-paid uids into a later attempt.
+			pending_summon_sacrifice_payments.clear()
 			_declined_moon_hunt_uids.clear()
 			_pending_end_turn_player = acting_player
 			_continue_pending_end_turn()
@@ -5210,6 +5231,67 @@ func _process_command_impl(command: Dictionary) -> bool:
 		"submit_reinforcements":
 			move_failed.emit("Reinforcement changes are only available between games in a series.")
 			return false
+		"sacrifice_summon_payment":
+			var payment_summon_uid := str(command.get("summon_uid", "")).strip_edges()
+			var payment_summon_card := game_manager.get_card_by_uid(payment_summon_uid)
+			if payment_summon_card == null:
+				move_failed.emit("sacrifice_summon_payment: summon card not found")
+				return false
+			if bool(command.get("cancel", false)):
+				# Creatures already sacrificed stay sacrificed; only the pending
+				# mapping is dropped so a fresh attempt cannot double-count them.
+				_clear_pending_summon_sacrifice_payments(payment_summon_uid)
+				move_validated.emit(command)
+				return true
+			if acting_player == null \
+					or payment_summon_card.card_owner != acting_player \
+					or payment_summon_card.current_zone != acting_player.hand_zone \
+					or payment_summon_card.card_type != Card.CardType.CREATURE:
+				move_failed.emit("sacrifice_summon_payment: " + payment_summon_card.card_name + " is not one of your hand creatures waiting on sacrifices.")
+				return false
+			var payment_sacrifice_uid := str(command.get("sacrifice_uid", "")).strip_edges()
+			var payment_sacrificed := game_manager.get_card_by_uid(payment_sacrifice_uid)
+			if payment_sacrificed == null:
+				move_failed.emit("sacrifice_summon_payment: sacrifice card not found")
+				return false
+			if not _can_use_creature_for_summon_sacrifice(payment_sacrificed, acting_player):
+				move_failed.emit(payment_sacrificed.card_name + " is not a valid sacrifice for " + payment_summon_card.card_name + ".")
+				return false
+			var payment_index := int(command.get("payment_index", -1))
+			var prepaid_uids := _get_pending_summon_sacrifice_uids(payment_summon_uid)
+			if payment_index == 0:
+				# A fresh payment sequence supersedes any mapping left by a
+				# cancelled or abandoned attempt for the same summon card.
+				prepaid_uids.clear()
+				pending_summon_sacrifice_payments[payment_summon_uid] = prepaid_uids
+			if payment_index < 0 or payment_index >= payment_summon_card.sacrifice_cost:
+				move_failed.emit(payment_summon_card.card_name + " does not need that many sacrifices.")
+				return false
+			if payment_index != prepaid_uids.size():
+				move_failed.emit(payment_summon_card.card_name + "'s sacrifices must be paid in click order.")
+				return false
+			if payment_sacrifice_uid in prepaid_uids:
+				move_failed.emit(payment_sacrificed.card_name + " has already been sacrificed for " + payment_summon_card.card_name + ".")
+				return false
+			var finish_sacrifice_payment := func() -> void:
+				var payment_paid := not is_instance_valid(payment_sacrificed) \
+					or payment_sacrificed.current_zone == null \
+					or not payment_sacrificed.current_zone.is_board_zone()
+				if not payment_paid:
+					move_failed.emit("%s could not be sacrificed for %s." % [
+						payment_sacrificed.card_name if is_instance_valid(payment_sacrificed) else "Selected creature",
+						payment_summon_card.card_name
+					])
+					return
+				if is_instance_valid(payment_sacrificed) \
+						and payment_sacrificed.has_method("on_sacrificed_for_summon") \
+						and not payment_sacrificed.abilities_suppressed():
+					payment_sacrificed.on_sacrificed_for_summon(game_manager, payment_summon_card)
+				prepaid_uids.append(payment_sacrifice_uid)
+				pending_summon_sacrifice_payments[payment_summon_uid] = prepaid_uids
+				move_validated.emit(command)
+			game_manager.request_send_to_graveyard(payment_sacrificed, finish_sacrifice_payment, false, false)
+			return true
 		"play_creature":
 			var card := game_manager.get_card_by_uid(command.get("card_uid", ""))
 			var zone := resolve_zone(command)
@@ -5220,6 +5302,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 			if card == null or zone == null:
 				move_failed.emit("play_creature: invalid card or zone")
 				return false
+			var prepaid_sacrifice_uids := _get_pending_summon_sacrifice_uids(str(card.uid))
 			var original_sacrifice_cost := card.sacrifice_cost
 			var using_altar_void := not altar_void_cards.is_empty()
 			if using_altar_void and not sacrifice_cards.is_empty():
@@ -5243,6 +5326,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 						move_failed.emit("%s requires exactly %d unique summon sacrifice(s)." % [card.card_name, original_sacrifice_cost])
 						return false
 					for sacrifice_card in sacrifice_cards:
+						# Creatures already sacrificed through sacrifice_summon_payment
+						# commands count toward the cost without being on the board.
+						if str(sacrifice_card.uid) in prepaid_sacrifice_uids:
+							continue
 						if not _can_use_creature_for_summon_sacrifice(sacrifice_card, acting_player):
 							move_failed.emit("Selected summon sacrifice is invalid for " + card.card_name + ".")
 							return false
@@ -5251,6 +5338,7 @@ func _process_command_impl(command: Dictionary) -> bool:
 			var play_failure_reason := game_manager.get_play_card_failure_reason(acting_player, card, zone)
 			if not play_failure_reason.is_empty():
 				card.sacrifice_cost = original_sacrifice_cost
+				_clear_pending_summon_sacrifice_payments(str(card.uid))
 				move_failed.emit(play_failure_reason)
 				return false
 			card.sacrifice_cost = original_sacrifice_cost
@@ -5265,8 +5353,10 @@ func _process_command_impl(command: Dictionary) -> bool:
 				)
 				card.sacrifice_cost = summon_original_sacrifice_cost
 				if not success:
+					_clear_pending_summon_sacrifice_payments(str(card.uid))
 					move_failed.emit("Summon failed for " + card.card_name)
 					return
+				_clear_pending_summon_sacrifice_payments(str(card.uid))
 				move_validated.emit(command)
 				_advance_authoritative_priority_for_pending_card_events(card)
 			if original_sacrifice_cost <= 0:
@@ -5279,7 +5369,12 @@ func _process_command_impl(command: Dictionary) -> bool:
 					return false
 				finish_creature_play.call()
 				return true
-			_resolve_authoritative_creature_summon_sacrifices(sacrifice_cards, card, finish_creature_play)
+			var live_sacrifice_cards: Array[Card] = []
+			for sacrifice_card in sacrifice_cards:
+				if str(sacrifice_card.uid) in prepaid_sacrifice_uids:
+					continue
+				live_sacrifice_cards.append(sacrifice_card)
+			_resolve_authoritative_creature_summon_sacrifices(live_sacrifice_cards, card, finish_creature_play)
 			return true
 		"cast_spell":
 			var spell_uid: String = command.get("spell_uid", "")

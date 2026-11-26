@@ -253,7 +253,59 @@ func _setup_test_board() -> void:
 	load_featured_card_test_scenario()
 
 func load_featured_card_test_scenario() -> void:
-	load_thor_active_vs_gullinbursti_scenario()
+	load_tactic_token_test_scenario()
+
+func load_tactic_token_test_scenario() -> void:
+	_reset_test_match_state()
+	var guan_yu := GuanYu.new()
+	guan_yu.tactic_counters = 4
+	_add_test_god(player1, guan_yu)
+	_add_test_god(player2, Thor.new())
+
+	var jiang_ziya := JiangZiyaFisherOfKings.new()
+	jiang_ziya.tactic_counters = 2
+	_place_test_board_card(player1, player1.frontline_zones[1], jiang_ziya)
+	var guan_yu_active := GuanYuActive.new()
+	guan_yu_active.tactic_counters = 7
+	_place_test_board_card(player1, player1.frontline_zones[2], guan_yu_active)
+
+	# Fill in the remaining counts, including zero and the numeric overflow display.
+	var tower_counts: Array[int] = [0, 1, 3, 5, 6, 8]
+	var tower_zones: Array[Zone] = [
+		player1.reserve_zones[0], player1.reserve_zones[1], player1.reserve_zones[2],
+		player1.reserve_zones[3], player1.reserve_zones[4], player1.frontline_zones[4],
+	]
+	for index in range(tower_counts.size()):
+		var tower := Watchtower.new()
+		tower.tactic_counters = tower_counts[index]
+		_place_test_board_permanent(player1, tower_zones[index], tower)
+
+	_place_test_board_card(player2, player2.frontline_zones[1], BrownBear.new())
+	_place_test_hidden_creature(player2, player2.frontline_zones[3], BrownBear.new())
+	_add_test_deck_card(player1, Gilgamesh.new())
+	_add_test_deck_card(player2, BrownBear.new())
+
+	for player: Player in [player1, player2]:
+		player.spend_mana(player.mana)
+		player.gain_mana(20)
+		player.followers = 100
+		player.followers_changed.emit(player.followers)
+		player.has_summoned_this_turn = false
+
+	game_manager.current_player = player1
+	game_manager.other_player = player2
+	game_manager.feedback_viewer = player1
+	_test_turn_owner = player1
+	_test_turn_opponent = player2
+	game_manager.turn_number = 1
+	game_manager.start_turn()
+	_open_upkeep_choice_window()
+	action_label.text = (
+		"Tactic Token Test. The board shows counts from 0 to 8. "
+		+ "Hover over a coin stack to see its count. Choose Mana, then hover over Guan Yu, Active God "
+		+ "and click his Manoeuvre badge to move a token to another card."
+	)
+	update_ui()
 
 func load_thor_active_vs_gullinbursti_scenario() -> void:
 	_reset_test_match_state()
