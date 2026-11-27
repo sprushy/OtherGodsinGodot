@@ -109,6 +109,10 @@ func run() -> bool:
 	_check_bot_fenrir_creature_lethal(failures)
 	_check_bot_wolf_master(failures)
 	_check_bot_main_phase_combat_order(failures)
+	_check_bot_askelladen_combat_lookahead(failures)
+	_check_bot_grindylow_combat_lookahead(failures)
+	_check_bot_opponent_turn_lookahead(failures)
+	_check_bot_counterattack_lookahead(failures)
 	_check_bot_equipment_forecast(failures)
 	_check_bot_hyena_stealth_attack(failures)
 	_check_bot_aurboda_pierce(failures)
@@ -3353,6 +3357,188 @@ func _check_bot_hyena_stealth_attack(failures: PackedStringArray) -> void:
 	if hidden.current_zone != opponent.graveyard_zone or packmate.current_zone not in player.frontline_zones:
 		failures.append("Bot did not attack the Stealth creature with Hyena Pack ahead of Pai Long and trigger Scavenge")
 	bot.detach()
+
+func _check_bot_askelladen_combat_lookahead(failures: PackedStringArray) -> void:
+	for hastened_gilgamesh in [false, true]:
+		var game := _new_fixture_game()
+		var player := _new_fixture_player()
+		var opponent := _new_fixture_player()
+		game.players.assign([player, opponent])
+		game.current_player = player
+		game.other_player = opponent
+		game.turn_number = 6
+		game._upkeep_resolved_turn = game.turn_number
+		player.followers = 38
+		var manager := _new_fixture_match(game)
+		var bot := _new_fixture_bot()
+		bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+
+		var askelladen := Askelladen.new()
+		askelladen.card_owner = player
+		player.hand_zone.add_card(askelladen)
+		var thor := ThorActive.new()
+		thor.card_owner = opponent
+		thor.creature_mode = Card.CreatureMode.AGGRESSIVE
+		thor.summoned_by_champions_call = true
+		opponent.frontline_zones[0].add_card(thor)
+		var gilgamesh := Gilgamesh.new()
+		gilgamesh.card_owner = opponent
+		gilgamesh.creature_mode = Card.CreatureMode.AGGRESSIVE
+		opponent.frontline_zones[1].add_card(gilgamesh)
+		thor.apply_passive_to_board(game)
+		if bot._forecast_incoming_follower_loss({"removed": [thor]}) != gilgamesh.strength:
+			failures.append("Projected removal of Thor left Patron's Hand on Gilgamesh")
+		if hastened_gilgamesh:
+			gilgamesh.add_buff("Test Speed Buff", 0, 0, 1)
+		var retreat_target: Card = thor if hastened_gilgamesh else gilgamesh
+
+		if not bot._take_main_phase_action() or askelladen.current_zone not in player.frontline_zones \
+				or askelladen.creature_mode != Card.CreatureMode.AGGRESSIVE:
+			failures.append("Bot did not summon Askelladen Aggressive against Active Thor and Gilgamesh")
+		else:
+			for _step in range(8):
+				manager.advance_priority()
+			if not bot._take_main_phase_action():
+				failures.append("Bot did not execute its Askelladen attack")
+			else:
+				for _step in range(8):
+					manager.advance_priority()
+				if retreat_target.current_zone != opponent.deck_zone or askelladen.current_zone != player.deck_zone:
+					failures.append("Bot did not use Tactical Retreat on %s" % retreat_target.card_name)
+		bot.detach()
+
+
+func _check_bot_grindylow_combat_lookahead(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 8
+	game._upkeep_resolved_turn = game.turn_number
+	player.followers = 16
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+
+	var grindylow := Grindylow.new()
+	grindylow.card_owner = player
+	grindylow.creature_mode = Card.CreatureMode.AGGRESSIVE
+	player.frontline_zones[0].add_card(grindylow)
+	var lamashatu := Lamashatu.new()
+	lamashatu.card_owner = opponent
+	lamashatu.creature_mode = Card.CreatureMode.AGGRESSIVE
+	opponent.frontline_zones[0].add_card(lamashatu)
+	var gidim_ensi := GidimEnsi.new()
+	gidim_ensi.card_owner = opponent
+	gidim_ensi.creature_mode = Card.CreatureMode.AGGRESSIVE
+	opponent.frontline_zones[1].add_card(gidim_ensi)
+	gidim_ensi.on_summon(game)
+
+	var attacks := bot._get_combat_candidates()
+	var danger := bot._forecast_incoming_follower_loss()
+	var immediate := bot._plan_combat(attacks)
+	var forecast := bot._plan_combat(attacks, [], null, 0, null, -1, [], null, {"danger": danger})
+	if danger >= player.followers or immediate.get("target") != opponent or not forecast.is_empty():
+		failures.append("Bot failed to see that Gidim Ensi's sleep turns Grindylow's poke into a lethal reply")
+
+	player.move_card(grindylow, player.hand_zone)
+	if not bot._take_main_phase_action() or not grindylow.is_stealth:
+		failures.append("Bot did not bank Grindylow's Drown Below against Lamashatu")
+	bot.detach()
+
+
+func _check_bot_opponent_turn_lookahead(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 8
+	game._upkeep_resolved_turn = game.turn_number
+	player.guard = 4
+	opponent.mana = 1
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+
+	for index in range(3):
+		var attacker := CreatureCard.new()
+		attacker.card_owner = opponent
+		attacker.strength = 8
+		attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
+		opponent.frontline_zones[index].add_card(attacker)
+	if bot._forecast_incoming_follower_loss() != 20:
+		failures.append("Bot did not count three legal attacks with shared Guard")
+
+	var change := {"removed": [opponent.frontline_zones[1].cards.front(), opponent.frontline_zones[2].cards.front()]}
+	var god := HermesPsychopompus.new()
+	god.card_owner = opponent
+	opponent.god_zone.add_card(god)
+	var recruit := CreatureCard.new()
+	recruit.card_owner = opponent
+	recruit.strength = 12
+	recruit.mana_cost = 5
+	opponent.hand_zone.add_card(recruit)
+	recruit.add_status_effect("revealed_in_hand", "Preflight")
+	var ghost := Edimmu.new()
+	ghost.card_owner = opponent
+	opponent.deck_zone.add_card(ghost)
+	var spare := CreatureCard.new()
+	spare.card_owner = opponent
+	opponent.hand_zone.add_card(spare)
+	if bot._forecast_incoming_follower_loss(change) != 16:
+		failures.append("Opponent search missed a public summon or used the private Ghost's identity")
+	opponent.deck_zone.reveal_deck_card(ghost)
+	if bot._forecast_incoming_follower_loss(change) != 27:
+		failures.append("Bot did not combine the normal summon, Call of the Crossing, and the existing attacker")
+	opponent.move_card(spare, opponent.graveyard_zone)
+	if bot._forecast_incoming_follower_loss(change) != 16:
+		failures.append("Opponent search reused the summon card as the Call of the Crossing discard")
+	opponent.mana = 0
+	recruit.mana_cost = 9
+	if bot._forecast_incoming_follower_loss(change) != 15:
+		failures.append("Opponent search missed a legal Call of the Crossing without the normal summon")
+	bot.detach()
+
+
+func _check_bot_counterattack_lookahead(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 8
+	game._upkeep_resolved_turn = game.turn_number
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+
+	var ally := CreatureCard.new()
+	ally.card_owner = player
+	ally.strength = 10
+	ally.speed = 2
+	ally.creature_mode = Card.CreatureMode.AGGRESSIVE
+	player.frontline_zones[0].add_card(ally)
+	var enemy := CreatureCard.new()
+	enemy.card_owner = opponent
+	enemy.strength = 12
+	enemy.speed = 1
+	enemy.creature_mode = Card.CreatureMode.AGGRESSIVE
+	opponent.frontline_zones[0].add_card(enemy)
+	if bot._forecast_opponent_turn({}, false, {}, true) != Vector2i(2, 0):
+		failures.append("Bot expected a counterattack from a creature lost on the opponent's turn")
+	var after_removal := {"removed": [enemy], "opponent_guard": 3}
+	if bot._forecast_opponent_turn(after_removal, false, {}, true) != Vector2i(0, 7):
+		failures.append("Bot did not carry the surviving attacker and projected Guard into its next turn")
+	after_removal["sleeping"] = [ally]
+	if bot._forecast_opponent_turn(after_removal, false, {}, true) != Vector2i.ZERO:
+		failures.append("Bot counted a counterattack from a creature still asleep")
+	bot.detach()
+
 
 func _check_bot_main_phase_combat_order(failures: PackedStringArray) -> void:
 	var game := _new_fixture_game()

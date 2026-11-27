@@ -26,7 +26,7 @@ const CALL_VALKYRIE_LARGE_UPGRADE_MARGIN := 500
 const ECON_CARD_VALUE := 5000
 const VEIL_CONCEALMENT_VALUE := 1200
 const SINGLE_TARGET_REMOVAL_HOLD_VALUE := 1000
-const COMBAT_ATTACK_SEARCH_WIDTH := 16
+const COMBAT_ATTACK_SEARCH_WIDTH := 64
 const COMBAT_REMOVAL_SEARCH_WIDTH := 32
 const COMBAT_RESPONSE_SEARCH_WIDTH := 24
 const ECON_MANA_VALUE := 1000
@@ -949,7 +949,11 @@ func _take_main_phase_action() -> bool:
 	# the line's action taxes run past the current stock.
 	var mana_budget := bot_player.mana + _ready_brew_mana_gain()
 	var attacks := _get_combat_candidates(mana_budget)
-	var combat := _plan_combat(attacks, [], null, 0, null, mana_budget)
+	var reply := _forecast_opponent_turn({}, false, {}, true)
+	var danger := reply.x
+	var combat := _plan_combat(attacks, [], null, 0, null, mana_budget, [], null, {
+		"danger": danger, "unspent_brew": mana_budget - bot_player.mana, "counterattack_baseline": reply.y,
+	})
 	var attack := combat
 	var hidden_hexes := _count_unidentified_attack_hexes()
 	var lethal := bool(combat.get("lethal", false))
@@ -967,7 +971,6 @@ func _take_main_phase_action() -> bool:
 			hermes_plan["brew_setup"] = true
 		if _submit_strategy_plan(hermes_plan):
 			return true
-	var danger := _forecast_incoming_follower_loss()
 	var aspect_shift := _plan_aspect_shift(attacks, combat, danger, hermes_plan, mana_budget)
 	if bool(aspect_shift.get("lethal", false)) and _submit_strategy_plan(aspect_shift):
 		return true
@@ -986,7 +989,7 @@ func _take_main_phase_action() -> bool:
 		return true
 	if _try_activate_mead_for_enki():
 		return true
-	var summon := _plan_creature_summon(danger, attacks, combat)
+	var summon := _plan_creature_summon(danger, attacks, combat, [], 0, {"counterattack_baseline": reply.y})
 	var attack_setup: Dictionary = summon.get("attack_setup", {})
 	var summon_command: Dictionary = summon.get("command", {})
 	if summon_command.get("type") == "play_creature" and summon_command.get("mode") == Card.CreatureMode.AGGRESSIVE \
@@ -1042,8 +1045,6 @@ func _take_main_phase_action() -> bool:
 		if power != null and _submit_strategy_plan(_plan_power_activation(power)):
 			return true
 	if _try_activate_best_god_ability():
-		return true
-	if _try_summon_askelladen_answer():
 		return true
 	var united_front := _plan_united_front(attacks, attack)
 	var plans := [united_front]
@@ -2350,6 +2351,7 @@ func _plan_creature_summon(danger: int = -1, attacks: Array[Dictionary] = [], ba
 	var brew := _ready_brew_mana_gain()
 	var available_mana := bot_player.mana + brew - setup_cost
 	var baseline_score := int(baseline.get("score", 0))
+	var counterattack_baseline := int(setup.get("counterattack_baseline", baseline.get("counterattack_baseline", -1)))
 	var summon_first := bool(setup.get("summon_first", false))
 	var removed_before_summon := [] if summon_first else removed_by_setup
 	var committed := setup.get("committed") as Card
@@ -2531,18 +2533,26 @@ func _plan_creature_summon(danger: int = -1, attacks: Array[Dictionary] = [], ba
 				if returns_to_hand:
 					projected = attacks
 					block_after_impact = 0
-				var line := _plan_combat(projected, removed, committed, mana_spent, occupied_zone, bot_player.mana + brew, [], recruit)
-				var combat_score := int(line.get("score", 0))
-				var attack_value := combat_score - baseline_score
-				if prefer_stealth and not returns_to_hand and not projected_defensive and not summon_attacks.is_empty():
-					var boosted := _plan_hermes_summon_attack(creature, summon_zone, attacks, removed, mana_spent, available_mana, committed, removed_before_summon, summon_source)
-					var boosted_score := int(boosted.get("score", 0))
-					if boosted_score - Hermes.ACTIVATION_COST * _mana_rate() > combat_score:
-						line = boosted
-						combat_score = boosted_score
-						attack_value = combat_score - baseline_score - Hermes.ACTIVATION_COST * _mana_rate()
-				var cleared: Array = line.get("cleared", [])
 				for stealth: bool in stealth_options:
+					change["stealth"] = stealth
+					var forecast := {
+						"danger": danger, "change": change, "counterattack_baseline": counterattack_baseline,
+						"unspent_brew": 0 if needs_brew else brew,
+						"reserved_mana": rage_cost if rage_ready else 0,
+					}
+					var line := _plan_combat(projected, removed, committed, mana_spent, occupied_zone, bot_player.mana + brew, [], recruit, forecast)
+					var hold_safety := int(forecast.get("hold_safety", 0))
+					var combat_score := int(line.get("score", 0))
+					var attack_value := combat_score - baseline_score
+					if prefer_stealth and not returns_to_hand and not projected_defensive and not summon_attacks.is_empty():
+						var boosted_forecast := forecast.duplicate()
+						var boosted := _plan_hermes_summon_attack(creature, summon_zone, attacks, removed, mana_spent, available_mana, committed, removed_before_summon, summon_source, boosted_forecast)
+						var boosted_score := int(boosted.get("score", 0)) + int(boosted_forecast.get("hold_safety", hold_safety)) - hold_safety
+						if not boosted.is_empty() and boosted_score - Hermes.ACTIVATION_COST * _mana_rate() > combat_score:
+							line = boosted
+							combat_score = boosted_score
+							attack_value = combat_score - baseline_score - Hermes.ACTIVATION_COST * _mana_rate()
+					var cleared: Array = line.get("cleared", [])
 					var lethal := bool(line.get("lethal", false))
 					var uses_recruit: bool = creature in line.get("attackers", [])
 					var candidate_combat := combat_score
@@ -2572,25 +2582,16 @@ func _plan_creature_summon(danger: int = -1, attacks: Array[Dictionary] = [], ba
 						if prefer_stealth and not returns_to_hand:
 							candidate += _estimate_face_up_summon_value(creature, summon_zone, projected_defensive, mana_after_summon, removed)
 					candidate += prior_payment_penalty - int(command.get("payment_penalty", 0))
-					change["stealth"] = stealth
-					# The combat score already credits ordinary damage prevention. Only
-					# fold the clears into safety when survival is at stake.
 					var impact_opens_combat := not charge.is_empty() and combat_score > baseline_score
-					var uses_combat_for_safety := (uses_recruit or impact_opens_combat) and danger >= bot_player.followers
-					var safety_mana := mana_after_summon
-					var brew_for_combat := false
-					if uses_combat_for_safety:
-						var combat_spend := bot_player.mana + brew - mana_spent - int(line["mana"])
-						brew_for_combat = int(line["mana_required"]) > bot_player.mana
-						safety_mana = int(line["mana"]) if brew_for_combat else mana_after_summon - combat_spend
-					change["removed"] = removed + cleared if uses_combat_for_safety else removed
-					change["mana_left"] = safety_mana
-					var safety := _follower_safety_gain(danger, change, safety_mana) if devour.is_empty() or summon_first or uses_combat_for_safety else int(devour["safety"])
-					if not stealth and danger > 0 and fenrir == null:
+					var brew_for_combat := int(line.get("mana_required", 0)) > bot_player.mana
+					# The combat score contains the gain from attacking instead of
+					# holding this summon. Add the hold's safety to compare summons.
+					var safety := hold_safety
+					if not stealth and danger > 0 and fenrir == null and creature.has_type("Demon"):
 						safety = _score_summon_terror(creature, danger, change, safety)
 					candidate += safety
 					var casualty_cost := 0
-					if not lethal and not returns_to_hand:
+					if not lethal and not returns_to_hand and creature not in cleared:
 						casualty_cost = _estimate_projected_summon_casualty_cost(
 							creature, summon_zone, projected_defensive, removed + cleared, stats, stealth,
 							mana_after_summon, reserved_cards
@@ -2612,11 +2613,8 @@ func _plan_creature_summon(danger: int = -1, attacks: Array[Dictionary] = [], ba
 							remaining_attacks = aggressive_attacks
 						var occupied := summon_zone if recruit_survives else null
 						var surviving_recruit := creature if recruit_survives else null
-						var reply_line := _plan_combat(remaining_attacks, after_entry, committed, mana_spent, occupied, bot_player.mana + brew, [], surviving_recruit)
-						var reply_combat := int(reply_line.get("score", 0))
 						var mana_left := mana_after_summon
 						var reply_score := _score_known_entry_trade(reply, mana_left, removed_on_entry + [creature] + reserved_cards)
-						reply_score += reply_combat - baseline_score - int(command.get("payment_penalty", 0))
 						var reply_change := {"removed": after_entry}
 						if recruit_survives:
 							reply_score += score + prior_payment_penalty
@@ -2624,9 +2622,13 @@ func _plan_creature_summon(danger: int = -1, attacks: Array[Dictionary] = [], ba
 								"defensive": projected_defensive, "stealth": stealth})
 						else:
 							reply_score -= CardStrategy.mana_penalty(self, summon_cost, available_mana)
+						var entry_forecast := forecast.merged({"change": reply_change}, true)
+						var reply_line := _plan_combat(remaining_attacks, after_entry, committed, mana_spent, occupied, bot_player.mana + brew, [], surviving_recruit, entry_forecast)
+						var reply_combat := int(reply_line.get("score", 0))
+						reply_score += reply_combat - baseline_score - int(command.get("payment_penalty", 0))
 						var reply_lethal := bool(reply_line.get("lethal", false))
 						if not reply_lethal:
-							reply_score += _follower_safety_gain(danger, reply_change, mana_left)
+							reply_score += int(entry_forecast.get("hold_safety", 0))
 						if (lethal and not reply_lethal) or (lethal == reply_lethal and reply_score < candidate):
 							candidate = reply_score
 							candidate_combat = reply_combat
@@ -2805,7 +2807,7 @@ func _estimate_face_up_summon_forced_combat(creature: Card, zone: Zone, defensiv
 		best_gain = maxi(best_gain, gain - existing_gain)
 	return best_gain
 
-func _plan_hermes_summon_attack(creature: Card, zone: Zone, attacks: Array[Dictionary], removed: Array, mana_spent: int, available_mana: int, committed: Card = null, removed_before_summon: Array = [], summon_source: Fenrir = null) -> Dictionary:
+func _plan_hermes_summon_attack(creature: Card, zone: Zone, attacks: Array[Dictionary], removed: Array, mana_spent: int, available_mana: int, committed: Card = null, removed_before_summon: Array = [], summon_source: Fenrir = null, forecast: Dictionary = {}) -> Dictionary:
 	var hermes := _find_player_god() as Hermes
 	# The brew may fund the speed activation plus the summon line's taxes.
 	var brew := _ready_brew_mana_gain()
@@ -2816,7 +2818,7 @@ func _plan_hermes_summon_attack(creature: Card, zone: Zone, attacks: Array[Dicti
 	var boosted := _get_summon_attack_candidates(creature, zone, available_mana - Hermes.ACTIVATION_COST, stats, removed_before_summon, removed, summon_source)
 	if boosted.is_empty():
 		return {}
-	return _plan_combat(attacks + boosted, removed, committed, mana_spent + Hermes.ACTIVATION_COST, zone, bot_player.mana + brew, [], creature)
+	return _plan_combat(attacks + boosted, removed, committed, mana_spent + Hermes.ACTIVATION_COST, zone, bot_player.mana + brew, [], creature, forecast)
 
 func _estimate_projected_summon_casualty_cost(
 	creature: Card,
@@ -2923,7 +2925,7 @@ func _projected_champions_call(removed: Array) -> Dictionary:
 	attacker.current_zone = zone
 	attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
 	attacker.summoned_by_champions_call = true
-	return {"attacker": attacker, "cost": with_mana - mana_left}
+	return {"attacker": attacker, "summon_cost": cost}
 
 func _estimate_champions_call_loss(
 	target: Card, removed: Array, stats: Dictionary = {}, mana_left: int = -1,
@@ -3368,26 +3370,6 @@ func _is_enemy_creature_answer(card: Card, target: Card, score: int) -> bool:
 		"Dromi", "Gleipnir", "Snowball", "SapStrength", "VisionOfTartarus", "Absence",
 		"Sap", "SepLemutti", "Lindwyrm", "GungnirTheSpearOfOdin", "FairyBlast",
 	]
-
-func _try_summon_askelladen_answer() -> bool:
-	if game_manager == null or bot_player.has_summoned_this_turn:
-		return false
-	var askelladen := _find_hand_askelladen()
-	if askelladen == null:
-		return false
-	var zone := _get_first_open_summon_zone(bot_player)
-	if zone == null:
-		return false
-	var target := _get_askelladen_problem_creature()
-	if target == null:
-		return false
-	if not _can_evaluate_creature_play(askelladen, zone, bot_player.mana):
-		return false
-	# A known entry answer (a revealed Sap) destroys Askelladen as it enters,
-	# so the problem creature stays unanswered and the body is wasted.
-	if _known_entry_response_penalty(askelladen, zone, false) > 0:
-		return false
-	return _submit_play_creature(askelladen, zone, Card.CreatureMode.AGGRESSIVE)
 
 func _try_cast_divine_lightning() -> bool:
 	var divine_lightning := _find_hand_divine_lightning()
@@ -6591,13 +6573,9 @@ func _warding_stone_safety_gain(danger: int, followers: int, removed: Array = []
 		"removed": removed, "followers": followers, "block_attacks": true,
 	})
 	var immediate := CardStrategy.follower_change_value(bot_player.followers, followers)
-	var recruits := _projected_warding_stone_recruits()
-	var known_danger := danger if danger >= 0 else _forecast_incoming_follower_loss()
-	var known: Dictionary = recruits["known"]
-	if not known.is_empty():
-		known_danger = maxi(known_danger, _forecast_incoming_follower_loss({}, false, known))
+	var known_danger := danger if danger >= bot_player.followers else maxi(danger, _forecast_incoming_follower_loss())
 	var gain := _score_follower_safety(bot_player.followers - known_danger, safe_followers, immediate)
-	var possible: Dictionary = recruits["possible"]
+	var possible := _projected_uncertain_opponent_recruit()
 	if possible.is_empty() or safe_followers <= 0 or known_danger >= bot_player.followers:
 		return gain
 	var possible_danger := _forecast_incoming_follower_loss({}, false, possible)
@@ -6609,63 +6587,130 @@ func _warding_stone_safety_gain(danger: int, followers: int, removed: Array = []
 		gain += mini(possible_gain - gain, ECON_CARD_VALUE * 4) / 2
 	return gain
 
-func _projected_warding_stone_recruits() -> Dictionary:
-	var known := {}
-	var possible := {}
-	var result := {"known": known, "possible": possible}
+func _projected_uncertain_opponent_recruit() -> Dictionary:
 	var zone := _get_central_open_zone(opponent.frontline_zones)
 	if zone == null:
-		return result
+		return {}
 	var base_mana := opponent.mana + game_manager.get_automatic_upkeep_mana_gain(opponent, game_manager.turn_number + 1)
 	var mana_budget := base_mana + game_manager.get_effective_upkeep_mana_gain(game_manager.get_base_upkeep_mana_gain(), opponent)
 	var draw_budget := base_mana + game_manager.get_effective_upkeep_mana_gain(game_manager.get_base_upkeep_draw_mana_gain(), opponent)
 	var unknown_budget := -1
-	var cards: Array[Card] = opponent.hand_zone.cards.duplicate()
+	if opponent.hand_zone.cards.any(func(card: Card) -> bool: return not CardStrategy.visible(self, card)):
+		unknown_budget = mana_budget
+	elif not opponent.deck_zone.cards.is_empty() and not CardStrategy.visible(self, opponent.deck_zone.known_top_card):
+		unknown_budget = draw_budget
+	if unknown_budget <= 0:
+		return {}
+	# Warding Stone also prices uncertain summons from public mana and card counts.
+	var recruit := CreatureCard.new()
+	recruit.card_owner = opponent
+	recruit.current_zone = zone
+	recruit.creature_mode = Card.CreatureMode.AGGRESSIVE
+	recruit.strength = mini(24, unknown_budget * ECON_FORECAST_SUMMON_STR_PER_MANA)
+	recruit.speed = 2
+	if game_manager.is_first_turn_attack_blocked_by_weather(recruit, true):
+		return {}
+	return {recruit: mana_budget - unknown_budget + ceili(float(recruit.strength) / ECON_FORECAST_SUMMON_STR_PER_MANA)}
+
+
+func _projected_opponent_summon(card: Card, lane: Zone, removed: Array) -> Card:
+	if not card is CreatureCard or card.is_god or card is GidimEnsi \
+			or game_manager.is_first_turn_attack_blocked_by_weather(card, true, removed):
+		return null
+	var recruit := _preview_summoned_creature(card, lane, false)
+	recruit.creature_mode = Card.CreatureMode.AGGRESSIVE
+	return recruit
+
+
+func _projected_opponent_combat_setups(removed: Array, budget: int, draw_budget: int, uncertain_recruits: Dictionary) -> Dictionary:
+	var lanes := opponent.frontline_zones.filter(func(lane: Zone) -> bool:
+		return lane.cards.all(func(card: Card) -> bool: return card in removed)
+	)
+	var attackers: Array[Card] = []
+	var plans := {[]: budget}
+	if lanes.is_empty():
+		return {"attackers": attackers, "plans": plans}
+	var normal: Array[Dictionary] = [{"attacker": null, "cost": 0, "draw_only": false}]
+	var god_summons: Array[Dictionary] = [{"attacker": null, "discard": 0, "shelve_cost": 0}]
 	var top := opponent.deck_zone.known_top_card
-	if not opponent.deck_zone.cards.is_empty():
-		if CardStrategy.visible(self, top):
-			cards.append(top)
-		else:
-			unknown_budget = draw_budget
-	for card in cards:
-		if not CardStrategy.visible(self, card):
-			unknown_budget = mana_budget
+	var can_draw := not opponent.deck_zone.cards.is_empty() and game_manager.can_player_add_to_hand_now(opponent)
+	var forced_defensive := game_manager._any_active_structure_forces_defensive_summon(removed)
+	if not forced_defensive:
+		var visible_cards := opponent.hand_zone.cards.filter(func(card: Card) -> bool: return CardStrategy.visible(self, card))
+		if can_draw and CardStrategy.visible(self, top):
+			visible_cards.append(top)
+		for card: Card in visible_cards:
+			if card.sacrifice_cost > 0 or card.discard_cost > 0 or card.shelve_cost > 0 or card.banish_cost > 0:
+				continue
+			var recruit := _projected_opponent_summon(card, lanes[0], removed)
+			if recruit != null:
+				normal.append({"attacker": recruit, "cost": game_manager.get_creature_summon_mana_cost(opponent, card), "draw_only": card == top})
+				attackers.append(recruit)
+		for recruit: Card in uncertain_recruits:
+			normal.append({"attacker": recruit, "cost": uncertain_recruits[recruit], "draw_only": false})
+			attackers.append(recruit)
+
+	var god: Card = opponent.god_zone.cards.front() if not opponent.god_zone.cards.is_empty() else null
+	var god_lane: Zone = lanes[1] if lanes.size() > 1 else lanes[0]
+	if god is HermesPsychopompus and god not in removed and CardStrategy.visible(self, god) \
+			and not god.is_muted and not _status_persists_to_next_turn(god, "activation_locked", removed):
+		for card: Card in opponent.deck_zone.cards:
+			if not CardStrategy.visible(self, card) or not card.has_type("Ghost"):
+				continue
+			var recruit := _projected_opponent_summon(card, god_lane, removed)
+			if recruit != null:
+				god_summons.append({"attacker": recruit, "discard": god.get_ghost_discard_cost(card), "shelve_cost": 0, "from_top": card == top})
+				attackers.append(recruit)
+	else:
+		var champions_call := _projected_champions_call(removed)
+		var manifestation := champions_call.get("attacker") as Card
+		if manifestation != null:
+			manifestation.current_zone = god_lane
+			god_summons.append({"attacker": manifestation, "discard": 0, "shelve_cost": champions_call["summon_cost"], "manifestation": true})
+			attackers.append(manifestation)
+
+	for draw: bool in [false, true]:
+		if draw and not can_draw:
 			continue
-		if not card is CreatureCard or card.is_god or card.sacrifice_cost > 0 or card.discard_cost > 0 \
-				or card.shelve_cost > 0 or card.banish_cost > 0 \
-				or game_manager.is_first_turn_attack_blocked_by_weather(card, true):
-			continue
-		var cost := game_manager.get_creature_summon_mana_cost(opponent, card)
-		if card == top:
-			cost += mana_budget - draw_budget
-		if cost + game_manager.get_creature_action_mana_cost(card, "attack") > mana_budget:
-			continue
-		var recruit := _preview_board_creature(card, zone)
-		recruit.is_face_down = false
-		recruit.is_stealth = false
-		recruit.creature_mode = Card.CreatureMode.AGGRESSIVE
-		known[recruit] = cost
-	if unknown_budget > 0:
-		# Use only public mana and card counts to model a typical incoming body.
-		var recruit := CreatureCard.new()
-		recruit.card_owner = opponent
-		recruit.current_zone = zone
-		recruit.creature_mode = Card.CreatureMode.AGGRESSIVE
-		recruit.strength = mini(24, unknown_budget * ECON_FORECAST_SUMMON_STR_PER_MANA)
-		recruit.speed = 2
-		if not game_manager.is_first_turn_attack_blocked_by_weather(recruit, true):
-			possible[recruit] = mana_budget - unknown_budget + ceili(float(recruit.strength) / ECON_FORECAST_SUMMON_STR_PER_MANA)
-	return result
+		var money := draw_budget if draw else budget
+		var hand_size := opponent.hand_zone.get_card_count() + int(draw)
+		for summon in normal:
+			var recruit := summon["attacker"] as Card
+			if (summon["draw_only"] and not draw) or int(summon["cost"]) > money:
+				continue
+			var available_discards := hand_size - int(recruit != null)
+			for ability in god_summons:
+				var god_recruit := ability["attacker"] as Card
+				if god_recruit != null and ((recruit != null and lanes.size() < 2) \
+						or ability["discard"] > available_discards or (draw and ability.get("from_top", false))):
+					continue
+				var cost := int(summon["cost"]) + maxi(0, int(ability["shelve_cost"]) \
+					- available_discards * GodCard.CHAMPIONS_CALL_SHELVE_MANA_VALUE)
+				if god_recruit != null and forced_defensive:
+					cost += game_manager.get_creature_action_mana_cost(god_recruit, "change stance")
+				if cost <= money:
+					var summoned: Array[Card] = []
+					if recruit != null:
+						summoned.append(recruit)
+					if god_recruit != null:
+						summoned.append(god_recruit)
+					plans[summoned] = maxi(int(plans.get(summoned, -1)), money - cost)
+	return {"attackers": attackers, "plans": plans}
+
 
 func _forecast_incoming_follower_loss(change: Dictionary = {}, this_turn: bool = false, recruits: Dictionary = {}) -> int:
+	return _forecast_opponent_turn(change, this_turn, recruits).x
+
+
+func _forecast_opponent_turn(change: Dictionary, this_turn: bool, recruits: Dictionary, counterattack: bool = false) -> Vector2i:
 	if not bot_player.followers_enabled or opponent == null:
-		return 0
+		return Vector2i.ZERO
 	var removed: Array = change.get("removed", []).duplicate()
 	var followers := int(change.get("followers", bot_player.followers))
 	var upkeep_loss := 0 if this_turn else _projected_upkeep_follower_loss(removed, followers)
 	var followers_after_upkeep := maxi(0, followers - upkeep_loss)
 	if bool(change.get("block_attacks", false)) or followers_after_upkeep <= 0:
-		return mini(followers, upkeep_loss)
+		return Vector2i(mini(followers, upkeep_loss), 0)
 	if game_manager.current_player == bot_player:
 		for creature in _get_board_creatures(bot_player):
 			if creature is RedCap and not creature.abilities_suppressed() and not creature._resolved_attack_this_turn \
@@ -6674,11 +6719,11 @@ func _forecast_incoming_follower_loss(change: Dictionary = {}, this_turn: bool =
 				removed.append(creature)
 	var restriction: Dictionary = game_manager.attack_restrictions.get(opponent, {})
 	if not restriction.is_empty() and restriction.get("source") not in removed:
-		return mini(followers, upkeep_loss)
+		return Vector2i(mini(followers, upkeep_loss), 0)
 	var prevention: Dictionary = game_manager.turn_follower_loss_preventions.get(bot_player, {})
 	if int(prevention.get("expires_turn", -1)) >= game_manager.turn_number + (0 if this_turn else 1) \
 			and prevention.get("source_card") not in removed:
-		return mini(followers, upkeep_loss)
+		return Vector2i(mini(followers, upkeep_loss), 0)
 
 	var targets: Array = [bot_player]
 	var defenders := _get_board_creatures(bot_player)
@@ -6695,6 +6740,7 @@ func _forecast_incoming_follower_loss(change: Dictionary = {}, this_turn: bool =
 			standing_defenders.append(card)
 	if not returning_attackers.is_empty():
 		defenders = standing_defenders
+	var sleeping: Array = change.get("sleeping", [])
 	var summon := change.get("summon") as Card
 	var stance := change.get("stance") as Card
 	var defensive := bool(change.get("defensive", false))
@@ -6726,16 +6772,27 @@ func _forecast_incoming_follower_loss(change: Dictionary = {}, this_turn: bool =
 
 	var attack_lines: Array[Dictionary] = []
 	var budget := opponent.mana
+	var setups := {"attackers": [], "plans": {[]: budget}}
 	if not this_turn:
-		budget += game_manager.get_automatic_upkeep_mana_gain(opponent, game_manager.turn_number + 1) \
-			+ game_manager.get_effective_upkeep_mana_gain(game_manager.get_base_upkeep_mana_gain(), opponent)
+		var upkeep_mana := opponent.mana + game_manager.get_automatic_upkeep_mana_gain(opponent, game_manager.turn_number + 1)
+		budget = upkeep_mana + game_manager.get_effective_upkeep_mana_gain(game_manager.get_base_upkeep_mana_gain(), opponent)
+		var draw_budget := upkeep_mana + game_manager.get_effective_upkeep_mana_gain(game_manager.get_base_upkeep_draw_mana_gain(), opponent)
+		setups = _projected_opponent_combat_setups(removed, budget, draw_budget, recruits)
 	var attackers := _get_board_creatures(opponent)
 	attackers.append_array(returning_attackers)
-	var champions_call := {} if this_turn else _projected_champions_call(removed)
-	var manifestation := champions_call.get("attacker") as Card
-	if manifestation != null:
-		attackers.append(manifestation)
-	attackers.append_array(recruits.keys())
+	var setup_attackers: Array = setups["attackers"]
+	attackers.append_array(setup_attackers)
+	# Patron's Hand is removed from the board with Active Thor. Keep the
+	# projected stats separate from the authoritative cards and their buffs.
+	if removed.any(func(card: Card) -> bool: return card is ThorActive):
+		stats = stats.duplicate()
+		for creature: Card in attackers + defenders:
+			if creature in removed:
+				continue
+			for buff in creature._get_effective_buffs():
+				if buff.get("source") == ThorActive.PASSIVE_SOURCE and buff.get("source_card") in removed:
+					var delta: Vector3i = stats.get(creature, Vector3i.ZERO)
+					stats[creature] = delta - Vector3i(int(buff["str"]), int(buff["res"]), int(buff["spd"]))
 	var mana_left := maxi(0, int(change.get("mana_left", bot_player.mana)))
 	for attacker in attackers:
 		var attack_zone := destination if attacker == moved else attacker.current_zone
@@ -6761,17 +6818,15 @@ func _forecast_incoming_follower_loss(change: Dictionary = {}, this_turn: bool =
 			continue
 		if this_turn and not _can_attack_after_priority(attacker):
 			continue
-		var cost := game_manager.get_creature_action_mana_cost(attacker, "attack") + int(recruits.get(attacker, 0))
+		var cost := game_manager.get_creature_action_mana_cost(attacker, "attack")
 		if assumes_stance_flip:
 			cost += game_manager.get_creature_action_mana_cost(attacker, "change stance")
-		if attacker == manifestation:
-			cost += int(champions_call["cost"])
 		if cost > budget:
 			continue
 		var speed := attacker.get_effective_speed()
 		for target in targets:
 			var target_form: Variant = shifted_form if target == shifting else target
-			if attacker == manifestation and _has_prepared_answer_to_champions_call(
+			if attacker is ActiveGodCard and attacker in setup_attackers and _has_prepared_answer_to_champions_call(
 				attacker, target_form as Card, mana_left, removed
 			):
 				continue
@@ -6794,7 +6849,8 @@ func _forecast_incoming_follower_loss(change: Dictionary = {}, this_turn: bool =
 			var target_stance := target as Card if target in summons else stance
 			var replies := {target: _forecast_incoming_combat(action, target_stance, (defensive and target == stance) or (defensive_summons and target in summons), summon_stealth and target == summon, removed, stats)}
 			for interceptor in defenders:
-				if interceptor == target or interceptor in removed or _status_persists_to_next_turn(interceptor, "cannot_intercept", removed):
+				if interceptor == target or interceptor in removed or interceptor in sleeping \
+						or _status_persists_to_next_turn(interceptor, "cannot_intercept", removed):
 					continue
 				var projected_zone := destination if interceptor == moved else summons.get(interceptor) as Zone
 				var mode := -1
@@ -6813,45 +6869,182 @@ func _forecast_incoming_follower_loss(change: Dictionary = {}, this_turn: bool =
 				replies[interceptor] = _forecast_incoming_combat(action, interceptor_stance, (defensive and interceptor == stance) or (defensive_summons and interceptor in summons), projected_stealth, removed, stats)
 			attack_lines.append({"attacker": attacker, "target": target, "replies": replies, "barriers": barriers, "cost": cost})
 	var exposure := 0 if this_turn else _aphrodite_exposure_pulse(removed)
-	if attack_lines.is_empty():
-		return mini(followers, upkeep_loss + exposure)
 	var guard := int(change.get("guard", bot_player.guard))
-	var most_damage := 0
-	# The opponent chooses the attack and the bot chooses whether to intercept.
-	# Recheck a second attack after each reply, with spent Guard and casualties carried forward.
-	for line in attack_lines:
-		if not line["barriers"].is_empty():
-			continue
-		var least_damage := followers_after_upkeep
-		for first: Dictionary in line["replies"].values():
-			var first_loss := _forecast_follower_damage(first, guard, followers_after_upkeep)
-			if first_loss >= least_damage:
-				continue
-			var remaining_guard := maxi(0, guard - int(first["damage"]))
-			var remaining_followers := followers_after_upkeep - first_loss
-			var casualties: Array = first["casualties"]
-			var followup := 0
-			for second in attack_lines:
-				if second["attacker"] == line["attacker"] or second["attacker"] in casualties or second["target"] in casualties \
-						or int(line["cost"]) + int(second["cost"]) > budget:
-					continue
-				if recruits.has(line["attacker"]) and (recruits.has(second["attacker"]) or second["attacker"] == manifestation) \
-						or line["attacker"] == manifestation and recruits.has(second["attacker"]):
-					continue
-				if second["barriers"].any(func(barrier: Card) -> bool: return barrier not in casualties):
-					continue
-				var second_loss := _forecast_follower_damage(second["replies"][second["target"]], remaining_guard, remaining_followers)
-				for interceptor in second["replies"]:
-					if interceptor not in casualties:
-						second_loss = mini(second_loss, _forecast_follower_damage(second["replies"][interceptor], remaining_guard, remaining_followers))
-				followup = maxi(followup, second_loss)
-				if first_loss + followup >= least_damage:
-					break
-			least_damage = mini(least_damage, first_loss + followup)
-		most_damage = maxi(most_damage, least_damage)
-		if upkeep_loss + most_damage >= followers:
+	var enemy_followers := maxi(0, int(change.get("opponent_followers", opponent.followers)))
+	var enemy_guard := int(change.get("opponent_guard", opponent.guard))
+	var resources := Vector4i(followers_after_upkeep, guard, enemy_followers, enemy_guard)
+	# Pack damage and the counterattack as lexicographic values. Survival
+	# comes first, then the opponent prefers leaving the weakest reply.
+	var scale := enemy_followers + 1 if counterattack else 1
+	var worst := -enemy_followers if counterattack else 0
+	var retaliation_mana := mana_left + game_manager.get_automatic_upkeep_mana_gain(bot_player, game_manager.turn_number + 2) \
+		+ game_manager.get_effective_upkeep_mana_gain(game_manager.get_base_upkeep_mana_gain(), bot_player)
+	var plans: Dictionary = setups["plans"]
+	for summoned: Array in plans:
+		var lines := attack_lines.filter(func(line: Dictionary) -> bool:
+			return line["attacker"] not in setup_attackers or line["attacker"] in summoned
+		)
+		var continuation := Callable()
+		if counterattack and enemy_followers > 0:
+			var counter_lines := _forecast_counterattack_lines(
+				defenders, _get_board_creatures(opponent) + summoned, change, summoned_forms, removed, stats
+			)
+			if not counter_lines.is_empty():
+				var counter_memo := {}
+				continuation = func(casualties: Array, remaining: Vector4i) -> int:
+					var reversed := Vector4i(remaining.z, remaining.w, remaining.x, remaining.y)
+					return _search_turn_attacks(counter_lines, retaliation_mana, reversed, [], casualties, counter_memo)
+		worst = maxi(worst, _search_turn_attacks(lines, int(plans[summoned]), resources, [], [], {}, scale, continuation))
+		if worst >= followers_after_upkeep * scale:
 			break
-	return mini(followers, upkeep_loss + most_damage + exposure)
+	var damage := ceili(float(worst) / scale)
+	var loss := mini(followers, upkeep_loss + damage + exposure)
+	return Vector2i(loss, damage * scale - worst if loss < followers else 0)
+
+
+func _forecast_counterattack_lines(
+	allies: Array[Card], enemies: Array, change: Dictionary, summoned_forms: Dictionary,
+	removed: Array, stats: Dictionary
+) -> Array[Dictionary]:
+	var lines: Array[Dictionary] = []
+	var targets: Array = [opponent]
+	var structures := game_manager._get_active_structures()
+	for enemy: Card in enemies:
+		if enemy in removed:
+			continue
+		if not CardStrategy.visible(self, enemy):
+			# A hidden interceptor or attacker can change the entire line.
+			return lines
+		targets.append(enemy)
+	for structure in structures:
+		if structure.get_controller() == opponent and structure not in removed:
+			targets.append(structure)
+	for attacker in allies:
+		if attacker in removed or attacker in change.get("sleeping", []) or attacker.is_petrified() \
+				or _status_persists_to_next_turn(attacker, "sleep", removed, 2) \
+				or _status_persists_to_next_turn(attacker, "cannot_attack", removed, 2) \
+				or _status_persists_to_next_turn(attacker, "paralyze", removed, 2):
+			continue
+		var form: Card = summoned_forms.get(attacker, attacker)
+		if attacker == change.get("shifting"):
+			form = change.get("shifted_form", form)
+		var zone: Zone = change.get("destination") if attacker == change.get("moved") else form.current_zone
+		if zone == null or zone.zone_type != Zone.ZoneType.FRONTLINE:
+			continue
+		var is_defensive := form.creature_mode == Card.CreatureMode.DEFENSIVE
+		if attacker == change.get("stance"):
+			is_defensive = bool(change.get("defensive", false))
+		elif summoned_forms.has(attacker):
+			is_defensive = bool(change.get("defensive_summons", false))
+		var cost := game_manager.get_creature_action_mana_cost(attacker, "attack")
+		if is_defensive or form.is_stealth:
+			if attacker.get_max_minor_creature_actions_per_turn() < 1:
+				continue
+			cost += game_manager.get_creature_action_mana_cost(attacker, "change stance")
+		var declared_form := _preview_summoned_creature(form, zone, false)
+		declared_form.creature_mode = Card.CreatureMode.AGGRESSIVE
+		var delta: Vector3i = stats.get(attacker, Vector3i.ZERO)
+		var speed := declared_form.get_effective_speed(delta.z)
+		for target in targets:
+			if target is Card and not game_manager.can_cards_engage_each_other(declared_form, target, false):
+				continue
+			var barriers: Array[Card] = []
+			for structure in structures:
+				if structure in removed:
+					continue
+				if (structure.blocks_attack_on_followers(game_manager, declared_form, opponent) if target is Player \
+						else structure.blocks_attack_on_target(game_manager, declared_form, target)):
+					barriers.append(structure)
+			var action := CardAction.new()
+			action.type = CardAction.Type.ATTACK
+			action.source_player = bot_player
+			action.attacker = attacker
+			action.target = target
+			var replies := {target: _forecast_counterattack_outcome(action, stats)}
+			for interceptor: Card in enemies:
+				if interceptor in removed or not match_manager._can_intercept(interceptor, declared_form, target, null, 0, speed):
+					continue
+				action.interceptor = interceptor
+				replies[interceptor] = _forecast_counterattack_outcome(action, stats)
+			lines.append({"attacker": attacker, "target": target, "replies": replies, "barriers": barriers, "cost": cost})
+	return lines
+
+
+func _forecast_counterattack_outcome(action: CardAction, stats: Dictionary) -> Dictionary:
+	var result := _estimate_projected_attack_economy(action, stats)
+	var returning: Array = result.get("returning_casualties", [])
+	var casualties: Array = result.get("casualties", []).filter(func(card: Card) -> bool: return card not in returning)
+	return {
+		"damage": int(result.get("opponent_damage_before_guard", result["opponent_followers_lost"])),
+		"source": result.get("opponent_loss_source"), "casualties": casualties,
+		"self_damage": int(result.get("bot_damage_before_guard", result["bot_followers_lost"])),
+		"self_source": result.get("bot_loss_source"),
+	}
+
+
+# Resources hold the defending side's Followers and Guard, then the attacking side's.
+func _search_turn_attacks(
+	lines: Array[Dictionary], mana: int, resources: Vector4i,
+	spent: Array, casualties: Array, memo: Dictionary, scale: int = 1, continuation: Callable = Callable()
+) -> int:
+	var spent_ids := spent.map(func(card: Card) -> int: return card.get_instance_id())
+	var casualty_ids := casualties.map(func(card: Card) -> int: return card.get_instance_id())
+	spent_ids.sort()
+	casualty_ids.sort()
+	var key := str([mana, resources, spent_ids, casualty_ids])
+	if memo.has(key):
+		return int(memo[key])
+	# Stopping now is also a legal choice. Evaluate what can attack back
+	# after the opponent is done, with the casualties shared across turns.
+	var most_damage := -int(continuation.call(casualties, resources)) if continuation.is_valid() else 0
+	var followers := resources.x
+	for line in lines:
+		var attacker := line["attacker"] as Card
+		var target = line["target"]
+		var cost := int(line["cost"])
+		if attacker in spent or attacker in casualties or target in casualties or cost > mana:
+			continue
+		if line["barriers"].any(func(barrier: Card) -> bool: return barrier not in casualties):
+			continue
+		var next_spent := spent + [attacker]
+		var least_damage := followers * scale
+		var replies: Dictionary = line["replies"]
+		for defender in replies:
+			if defender in casualties:
+				continue
+			var result: Dictionary = replies[defender]
+			var loss := _forecast_follower_damage(result, resources.y, followers)
+			if loss >= followers:
+				continue
+			var remaining := resources
+			remaining.x -= loss
+			remaining.y = maxi(0, remaining.y - int(result["damage"]))
+			var self_damage := int(result.get("self_damage", 0))
+			if self_damage > 0 and remaining.z > 0:
+				var self_hit := {"damage": self_damage, "source": result.get("self_source")}
+				remaining.z -= _forecast_follower_damage(self_hit, remaining.w, remaining.z)
+				remaining.w = maxi(0, remaining.w - self_damage)
+				if remaining.z <= 0:
+					least_damage = mini(least_damage, loss * scale - (scale - 1))
+					if least_damage <= most_damage:
+						break
+					continue
+			var remaining_casualties := casualties.duplicate()
+			for casualty: Card in result["casualties"]:
+				if casualty != null and casualty not in remaining_casualties:
+					remaining_casualties.append(casualty)
+			var followup := _search_turn_attacks(
+				lines, mana - cost, remaining, next_spent, remaining_casualties, memo, scale, continuation
+			)
+			least_damage = mini(least_damage, loss * scale + followup)
+			if least_damage <= most_damage:
+				break
+		most_damage = maxi(most_damage, least_damage)
+		if most_damage >= followers * scale:
+			break
+	memo[key] = most_damage
+	return most_damage
+
 
 func _projected_upkeep_follower_loss(removed: Array, projected_followers: int) -> int:
 	if game_manager == null or opponent == null:
@@ -6887,12 +7080,8 @@ func _forecast_incoming_combat(action: CardAction, stance: Card, defensive: bool
 	var result := _estimate_raw_attack_economy(action, stats, mode)
 	if defender is Askelladen and _can_askelladen_retreat(defender, action.attacker, stats):
 		return {"damage": 0, "casualties": [defender, action.attacker]}
-	var damage_from_defender: bool = defender != null and (result.get("bot_loss_source") == defender \
-		or result.get("defensive_conversion_defender") == defender)
-	var halvings := int(action.halve_follower_damage) + GameManager.combat_follower_damage_halvings(
-		action.attacker, defender, action.united_front_partner, damage_from_defender
-	)
-	var damage := GameManager.apply_follower_damage_halvings(int(result["bot_followers_lost"]), halvings)
+	var damage := _forecast_raw_follower_damage(action, result, defender, "bot")
+	var self_damage := _forecast_raw_follower_damage(action, result, defender, "opponent")
 	if (defender is MasmassuPriest or defender is Grindylow) and (projected_stealth or defender.is_stealth) \
 			and not defender.has_veil_of_night():
 		var targets := _get_reveal_removal_targets(defender)
@@ -6903,7 +7092,18 @@ func _forecast_incoming_combat(action: CardAction, stance: Card, defensive: bool
 	# Her attack kills a bot creature, unlocking Violent Delights on HER turn;
 	# the follow-up enslaved value must flow to the defense forecast.
 	return {"damage": damage, "source": result.get("bot_loss_source"), "casualties": result["casualties"],
+		"self_damage": self_damage, "self_source": result.get("opponent_loss_source"),
 		"enslavement_risk": int(result.get("enslavement_risk", 0))}
+
+
+func _forecast_raw_follower_damage(action: CardAction, result: Dictionary, defender: Card, side: String) -> int:
+	var damage_from_defender: bool = defender != null and (result.get(side + "_loss_source") == defender \
+		or (result.get("defensive_conversion_defender") == defender and side == "opponent"))
+	var halvings := int(action.halve_follower_damage) + GameManager.combat_follower_damage_halvings(
+		action.attacker, defender, action.united_front_partner, damage_from_defender
+	)
+	return GameManager.apply_follower_damage_halvings(int(result[side + "_followers_lost"]), halvings)
+
 
 func _forecast_follower_damage(result: Dictionary, guard: int, remaining_followers: int) -> int:
 	var damage := maxi(0, int(result["damage"]) - guard)
@@ -7364,7 +7564,7 @@ func _guaranteed_attack_casualties(candidate: Dictionary, removed: Array, outcom
 		)
 	)
 
-func _plan_combat(candidates: Array[Dictionary], removed: Array = [], committed: Card = null, mana_spent: int = 0, occupied_zone: Zone = null, projected_mana: int = -1, additional_committed: Array = [], recruit: Card = null) -> Dictionary:
+func _plan_combat(candidates: Array[Dictionary], removed: Array = [], committed: Card = null, mana_spent: int = 0, occupied_zone: Zone = null, projected_mana: int = -1, additional_committed: Array = [], recruit: Card = null, forecast: Dictionary = {}) -> Dictionary:
 	var best := {}
 	var best_score := 0
 	var best_is_lethal := false
@@ -7374,14 +7574,27 @@ func _plan_combat(candidates: Array[Dictionary], removed: Array = [], committed:
 	# upkeep-funded turn can pay for it: a combat line that kills her unlock
 	# enabler or trades away her kill/enslave pool denies that swing.
 	var standing_enslave_exposure := _opponent_aphrodite_enslave_exposure(removed)
+	var forecast_replies := int(forecast.get("danger", -1)) >= 0
+	var gidim_ensi: Array[Card] = []
+	if forecast_replies:
+		gidim_ensi = _get_board_creatures(opponent).filter(func(card: Card) -> bool:
+			return card is GidimEnsi and CardStrategy.visible(self, card) and not card.abilities_suppressed()
+		)
 	var frontier: Array[Dictionary] = [{
 		"score": 0, "mana": available_mana, "min_mana": available_mana, "attackers": [], "removed": removed,
-		"spent_hexes": [],
+		"spent_hexes": [], "projected_losses": [], "sleeping": [], "gidim_ensi": gidim_ensi,
 		"blocked": removed + additional_committed if committed == null else removed + additional_committed + [committed],
 		"opponent_followers": opponent.followers, "opponent_guard": opponent.guard,
 		"bot_followers": bot_player.followers, "bot_guard": bot_player.guard,
 		"uncontested": true, "scavenged": false,
 	}]
+	var reply_cache := {}
+	var hold_safety := 0
+	if forecast_replies and not forecast.get("change", {}).is_empty():
+		hold_safety = _combat_reply_safety(frontier[0], forecast, reply_cache)
+		forecast["hold_safety"] = hold_safety
+	if candidates.is_empty():
+		return {}
 	var depth := 0
 	while not frontier.is_empty():
 		var next := {}
@@ -7393,6 +7606,9 @@ func _plan_combat(candidates: Array[Dictionary], removed: Array = [], committed:
 					continue
 				var lethal := bool(extended["lethal"])
 				var score := int(extended["score"])
+				if forecast_replies and not extended["terminal"]:
+					score += _combat_reply_safety(extended, forecast, reply_cache) - hold_safety
+				extended["evaluation"] = score
 				var capture := 0
 				if depth == 0 and not extended["terminal"] and not enslave_targets.is_empty() \
 						and int(extended["mana"]) >= AphroditeAreia.ACTIVATION_COST:
@@ -7408,20 +7624,67 @@ func _plan_combat(candidates: Array[Dictionary], removed: Array = [], committed:
 						"lethal": lethal, "violent_delights": capture > 0, "attackers": extended["attackers"],
 						"cleared": extended["removed"].slice(removed.size()), "mana": extended["mana"],
 						"mana_required": available_mana - int(extended["min_mana"]) + mana_spent,
+						"counterattack_baseline": forecast.get("counterattack_baseline", -1),
 					}
 				if extended["terminal"]:
 					continue
 				var key := _combat_line_key(extended)
-				if not next.has(key) or score > int(next[key]["score"]):
+				if not next.has(key) or score > int(next[key]["evaluation"]):
 					next[key] = extended
 		# Equivalent board and resource states share one continuation. Limit
 		# breadth without limiting how many ready creatures can attack.
 		frontier.assign(next.values())
-		frontier.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a["score"]) > int(b["score"]))
+		frontier.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a["evaluation"]) > int(b["evaluation"]))
 		if frontier.size() > COMBAT_ATTACK_SEARCH_WIDTH:
 			frontier.resize(COMBAT_ATTACK_SEARCH_WIDTH)
 		depth += 1
 	return best
+
+func _combat_reply_mana(line: Dictionary, forecast: Dictionary) -> int:
+	var unspent_brew := int(forecast.get("unspent_brew", 0))
+	var reserved_mana := int(forecast.get("reserved_mana", 0))
+	var mana := int(line["mana"]) - reserved_mana
+	if int(line["min_mana"]) - reserved_mana >= unspent_brew:
+		mana -= unspent_brew
+	return maxi(0, mana)
+
+
+func _combat_reply_safety(line: Dictionary, forecast: Dictionary, cache: Dictionary) -> int:
+	var followers := int(line["bot_followers"])
+	var guard := int(line["bot_guard"])
+	var mana := _combat_reply_mana(line, forecast)
+	var removed: Array = line["removed"] + line["spent_hexes"] + line["projected_losses"]
+	var removed_ids := removed.map(func(card: Card) -> int: return card.get_instance_id() if card != null else 0)
+	removed_ids.sort()
+	var sleeping: Array = line["sleeping"]
+	var sleeping_ids := sleeping.map(func(card: Card) -> int: return card.get_instance_id())
+	sleeping_ids.sort()
+	# Only Red Cap's end-of-turn survival depends on whether it attacked.
+	var red_caps := []
+	for attacker: Card in line["attackers"]:
+		if attacker is RedCap:
+			red_caps.append(attacker.get_instance_id())
+	red_caps.sort()
+	var enemy_followers := int(line["opponent_followers"])
+	var enemy_guard := int(line["opponent_guard"])
+	var key := str([followers, guard, mana, removed_ids, sleeping_ids, red_caps, enemy_followers, enemy_guard])
+	if not cache.has(key):
+		var change: Dictionary = forecast.get("change", {}).merged({
+			"removed": removed, "followers": followers, "guard": guard,
+			"committed_attackers": line["attackers"], "sleeping": sleeping, "mana_left": mana,
+			"opponent_followers": enemy_followers, "opponent_guard": enemy_guard,
+		}, true)
+		var baseline := int(forecast.get("counterattack_baseline", -1))
+		var reply := _forecast_opponent_turn(change, false, {}, baseline >= 0)
+		var immediate := CardStrategy.follower_change_value(bot_player.followers, followers)
+		var safety := _score_follower_safety(bot_player.followers - int(forecast["danger"]), followers - reply.x, immediate)
+		# Discount damage on our following turn below damage we can deal now.
+		if baseline >= 0:
+			@warning_ignore("integer_division")
+			safety += (reply.y - baseline) * CardStrategy.FOLLOWER_VALUE / 2
+		cache[key] = safety
+	return int(cache[key])
+
 
 func _extend_combat_line(line: Dictionary, attack: Dictionary, occupied_zone: Zone, weight: float, recruit: Card) -> Dictionary:
 	var mana := int(line["mana"]) - int(attack["mana_cost"])
@@ -7459,13 +7722,30 @@ func _extend_combat_line(line: Dictionary, attack: Dictionary, occupied_zone: Zo
 	score = int(line["score"]) + int((score - lethal_bonus) * weight) + lethal_bonus
 	# Optional interceptions can leave the declared target alive. Avoid
 	# crediting a second kill on that target, or relying on an uncertain survivor.
-	var next_blocked: Array = blocked + result.get("casualties", [])
+	var casualties: Array = result.get("casualties", [])
+	var next_blocked: Array = blocked + casualties
+	# Don't count an ally lost in the projected reply as an interceptor next
+	# turn. Enemy removals still have to be guaranteed across the known replies.
+	var returning: Array = result.get("returning_casualties", [])
+	var projected_losses: Array = line["projected_losses"] + casualties.filter(func(card: Card) -> bool:
+		return card.get_controller() == bot_player and card not in cleared and card not in returning
+	)
+	var sleeping: Array = line["sleeping"]
+	if target is Player and not line["gidim_ensi"].is_empty() and not _has_projected_attack_reply(attack, unavailable_responses):
+		for combatant: Card in [attacker, partner]:
+			if combatant == null or combatant.is_immune_to_sleep():
+				continue
+			if line["gidim_ensi"].any(func(guardian: Card) -> bool:
+				return guardian not in unavailable_responses and not game_manager.is_immune_to_source(combatant, guardian)
+			):
+				sleeping = sleeping + [combatant]
 	if target is Card and target not in next_blocked:
 		next_blocked.append(target)
 	return {
 		"attacker": line.get("attacker", attacker), "target": line.get("target", target),
 		"attackers": spent_attackers + ([attacker] if partner == null else [attacker, partner]),
 		"blocked": next_blocked, "removed": removed + cleared,
+		"projected_losses": projected_losses, "sleeping": sleeping, "gidim_ensi": line["gidim_ensi"],
 		"mana": mana + int(result.get("guaranteed_mana_gain", 0)), "min_mana": mini(int(line.get("min_mana", line["mana"])), mana),
 		"score": score,
 		"spent_hexes": spent_hexes,
@@ -7543,7 +7823,7 @@ func _apply_pierce_conversions(result: Dictionary, bot_followers: int, opponent_
 func _combat_line_key(line: Dictionary) -> String:
 	var key := [line["mana"], line.get("min_mana", line["mana"]), line["opponent_followers"], line["bot_followers"],
 		line["opponent_guard"], line["bot_guard"], line["uncontested"], line["scavenged"], line.get("heroic_stand_reward", 0)]
-	for field in ["attackers", "blocked", "removed", "spent_hexes"]:
+	for field in ["attackers", "blocked", "removed", "spent_hexes", "projected_losses", "sleeping"]:
 		var cards: Array = line[field]
 		var ids := cards.map(func(card: Card) -> int: return card.get_instance_id() if card != null else 0)
 		ids.sort()
