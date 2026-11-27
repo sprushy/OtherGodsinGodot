@@ -134,6 +134,8 @@ func run() -> bool:
 	_check_bot_immortal_techniques_refund(failures)
 	_check_bot_pazuzu_drain_forecast(failures)
 	_check_bot_next_turn_lethal(failures)
+	_check_bot_defensive_stance_posture_gate(failures)
+	_check_bot_defensive_mode_switch_option_gate(failures)
 	_check_bot_mummu_entropic_force_economy(failures)
 	_check_bot_mummu_active_entropy(failures)
 	_check_bot_mummu_wipe_shelve_economy(failures)
@@ -5482,6 +5484,156 @@ func _check_bot_exorcism_attached_sources(failures: PackedStringArray) -> void:
 	opponent.reserve_zones[0].add_card(wheel)
 	if BotCardStrategyScript.target_score(bot, exorcism, gilgamesh) <= 0:
 		failures.append("Bot stopped valuing the enemy hex Exorcism destroys as an attached source")
+
+func _check_bot_defensive_stance_posture_gate(failures: PackedStringArray) -> void:
+	# A preservation stance switch is tempo-negative, so it is reserved for
+	# lethal prevention and scarce pools. The defend posture is the third
+	# allowed state: when the opponent's push already owns the clock, walling
+	# up beats donating bodies to a race the bot cannot win.
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	player.followers = 56
+	player.mana = 4
+	opponent.followers = 100
+	opponent.mana = 5
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var wall := CreatureCard.new()
+	wall.card_name = "Fixture Wall Body"
+	wall.card_owner = player
+	wall.creature_mode = Card.CreatureMode.AGGRESSIVE
+	wall.strength = 20
+	wall.resilience = 40
+	player.frontline_zones[0].add_card(wall)
+	var heavy := CreatureCard.new()
+	heavy.card_name = "Fixture Lost-Clock Attacker"
+	heavy.card_owner = opponent
+	heavy.creature_mode = Card.CreatureMode.AGGRESSIVE
+	heavy.strength = 23
+	opponent.frontline_zones[1].add_card(heavy)
+	var light := CreatureCard.new()
+	light.card_name = "Fixture Lost-Clock Skirmisher"
+	light.card_owner = opponent
+	light.creature_mode = Card.CreatureMode.AGGRESSIVE
+	light.strength = 21
+	opponent.frontline_zones[2].add_card(light)
+	var danger := bot._forecast_incoming_follower_loss()
+	if danger <= 0 or danger >= player.followers:
+		failures.append("Fixture failed to project a non-lethal incoming push for the stance posture gate")
+	if str(bot._strategy_posture().get("posture", "balanced")) != "defend":
+		failures.append("Fixture failed to classify a lost race clock as defend posture")
+	var stance: Dictionary = bot._plan_defensive_stance(danger).get("command", {})
+	if stance.get("card_uid") != wall.uid:
+		failures.append("Bot skipped a defensive stance switch that walls a push the posture clock already lost")
+	# The same preservation gain stays gated off while the bot owns the race:
+	# tempo beats a small safety gain outside defend posture.
+	var race_game := _new_fixture_game()
+	var race_player := _new_fixture_player()
+	var race_opponent := _new_fixture_player()
+	race_game.players.assign([race_player, race_opponent])
+	race_game.current_player = race_player
+	race_game.other_player = race_opponent
+	race_game.turn_number = 3
+	race_game._upkeep_resolved_turn = race_game.turn_number
+	race_player.followers = 100
+	race_player.mana = 4
+	race_opponent.followers = 10
+	race_opponent.mana = 5
+	var race_manager := _new_fixture_match(race_game)
+	var race_bot := _new_fixture_bot()
+	race_bot.attach(race_game, race_manager, ServerBotGameInput.new(race_manager, 0), 0)
+	var race_wall := CreatureCard.new()
+	race_wall.card_name = "Fixture Race Body"
+	race_wall.card_owner = race_player
+	race_wall.creature_mode = Card.CreatureMode.AGGRESSIVE
+	race_wall.strength = 20
+	race_wall.resilience = 40
+	race_player.frontline_zones[0].add_card(race_wall)
+	var race_attacker := CreatureCard.new()
+	race_attacker.card_name = "Fixture Race Attacker"
+	race_attacker.card_owner = race_opponent
+	race_attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
+	race_attacker.strength = 24
+	race_opponent.frontline_zones[1].add_card(race_attacker)
+	var race_danger := race_bot._forecast_incoming_follower_loss()
+	if race_danger <= 0:
+		failures.append("Fixture failed to project an incoming push while the bot owns the race")
+	if str(race_bot._strategy_posture().get("posture", "balanced")) != "race":
+		failures.append("Fixture failed to classify a winning race clock as race posture")
+	if not race_bot._plan_defensive_stance(race_danger).is_empty():
+		failures.append("Bot planned a preservation stance switch while winning the race")
+
+func _check_bot_defensive_mode_switch_option_gate(failures: PackedStringArray) -> void:
+	# The preservation block keeps a healthy-follower body aggressive to
+	# preserve its attack option — but only when an attack option actually
+	# exists. In an even-clock balanced game, a body with no profitable
+	# creature attack and no safe followers poke must fall through to the
+	# casualty-savings math and flip against attackers its defensive RES
+	# walls, while a body that still owns a safe poke stays aggressive.
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	player.followers = 100
+	player.mana = 4
+	opponent.followers = 100
+	opponent.mana = 8
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var wall := CreatureCard.new()
+	wall.card_name = "Fixture Option-Gate Wall"
+	wall.card_owner = player
+	wall.creature_mode = Card.CreatureMode.AGGRESSIVE
+	wall.strength = 20
+	wall.resilience = 40
+	wall.speed = 2
+	player.frontline_zones[0].add_card(wall)
+	var poker := CreatureCard.new()
+	poker.card_name = "Fixture Option-Gate Poker"
+	poker.card_owner = player
+	poker.creature_mode = Card.CreatureMode.AGGRESSIVE
+	poker.strength = 24
+	poker.resilience = 24
+	poker.speed = 5
+	player.frontline_zones[1].add_card(poker)
+	var heavy := CreatureCard.new()
+	heavy.card_name = "Fixture Option-Gate Heavy"
+	heavy.card_owner = opponent
+	heavy.creature_mode = Card.CreatureMode.AGGRESSIVE
+	heavy.strength = 35
+	heavy.speed = 2
+	opponent.frontline_zones[1].add_card(heavy)
+	var skirmisher := CreatureCard.new()
+	skirmisher.card_name = "Fixture Option-Gate Skirmisher"
+	skirmisher.card_owner = opponent
+	skirmisher.creature_mode = Card.CreatureMode.AGGRESSIVE
+	skirmisher.strength = 33
+	skirmisher.speed = 2
+	opponent.frontline_zones[2].add_card(skirmisher)
+	var danger := bot._forecast_incoming_follower_loss()
+	if danger <= 0 or danger >= player.followers:
+		failures.append("Fixture failed to project a non-lethal even-clock push for the mode-switch option gate")
+	if str(bot._strategy_posture().get("posture", "balanced")) != "balanced":
+		failures.append("Fixture failed to keep even clocks in balanced posture")
+	var opponents: Array[Card] = bot._get_board_creatures(opponent)
+	if bot._get_defensive_mode_switch_score(wall, opponents) <= 0:
+		failures.append("Bot refused a defensive flip for a body with no real attack option in balanced posture")
+	if bot._get_best_defensive_mode_switch_candidate() != wall:
+		failures.append("Bot did not pick the optionless wall as its defensive mode-switch candidate")
+	if bot._get_defensive_mode_switch_score(poker, opponents) != -1:
+		failures.append("Bot flipped a body that still owns a safe followers poke")
 
 func _check_bot_next_turn_lethal(failures: PackedStringArray) -> void:
 	var game := _new_fixture_game()

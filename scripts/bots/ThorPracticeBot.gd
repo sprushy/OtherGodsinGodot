@@ -1212,13 +1212,24 @@ func _choose_dellingr_reveal_target(_source: DellingrTheDayspring, targets: Arra
 		var target := raw_target as Card
 		if target == null or target.get_controller() != opponent:
 			continue
-		var score := _score_enemy_target(target)
+		var score := 0
 		if _dellingr_revealed_target_uids.has(target.uid):
 			# A second reveal only matters when this prepared magical card can
-			# answer a strong attack or summon line this turn.
+			# answer a strong attack or summon line this turn. The target is
+			# already public, so its stats and type may be read.
 			if not _dellingr_can_interrupt_strong_line(target):
 				continue
-			score += ECON_CARD_VALUE
+			score = _score_enemy_target(target) + ECON_CARD_VALUE
+		elif target.current_zone != null:
+			# First reveal of a hidden body: only public zone information may
+			# steer the choice, never the hidden card's identity or stats.
+			match target.current_zone.zone_type:
+				Zone.ZoneType.FRONTLINE:
+					score = 2000 - target.current_zone.zone_index * 10
+				Zone.ZoneType.RESERVE:
+					score = 1000 - target.current_zone.zone_index * 10
+				_:
+					score = 0
 		if best_target == null or score > best_score:
 			best_target = target
 			best_score = score
@@ -5306,8 +5317,10 @@ func _plan_defensive_stance(danger: int) -> Dictionary:
 			continue
 		# Lethal-prevention stance switches are always allowed; milder
 		# preservation gains are only worth the tempo loss when the follower
-		# pool is actually scarce.
-		if gain < ECON_CARD_VALUE * 30 and not _is_dangerously_low_on_followers():
+		# pool is actually scarce, or when the posture clock already says the
+		# opponent's push wins the race unless the bleeding stops.
+		if gain < ECON_CARD_VALUE * 30 and not _is_dangerously_low_on_followers() \
+				and str(_strategy_posture().get("posture", "balanced")) != "defend":
 			continue
 		var score := gain + _stance_casualty_savings(creature, Card.CreatureMode.DEFENSIVE) \
 			- (1 + cost) * _mana_rate()
@@ -8246,6 +8259,10 @@ func _get_best_askelladen_target_for(askelladen: Askelladen, opposing_creatures:
 	var best_target: Card = null
 	var best_score := ASKELLADEN_BOUNCE_TARGET_SCORE
 	for creature in opposing_creatures:
+		if not CardStrategy.visible(self, creature):
+			# Hidden bodies' stats/identities are unknown, so Askelladen's
+			# speed-gated retreat and bounce pricing must not read them.
+			continue
 		if not _can_attack_creature(askelladen, creature):
 			continue
 		if _known_prepared_response_punishes_attack(askelladen, creature):
@@ -8610,14 +8627,14 @@ func _plan_scavenge_against_unknown_stealth() -> Dictionary:
 func _get_best_stealth_attack(attackers: Array[Card], opposing_creatures: Array[Card]) -> Dictionary:
 	var best_attacker: Card = null
 	var best_target: Card = null
-	var best_target_value := -1
-	var best_attacker_value := 0
+	var best_score := -1000000
 	for target in opposing_creatures:
 		if target == null or not (target.is_stealth or target.is_face_down):
 			continue
-		var target_value := _get_card_economic_value(target) if CardStrategy.visible(self, target) else CardStrategy.CARD_VALUE
-		var cheapest_attacker: Card = null
-		var cheapest_attacker_value := 0
+		# A hidden body's stats are unknown before combat (under Veil of Night
+		# only Resilience becomes inferable afterwards), so price it at the
+		# generic card value instead of reading its real STR/RES.
+		var target_value := CardStrategy.CARD_VALUE
 		for attacker in attackers:
 			if not _can_attack_creature(attacker, target):
 				continue
@@ -8625,21 +8642,20 @@ func _get_best_stealth_attack(attackers: Array[Card], opposing_creatures: Array[
 				continue
 			if not _is_attack_safe_from_interceptors(attacker, target):
 				continue
-			if not _would_destroy_target_in_battle(attacker, target):
+			var strength := _get_attack_strength_against_defense(attacker)
+			var kill_chance := CardStrategy.estimate_defensive_kill_chance(strength)
+			# Only commit when the generic curve says the hit is more likely
+			# than not; a hidden statline must not leak a guaranteed verdict.
+			if kill_chance < 0.5:
 				continue
-			if not _would_attacker_survive_battle(attacker, target):
+			var expected_gain := int(kill_chance * float(target_value))
+			var expected_loss := int((1.0 - kill_chance) * float(_get_card_economic_value(attacker)))
+			var score := expected_gain - expected_loss
+			if score <= best_score:
 				continue
-			var attacker_value := _get_card_economic_value(attacker)
-			if cheapest_attacker == null or attacker_value < cheapest_attacker_value:
-				cheapest_attacker = attacker
-				cheapest_attacker_value = attacker_value
-		if cheapest_attacker == null:
-			continue
-		if best_attacker == null or target_value > best_target_value or (target_value == best_target_value and cheapest_attacker_value < best_attacker_value):
-			best_attacker = cheapest_attacker
+			best_attacker = attacker
 			best_target = target
-			best_target_value = target_value
-			best_attacker_value = cheapest_attacker_value
+			best_score = score
 	if best_attacker == null:
 		return {}
 	return {"attacker": best_attacker, "target": best_target}
@@ -8969,9 +8985,14 @@ func _get_defensive_mode_switch_score(creature: Card, opposing_creatures: Array[
 		# skips the preservation block: staying aggressive would just feed
 		# the enemy farm, so flip now.
 		if not farm_bait or has_attack_plan or _is_dangerously_low_on_followers():
-			# Preserve the attack option while followers are plentiful.
+			# Preserve the attack option while followers are plentiful, but
+			# only when an option actually exists to preserve: a profitable
+			# creature attack or a safe followers poke. Without either, the
+			# preserved option is worth nothing and the casualty-savings math
+			# below decides whether the body should be walling instead.
 			if not _is_dangerously_low_on_followers():
-				return -1
+				if has_attack_plan or _can_attack_followers_safely(creature):
+					return -1
 			if has_attack_plan:
 				return -1
 			if opposing_creatures.is_empty() and _can_attack_followers_safely(creature):
@@ -9194,10 +9215,8 @@ func _is_divine_lightning_target_better(candidate: Card, current_best: Card) -> 
 		return true
 	if candidate.is_prepared != current_best.is_prepared:
 		return candidate.is_prepared
-	var candidate_speed := candidate.get_effective_speed()
-	var current_speed := current_best.get_effective_speed()
-	if candidate_speed != current_speed:
-		return candidate_speed > current_speed
+	# Prepared magical covers are public, but a hidden card's speed is not.
+	# Fall back to public board order instead of comparing real speeds.
 	return _get_card_order_index(candidate) < _get_card_order_index(current_best)
 
 func _opponent_controls_strictly_strongest_creature() -> bool:
@@ -9209,6 +9228,11 @@ func _opponent_controls_strictly_strongest_creature() -> bool:
 	var opponent_max_strength := -1
 	for creature in _get_board_creatures(opponent):
 		if not FallOfTheMighty.counts_for_strength_check(creature):
+			continue
+		# Hidden stealth/face-down creatures' strength is not visible to the bot,
+		# so they must not influence this strength comparison (Aphrodite Skotia's
+		# Veil of Night only makes Resilience inferable, never Strength).
+		if not CardStrategy.visible(self, creature):
 			continue
 		opponent_max_strength = maxi(opponent_max_strength, creature.get_effective_strength())
 	return opponent_max_strength >= 0 and opponent_max_strength > bot_max_strength
@@ -9225,7 +9249,11 @@ func _get_askelladen_problem_creature() -> Card:
 	var sample_askelladen := Askelladen.new()
 	sample_askelladen.card_owner = bot_player
 	for creature in _get_board_creatures(opponent):
-		if creature == null or not _can_askelladen_retreat(sample_askelladen, creature):
+		if creature == null or not CardStrategy.visible(self, creature):
+			# A hidden body's stats/identity are unknown, so it cannot be the
+			# "problem creature" that justifies an Askelladen answer.
+			continue
+		if not _can_askelladen_retreat(sample_askelladen, creature):
 			continue
 		var score := _score_askelladen_bounce_target(creature)
 		if _can_clear_creature_without_askelladen(creature):
@@ -9438,6 +9466,11 @@ func _should_use_askelladen_retreat(ask_card: Askelladen, other_card: Card, acti
 		return false
 	if other_card.get_controller() == bot_player:
 		return false
+	if not CardStrategy.visible(self, other_card):
+		# The prompt only appears when the speed gate already passed, but the
+		# hidden body's stats are still unknown. Retreat rather than pricing a
+		# fight with information the bot cannot have.
+		return true
 	if not _can_askelladen_retreat(ask_card, other_card):
 		return false
 	var fight_score := _score_askelladen_fight_result(action, ask_card, other_card)
@@ -9754,7 +9787,7 @@ func _should_summon_as_aggressive_into_defensive_wall(card: Card, opposing_creat
 		return false
 	var has_defensive_wall := false
 	for enemy in opposing_creatures:
-		if enemy == null:
+		if enemy == null or not CardStrategy.visible(self, enemy):
 			continue
 		if enemy.creature_mode == Card.CreatureMode.DEFENSIVE and not _would_destroy_target_in_battle(card, enemy):
 			has_defensive_wall = true
@@ -9766,7 +9799,7 @@ func _should_summon_as_aggressive_into_defensive_wall(card: Card, opposing_creat
 	if projected_resilience > projected_strength:
 		return false
 	for enemy in opposing_creatures:
-		if enemy == null or not _can_attack_creature(enemy, card):
+		if enemy == null or not CardStrategy.visible(self, enemy) or not _can_attack_creature(enemy, card):
 			continue
 		if enemy.get_effective_strength() >= projected_resilience and enemy.get_effective_strength() < projected_strength:
 			return true
@@ -9775,6 +9808,8 @@ func _should_summon_as_aggressive_into_defensive_wall(card: Card, opposing_creat
 func _count_clean_attack_targets_for(attacker: Card, opposing_creatures: Array[Card]) -> int:
 	var count := 0
 	for target in opposing_creatures:
+		if not CardStrategy.visible(self, target):
+			continue
 		if _is_clean_creature_kill(attacker, target):
 			count += 1
 	return count
@@ -9786,7 +9821,7 @@ func _is_projected_creature_strongest_on_board(card: Card, opposing_creatures: A
 	var projected_speed := card.get_effective_speed()
 	var strongest_seen := false
 	for enemy in opposing_creatures:
-		if enemy == null:
+		if enemy == null or not CardStrategy.visible(self, enemy):
 			continue
 		strongest_seen = true
 		var projected_strength := _get_combat_strength(card, enemy) + _get_projected_strength(card) - card.get_effective_strength()
@@ -10209,9 +10244,11 @@ func _choose_combat_reveal_removal(source: Card, targets: Array[Card], action: C
 	var best: Card = null
 	var best_score := 0
 	for target in targets:
-		if target == null or target.get_controller() != opponent or target in excluded \
-				or game_manager.is_immune_to_source(target, source) or game_manager.is_guardian_protected(target, source) \
-				or CardStrategy.destruction_guard(target) or game_manager.has_turn_destruction_ward(opponent):
+		if target == null or target.get_controller() != opponent or target in excluded:
+			continue
+		if CardStrategy.visible(self, target) \
+				and (game_manager.is_immune_to_source(target, source) or game_manager.is_guardian_protected(target, source) \
+				or CardStrategy.destruction_guard(target) or game_manager.has_turn_destruction_ward(opponent)):
 			continue
 		var score := CardStrategy.value(self, target) + _reveal_removal_mana_value(source, target)
 		# Solo combat is already committed. Removing its attacker still allows that
@@ -10356,6 +10393,10 @@ func _estimate_reveal_trigger_value(card: Card) -> int:
 	if card is Afanc:
 		var targets := 0
 		for enemy in _get_board_creatures(opponent):
+			if not CardStrategy.visible(self, enemy):
+				# A hidden body's type and immunities are unknown, so it
+				# cannot contribute to Afanc's poison count.
+				continue
 			if card._can_poison_target(enemy, game_manager):
 				targets += 1
 		@warning_ignore("integer_division")
@@ -10363,12 +10404,13 @@ func _estimate_reveal_trigger_value(card: Card) -> int:
 	if card is PictishBeast:
 		return CardStrategy.mana_gain_value(self, _pictish_beast_mana(card, []))
 	if card is Lailoken:
-		var lailoken_best_value := 0
+		# Magic Drain only targets prepared magical cards, whose covers are
+		# public, but their real value is hidden. Price the trigger at the
+		# generic card value whenever any opposing target exists.
 		for lailoken_target in card.get_valid_targets(game_manager):
-			if lailoken_target.get_controller() == opponent and not game_manager.is_immune_to_source(lailoken_target, card) \
-					and not game_manager.is_guardian_protected(lailoken_target, card) and not CardStrategy.destruction_guard(lailoken_target):
-				lailoken_best_value = maxi(lailoken_best_value, CardStrategy.value(self, lailoken_target))
-		return lailoken_best_value
+			if lailoken_target != null and lailoken_target.get_controller() == opponent:
+				return CardStrategy.CARD_VALUE
+		return 0
 	if card is MasmassuPriest or card is Grindylow:
 		var target := _choose_combat_reveal_removal(card, _get_reveal_removal_targets(card))
 		if target != null:

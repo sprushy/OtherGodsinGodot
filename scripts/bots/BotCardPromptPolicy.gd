@@ -329,10 +329,13 @@ static func _best_reveal_target(bot, source: Card, target_uids: Array, enemy_onl
 		else:
 			# These reveal abilities destroy their target. Prefer a legal, high
 			# value opposing target and avoid wasting the trigger into protection.
-			if bot.game_manager.is_immune_to_source(target, source) \
+			# Protection statuses are hidden information, so they may only
+			# influence the score when the target is already visible.
+			if Strategy.visible(bot, target) \
+					and (bot.game_manager.is_immune_to_source(target, source) \
 					or bot.game_manager.is_guardian_protected(target, source) \
 					or Strategy.destruction_guard(target) \
-					or (target.card_type == Card.CardType.CREATURE and bot.game_manager.has_turn_destruction_ward(target.get_controller())):
+					or (target.card_type == Card.CardType.CREATURE and bot.game_manager.has_turn_destruction_ward(target.get_controller()))):
 				score = Strategy.BAD
 			else:
 				score += 1000
@@ -441,28 +444,36 @@ static func _best_uid(bot, data: Dictionary, key: String, harmful: bool) -> Stri
 ## True when hitting the caster's followers beats every offered creature
 ## target: the followers attack deals guaranteed damage and never trades away
 ## the compelled body, while mutual combat usually loses the bot's creature.
-static func _compelled_followers_attack_preferred(_bot, attacker: Card, candidates: Array[Card]) -> bool:
+static func _compelled_followers_attack_preferred(bot, attacker: Card, candidates: Array[Card]) -> bool:
 	if attacker == null or candidates.is_empty():
 		return true
 	# Only deviate when a clean kill is on the table: the attacker destroys a
-	# high-value enemy body in combat without dying itself.
+	# high-value enemy body in combat without dying itself. Hidden candidates
+	# have unknown stats, so they cannot justify deviating from the followers
+	# attack; a clean kill must be visible.
 	var attacker_strength := attacker.get_effective_strength()
 	var attacker_resilience := attacker.get_effective_resilience()
 	var best_kill_score := 0
+	var has_visible_candidate := false
 	for candidate in candidates:
 		if candidate == null or candidate.card_type != Card.CardType.CREATURE:
 			continue
+		if not Strategy.visible(bot, candidate):
+			continue
+		has_visible_candidate = true
 		if attacker_strength < candidate.get_effective_resilience():
 			continue
 		if candidate.get_effective_strength() >= attacker_resilience:
 			continue
 		var kill_score := 100 + candidate.get_effective_level() * 10 + candidate.get_effective_strength()
 		best_kill_score = maxi(best_kill_score, kill_score)
+	if not has_visible_candidate:
+		return true
 	# Followers damage is roughly the attacker's strength; prefer combat only
 	# when it removes meaningfully more value than that.
 	return best_kill_score <= attacker_strength * 2
 
-static func _best_compelled_attack_target(_bot, attacker: Card, candidates: Array[Card]) -> String:
+static func _best_compelled_attack_target(bot, attacker: Card, candidates: Array[Card]) -> String:
 	if attacker == null or candidates.is_empty():
 		return ""
 	var attacker_strength := attacker.get_effective_strength()
@@ -471,6 +482,8 @@ static func _best_compelled_attack_target(_bot, attacker: Card, candidates: Arra
 	var best_score := -1
 	for candidate in candidates:
 		if candidate == null:
+			continue
+		if not Strategy.visible(bot, candidate):
 			continue
 		var score := candidate.get_effective_level() * 10 + candidate.get_effective_strength()
 		if attacker_strength >= candidate.get_effective_resilience() \
@@ -481,7 +494,14 @@ static func _best_compelled_attack_target(_bot, attacker: Card, candidates: Arra
 		if score > best_score:
 			best_score = score
 			best_card = candidate
-	return best_card.uid if best_card != null else str(candidates[0].uid)
+	# No visible candidate could be evaluated; fall back to the first offered
+	# uid so the choice never depends on hidden stats.
+	if best_card != null:
+		return best_card.uid
+	for candidate in candidates:
+		if candidate != null:
+			return str(candidate.uid)
+	return ""
 
 
 static func _select_uids(bot, data: Dictionary, limit: int, lowest: bool = false) -> Array[String]:

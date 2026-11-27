@@ -2166,7 +2166,14 @@ static func _doorway_grave_denial_gain(bot, excluded: Array) -> int:
 	var opponent: Player = bot.opponent
 	var targets: Array[Card] = []
 	for card in bot._get_board_creatures(opponent):
-		if card not in excluded and card.card_owner == opponent and not card.is_god and not card.is_token:
+		if card in excluded:
+			continue
+		if not visible(bot, card):
+			# The body is publicly there, but its identity is hidden. Count it
+			# as a generic grave-fuel body without reading is_god/is_token.
+			targets.append(card)
+			continue
+		if card.card_owner == opponent and not card.is_god and not card.is_token:
 			targets.append(card)
 	if targets.is_empty():
 		return 0
