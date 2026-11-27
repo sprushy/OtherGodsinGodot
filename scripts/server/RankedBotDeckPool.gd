@@ -10,6 +10,11 @@ const EARLY_RETIREMENT_GAMES := 60
 const EARLY_QUARANTINE_MAX_GAMES := 20
 const EARLY_QUARANTINE_WIN_RATE_NUMERATOR := 11
 const EARLY_QUARANTINE_WIN_RATE_DENOMINATOR := 20
+# A quarantined bot that climbs back to a 60% win rate over at least 20 games
+# (draws count as games but not wins) is released into the main pool again by
+# its next result.
+const QUARANTINE_RELEASE_WIN_RATE_NUMERATOR := 3
+const QUARANTINE_RELEASE_WIN_RATE_DENOMINATOR := 5
 const EXPLORATION_CHANCE := 0.20
 # How many of the worst bots per god are kept as quarantined bad bots for
 # forced matchmaking (Iron V and post-loss Iron/Bronze pairing).
@@ -89,7 +94,7 @@ const NAME_POOLS := {
 		"Swift Coin", "Wayfarer's Luck", "Stolen Herd", "Hidden Milestone",
 		"Border Runner", "Winged Cap", "The Kindly Guide", "Lyre of Shell",
 	],
-	"Hermes Psychopompus": [
+	"Hermes Psychopompos": [
 		"The Last Passage", "Shepherd of Shades", "The Golden Threshold", "Beyond the Styx",
 		"The Souls' Crossing", "Warden of the Veil", "The Final Escort", "Whispers of Asphodel",
 		"The Road to Hades", "The Psychopomp's Procession", "Between Two Worlds", "The Wand of Slumber",
@@ -852,6 +857,52 @@ func _is_quarantined_list(pool: Dictionary, list_id: String) -> bool:
 		return true
 	return list_id in pool.get("quarantined_ids", [])
 
+func _quarantine_release_due(list: Dictionary) -> bool:
+	var games_played := _get_played_match_count(list)
+	# Require the same 20-game window as early quarantine so a tiny comeback
+	# sample cannot fling a bot straight back into the main pool.
+	if games_played < EARLY_QUARANTINE_MAX_GAMES:
+		return false
+	return QUARANTINE_RELEASE_WIN_RATE_DENOMINATOR * int(list["wins"]) \
+		>= QUARANTINE_RELEASE_WIN_RATE_NUMERATOR * games_played
+
+# Releases a quarantined bot whose record reached the release win rate back
+# into the main pool. Bots that stayed on the ladder (finalize_league keeps
+# every seeded list in `lists`) only need their quarantine flags cleared;
+# retired bots held in quarantined_lists also need a free ladder slot.
+func _maybe_release_quarantined(pool: Dictionary, list: Dictionary) -> void:
+	var list_id := str(list.get("list_id", ""))
+	if list_id.is_empty() or not _quarantine_release_due(list):
+		return
+	if not pool["challenger"].is_empty() and str(pool.get("quarantined_id", "")) == list_id:
+		# A challenger trial is playing off against this bot; let it finish.
+		return
+	var lists: Array = pool["lists"]
+	var on_ladder := false
+	for ladder_list: Dictionary in lists:
+		if ladder_list["list_id"] == list_id:
+			on_ladder = true
+			break
+	if not on_ladder:
+		if lists.size() >= LISTS_PER_GOD:
+			return
+		lists.append(list)
+	_clear_quarantine_flags(pool, list_id)
+
+func _clear_quarantine_flags(pool: Dictionary, list_id: String) -> void:
+	var qids: Array = pool.get("quarantined_ids", [])
+	qids.erase(list_id)
+	pool["quarantined_ids"] = qids
+	if str(pool.get("quarantined_id", "")) == list_id:
+		pool["quarantined_id"] = ""
+	var qlists: Array = pool.get("quarantined_lists", [])
+	for index in range(qlists.size()):
+		if str(qlists[index].get("list_id", "")) == list_id:
+			qlists.remove_at(index)
+			break
+	pool["quarantined_lists"] = qlists
+	_state_changed = true
+
 func _find_list_by_id(pool: Dictionary, list_id: String) -> Dictionary:
 	var challenger: Dictionary = pool.get("challenger", {})
 	if not challenger.is_empty() and challenger.get("list_id", "") == list_id:
@@ -1105,12 +1156,24 @@ func _apply_result(result: Dictionary) -> void:
 				if list.get("fingerprint", "") != new_fingerprint:
 					list["fingerprint"] = new_fingerprint
 				_update_record(list, outcome)
+				if _is_quarantined_list(pool, list_id):
+					_maybe_release_quarantined(pool, list)
 				if list_id == pool["quarantined_id"] and not challenger.is_empty():
 					challenger["trial_target_games"] = _get_played_match_count(list)
 					return
 				if _should_retire_early(list):
 					_eliminated_bot_match_ids[str(result.get("match_id", ""))] = true
 					_retire_list(pool, list)
+				return
+		for held: Dictionary in pool.get("quarantined_lists", []):
+			if held["list_id"] == list_id:
+				# Retired bots keep playing quarantine matchmaking, so their
+				# results still count toward earning a release.
+				var held_fingerprint := _fingerprint(result)
+				if held.get("fingerprint", "") != held_fingerprint:
+					held["fingerprint"] = held_fingerprint
+				_update_record(held, outcome)
+				_maybe_release_quarantined(pool, held)
 				return
 		if submission.is_empty() and _eliminated_bot_match_ids.has(str(result.get("match_id", ""))):
 			# A match already in flight can finish after its list was retired.

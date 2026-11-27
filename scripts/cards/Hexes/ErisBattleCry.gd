@@ -136,6 +136,23 @@ func get_compelled_attackers(game_manager: GameManager, opponent: Player) -> Arr
 	)
 	return final_attackers
 
+# One compelled-attack stack action, exactly as the engine resolves it. The
+# bot's planning uses the same builder so its projection cannot drift from
+# the real speed, partner, and source attribution.
+func build_compelled_attack_action(game_manager: GameManager, attacker: Card) -> CardAction:
+	if game_manager == null or attacker == null or not is_instance_valid(attacker):
+		return null
+	var action := CardAction.new()
+	action.type = CardAction.Type.ATTACK
+	action.source_player = attacker.get_controller()
+	action.card = self
+	action.attacker = attacker
+	action.united_front_partner = _get_united_front_partner(game_manager, attacker)
+	action.attack_speed_override = _get_declared_attack_speed(game_manager, attacker)
+	action.target = null
+	action.event_data = {"compelled_attack": true}
+	return action
+
 func _push_compelled_attacks(game_manager: GameManager, attackers: Array[Card]) -> void:
 	if game_manager == null:
 		return
@@ -147,16 +164,9 @@ func _push_compelled_attacks(game_manager: GameManager, attackers: Array[Card]) 
 		index -= 1
 		if attacker == null or not is_instance_valid(attacker):
 			continue
-		var action := CardAction.new()
-		action.type = CardAction.Type.ATTACK
-		action.source_player = attacker.get_controller()
-		action.card = self
-		action.attacker = attacker
-		action.united_front_partner = _get_united_front_partner(game_manager, attacker)
-		action.attack_speed_override = _get_declared_attack_speed(game_manager, attacker)
-		action.target = null
-		action.event_data = {"compelled_attack": true}
-		game_manager.push_to_stack(action)
+		var action := build_compelled_attack_action(game_manager, attacker)
+		if action != null:
+			game_manager.push_to_stack(action)
 
 # Legal targets for one compelled attack at the moment it resolves: enemy
 # creatures/structures the attacker can legally engage, plus the defending

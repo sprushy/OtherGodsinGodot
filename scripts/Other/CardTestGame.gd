@@ -461,7 +461,7 @@ func load_hermes_psychopompus_wings_test_scenario() -> void:
 	game_manager.start_turn()
 	_open_upkeep_choice_window()
 	action_label.text = (
-		"Hermes Psychopompus - Wings of the Departed Test. Choose Mana for upkeep, then click P1's god slot. "
+		"Hermes Psychopompos - Wings of the Departed Test. Choose Mana for upkeep, then click P1's god slot. "
 		+ "Call of the Crossing is disabled (no Ghosts in P1's deck); Wings of the Departed is ready. "
 		+ "Pick a face-up friendly creature, then spend 1-4 mana: the grave has 4 Ghosts, so the cap is 4 "
 		+ "even though P1 has 12 mana. The buff lasts until end of turn."
@@ -490,7 +490,7 @@ func load_hermes_dodge_test_scenario() -> void:
 	_add_test_hand_card(player2, Enkidu.new())
 	_add_test_hand_card(player2, Enkidu.new())
 
-	# Ghost/Spirit cards for Hermes Psychopompus: graveyard copies pay for Wings of the Departed,
+	# Ghost/Spirit cards for Hermes Psychopompos: graveyard copies pay for Wings of the Departed,
 	# while deck copies are Call of the Crossing targets paid for with hand discards.
 	_add_test_graveyard_card(player1, Edimmu.new())
 	_add_test_graveyard_card(player1, TheChainedGhostOfAthens.new())
@@ -529,7 +529,7 @@ func load_hermes_dodge_test_scenario() -> void:
 	action_label.text = (
 		"Choose an upkeep option, then cast Metamorphosis and search for Knight or Raven. "
 		+ "Reveal a reserve creature to see it gain the chosen typing. Cast Occult Singularity to remove the Aura. "
-		+ "Aspect Shift is locked in P1's first power slot: unlock for 4 to become Hermes Psychopompus, then use Call of the Crossing on a Ghost/Spirit in deck by discarding half its Level (min 1), or Wings of the Departed with the Ghost/Spirit cards in your grave. Return to Form shifts back for 4. "
+		+ "Aspect Shift is locked in P1's first power slot: unlock for 4 to become Hermes Psychopompos, then use Call of the Crossing on a Ghost/Spirit in deck by discarding half its Level (min 1), or Wings of the Departed with the Ghost/Spirit cards in your grave. Return to Form shifts back for 4. "
 		+ "You can also use Hermes's Deceptive Speed to test Dodge against Gullinbursti. "
 		+ "On P1's next turn, attack P2's Followers with Enkidu to test Guardian. Then attack with Asaruludu to test Smite against Asaruludu himself."
 	)

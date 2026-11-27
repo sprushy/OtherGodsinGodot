@@ -53,7 +53,7 @@ const TACTICAL_CARDS := [
 	"Banishment", "SpellDemolition", "Sap", "SepLemutti", "Smite", "VoidShield", "ObsidianReflection",
 	"TheInferno", "TheDeluge", "Dromi", "Gleipnir", "SapStrength", "VisionOfTartarus", "VisionOfOdin", "Hermes",
 	"Drought", "HeavySnow", "Storm", "SavingGrace", "JiangZiyaFisherOfKings", "ShroudOfTheAncients", "WildMagic",
-	"FairyBlast", "TheChangelingExchange", "CompelledByTheSecretName", "GorgonsGaze",
+	"FairyBlast", "TheChangelingExchange", "CompelledByTheSecretName", "GorgonsGaze", "ErisBattleCry",
 ]
 const ACTIVE_POWERS := ["AcceleratedFate", "OraclesSight", "BerserkerMead", "MechFactory", "Palisade", "ManaGuard"]
 const BOARD_ABILITIES := ["Alu", "Lindwyrm", "Lamashatu", "ClayEaters", "AncientPyre", "Watchtower", "Gawain", "Beyla", "Nimue", "JiangZiyaFisherOfKings",
@@ -1648,6 +1648,12 @@ static func effect_score(bot, card: Card, target: Card = null, action: CardActio
 		"FoolishOptimism":
 			var choice := forced_combat_choice(bot, card, card.get_lowest_level_attacker_choices(bot.game_manager), card.get_highest_level_defender_choices(bot.game_manager))
 			gain = int(choice.get("score", BAD))
+		"ErisBattleCry":
+			if action != null:
+				# The sweep is a main-phase board play: it needs a clear
+				# stack and reads the whole board, not one pending action.
+				return BAD
+			gain = eris_battle_cry_gain(bot, card)
 		"CircleofRebirth":
 			gain = 0
 			var spaces := {bot.bot_player: open_spaces(bot.bot_player), bot.opponent: open_spaces(bot.opponent)}
@@ -2304,6 +2310,18 @@ static func preparation_score(bot, card: Card) -> int:
 		for target in wipe_cards(bot, card):
 			gain += petrify_disable_gain(bot, target)
 		return maxi(750, gain - CARD_VALUE - mana_penalty(bot, bot._get_play_cost(card, true)))
+	if card is ErisBattleCry:
+		var sweep := eris_battle_cry_gain(bot, card)
+		if sweep > 0:
+			# A prepared hex cannot fire until the next upkeep, so the board
+			# may shift before the sweep lands; decay it like other
+			# one-turn-ahead forecasts, above a sweeper's hold floor.
+			return maxi(750, int(round(float(sweep) * 0.65)) - CARD_VALUE)
+		# No profitable sweep yet. Arm the cry only while the opposing
+		# attackers are all dominated by a defensive wall that is already up
+		# or summonable, so the prepared hex is a live threat the next board
+		# state can actually cash.
+		return 750 if _eris_wall_dominates_board(bot, card) else 0
 	if id in ["SapStrength", "VisionOfTartarus"]:
 		return 1500
 	if id in ["FifaTheMagicalArrow", "GungnirTheSpearOfOdin"]:
@@ -2378,6 +2396,179 @@ static func _opponent_trick_str_bump(bot) -> int:
 			if card != null and (card.is_face_down or card.is_prepared):
 				return OPPONENT_TRICK_STR_BUMP
 	return 0
+
+# Eris' Battle Cry flips every opposing face-up creature to Aggressive and
+# compels each legal frontline attacker to attack, with the attacker's
+# controller choosing each target as the attack resolves. The projection
+# stays honest about that agency: every compelled attacker is priced at the
+# opponent's best legal target, answered by the bot's best intercept, through
+# the same combat economy the live intercept decision uses. A wall board
+# (Ferocious Defence behind a high-RES defender) prices each attack as a
+# casualty for the opponent; an open board prices it as lost followers.
+static func eris_battle_cry_gain(bot, hex: ErisBattleCry) -> int:
+	if bot == null or hex == null or bot.game_manager == null or bot.opponent == null:
+		return BAD
+	var attackers: Array[Card] = hex.get_compelled_attackers(bot.game_manager, bot.opponent)
+	if attackers.is_empty():
+		return BAD
+	# The sweep needs a live wall: a face-up Defensive body intercepts every
+	# compelled attack regardless of speed. Without one the compelled board
+	# simply attacks the bot's followers, and an attacker strong enough to
+	# break the best wall turns the sweep into a trade the opponent times.
+	# Keep the hex prepared until the wall dominates the whole compelled set.
+	var wall_res := _eris_board_wall_resilience(bot)
+	if wall_res <= 0:
+		return BAD
+	for attacker: Card in attackers:
+		if bot._get_attack_strength_against_defense(attacker) > wall_res:
+			return BAD
+	var gain := 0
+	for attacker: Card in attackers:
+		gain += _compelled_attack_gain(bot, hex, attacker)
+	gain += _eris_stance_flip_gain(bot, attackers)
+	return gain
+
+# The opponent's best case for one compelled attack: they pick the target
+# that minimizes the bot's outcome, and the bot answers with its best
+# intercept (including declining to intercept).
+static func _compelled_attack_gain(bot, hex: ErisBattleCry, attacker: Card) -> int:
+	var game: GameManager = bot.game_manager
+	var candidates: Array = hex.get_compelled_attack_target_candidates(game, attacker)
+	if candidates.is_empty():
+		# The stack re-checks each attack at resolution; a compelled attack
+		# with no legal target fizzles without spending anything.
+		return 0
+	var worst := 0
+	var priced_candidate := false
+	for candidate in candidates:
+		var best_reply := BAD
+		var replies: Array = [null]
+		replies.append_array(bot.match_manager._get_possible_interceptors(attacker, candidate))
+		for interceptor in replies:
+			var action := hex.build_compelled_attack_action(game, attacker)
+			if action == null:
+				continue
+			action.target = candidate
+			action.interceptor = interceptor
+			best_reply = maxi(best_reply, bot._score_attack_economy(bot._estimate_attack_economy(action, null, 0, 0)))
+		# The opponent must attack, so their result is one of the candidate
+		# outcomes: take their best (the bot's worst), never a clamped zero.
+		if not priced_candidate:
+			worst = best_reply
+			priced_candidate = true
+		else:
+			worst = mini(worst, best_reply)
+	return worst
+
+# The stance flip half of the cry: face-up bodies it does not compel (reserve
+# rows, sleeping or otherwise attack-locked walls) still lose Defensive.
+# Aggressive defenders fight STR vs STR and only intercept on speed, so the
+# bot's best attacker reaches bodies its strength could not crack through
+# RES, and the guaranteed defensive interception cover disappears.
+static func _eris_stance_flip_gain(bot, compelled: Array[Card]) -> int:
+	var best_strength := 0
+	for ally: Card in bot._get_board_creatures(bot.bot_player):
+		if ally.current_zone not in bot.bot_player.frontline_zones \
+				or ally.creature_mode != Card.CreatureMode.AGGRESSIVE:
+			continue
+		if ally.is_sleeping or ally.has_status_effect("cannot_attack"):
+			continue
+		best_strength = maxi(best_strength, ally.get_effective_strength())
+	var gain := 0
+	for enemy: Card in bot._get_board_creatures(bot.opponent):
+		if enemy in compelled or enemy.creature_mode != Card.CreatureMode.DEFENSIVE:
+			continue
+		if enemy.is_face_down or enemy.is_stealth or enemy.is_prepared or not visible(bot, enemy):
+			continue
+		var enemy_value := value(bot, enemy)
+		# Flipped bodies keep speed-based interception, so only a share of
+		# the guaranteed cover is really lost.
+		gain += _disable_gain(bot, enemy, {"cannot_intercept": enemy_value * 0.2})
+		if best_strength >= enemy.get_effective_strength() \
+				and best_strength <= enemy.get_effective_resilience():
+			# The flip converts a body our best attacker could not crack
+			# through RES into a STR-vs-STR kill it can take this turn.
+			@warning_ignore("integer_division")
+			gain += enemy_value / 2
+	return gain
+
+# Extra Ferocious Defence unlock value while Eris' Battle Cry waits in hand or
+# prepared: each face-up enemy frontline body the bot's best defensive wall
+# would destroy on a compelled attack (RES >= its STR) is removal the unlock
+# enables directly.
+static func ferocious_eris_sweep_gain(bot) -> int:
+	if bot == null or bot.game_manager == null or bot.opponent == null:
+		return 0
+	var eris: Card = null
+	for card in bot.bot_player.hand_zone.cards + bot.game_manager.get_field_cards(bot.bot_player):
+		if card is ErisBattleCry:
+			eris = card
+			break
+	if eris == null:
+		return 0
+	var wall_res := _eris_board_wall_resilience(bot)
+	if wall_res <= 0:
+		return 0
+	var dominated := 0
+	for zone in bot.opponent.frontline_zones:
+		if zone == null:
+			continue
+		for enemy: Card in zone.cards:
+			if enemy == null or enemy.card_type != Card.CardType.CREATURE \
+					or enemy.is_face_down or enemy.is_stealth or enemy.is_prepared \
+					or enemy.is_sleeping or not visible(bot, enemy):
+				continue
+			if enemy.get_effective_strength() <= wall_res:
+				dominated += 1
+	return dominated * 700
+
+# The best live defensive body on the bot's board, at full effective RES.
+static func _eris_board_wall_resilience(bot) -> int:
+	if bot == null or bot.bot_player == null:
+		return 0
+	var best := 0
+	for wall: Card in bot._get_board_creatures(bot.bot_player):
+		if wall.creature_mode != Card.CreatureMode.DEFENSIVE or wall.is_sleeping:
+			continue
+		if wall.is_face_down or wall.is_stealth or wall.is_prepared:
+			continue
+		best = maxi(best, wall.get_effective_resilience())
+	return best
+
+# True when every current compelled attacker loses to a defensive wall the
+# bot already fields or can summon from hand: the cry would then answer the
+# whole board by itself, and keeping it prepared is worth a sweeper's hold
+# value even before the exact sweep turns positive.
+static func _eris_wall_dominates_board(bot, hex: ErisBattleCry) -> bool:
+	var game: GameManager = bot.game_manager
+	if bot == null or game == null or bot.opponent == null:
+		return false
+	var attackers: Array[Card] = hex.get_compelled_attackers(game, bot.opponent)
+	if attackers.size() < 2:
+		return false
+	var wall_res := _eris_wall_resilience(bot)
+	if wall_res <= 0:
+		return false
+	for attacker: Card in attackers:
+		if bot._get_attack_strength_against_defense(attacker) > wall_res:
+			return false
+	return true
+
+# The best defensive body protecting the bot's next turn: live walls count
+# at full effective RES; a hand body counts once its projected RES reaches
+# the same steep survival zone Ferocious Defence fuel uses.
+static func _eris_wall_resilience(bot) -> int:
+	if bot == null or bot.bot_player == null:
+		return 0
+	var best := _eris_board_wall_resilience(bot)
+	for hand_card: Card in bot.bot_player.hand_zone.cards:
+		if hand_card.card_type != Card.CardType.CREATURE:
+			continue
+		var projected: int = bot._get_projected_resilience(hand_card)
+		if projected < FEROCIOUS_DEFENCE_HIGH_RES:
+			continue
+		best = maxi(best, projected)
+	return best
 
 static func healing_score(bot, target: Card, status: Dictionary) -> int:
 	var name := str(status.get("name", ""))
@@ -2564,6 +2755,11 @@ static func unlock_score(bot, power: PowerCard, unlock_cost: int = -1) -> int:
 				continue
 			gain += FEROCIOUS_DEFENCE_HAND_GAIN if card.current_zone == bot.bot_player.hand_zone \
 					else FEROCIOUS_DEFENCE_DECK_GAIN
+		# Eris' Battle Cry upgrades a dominating wall from deterrence into a
+		# proactive sweeper: while the hex waits in hand or prepared, every
+		# enemy attacker that would die on a compelled attack into the wall
+		# is removal the unlock enables directly, not just board presence.
+		gain += ferocious_eris_sweep_gain(bot)
 	elif id == "AdvancedBuildingTechniques":
 		# Price the unlock by the ward payments the bot would actually make on
 		# structures it can build: structures in hand it can play this turn, or

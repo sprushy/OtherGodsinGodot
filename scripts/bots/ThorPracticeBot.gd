@@ -3348,7 +3348,8 @@ func _get_best_strategy_action(attacks: Array[Dictionary], attack: Dictionary, d
 			# does not value a self-only ward.
 			continue
 		if card is HildskjalfThroneOfOdin or card is AnointingStatue or card is Gambanteinn \
-				or card is ShroudOfTheAncients or card is GorgonsGaze or card is ApollyonsDemiurge:
+				or card is ShroudOfTheAncients or card is GorgonsGaze or card is ApollyonsDemiurge \
+				or card is ErisBattleCry:
 			var reading := _plan_special_card(card, attacks, attack, danger)
 			if _is_better_strategy_plan(reading, best_plan):
 				best_plan = reading
@@ -4035,6 +4036,13 @@ func _plan_special_card(card: Card, attacks: Array[Dictionary], attack: Dictiona
 			return {}
 		var gaze_score := CardStrategy.effect_score(self, card)
 		return {"score": gaze_score, "command": {"type": "activate_prepared_hex", "hex_uid": card.uid}} if gaze_score > 0 else {}
+	if card is ErisBattleCry:
+		# Proactive flip on the bot's own turn: compel the opposing board
+		# into the bot's walls once the projected sweep beats the spent hex.
+		if not card.can_activate_prepared(game_manager, bot_player):
+			return {}
+		var cry_score := CardStrategy.effect_score(self, card)
+		return {"score": cry_score, "command": {"type": "activate_prepared_hex", "hex_uid": card.uid}} if cry_score > 0 else {}
 	if card.is_face_down or card.abilities_suppressed() or card.is_activation_locked(game_manager) \
 			or int(_strategy_activation_turns.get(card.uid, -1)) == game_manager.turn_number:
 		return {}

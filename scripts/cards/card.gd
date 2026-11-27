@@ -1316,6 +1316,16 @@ func wake_up() -> void:
 	# Explicit Wake effects clear all sleep; expiry must remove only its own source.
 	remove_status_effects_by_name("sleep")
 
+func apply_paralyze(source_card: Card) -> void:
+	# Refresh this source without replacing paralysis with independent durations.
+	remove_status_effects_from_source_card(source_card, PARALYZED_STATUS)
+	add_status_effect(
+		PARALYZED_STATUS,
+		source_card.card_name if source_card != null else "Paralyze",
+		source_card,
+		source_card.card_owner if source_card != null else null
+	)
+
 func clear_all_effects() -> void:
 	var had_changes := not active_buffs.is_empty() or not active_statuses.is_empty()
 	_restore_removed_status_side_effects(active_statuses)

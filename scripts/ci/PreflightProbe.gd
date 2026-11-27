@@ -81,6 +81,7 @@ func run() -> bool:
 	_check_rank_badges(failures)
 	_check_dedicated_ranked_history(failures)
 	_check_ranked_bot_pool(failures)
+	_check_quarantined_bot_release(failures)
 	_check_bo3_bot_ladder_separation(failures)
 	_check_community_bot_rank_badge(failures)
 	_check_community_bot_quarantine(failures)
@@ -94,6 +95,7 @@ func run() -> bool:
 	_check_bot_berserker_rage_combo(failures)
 	_check_bot_interception_forecasts(failures)
 	_check_bot_prepare_and_reflect(failures)
+	_check_bot_eris_battle_cry_sweep(failures)
 	_check_bot_namburbi_combat_ward(failures)
 	_check_bot_speed_one_stealth(failures)
 	_check_bot_reserve_summon_threat(failures)
@@ -1536,7 +1538,7 @@ func _check_ranked_bot_deck_generation(failures: PackedStringArray) -> void:
 	for seed_value in range(8):
 		var psychopompus_deck := factory.build_random_deck(7600 + seed_value, psychopompus.card_name, true)
 		if psychopompus_deck.is_empty():
-			failures.append("Ranked bot generator did not produce a Hermes Psychopompus deck")
+			failures.append("Ranked bot generator did not produce a Hermes Psychopompos deck")
 			break
 		var ghost_names: Array[String] = []
 		var psychopompus_cards: Dictionary = psychopompus_deck.get("cards", {})
@@ -1547,14 +1549,14 @@ func _check_ranked_bot_deck_generation(failures: PackedStringArray) -> void:
 			for _copy in range(int(psychopompus_cards[card_name])):
 				ghost_names.append(str(card_name))
 		if ghost_names.size() < PracticeAutofillDeckFactory.HERMES_PSYCHOPOMPUS_MIN_GHOSTS:
-			failures.append("Ranked Hermes Psychopompus autofill included fewer than four Ghosts")
+			failures.append("Ranked Hermes Psychopompos autofill included fewer than four Ghosts")
 		ghost_names.sort()
 		psychopompus_ghost_signatures.append(JSON.stringify(ghost_names))
 	var unique_ghost_signatures := {}
 	for signature in psychopompus_ghost_signatures:
 		unique_ghost_signatures[signature] = true
 	if psychopompus_ghost_signatures.size() == 8 and unique_ghost_signatures.size() < 2:
-		failures.append("Ranked Hermes Psychopompus autofill Ghosts did not vary by seed")
+		failures.append("Ranked Hermes Psychopompos autofill Ghosts did not vary by seed")
 	for god_case in [
 		[NuskuFirebearer.new(), PracticeAutofillDeckFactory.NUSKU_MIN_ANCIENT_MAGICAL],
 		[ManannanMacLir.new(), PracticeAutofillDeckFactory.MANANNAN_MAC_LIR_MIN_TRISKELION_CREATURES],
@@ -2546,6 +2548,78 @@ func _check_bot_prepare_and_reflect(failures: PackedStringArray) -> void:
 		if player.followers != 100 or opponent.followers != expected_followers \
 				or game._temporary_combat_follower_damage_reversed:
 			failures.append("Obsidian Reflection did not apply and clear after %s combat" % ("United Front" if united_front else "committed"))
+
+func _check_bot_eris_battle_cry_sweep(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	player.mana = 0
+	player.followers = 100
+	opponent.followers = 100
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+
+	# A dominating wall against a wide attacking board: Eris' Battle Cry in
+	# hand must be prepared so the sweep line exists at all.
+	var wall := RoboticFootsoldier.new()
+	wall.card_owner = player
+	wall.creature_mode = Card.CreatureMode.DEFENSIVE
+	wall.strength = 8
+	wall.resilience = 36
+	wall.speed = 2
+	player.frontline_zones[2].add_card(wall)
+	for index in range(4):
+		var attacker := RoboticFootsoldier.new()
+		attacker.card_owner = opponent
+		attacker.creature_mode = Card.CreatureMode.AGGRESSIVE if index % 2 == 0 else Card.CreatureMode.DEFENSIVE
+		attacker.strength = 10 + index * 4
+		attacker.resilience = 6
+		attacker.speed = 2
+		opponent.frontline_zones[index].add_card(attacker)
+	var eris := ErisBattleCry.new()
+	eris.card_owner = player
+	player.hand_zone.add_card(eris)
+	if not bot._try_prepare_strategy_card() or eris.current_zone not in player.reserve_zones or not eris.is_prepared:
+		failures.append("Bot did not prepare Eris' Battle Cry behind a dominating wall against a wide board")
+		return
+
+	# The bot's next turn: the hex prepared last turn can now fire.
+	game.turn_number += 2
+	game._upkeep_resolved_turn = game.turn_number
+	var plain_gain := BotCardStrategyScript.eris_battle_cry_gain(bot, eris)
+	if plain_gain <= 0:
+		failures.append("Eris' Battle Cry priced the wide-board sweep non-positive behind a dominating wall")
+	var eris_bonus := BotCardStrategyScript.ferocious_eris_sweep_gain(bot)
+	if eris_bonus < 4 * 700:
+		failures.append("Ferocious Defence unlock did not price the Eris' Battle Cry sweep against a dominated board")
+	var ferocious := FerociousDefence.new()
+	ferocious.card_owner = player
+	ferocious.is_face_down = false
+	player.power_zones[0].add_card(ferocious)
+	var ferocious_gain := BotCardStrategyScript.eris_battle_cry_gain(bot, eris)
+	if ferocious_gain <= plain_gain or ferocious_gain < 4 * BotCardStrategyScript.CARD_VALUE:
+		failures.append("Eris' Battle Cry did not price Ferocious Defence kills on every compelled attacker")
+	var plan := bot._get_best_strategy_action([], {})
+	var command: Dictionary = plan.get("command", {})
+	if command.get("type") != "activate_prepared_hex" or command.get("hex_uid") != eris.uid:
+		failures.append("Bot did not plan Eris' Battle Cry activation once the sweep line was live")
+
+	# Honesty guard: with the wall gone the same board punishes the bot, so
+	# the cry must not fire.
+	player.power_zones[0].remove_card(ferocious)
+	player.frontline_zones[2].remove_card(wall)
+	var bare_gain := BotCardStrategyScript.eris_battle_cry_gain(bot, eris)
+	if bare_gain >= 0:
+		failures.append("Eris' Battle Cry priced a sweep non-negative with no wall to intercept the compelled attacks")
+	var bare_plan := bot._get_best_strategy_action([], {})
+	if bare_plan.get("command", {}).get("type") == "activate_prepared_hex":
+		failures.append("Bot planned Eris' Battle Cry activation without a wall to intercept the compelled attacks")
 
 func _check_bot_namburbi_combat_ward(failures: PackedStringArray) -> void:
 	var game := _new_fixture_game()
@@ -3966,7 +4040,7 @@ func _check_bot_hermes_speed(failures: PackedStringArray) -> void:
 	player.hand_zone.add_card(discard)
 	var summon := bot._plan_deck_god_ability(0)
 	if not bot._submit_strategy_plan(summon):
-		failures.append("Hermes Psychopompus did not submit Call of the Crossing")
+		failures.append("Hermes Psychopompos did not submit Call of the Crossing")
 	for _step in range(8):
 		manager.advance_priority()
 	if ghost.current_zone not in player.frontline_zones or ghost.creature_mode != Card.CreatureMode.AGGRESSIVE \
@@ -3980,7 +4054,7 @@ func _check_bot_hermes_speed(failures: PackedStringArray) -> void:
 		buried_ghost.card_owner = player
 		player.graveyard_zone.add_card(buried_ghost)
 	if not bot._take_main_phase_action():
-		failures.append("Hermes Psychopompus did not submit Wings of the Departed to outrun Void Shield")
+		failures.append("Hermes Psychopompos did not submit Wings of the Departed to outrun Void Shield")
 	for _step in range(8):
 		manager.advance_priority()
 	if attacker.get_effective_speed() != 4 or player.mana != 2:
@@ -7115,6 +7189,73 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 			or player_loss_summary["challenger"].get("matches_played") != 2 \
 			or player_loss_summary["challenger"].get("losses") != 1:
 		failures.append("A self-play loss stopped counting toward bot pool evaluation")
+
+## A quarantined bot that climbs back over the release win rate (60%) returns
+## to the main pool; without a free ladder slot it waits until one opens.
+func _check_quarantined_bot_release(failures: PackedStringArray) -> void:
+	var results: Array[Dictionary] = []
+	for i in range(RankedBotDeckPoolScript.LISTS_PER_GOD - 1):
+		results.append(_bot_pool_result("release_seed_%d" % i, "", {"Thor": 1, "Common": 30, "Release %d" % i: 10}, "win"))
+	results.append(_bot_pool_result("release_roomy_win", "release_roomy", {}, "win"))
+	results.append(_bot_pool_result("release_roomy_loss", "release_roomy", {}, "loss", true))
+	var pool := RankedBotDeckPoolScript.new()
+	pool.refresh(results)
+	if pool.can_play_list("Thor", "release_roomy") or pool.get_quarantined_ladder_summary().is_empty():
+		failures.append("A 1-1 bot was not quarantined before the release rule could apply")
+	# One comeback win reaches a 60% win rate but not the 20-game minimum, so
+	# the bot stays quarantined; release fires once the rate holds over 20
+	# games and a ladder slot is free.
+	results.append(_bot_pool_result("release_roomy_comeback", "release_roomy", {}, "win"))
+	pool.refresh(results)
+	if pool.can_play_list("Thor", "release_roomy") or pool.get_quarantined_ladder_summary().is_empty():
+		failures.append("A quarantined bot under the 20-game release minimum was released early")
+	for game in range(17):
+		results.append(_bot_pool_result("release_roomy_comeback_%d" % game, "release_roomy", {}, "win"))
+	pool.refresh(results)
+	if not pool.can_play_list("Thor", "release_roomy") or not pool.get_quarantined_ladder_summary().is_empty():
+		failures.append("A quarantined bot above the release win rate over 20 games was not returned to the main pool")
+	# Refill the ladder, quarantine a second bot, and refill again so no slot
+	# is free when its record qualifies for release.
+	results.append(_bot_pool_result("release_filler", "release_filler", {}, "win"))
+	results.append(_bot_pool_result("release_blocked_win", "release_blocked", {}, "win"))
+	results.append(_bot_pool_result("release_blocked_loss", "release_blocked", {}, "loss", true))
+	results.append(_bot_pool_result("release_filler_two", "release_filler_two", {}, "win"))
+	pool.refresh(results)
+	if pool.can_play_list("Thor", "release_blocked"):
+		failures.append("A bot quarantined while the ladder was full was not held in the quarantine pool")
+	for game in range(18):
+		results.append(_bot_pool_result("release_blocked_comeback_%d" % game, "release_blocked", {}, "win"))
+	pool.refresh(results)
+	if pool.can_play_list("Thor", "release_blocked"):
+		failures.append("A quarantined bot was released without a free ladder slot")
+	# Retiring another bot frees a slot; the held bot's next win releases it.
+	results.append(_bot_pool_result("release_seed_2_loss", "release_seed_2", {}, "loss", true))
+	results.append(_bot_pool_result("release_blocked_final_win", "release_blocked", {}, "win"))
+	pool.refresh(results)
+	var held_ids := {}
+	for entry in pool.get_quarantined_ladder_summary():
+		held_ids[str(entry["list_id"])] = true
+	if not pool.can_play_list("Thor", "release_blocked") \
+			or not held_ids.has("release_seed_2") or held_ids.has("release_blocked"):
+		failures.append("A quarantined bot above the release win rate stayed held after a ladder slot opened")
+	# finalize_league keeps the quarantined seeded bot on the ladder; releasing
+	# it only clears the quarantine flags.
+	var league_pool := RankedBotDeckPoolScript.new()
+	league_pool.register_league_list("Thor", {
+		"deck_name": "Thor: Held League Bot", "cards": {"Thor": 1, "Common": 30},
+		"reinforcements": {}, "special_setup": {},
+	}, "held_league_bot")
+	league_pool.finalize_league(["Thor"] as Array[String])
+	if not bool(league_pool.get_ladder_summary()["gods"][0]["lists"][0]["quarantined"]):
+		failures.append("finalize_league did not quarantine the seeded league bot")
+	for game in range(19):
+		league_pool._apply_result(_bot_pool_result("held_league_comeback_%d" % game, "held_league_bot", {"Thor": 1, "Common": 30}, "win"))
+	if league_pool.can_play_list("Thor", "held_league_bot"):
+		failures.append("A quarantined on-ladder bot was released under the 20-game minimum")
+	league_pool._apply_result(_bot_pool_result("held_league_comeback_final", "held_league_bot", {"Thor": 1, "Common": 30}, "win"))
+	if not league_pool.can_play_list("Thor", "held_league_bot") \
+			or not league_pool.get_quarantined_ladder_summary().is_empty():
+		failures.append("A quarantined on-ladder bot was not released after reaching the release win rate over 20 games")
 
 ## A user-submitted bot must carry its replayed ladder record into every hosted
 ## match so its rank badge keeps updating, instead of restarting at zero stars.

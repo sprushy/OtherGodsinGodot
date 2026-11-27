@@ -1403,8 +1403,6 @@ func _on_game_manager_card_summoned(
 	_prune_invalidated_frontline_entry_event(card)
 	if card.card_type == Card.CardType.STRUCTURE:
 		_maybe_emit_advanced_building_techniques_prompt(player, card)
-	if _is_tezcatlipoca_necoc_yaotl_summon(card, summon_source):
-		return
 	if _has_pending_impact_priority_action(card):
 		return
 	if _has_pending_event_priority_action(card, "summon"):
@@ -1472,13 +1470,6 @@ func _get_active_advanced_building_techniques(player: Player) -> AdvancedBuildin
 		if power != null and not power.is_face_down:
 			return power
 	return null
-
-func _is_tezcatlipoca_necoc_yaotl_summon(card: Card, summon_source: Card) -> bool:
-	return card != null \
-		and summon_source != null \
-		and summon_source.card_name == "Tezcatlipoca, the Smoking Mirror" \
-		and card.card_name == "Tezcatlipoca, Active God" \
-		and card.has_method("get_valid_titlacauan_targets")
 
 func resolve_action(action: CardAction) -> void:
 	last_resolution_text = ""

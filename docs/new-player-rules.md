@@ -452,6 +452,7 @@ Cards explain their own rules text, and keyword hints appear in card detail view
 - Void: send a card to the Abyss.
 - Immortal: cannot be destroyed.
 - Sleep: the Creature cannot take actions or intercept.
+- Paralyze: the Creature cannot move, switch stance, attack, or intercept.
 - Mute: suppresses abilities; muted Powers cannot be unlocked or activated.
 - Passive: always active while the card remains in play.
 - Impact: triggers when the card enters the field from your hand.

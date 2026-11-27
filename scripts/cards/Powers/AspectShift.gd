@@ -13,7 +13,7 @@ func _init() -> void:
 	culture = "Olympic"
 	mana_cost = SHIFT_COST
 	card_types = ["Power", "Aspect"]
-	ability_text = "[b]Unlock[/b] (%d mana): Shift your God to their Hades aspect.\n[b]Return to Form[/b] ([b]Activate[/b], %d mana): Shift your God back to their normal aspect and [b]Relock[/b] this.\nAphrodite Areia shifts into Aphrodite Skotia. Hermes shifts into Hermes Psychopompus." % [SHIFT_COST, SHIFT_COST]
+	ability_text = "[b]Unlock[/b] (%d mana): Shift your God to their Hades aspect.\n[b]Return to Form[/b] ([b]Activate[/b], %d mana): Shift your God back to their normal aspect and [b]Relock[/b] this.\nAphrodite Areia shifts into Aphrodite Skotia. Hermes shifts into Hermes Psychopompos." % [SHIFT_COST, SHIFT_COST]
 	art_path = ART_PATH
 
 func can_unlock(game_manager: GameManager) -> bool:

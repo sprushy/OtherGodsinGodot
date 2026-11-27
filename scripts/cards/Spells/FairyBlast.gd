@@ -15,7 +15,7 @@ func _init() -> void:
 	targets = true
 	artist = "User provided"
 	art_path = ART_PATH
-	ability_text = "Halve a creature's Str and SPD and Paralyze it."
+	ability_text = "Halve a creature's Str and SPD and [b]Paralyze[/b] it."
 
 func resolve(game_manager: GameManager, target = null) -> void:
 	var creature := target as Card
@@ -34,12 +34,7 @@ func resolve(game_manager: GameManager, target = null) -> void:
 			card_owner,
 			DEBUFF_EFFECT_TYPE
 		)
-	creature.add_status_effect(
-		Card.PARALYZED_STATUS,
-		card_name,
-		self,
-		card_owner
-	)
+	creature.apply_paralyze(self)
 	var target_name := creature.get_target_log_display_name(game_manager.get_feedback_viewer())
 	game_manager.note_player_feedback(
 		"Fairy Blast halved %s's Str and SPD and paralyzed it." % target_name

@@ -11,7 +11,7 @@ var _wings_last_used_turn: int = -1
 
 func _init() -> void:
 	super._init()
-	card_name = "Hermes Psychopompus"
+	card_name = "Hermes Psychopompos"
 	card_types = ["Emissary", "Death", "Targeting"]
 	mana_cost = 0
 	speed = 7
