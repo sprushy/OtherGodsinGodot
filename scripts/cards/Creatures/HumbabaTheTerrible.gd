@@ -89,17 +89,19 @@ func resolve_augury_reading(game_manager: GameManager, chosen_card: Card = null)
 	var primed_card := chosen_card if chosen_card != null and chosen_card in top_cards else top_cards[0]
 	var shelved_cards := top_cards
 	shelved_cards.erase(primed_card)
-	opponent.deck_zone.prime_card(primed_card)
+	var deck := opponent.deck_zone
+	deck.prime_card(primed_card)
 	for card in shelved_cards:
-		opponent.deck_zone.shelve_deck_card(card)
+		deck.shelve_deck_card(card)
 
-	var primed_name := primed_card.get_target_log_display_name(game_manager.get_feedback_viewer())
+	# This feedback can be sent to both players as part of the combat log.
+	var primed_name := primed_card.get_display_name() if deck.is_deck_card_publicly_known(primed_card) else "a card"
 	if shelved_cards.is_empty():
 		return "%s used Augury Reading and primed %s." % [card_name, primed_name]
 
 	var shelved_names: Array[String] = []
 	for card in shelved_cards:
-		shelved_names.append(card.get_target_log_display_name(game_manager.get_feedback_viewer()))
+		shelved_names.append(card.get_display_name() if deck.is_deck_card_publicly_known(card) else "a card")
 	return "%s used Augury Reading and primed %s while shelving %s." % [
 		card_name,
 		primed_name,

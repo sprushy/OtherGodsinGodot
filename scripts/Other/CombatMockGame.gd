@@ -7193,8 +7193,10 @@ func _sync_turn_start_props() -> void:
 	var local_top := display_player.deck_zone.get_primed_top_card()
 	if local_top != null and _card_shelve_animations.has(local_top.uid):
 		local_top = null
-	draw_button.set_primed_top_card(local_top)
-	_opponent_draw_deck.set_primed_top_card(opponent.deck_zone.get_primed_top_card())
+	var opponent_top := opponent.deck_zone.get_primed_top_card()
+	var viewer := game_manager.get_feedback_viewer()
+	draw_button.set_primed_top_card(local_top, _is_deck_card_identity_hidden(local_top, viewer))
+	_opponent_draw_deck.set_primed_top_card(opponent_top, _is_deck_card_identity_hidden(opponent_top, viewer))
 	_opponent_draw_deck.set_opponent_draw_available(not _game_finished \
 		and game_manager.current_player == opponent \
 		and game_manager.is_player_in_upkeep_window(opponent) \
@@ -14615,14 +14617,26 @@ func _make_zone_overlay_card(card: Card, compact: bool = false) -> VisualCard:
 	visual.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	return visual
 
+func _is_deck_card_identity_hidden(card: Card, viewer: Player) -> bool:
+	if card == null:
+		return false
+	if _is_networked_client:
+		# The server supplies face-down placeholders for hidden deck cards.
+		return card.is_face_down
+	return card.current_zone.zone_owner != viewer \
+		and (viewer == null or not viewer.reveals_all_hidden_cards) \
+		and not card.current_zone.is_deck_card_publicly_known(card)
+
 func _refresh_deck_overlay() -> void:
 	if _deck_overlay_zone == null or not is_instance_valid(_deck_overlay_grid):
 		return
 	var count := _deck_overlay_zone.get_card_count()
 	_deck_overlay_title.text = "%s’s Deck (%d) · Top to Bottom" % [_deck_overlay_zone.zone_owner.player_name, count]
+	var viewer := game_manager.get_feedback_viewer()
 	var known_cards: Array[Card] = []
 	for index in count:
-		known_cards.append(_deck_overlay_zone.get_known_deck_card(index))
+		var card := _deck_overlay_zone.get_known_deck_card(index)
+		known_cards.append(null if _is_deck_card_identity_hidden(card, viewer) else card)
 	if known_cards == _deck_overlay_cards:
 		return
 	_deck_overlay_cards = known_cards

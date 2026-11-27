@@ -53,6 +53,7 @@ signal rank_badge_result(success: bool, message: String)
 signal bot_ladder_received(summary: Dictionary)
 signal bot_deck_received(list_id: String, deck: Dictionary)
 signal bot_record_received(record: Dictionary)
+signal ranked_god_records_received(record: Dictionary)
 signal bot_match_history_received(history: Dictionary)
 signal bot_work_assignment_received(job: Dictionary)
 signal bot_work_result_received(job_id: String, success: bool, message: String)
@@ -596,6 +597,12 @@ func request_bot_record(list_id: String, best_of: int, quarantined_only: bool, b
 			"before_match_id": before_match_id, "request_id": request_id,
 		})
 
+func request_ranked_god_records(username: String, best_of: int, request_id: int) -> void:
+	if is_authenticated() and supports_bot_ladder:
+		_send_request(LobbyProtocolScript.REQUEST_RANKED_GOD_RECORDS, {
+			"username": username, "best_of": best_of, "request_id": request_id,
+		})
+
 func request_bot_match_history(before_match_id: String = "") -> void:
 	if is_authenticated() and supports_bot_ladder:
 		_send_request(LobbyProtocolScript.REQUEST_BOT_MATCH_HISTORY, {"before_match_id": before_match_id})
@@ -951,6 +958,9 @@ func lobby_event(message: Dictionary) -> void:
 		LobbyProtocolScript.BOT_RECORD:
 			if is_authenticated():
 				bot_record_received.emit(payload)
+		LobbyProtocolScript.RANKED_GOD_RECORDS:
+			if is_authenticated():
+				ranked_god_records_received.emit(payload)
 		LobbyProtocolScript.BOT_MATCH_HISTORY:
 			if is_authenticated():
 				bot_match_history_received.emit(payload)

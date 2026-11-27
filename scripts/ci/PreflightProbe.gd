@@ -75,6 +75,7 @@ func run() -> bool:
 	_check_full_state_event_payload_budget(failures)
 	_check_game_state_privacy(failures)
 	_check_public_deck_knowledge(failures)
+	_check_humbaba_augury_privacy(failures)
 	_check_json_store_round_trip(failures)
 	_check_match_supervisor_launch_config(failures)
 	_check_ranked_progression(failures)
@@ -1015,6 +1016,34 @@ func _check_public_deck_knowledge(failures: PackedStringArray) -> void:
 	if deck_owner.draw_card() != grave_card or not grave_card.is_revealed_in_hand():
 		failures.append("Drawing a publicly known deck card did not keep it revealed in hand")
 
+func _check_humbaba_augury_privacy(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var deck_owner := _new_fixture_player()
+	var humbaba_owner := _new_fixture_player()
+	game.players.assign([deck_owner, humbaba_owner])
+	game.feedback_viewer = deck_owner
+	var humbaba := HumbabaTheTerrible.new()
+	humbaba.card_owner = humbaba_owner
+	humbaba_owner.frontline_zones[0].add_card(humbaba)
+	var deck := deck_owner.deck_zone
+	var primed := BrownBear.new()
+	var shelved := RedCap.new()
+	var revealed := Huginn.new()
+	for card: Card in [primed, shelved, revealed]:
+		card.card_owner = deck_owner
+		deck.add_card(card)
+	deck.reveal_deck_card(revealed)
+
+	var feedback := humbaba.resolve_augury_reading(game, primed)
+	if primed.get_display_name() in feedback or shelved.get_display_name() in feedback:
+		failures.append("Humbaba's shared Augury Reading feedback named a private deck card")
+	if revealed.get_display_name() not in feedback or not deck.is_deck_card_publicly_known(revealed):
+		failures.append("Humbaba's Augury Reading lost a publicly known deck card's identity")
+	if deck.get_primed_top_card() != primed or deck.is_deck_card_publicly_known(primed) \
+			or deck.get_deck_placement(shelved) != Zone.DeckPlacement.SHELVED \
+			or deck.is_deck_card_publicly_known(shelved):
+		failures.append("Humbaba's Augury Reading did not keep the chosen card primed and the other cards shelved privately")
+
 func _check_json_store_round_trip(failures: PackedStringArray) -> void:
 	var storage_path := "user://ci_preflight_json_store.json"
 	var global_path := ProjectSettings.globalize_path(storage_path)
@@ -1284,8 +1313,32 @@ func _check_dedicated_ranked_history(failures: PackedStringArray) -> void:
 	if reopened_summary["ranked_progress"] != winner_summary["ranked_progress"] \
 			or reopened_summary["ranked_bo3_progress"] != bo3_progress:
 		failures.append("Dedicated ranked history did not restore progress after reopening the store")
+	session.configure_series_format(1)
+	session.player_identity_by_session["session_b"]["account_id"] = "account_b"
+	session.match_id = "ranked_thor_loss"
+	writer_a.record_completed_match(session, 1, 0, "Odin", "Thor")
+	session.match_id = "ranked_hermes_draw"
+	session.registered_player_decks_by_session["session_a"] = {"cards": {"Hermes": 1}}
+	session.registered_player_decks_by_session["session_b"] = {"cards": {"Odin": 1}}
+	writer_b.record_completed_match(session, -1, -1, "", "")
+	session.match_id = "ranked_previous_season"
+	var previous_season_entry: Dictionary = writer_b.record_completed_match(session, 0, 1, "Thor", "Odin")["entry"]
+	previous_season_entry["played_unix"] -= 35 * 86400
+	var previous_season_path := result_dir.path_join("%s.json" % session.match_id.sha256_text())
+	if not JsonStoreScript.save_json(previous_season_path, previous_season_entry, "preflight_probe"):
+		failures.append("Could not prepare a ranked result from an earlier season")
+	if reader.get_ranked_god_records("account_a", 1) != [
+		{"god_name": "Thor", "wins": 3, "losses": 1, "draws": 0, "games": 4},
+		{"god_name": "Hermes", "wins": 0, "losses": 0, "draws": 1, "games": 1},
+	] or reader.get_ranked_god_records("account_a", 3) != [
+		{"god_name": "Loki", "wins": 1, "losses": 0, "draws": 0, "games": 1},
+	]:
+		failures.append("Ranked records by god missed results or mixed seasons or formats")
+	if reader.get_human_ladder(usernames, 1)[0]["wins"] != 4:
+		failures.append("The seasonal records by god changed the ladder's lifetime totals")
 	DirAccess.remove_absolute(old_result_path + ".bak")
-	for match_id in ["ranked_a", "ranked_b", "ranked_c", "ranked_d", "guest"]:
+	DirAccess.remove_absolute(previous_season_path + ".bak")
+	for match_id in ["ranked_a", "ranked_b", "ranked_c", "ranked_d", "guest", "ranked_thor_loss", "ranked_hermes_draw", "ranked_previous_season"]:
 		DirAccess.remove_absolute(result_dir.path_join("%s.json" % match_id.sha256_text()))
 	DirAccess.remove_absolute(result_dir)
 	DirAccess.remove_absolute(storage_path)
@@ -6906,6 +6959,19 @@ func _check_ladder_pages(failures: PackedStringArray) -> void:
 		"BOT_A": {"bot_god_name": "Thor", "cards": {"Thor": 1, "Berserker": 3}},
 	}, {"human": {"account_id": "account_0"}})
 	history.record_completed_match(session, 0, 1, "Thor", "Odin")
+	lobby._create_session("Player 001", 2, false, "", "account_1")
+	var god_records_request := LobbyProtocol.make_message(LobbyProtocol.REQUEST_RANKED_GOD_RECORDS, {
+		"username": "Player 000", "best_of": 1, "request_id": 99,
+	})
+	lobby._handle_request(2, god_records_request)
+	if lobby.events.size() != 1 or lobby.events[0] != {
+		"peer": 2, "type": LobbyProtocol.RANKED_GOD_RECORDS,
+		"payload": {"request_id": 99, "available": true, "god_records": [
+			{"god_name": "Odin", "wins": 0, "losses": 1, "draws": 0, "games": 1},
+		]},
+	}:
+		failures.append("The lobby did not return another player's public ranked record by god")
+	lobby.events.clear()
 	var network := NetworkManagerScript.new()
 	var names := {}
 	var bot_count := 0

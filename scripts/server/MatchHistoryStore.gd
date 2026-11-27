@@ -4,8 +4,10 @@ class_name MatchHistoryStore
 const ServerPathsScript = preload("res://scripts/server/ServerPaths.gd")
 const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
 const RankedProgressionScript = preload("res://scripts/server/RankedProgression.gd")
+const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
 const DEFAULT_STORAGE_FILE_NAME := "match_history.json"
 const SERVE_QUARANTINED_STORAGE_FILE := "serve_quarantined_next.json"
+const RECORD_FIELD_BY_RESULT := {"win": "wins", "loss": "losses", "draw": "draws"}
 
 var _storage_file_name: String = DEFAULT_STORAGE_FILE_NAME
 var _uses_dedicated_results: bool
@@ -443,7 +445,7 @@ func get_human_ladder(usernames: Dictionary, best_of: int) -> Array[Dictionary]:
 			players.append(entry)
 			continue
 		var progress := _get_ranked_progress(account_id, best_of, season)
-		var record := _get_lifetime_ranked_stats(account_str, best_of)
+		var record := _get_ranked_stats(account_str, best_of)
 		var player_entry := {"account_id": account_id, "name": usernames[account_id], "points": progress["points"],
 			"rank": progress["rank_name"], "stars": progress["stars"],
 			"wins": int(record["wins"]), "losses": int(record["losses"]), "draws": int(record["draws"]),
@@ -455,12 +457,25 @@ func get_human_ladder(usernames: Dictionary, best_of: int) -> Array[Dictionary]:
 		players.append(player_entry)
 	return players
 
-func _get_lifetime_ranked_stats(account_id: String, best_of: int = 1) -> Dictionary:
+func get_ranked_god_records(account_id: String, best_of: int) -> Array[Dictionary]:
+	_ensure_loaded()
+	_load_dedicated_results()
+	var season := RankedProgressionScript.season_for_time(Time.get_unix_time_from_system())
+	return _get_ranked_stats(account_id, best_of, season)["god_records"]
+
+func _get_ranked_stats(account_id: String, best_of: int, season: int = -1) -> Dictionary:
 	var record := {"wins": 0, "losses": 0, "draws": 0, "main_gods": []}
-	var god_counts: Dictionary = {}
+	var god_records: Dictionary = {}
 	var total_games := 0
-	for match_id in _get_sorted_ranked_ids_for_account(account_id):
-		var entry: Dictionary = _matches_by_id.get(match_id, {})
+	var match_ids := _get_sorted_ranked_ids_for_account(account_id)
+	for index in range(match_ids.size() - 1, -1, -1):
+		var entry: Dictionary = _matches_by_id.get(match_ids[index], {})
+		if season >= 0:
+			var match_season := RankedProgressionScript.season_for_time(float(entry.get("played_unix", 0)))
+			if match_season < season:
+				break
+			if match_season != season:
+				continue
 		if not bool(entry.get("advances_rank", false)):
 			continue
 		# Keep older results without a format on the original Bo1 ladder.
@@ -474,26 +489,32 @@ func _get_lifetime_ranked_stats(account_id: String, best_of: int = 1) -> Diction
 				continue
 			var result := str(player_entry.get("result", "")).strip_edges().to_lower()
 			total_games += 1
-			if result == "win":
-				record["wins"] += 1
-			elif result == "loss":
-				record["losses"] += 1
-			elif result == "draw":
-				record["draws"] += 1
 			var god_name := str(player_entry.get("god_name", "")).strip_edges()
-			if not god_name.is_empty():
-				god_counts[god_name] = int(god_counts.get(god_name, 0)) + 1
+			var god_record: Dictionary = god_records.get(god_name, {
+				"god_name": god_name, "wins": 0, "losses": 0, "draws": 0, "games": 0,
+			})
+			god_record["games"] += 1
+			if RECORD_FIELD_BY_RESULT.has(result):
+				var field: String = RECORD_FIELD_BY_RESULT[result]
+				record[field] += 1
+				god_record[field] += 1
+			god_records[god_name] = god_record
 			break
+	var sorted_records: Array[Dictionary] = []
+	sorted_records.assign(god_records.values())
+	sorted_records.sort_custom(_sort_god_records)
+	record["god_records"] = sorted_records
 	var gods: Array[String] = []
-	for god_name in god_counts.keys():
-		gods.append(str(god_name))
+	for god_name: String in god_records:
+		if not god_name.is_empty():
+			gods.append(god_name)
 	gods.sort_custom(func(a: String, b: String) -> bool:
-		var a_count := int(god_counts[a])
-		var b_count := int(god_counts[b])
+		var a_count := int(god_records[a]["games"])
+		var b_count := int(god_records[b]["games"])
 		return a < b if a_count == b_count else a_count > b_count
 	)
 	if not gods.is_empty():
-		if float(god_counts[gods[0]]) / float(total_games) > 0.5:
+		if float(god_records[gods[0]]["games"]) / float(total_games) > 0.5:
 			record["main_gods"] = [gods[0]]
 		else:
 			record["main_gods"] = gods.slice(0, mini(2, gods.size()))
@@ -726,6 +747,17 @@ func _build_player_entry(
 		god_name = winner_god_name.strip_edges()
 	elif player_index == loser_index:
 		god_name = loser_god_name.strip_edges()
+	if god_name.is_empty():
+		# Draws have no winner or loser seat. The registered deck identifies each god.
+		var registered_deck: Dictionary = match_session.registered_player_decks_by_session.get(session_id, submission)
+		var cards: Dictionary = registered_deck.get("cards", {})
+		if not cards.is_empty():
+			var catalog := DeckValidatorScript.get_shared_cards_by_name()
+			for card_name in cards:
+				var card: Card = catalog.get(card_name)
+				if card != null and card.is_god:
+					god_name = card.card_name
+					break
 
 	return {
 		"session_id": session_id,

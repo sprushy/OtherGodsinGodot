@@ -702,7 +702,13 @@ func _label_for_move(move: Dictionary, viewer: Player = null) -> String:
 			var humbaba := game_manager.get_card_by_uid(move.get("source_uid", ""))
 			var chosen := game_manager.get_card_by_uid(move.get("target_uid", ""))
 			if humbaba != null and chosen != null:
-				return "%s primes %s with Augury Reading." % [_card_label_for_viewer(humbaba, viewer), _card_label_for_viewer(chosen, viewer)]
+				var choice_label := "a card"
+				var deck := chosen.current_zone
+				if deck != null and deck.zone_type == Zone.ZoneType.DECK \
+						and (deck.is_deck_card_publicly_known(chosen) \
+							or (viewer != null and (viewer == deck.zone_owner or viewer.reveals_all_hidden_cards))):
+					choice_label = chosen.get_display_name()
+				return "%s primes %s with Augury Reading." % [_card_label_for_viewer(humbaba, viewer), choice_label]
 			return ("%s resolves Augury Reading." % _card_label_for_viewer(humbaba, viewer)) if humbaba != null else "Humbaba resolves Augury Reading."
 		"first_sage_adapa_choice":
 			var adapa := game_manager.get_card_by_uid(move.get("source_uid", ""))

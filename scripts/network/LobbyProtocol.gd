@@ -39,6 +39,7 @@ const SET_RANK_BADGE := "set_rank_badge"
 const REQUEST_BOT_LADDER := "request_bot_ladder"
 const REQUEST_BOT_DECK := "request_bot_deck"
 const REQUEST_BOT_RECORD := "request_bot_record"
+const REQUEST_RANKED_GOD_RECORDS := "request_ranked_god_records"
 const REQUEST_BOT_MATCH_HISTORY := "request_bot_match_history"
 const REQUEST_BOT_WORK := "request_bot_work"
 const REPORT_BOT_WORK_STARTED := "report_bot_work_started"
@@ -97,6 +98,7 @@ const RANK_BADGE_RESULT := "rank_badge_result"
 const BOT_LADDER := "bot_ladder"
 const BOT_DECK := "bot_deck"
 const BOT_RECORD := "bot_record"
+const RANKED_GOD_RECORDS := "ranked_god_records"
 const BOT_MATCH_HISTORY := "bot_match_history"
 const BOT_WORK_ASSIGNMENT := "bot_work_assignment"
 const BOT_WORK_RESULT := "bot_work_result"
@@ -292,6 +294,11 @@ static func validate_request(message: Dictionary) -> String:
 				var cursor = payload.get("before_match_id", "")
 				if not cursor is String or cursor.length() > 64 or not payload.get("request_id") is int:
 					return "Invalid bot record request."
+		REQUEST_RANKED_GOD_RECORDS:
+			var username = payload.get("username", "")
+			if not username is String or username.strip_edges().is_empty() or username.length() > 64 \
+					or payload.get("best_of") not in [1, 3] or not payload.get("request_id") is int:
+				return "Invalid ranked god records request."
 		REQUEST_BOT_MATCH_HISTORY:
 			var cursor = payload.get("before_match_id", "")
 			if not cursor is String or cursor.length() > 64:

@@ -6,6 +6,7 @@ signal page_requested(page: int)
 signal search_requested(query: String)
 signal deck_requested(list_id: String)
 signal record_requested(list_id: String, before_match_id: String, request_id: int)
+signal god_records_requested(username: String, request_id: int)
 signal delete_requested(list_id: String)
 signal quarantine_requested(list_id: String, quarantined: bool)
 signal add_deck_requested(deck: Dictionary)
@@ -65,6 +66,7 @@ var _record_timeout: Timer
 var _record_request_id := 0
 var _record_cursor := ""
 var _record_supported := false
+var _god_records_supported := false
 var _selected_list_id := ""
 var _selected_entry: Dictionary = {}
 var _own_username := ""
@@ -230,7 +232,9 @@ func _ready() -> void:
 	_record_timeout.timeout.connect(func() -> void:
 		_record_request_id = 0
 		_record_button.disabled = false
+		_record_button.show()
 		_record_status.text = "The lobby did not respond. Try again."
+		_set_entry_focus_order()
 	)
 	add_child(_record_timeout)
 	_deck_timeout = Timer.new()
@@ -310,6 +314,7 @@ func _on_search_text_changed(_text: String) -> void:
 
 func show_summary(summary: Dictionary) -> void:
 	_record_supported = bool(summary.get("supports_bot_records", false))
+	_god_records_supported = bool(summary.get("supports_ranked_god_records", false))
 	_current_page = int(summary.get("page", 0))
 	_last_page = int(summary.get("last_page", 0))
 	_ladder_entries = summary.get("ladder", []).duplicate()
@@ -458,10 +463,11 @@ func _open_selected_entry() -> void:
 	_selected_list_id = str(_selected_entry.get("list_id", ""))
 	_render_selected_entry()
 	_deck_contents.show()
-	_record_footer.visible = _record_supported and not _selected_list_id.is_empty()
-	_record_button.text = "See full record"
+	var load_god_records := _god_records_supported and not bool(_selected_entry.get("is_bot", false))
+	_record_footer.visible = load_god_records or (_record_supported and not _selected_list_id.is_empty())
+	_record_button.text = "Retry" if load_god_records else "See full record"
 	_record_button.disabled = false
-	_record_button.show()
+	_record_button.visible = not load_god_records
 	_record_status.text = ""
 	_back_button.show()
 	_view_deck_button.visible = not _selected_list_id.is_empty()
@@ -477,6 +483,8 @@ func _open_selected_entry() -> void:
 	_pagination.hide()
 	_set_entry_focus_order()
 	_back_button.grab_focus()
+	if load_god_records:
+		_request_record_page()
 
 func _set_entry_focus_order() -> void:
 	var focus_order: Array[Control] = [_back_button]
@@ -529,6 +537,14 @@ func _render_selected_entry(record: Dictionary = {}) -> void:
 			god_names.append(str(god))
 		_deck_contents.add_text("Most played God: %s\n" % " / ".join(god_names))
 	_deck_contents.pop()
+	if _selected_entry.has("ranked_god_records"):
+		var god_records: Array = _selected_entry["ranked_god_records"]
+		var heading := "Ranked record by God this season · Bo%d" % get_best_of()
+		if god_records.is_empty():
+			_add_record_heading(heading)
+			_deck_contents.add_text("No ranked matches in this format this season.\n")
+		else:
+			_render_record_breakdown(heading, god_records, "god_name", "Unknown God")
 	if _is_own_profile_selected() and not _own_profile_summary.is_empty():
 		_render_own_profile_record()
 	_add_record_heading("Recent ranked matches" if record.is_empty() else "Full ranked record · Bo%d" % get_best_of())
@@ -552,9 +568,31 @@ func _append_record_matches(matches: Array) -> void:
 func _request_record_page() -> void:
 	_record_request_id = Time.get_ticks_usec()
 	_record_button.disabled = true
-	_record_status.text = "Loading ranked matches…"
 	_record_timeout.start()
-	record_requested.emit(_selected_list_id, _record_cursor, _record_request_id)
+	if bool(_selected_entry.get("is_bot", false)):
+		_record_status.text = "Loading ranked matches…"
+		record_requested.emit(_selected_list_id, _record_cursor, _record_request_id)
+	else:
+		_record_status.text = "Loading ranked record by God…"
+		god_records_requested.emit(str(_selected_entry.get("name", "")), _record_request_id)
+
+func show_god_records(record: Dictionary) -> void:
+	if _record_request_id == 0 or record.get("request_id") != _record_request_id:
+		return
+	_record_request_id = 0
+	_record_timeout.stop()
+	if not bool(record.get("available", false)):
+		_record_button.hide()
+		_record_status.text = "This player is no longer available. Go back and refresh the ladder."
+		_set_entry_focus_order()
+		return
+	_selected_entry["ranked_god_records"] = record.get("god_records", [])
+	var record_button_had_focus := _record_button.has_focus()
+	_record_footer.hide()
+	_render_selected_entry()
+	_set_entry_focus_order()
+	if record_button_had_focus:
+		_deck_contents.grab_focus()
 
 func show_record_page(record: Dictionary) -> void:
 	if _record_request_id == 0 or record.get("request_id") != _record_request_id:
@@ -610,8 +648,9 @@ func _render_own_profile_record() -> void:
 			var delta := int(progress["last_delta"])
 			var delta_text := "+%d" % delta if delta > 0 else str(delta)
 			_deck_contents.add_text("Last ranked match %s★\n" % delta_text)
-	_render_record_breakdown("By God", "god_records", "god_name", "Unknown God", 4)
-	_render_record_breakdown("By Deck", "deck_records", "deck_name", "Unknown Deck", 3)
+	if not _god_records_supported:
+		_render_record_breakdown("By God", _own_profile_summary.get("god_records", []), "god_name", "Unknown God", 4)
+	_render_record_breakdown("By Deck", _own_profile_summary.get("deck_records", []), "deck_name", "Unknown Deck", 3)
 	var recent_matches = _own_profile_summary.get("recent_matches", [])
 	if recent_matches is Array and not recent_matches.is_empty():
 		_add_record_heading("Recent matches")
@@ -628,8 +667,7 @@ func _render_own_profile_record() -> void:
 			if displayed >= 3:
 				break
 
-func _render_record_breakdown(heading: String, records_key: String, name_key: String, fallback_name: String, limit: int) -> void:
-	var records = _own_profile_summary.get(records_key, [])
+func _render_record_breakdown(heading: String, records, name_key: String, fallback_name: String, limit: int = 0) -> void:
 	if not records is Array or records.is_empty():
 		return
 	_add_record_heading(heading)
@@ -643,7 +681,7 @@ func _render_record_breakdown(heading: String, records_key: String, name_key: St
 			int(record.get("wins", 0)), int(record.get("losses", 0)), int(record.get("draws", 0)),
 		])
 		displayed += 1
-		if displayed >= limit:
+		if limit > 0 and displayed >= limit:
 			break
 
 func _add_record_heading(heading: String) -> void:

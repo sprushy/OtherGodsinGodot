@@ -502,7 +502,8 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 			_handle_request_profile_summary(peer_id)
 		LobbyProtocolScript.SET_RANK_BADGE:
 			_handle_set_rank_badge(peer_id, payload)
-		LobbyProtocolScript.REQUEST_BOT_LADDER, LobbyProtocolScript.REQUEST_BOT_DECK, LobbyProtocolScript.REQUEST_BOT_RECORD:
+		LobbyProtocolScript.REQUEST_BOT_LADDER, LobbyProtocolScript.REQUEST_BOT_DECK, \
+				LobbyProtocolScript.REQUEST_BOT_RECORD, LobbyProtocolScript.REQUEST_RANKED_GOD_RECORDS:
 			_handle_request_bot_ladder(peer_id, message_type, payload)
 		LobbyProtocolScript.REQUEST_BOT_MATCH_HISTORY:
 			if not _get_session_for_peer(peer_id).is_empty():
@@ -1211,7 +1212,10 @@ func _handle_request_profile_summary(peer_id: int) -> void:
 			var progress: Dictionary = summary.get(key, {})
 			if not progress.is_empty():
 				var league := RankBadgeCatalog.league_for_rank(progress["rank_name"])
-				progress["portrait"] = account_store.get_rank_badge(account_id, league)
+				var portrait: Dictionary = account_store.get_rank_badge(account_id, league)
+				if portrait.is_empty() and league == RankedProgressionScript.DIVINE:
+					portrait = {"card": _get_most_played_ranked_god(account_id)}
+				progress["portrait"] = portrait
 	_send_to_peer(peer_id, LobbyProtocolScript.PROFILE_SUMMARY, summary)
 
 func _handle_set_rank_badge(peer_id: int, payload: Dictionary) -> void:
@@ -2359,6 +2363,14 @@ func _handle_request_bot_ladder(peer_id: int, message_type: String, payload: Dic
 		_send_error_to_peer(peer_id, "Only admins can view quarantined bots.")
 		return
 	_ensure_match_history_store()
+	if message_type == LobbyProtocolScript.REQUEST_RANKED_GOD_RECORDS:
+		var account: Dictionary = account_store.get_account_by_username(payload["username"])
+		var account_id := str(account.get("account_id", ""))
+		var god_records: Array = match_history_store.get_ranked_god_records(account_id, payload["best_of"]) if not account_id.is_empty() else []
+		_send_to_peer(peer_id, LobbyProtocolScript.RANKED_GOD_RECORDS, {
+			"request_id": payload["request_id"], "available": not account_id.is_empty(), "god_records": god_records,
+		})
+		return
 	if message_type == LobbyProtocolScript.REQUEST_BOT_RECORD:
 		_refresh_ranked_bot_deck_pool()
 		var list_id: String = payload["list_id"]
@@ -2503,13 +2515,14 @@ func _build_ladder_page(request: Dictionary, current_username: String = "") -> D
 	if search_query.is_empty() and player_type == LobbyProtocolScript.LADDER_FILTER_EVERYONE and ladder.size() > 100:
 		ladder.resize(100)
 	if not is_paged:
-		return {"ladder": _public_ladder_rows(ladder, best_of), "supports_bot_records": true}
+		return {"ladder": _public_ladder_rows(ladder, best_of), "supports_bot_records": true, "supports_ranked_god_records": true}
 	var last_page := maxi(0, ceili(float(ladder.size()) / LobbyProtocolScript.LADDER_PAGE_SIZE) - 1)
 	var page := mini(int(request.get("page", 0)), last_page)
 	var start := page * LobbyProtocolScript.LADDER_PAGE_SIZE
 	return {
 		"ladder": _public_ladder_rows(ladder.slice(start, start + LobbyProtocolScript.LADDER_PAGE_SIZE), best_of),
 		"supports_bot_records": true,
+		"supports_ranked_god_records": true,
 		"request_id": request.get("request_id", 0),
 		"page": page,
 		"last_page": last_page,
@@ -4701,7 +4714,39 @@ func _get_public_rank_portrait(account_id: String, rank_name: String) -> Diction
 	if account_store == null:
 		return {}
 	var league := RankBadgeCatalog.league_for_rank(rank_name)
-	return RankBadgeCatalog.validate_portrait(league, account_store.get_rank_badge(account_id, league))
+	var saved := RankBadgeCatalog.validate_portrait(league, account_store.get_rank_badge(account_id, league))
+	if not saved.is_empty():
+		return saved
+	if league == RankedProgressionScript.DIVINE:
+		var default_god := _get_most_played_ranked_god(account_id)
+		var default_portrait := RankBadgeCatalog.validate_portrait(league, {"card": default_god})
+		if not default_portrait.is_empty():
+			return default_portrait
+	return {}
+
+func _get_most_played_ranked_god(account_id: String) -> String:
+	if account_id.is_empty() or match_history_store == null:
+		return "Freyja"
+	var totals := {}
+	for best_of in [1, 3]:
+		var records: Array = match_history_store.get_ranked_god_records(account_id, best_of)
+		for record in records:
+			if not (record is Dictionary):
+				continue
+			var god_name := str((record as Dictionary).get("god_name", "")).strip_edges()
+			if god_name.is_empty():
+				continue
+			totals[god_name] = int(totals.get(god_name, 0)) + int((record as Dictionary).get("games", 0))
+	if totals.is_empty():
+		return "Freyja"
+	var best_god := ""
+	var best_games := -1
+	for god_name in totals.keys():
+		var games := int(totals[god_name])
+		if games > best_games or (games == best_games and (best_god.is_empty() or str(god_name) < best_god)):
+			best_games = games
+			best_god = str(god_name)
+	return best_god if not best_god.is_empty() else "Freyja"
 
 ## Finalize a (non-player-host) match: emit room updates, then either poll the
 ## dedicated subprocess for readiness or send both assignments immediately.
