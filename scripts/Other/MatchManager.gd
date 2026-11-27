@@ -105,6 +105,7 @@ var pending_retreat_guardian_blocked_uids: Array[String] = []
 var pending_humbaba_action: CardAction = null
 var pending_humbaba_target = null
 var pending_humbaba_prompt_uids: Array[String] = []
+var pending_compelled_attack_action: CardAction = null
 var pending_combat_reveal_linger_action: CardAction = null
 var _combat_reveal_before_retreat: bool = false
 var _combat_reveal_wait_generation: int = 0
@@ -193,6 +194,7 @@ func reset_runtime_state() -> void:
 	pending_humbaba_action = null
 	pending_humbaba_target = null
 	pending_humbaba_prompt_uids.clear()
+	pending_compelled_attack_action = null
 	pending_combat_reveal_linger_action = null
 	_combat_reveal_before_retreat = false
 	_combat_reveal_wait_generation = 0
@@ -1515,7 +1517,8 @@ func resolve_action(action: CardAction) -> void:
 			_resolve_attack(action)
 			action_completed = pending_retreat_action != action \
 				and pending_humbaba_action != action \
-				and pending_combat_reveal_linger_action != action
+				and pending_combat_reveal_linger_action != action \
+				and pending_compelled_attack_action != action
 			if not action_completed:
 				if pending_retreat_action == action:
 					deferred_completion_command_type = "combat_retreat_decision"
@@ -1523,6 +1526,8 @@ func resolve_action(action: CardAction) -> void:
 					deferred_completion_command_type = "humbaba_augury_choice"
 				elif pending_combat_reveal_linger_action == action:
 					deferred_completion_command_type = "combat_reveal_linger"
+				elif pending_compelled_attack_action == action:
+					deferred_completion_command_type = "compelled_attack_choice"
 	var action_finalized_during_resolution := false
 	if game_manager != null and action != null:
 		action_finalized_during_resolution = not game_manager.action_stack.has(action) \
@@ -2260,6 +2265,20 @@ func _resolve_attack(action: CardAction) -> void:
 		last_resolution_text = _get_declared_attack_fizzle_reason(action.attacker, action.source_player)
 		return
 
+	if _pause_compelled_attack_for_target_choice(action):
+		return
+
+	_continue_attack_resolution(action, attacker_can_continue, partner_can_continue)
+
+## Tail of attack resolution that needs a known target: engagement state, the
+## attacker's attack marker, and the combat/followers resolution itself.
+func _continue_attack_resolution(
+	action: CardAction,
+	attacker_can_continue: bool,
+	partner_can_continue: bool
+) -> void:
+	var actual_target = action.interceptor if action.interceptor != null else action.target
+
 	if actual_target is Card and actual_target.current_zone != null and actual_target.current_zone.is_board_zone():
 		if attacker_can_continue:
 			game_manager._begin_declared_combat(action.attacker, actual_target)
@@ -2288,6 +2307,106 @@ func _resolve_attack(action: CardAction) -> void:
 			return
 		_clear_pending_humbaba_state()
 		_finish_followers_attack(action, actual_target)
+
+## Compelled attacks (e.g. Eris' Battle Cry) are pushed with no target; the
+## attacker's controller chooses one from the legal candidates when the attack
+## resolves. Pauses here and completes through the "compelled_attack_choice"
+## command once a valid target arrives.
+func _pause_compelled_attack_for_target_choice(action: CardAction) -> bool:
+	if action == null or action.target != null or action.interceptor != null:
+		return false
+	if not bool(action.event_data.get("compelled_attack", false)):
+		return false
+	var attacker := action.attacker
+	var source: Card = action.card
+	var candidates: Array = []
+	if source != null and is_instance_valid(source) and source.has_method("get_compelled_attack_target_candidates"):
+		candidates = source.get_compelled_attack_target_candidates(game_manager, attacker)
+	if candidates.is_empty():
+		var attacker_label := attacker.get_public_combat_log_display_name() if attacker != null and is_instance_valid(attacker) else "The creature"
+		last_resolution_text = "%s's compelled attack fizzles — no legal target." % attacker_label
+		game_manager.note_player_feedback(last_resolution_text)
+		return true
+	pending_compelled_attack_action = action
+	var target_uids: Array[String] = []
+	var player_target := false
+	for candidate in candidates:
+		if candidate is Card:
+			target_uids.append((candidate as Card).uid)
+		elif candidate is Player:
+			player_target = true
+	action.event_data["compelled_target_uids"] = target_uids
+	action.event_data["compelled_player_target"] = player_target
+	_mark_deferred_authoritative_action(action, "compelled_attack_choice")
+	var attacker_controller := _get_card_controller(attacker)
+	if attacker_controller == null:
+		# Nowhere to send the prompt; the attack fizzles without spending the action.
+		pending_compelled_attack_action = null
+		last_resolution_text = "%s's compelled attack fizzles — its controller cannot choose a target." % (attacker.get_public_combat_log_display_name() if attacker != null and is_instance_valid(attacker) else "The creature")
+		game_manager.note_player_feedback(last_resolution_text)
+		return true
+	_emit_ui_interaction_for_player(attacker_controller, "compelled_attack_target", {
+		"source_uid": str(source.uid) if source != null and is_instance_valid(source) else "",
+		"attacker_uid": str(attacker.uid) if attacker != null and is_instance_valid(attacker) else "",
+		"target_uids": target_uids,
+		"player_target": player_target,
+	})
+	return true
+
+func _find_pending_compelled_attack_action(attacker: Card) -> CardAction:
+	if game_manager == null:
+		return null
+	if pending_compelled_attack_action != null:
+		var pending_attacker := pending_compelled_attack_action.attacker
+		if attacker == null or pending_attacker == attacker:
+			return pending_compelled_attack_action
+		return null
+	var sources := [game_manager.resolving_stack_actions, game_manager.action_stack]
+	for source_actions in sources:
+		for i in range((source_actions as Array).size() - 1, -1, -1):
+			var action: CardAction = (source_actions as Array)[i]
+			if action == null or action.type != CardAction.Type.ATTACK:
+				continue
+			if not bool(action.event_data.get("compelled_attack", false)):
+				continue
+			if str(action.event_data.get("deferred_authoritative_completion_command", "")) != "compelled_attack_choice":
+				continue
+			if attacker != null and action.attacker != attacker:
+				continue
+			return action
+	return null
+
+func _finish_compelled_attack_choice(action: CardAction, chosen_target) -> void:
+	if action == null:
+		return
+	pending_compelled_attack_action = null
+	action.target = chosen_target
+	var attacker_can_continue := _can_continue_declared_attack(action.attacker)
+	var partner_can_continue := _can_continue_declared_attack(action.united_front_partner)
+	if not attacker_can_continue and not partner_can_continue:
+		if action.attacker != null and is_instance_valid(action.attacker):
+			action.attacker.spend_major_creature_action()
+			action.attacker.mark_attacked_this_turn()
+		if action.united_front_partner != null and is_instance_valid(action.united_front_partner):
+			action.united_front_partner.spend_major_creature_action()
+			action.united_front_partner.mark_attacked_this_turn()
+		if action.target is Card:
+			game_manager._clear_combat_engagement_state(action.target)
+		last_resolution_text = _get_declared_attack_fizzle_reason(action.attacker, action.source_player)
+		_complete_deferred_authoritative_action(action, "compelled_attack_choice")
+		return
+	# With the target known, defenders get the same interception window a
+	# declared attack gets before combat commits.
+	if _offer_newly_eligible_interceptors(action):
+		return
+	_continue_attack_resolution(action, attacker_can_continue, partner_can_continue)
+	# If the continuation paused on another prompt (reveal linger, retreat or
+	# Humbaba augury), that flow owns completing this attack action.
+	if _pending_intercept_stack_action != action \
+			and pending_retreat_action != action \
+			and pending_humbaba_action != action \
+			and pending_combat_reveal_linger_action != action:
+		_complete_attack_or_wait_for_graveyard_choice(action, "compelled_attack_choice")
 
 func _offer_creature_combat_prompts(action: CardAction, target: Card, reveal_before_retreat: bool = true) -> bool:
 	var retreat_prompts := _get_retreat_candidates(action.attacker, target, action.source_player)
@@ -7165,6 +7284,40 @@ func _process_command_impl(command: Dictionary) -> bool:
 					dc.activate(game_manager, dc_plan)
 			)
 			_advance_authoritative_priority()
+			move_validated.emit(command)
+			return true
+		"compelled_attack_choice":
+			var ca_attacker_uid := str(command.get("attacker_uid", "")).strip_edges()
+			var ca_attacker := game_manager.get_card_by_uid(ca_attacker_uid) if ca_attacker_uid != "" else null
+			if ca_attacker == null:
+				move_failed.emit("compelled_attack_choice: attacker not found")
+				return false
+			var ca_action := _find_pending_compelled_attack_action(ca_attacker)
+			if ca_action == null:
+				move_failed.emit("compelled_attack_choice: no compelled attack is waiting for a target")
+				return false
+			var ca_offered_uids: Array = ca_action.event_data.get("compelled_target_uids", [])
+			var ca_player_target_allowed := bool(ca_action.event_data.get("compelled_player_target", false))
+			var ca_target_uid := str(command.get("target_uid", "")).strip_edges()
+			var ca_chosen = null
+			if not ca_target_uid.is_empty():
+				if ca_target_uid not in ca_offered_uids:
+					move_failed.emit("compelled_attack_choice: invalid target")
+					return false
+				ca_chosen = game_manager.get_card_by_uid(ca_target_uid)
+				if ca_chosen == null:
+					move_failed.emit("compelled_attack_choice: target not found")
+					return false
+			elif ca_player_target_allowed:
+				var ca_player_index := int(command.get("target_player_index", -1))
+				if ca_player_index < 0 or ca_player_index >= game_manager.players.size():
+					move_failed.emit("compelled_attack_choice: invalid follower target")
+					return false
+				ca_chosen = game_manager.players[ca_player_index]
+			else:
+				move_failed.emit("compelled_attack_choice: target required")
+				return false
+			_finish_compelled_attack_choice(ca_action, ca_chosen)
 			move_validated.emit(command)
 			return true
 		"intercept_decision":

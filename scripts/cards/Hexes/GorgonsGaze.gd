@@ -1,5 +1,5 @@
 extends HexCard
-class_name GorgonsStare
+class_name GorgonsGaze
 
 const ART_PATH := "res://images/card_art/hexes/GorgonsStare.png"
 const STONE_TYPE := "Stone"
@@ -7,14 +7,14 @@ const PETRIFIED_STATUS := "petrified"
 
 func _init() -> void:
 	super._init()
-	card_name = "Gorgon's Stare"
+	card_name = "Gorgon's Gaze"
 	level = 4
 	mana_cost = 1
 	speed = 4
 	is_legendary = true
 	culture = "Olympic"
 	card_types = ["Legendary Destruction", "Petrification"]
-	ability_text = "Reveal all opposing face-down creatures, then petrify all opposing creatures."
+	ability_text = "Reveal all opposing face-down creatures, then [b]Petrify[/b] all opposing creatures."
 	flavor_text = ""
 	artist = ""
 	art_path = ART_PATH
@@ -52,7 +52,7 @@ func on_activate_action(game_manager: GameManager, _action: CardAction) -> void:
 
 	var opposing_creatures := _get_opposing_board_creatures(game_manager)
 
-	# Reveal first so hidden creatures cannot escape the stare, and so
+	# Reveal first so hidden creatures cannot escape the gaze, and so
 	# reveal-trigger payoffs fire before the petrification pass.
 	var revealed_count := 0
 	for creature in opposing_creatures:

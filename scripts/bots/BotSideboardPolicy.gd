@@ -78,7 +78,7 @@ const CARD_HATE_TAGS := {
 	"Fairy Blast": [Tag.CREATURE],
 	"Sap Strength": [Tag.CREATURE],
 	"Shroud of the Ancients": [Tag.CREATURE],
-	"Gorgon's Stare": [Tag.CREATURE],
+	"Gorgon's Gaze": [Tag.CREATURE],
 	"Sleep of the Duat": [Tag.CREATURE, Tag.MECHANIC],
 	# Aerial / weather / tempo.
 	"Storm": [Tag.AERIAL_WEATHER],

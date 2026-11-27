@@ -897,6 +897,20 @@ func _label_for_move(move: Dictionary, viewer: Player = null) -> String:
 			if spell != null and attacker != null and defender != null:
 				return "%s compels %s to attack %s." % [_card_label_for_viewer(spell, viewer), _card_label_for_viewer(attacker, viewer), _card_label_for_viewer(defender, viewer)]
 			return ("%s fizzles." % _card_label_for_viewer(spell, viewer)) if spell != null else "Foolish Optimism fizzles."
+		"compelled_attack_choice":
+			var battle_cry := game_manager.get_card_by_uid(move.get("source_uid", ""))
+			var compelled_attacker := game_manager.get_card_by_uid(move.get("attacker_uid", ""))
+			var compelled_target: Card = game_manager.get_card_by_uid(str(move.get("target_uid", ""))) if not str(move.get("target_uid", "")).is_empty() else null
+			var compelled_defender: Player = null
+			if compelled_target == null:
+				var compelled_player_index := int(move.get("target_player_index", -1))
+				if compelled_player_index >= 0 and compelled_player_index < game_manager.players.size():
+					compelled_defender = game_manager.players[compelled_player_index]
+			if battle_cry != null and compelled_attacker != null and compelled_target != null:
+				return "%s compels %s to attack %s." % [_card_label_for_viewer(battle_cry, viewer), _card_label_for_viewer(compelled_attacker, viewer), _card_label_for_viewer(compelled_target, viewer)]
+			if battle_cry != null and compelled_attacker != null and compelled_defender != null:
+				return "%s compels %s to attack %s's followers." % [_card_label_for_viewer(battle_cry, viewer), _card_label_for_viewer(compelled_attacker, viewer), compelled_defender.player_name]
+			return ("%s resolves a compelled attack." % _card_label_for_viewer(battle_cry, viewer)) if battle_cry != null else "Eris' Battle Cry resolves a compelled attack."
 		"blessed_knights_choice":
 			var knights := game_manager.get_card_by_uid(move.get("source_uid", ""))
 			var ward_kind := str(move.get("ward_kind", "")).replace("_", " ")

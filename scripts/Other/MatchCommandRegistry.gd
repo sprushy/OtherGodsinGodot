@@ -41,6 +41,7 @@ const KNOWN_COMMAND_TYPES := [
 	"set_priority_preferences",
 	"intercept_decision",
 	"combat_retreat_decision",
+	"compelled_attack_choice",
 	"resurrection_choice",
 	"skoll_upkeep_summon",
 	"hati_moon_hunt",
@@ -173,6 +174,8 @@ static func get_required_player(command: Dictionary, game_manager: GameManager, 
 			if not askelladen_uid.is_empty():
 				return _card_controller(game_manager.get_card_by_uid(askelladen_uid))
 			return _get_pending_retreat_prompt_player(match_context, game_manager)
+		"compelled_attack_choice":
+			return _card_controller(game_manager.get_card_by_uid(str(command.get("attacker_uid", ""))))
 		"resurrection_choice", "fifa_graveyard_buyback":
 			var graveyard_card := _card_from_uid(command, game_manager, "card_uid")
 			return graveyard_card.card_owner if graveyard_card != null else null
@@ -213,6 +216,8 @@ static func get_ui_interaction_type(command_type: String) -> String:
 			return "intercept"
 		"combat_retreat_decision":
 			return "combat_retreat"
+		"compelled_attack_choice":
+			return "compelled_attack_target"
 		"blessed_knights_choice":
 			return "blessed_knights_ward"
 		"wheel_of_fire_turn_start_choice":
@@ -312,7 +317,7 @@ static func requires_resolved_upkeep(command: Dictionary) -> bool:
 	if command_type == "activate_power" and str(command.get("mode", "")) == "return_priest":
 		return false
 	match command_type:
-		"upkeep_choice", "tiamat_upkeep_choice", "skoll_upkeep_summon", "priority_pass", "set_priority_preferences", "intercept_decision", "combat_retreat_decision", "play_hex_response", "play_charm_response", "play_priority_ability", "forfeit", "forfeit_match", "offer_draw", "respond_draw_offer", "humbaba_augury_choice", "return_to_hand_choice", "doorway_choice":
+		"upkeep_choice", "tiamat_upkeep_choice", "skoll_upkeep_summon", "priority_pass", "set_priority_preferences", "intercept_decision", "combat_retreat_decision", "compelled_attack_choice", "play_hex_response", "play_charm_response", "play_priority_ability", "forfeit", "forfeit_match", "offer_draw", "respond_draw_offer", "humbaba_augury_choice", "return_to_hand_choice", "doorway_choice":
 			return false
 	return true
 

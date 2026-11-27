@@ -609,6 +609,7 @@ var _hati_prompt_panel: Control = null
 var _skoll_prompt_panel: Control = null
 var _gala_tura_prompt_panel: Control = null
 var _kur_jara_prompt_panel: Control = null
+var _compelled_attack_prompt_panel: Control = null
 var _habrok_breakout_prompt_panel: Control = null
 var _champions_call_prompt_panel: Control = null
 var _sharur_escape_prompt_panel: Control = null
@@ -1179,6 +1180,7 @@ func _has_active_modal_prompt() -> bool:
 		or (_hati_prompt_panel != null and is_instance_valid(_hati_prompt_panel)) \
 		or (_skoll_prompt_panel != null and is_instance_valid(_skoll_prompt_panel)) \
 		or (_kur_jara_prompt_panel != null and is_instance_valid(_kur_jara_prompt_panel)) \
+		or (_compelled_attack_prompt_panel != null and is_instance_valid(_compelled_attack_prompt_panel)) \
 		or (_doorway_prompt_panel != null and is_instance_valid(_doorway_prompt_panel)) \
 		or _deucalion_prompt_pending \
 		or (_deucalion_panel != null and is_instance_valid(_deucalion_panel)) \
@@ -21581,6 +21583,131 @@ func _resolve_foolish_optimism_prompt(
 		"Choose which tied lowest-level face-up opposing creature attacks for " + card.card_name
 	)
 
+## The opponent's compelled creature (Eris' Battle Cry) must attack; its
+## controller picks the target here. Creature targets open the standard card
+## selection overlay; the defending player's followers get a dedicated button.
+func _resolve_compelled_attack_target_prompt(data: Dictionary) -> void:
+	if game_manager == null:
+		return
+	var attacker := game_manager.get_card_by_uid(str(data.get("attacker_uid", "")))
+	if attacker == null:
+		return
+	var attacker_controller := attacker.get_controller()
+	var defender_player: Player = null
+	if bool(data.get("player_target", false)) and attacker_controller != null:
+		defender_player = game_manager.get_opponent(attacker_controller)
+	var creature_targets: Array[Card] = []
+	for target_uid in data.get("target_uids", []):
+		var target_card := game_manager.get_card_by_uid(str(target_uid))
+		if target_card != null and target_card not in creature_targets:
+			creature_targets.append(target_card)
+	if creature_targets.is_empty() and defender_player == null:
+		# Nothing left to offer; the server still owns the waiting attack, so
+		# keep the prompt state untouched rather than submitting a bogus choice.
+		update_ui()
+		return
+
+	if not _is_networked_client and _executing_stack_action and not _stack_resolution_paused:
+		_pause_stack_resolution(attacker_controller)
+
+	var hex_uid := str(data.get("source_uid", ""))
+	var submit_target := func(chosen_target) -> void:
+		var command := {
+			"type": "compelled_attack_choice",
+			"source_uid": hex_uid,
+			"attacker_uid": str(attacker.uid),
+		}
+		if chosen_target is Card:
+			command["target_uid"] = str((chosen_target as Card).uid)
+		elif chosen_target is Player:
+			command["target_player_index"] = game_manager.players.find(chosen_target)
+		if not _submit_prompt_choice_command(command):
+			_set_action_label_text("Could not submit the match decision. Please try again.")
+		update_ui()
+
+	_show_compelled_attack_target_panel(attacker, defender_player, creature_targets, submit_target)
+
+func _show_compelled_attack_target_panel(
+	attacker: Card,
+	defender_player: Player,
+	creature_targets: Array[Card],
+	submit_target: Callable
+) -> void:
+	if _compelled_attack_prompt_panel != null and is_instance_valid(_compelled_attack_prompt_panel):
+		_compelled_attack_prompt_panel.queue_free()
+	_compelled_attack_prompt_panel = null
+
+	var overlay := ColorRect.new()
+	overlay.color = Color(0.0, 0.0, 0.0, 0.6)
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.z_index = 300
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(overlay)
+	_promote_transient_ui(overlay)
+	_compelled_attack_prompt_panel = overlay
+
+	var panel := PanelContainer.new()
+	panel.set_anchors_preset(Control.PRESET_CENTER)
+	panel.custom_minimum_size = Vector2(420, 0)
+	overlay.add_child(panel)
+
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.09, 0.08, 0.11, 0.98)
+	style.border_color = Color(0.78, 0.72, 0.42, 0.95)
+	for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+		style.set_border_width(side as Side, 2)
+	panel.add_theme_stylebox_override("panel", style)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 8)
+	panel.add_child(vbox)
+
+	var viewer := game_manager.get_feedback_viewer()
+	var attacker_name := attacker.get_target_log_display_name(viewer)
+	var title := Label.new()
+	title.text = "%s must attack — choose its target" % attacker_name
+	title.add_theme_font_size_override("font_size", 15)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vbox.add_child(title)
+
+	var reopen_panel := func() -> void:
+		_show_compelled_attack_target_panel(attacker, defender_player, creature_targets, submit_target)
+
+	if defender_player != null:
+		var followers_btn := Button.new()
+		followers_btn.text = "Attack %s's followers" % defender_player.player_name
+		followers_btn.pressed.connect(func() -> void:
+			_hide_compelled_attack_prompt()
+			submit_target.bind(defender_player).call()
+		)
+		vbox.add_child(followers_btn)
+
+	if not creature_targets.is_empty():
+		var creature_btn := Button.new()
+		creature_btn.text = "Choose a creature or structure to attack"
+		creature_btn.pressed.connect(func() -> void:
+			var overlay_choice := func(chosen_target: Card) -> void:
+				_hide_compelled_attack_prompt()
+				submit_target.bind(chosen_target).call()
+			var overlay_cancel := func() -> void:
+				reopen_panel.call()
+			_show_card_selection_overlay(
+				"Choose a target for %s" % attacker_name,
+				creature_targets,
+				overlay_choice,
+				overlay_cancel,
+				""
+			)
+		)
+		vbox.add_child(creature_btn)
+
+	update_ui()
+
+func _hide_compelled_attack_prompt() -> void:
+	if _compelled_attack_prompt_panel != null and is_instance_valid(_compelled_attack_prompt_panel):
+		_compelled_attack_prompt_panel.queue_free()
+	_compelled_attack_prompt_panel = null
+
 func _show_fenrir_devour_prompt(card: Fenrir, prompt_targets: Array = []) -> void:
 	if card == null or game_manager == null:
 		return
@@ -28404,6 +28531,7 @@ func _dismiss_transient_prompts(clear_required_prompts: bool = true) -> void:
 	_hide_hati_prompt()
 	_hide_gala_tura_prompt()
 	_hide_kur_jara_tree_of_life_prompt()
+	_hide_compelled_attack_prompt()
 	_hide_tezcatlipoca_shift_prompt()
 	_hide_skoll_prompt()
 	_hide_doorway_choice_prompt()
@@ -29028,7 +29156,7 @@ func _on_match_move_validated(move: Dictionary) -> void:
 				_set_action_label_text(response_card.card_name + " responds!")
 			if not _is_networked_client:
 				_schedule_priority_recovery_check()
-		"durinn_secondborn_choice", "first_sage_adapa_choice", "third_sage_enmedugga_choice", "fourth_sage_enmegalamma_choice", "sixth_sage_an_enlilda_choice", "seventh_sage_utuabzu_choice", "lailoken_reveal_choice", "masmassu_priest_reveal_choice", "rally_the_troops_choice", "terror_impact_choice", "fenrir_devour_choice", "gawain_healing_hands_choice", "tatzelwurm_dragon_heart_choice", "byggvir_reveal_choice", "harii_jarl_impact_choice", "gala_tura_destroyed_choice", "kur_jara_tree_of_life_choice", "hunting_tactics_choice", "foolish_optimism_choice", "blessed_knights_choice", "tezcatlipoca_active_titlacauan_choice", "freyja_active_open_sessrumnir_choice", "tiamat_active_summon_choice", "mummu_entropy_choice", "nusku_active_core_flame_choice", "nusku_well_of_fire_choice", "apollyons_demiurge_choice", "habrok_breakout_choice":
+		"durinn_secondborn_choice", "first_sage_adapa_choice", "third_sage_enmedugga_choice", "fourth_sage_enmegalamma_choice", "sixth_sage_an_enlilda_choice", "seventh_sage_utuabzu_choice", "lailoken_reveal_choice", "masmassu_priest_reveal_choice", "rally_the_troops_choice", "terror_impact_choice", "fenrir_devour_choice", "gawain_healing_hands_choice", "tatzelwurm_dragon_heart_choice", "byggvir_reveal_choice", "harii_jarl_impact_choice", "gala_tura_destroyed_choice", "kur_jara_tree_of_life_choice", "hunting_tactics_choice", "foolish_optimism_choice", "blessed_knights_choice", "compelled_attack_choice", "tezcatlipoca_active_titlacauan_choice", "freyja_active_open_sessrumnir_choice", "tiamat_active_summon_choice", "mummu_entropy_choice", "nusku_active_core_flame_choice", "nusku_well_of_fire_choice", "apollyons_demiurge_choice", "habrok_breakout_choice":
 			_clear_reveal_auto_submit_for_command(move)
 			_apply_prompt_choice_feedback()
 			return
@@ -29248,6 +29376,8 @@ func _on_match_ui_interaction(player_index: int, type: String, data: Dictionary)
 					if defender != null:
 						defender_choices.append(defender)
 				_resolve_foolish_optimism_prompt(card, attacker_choices, defender_choices)
+		"compelled_attack_target":
+			_resolve_compelled_attack_target_prompt(data)
 		"fenrir_devour_impact":
 			var card := game_manager.get_card_by_uid(data.get("source_uid", "")) as Fenrir
 			if card != null:
@@ -31447,6 +31577,8 @@ func _apply_ui_interaction(event_data: Dictionary) -> void:
 					if defender != null:
 						defender_choices.append(defender)
 				_resolve_foolish_optimism_prompt(card, attacker_choices, defender_choices)
+		"compelled_attack_target":
+			_resolve_compelled_attack_target_prompt(payload)
 		"fenrir_devour_impact":
 			var card := game_manager.get_card_by_uid(payload.get("source_uid", "")) as Fenrir
 			if card != null:

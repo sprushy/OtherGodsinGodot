@@ -13,7 +13,7 @@ func _init() -> void:
 	resilience = 3
 	strength = 1
 	sacrifice_cost = 0
-	ability_text = "Revive ([b]Impact[/b]): [b]Wake[/b] all Norse creatures.\nRevive (%d mana): [b]Wake[/b] all friendly creatures." % REVIVE_ACTIVATION_COST
+	ability_text = "Revive ([b]Impact[/b]): [b]Wake[/b] all creatures.\nRevive (%d mana): [b]Wake[/b] all friendly creatures." % REVIVE_ACTIVATION_COST
 	flavor_text = ""
 	culture = "Norse"
 	artist = "Elliot Chan"
@@ -53,10 +53,10 @@ func activate(game_manager: GameManager, _target: Card = null) -> void:
 	print("%s uses Revive and wakes all friendly creatures." % card_name)
 
 func on_impact(game_manager: GameManager) -> void:
-	_wake_matching_creatures(game_manager, func(card: Card) -> bool:
-		return card.culture == "Norse"
+	_wake_matching_creatures(game_manager, func(_card: Card) -> bool:
+		return true
 	)
-	print("%s revives all Norse creatures on impact." % card_name)
+	print("%s revives all creatures on impact." % card_name)
 
 func on_turn_end(_game_manager: GameManager) -> void:
 	is_used = false

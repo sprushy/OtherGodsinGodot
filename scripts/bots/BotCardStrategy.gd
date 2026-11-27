@@ -36,6 +36,14 @@ const META_REACH_ANCHOR_SHARES := [0.0, 27.0, 49.5, 61.7, 73.1, 78.8, 93.0, 95.7
 const META_SURVIVAL_ANCHOR_STATS := [0, 9, 15, 18, 21, 24, 27, 30, 36, 99]
 const META_SURVIVAL_ANCHOR_SHARES := [0.0, 10.0, 21.2, 39.7, 53.8, 73.8, 84.4, 92.6, 98.5, 100.0]
 const META_STAT_POINT_WEIGHT := 23
+# Ferocious Defence unlock fuel: a body counts as a wall once its projected
+# resilience reaches the survival curve's steep zone (res 18 shrugs off ~40%
+# of meta attackers), because "RES >= opposing STR" starts firing regularly
+# there. Hand walls are near-term defenders; deck walls stretch the passive's
+# payoff across the match at half that price.
+const FEROCIOUS_DEFENCE_HIGH_RES := 18
+const FEROCIOUS_DEFENCE_HAND_GAIN := 800
+const FEROCIOUS_DEFENCE_DECK_GAIN := 400
 const TACTICAL_CARDS := [
 	"BitMeseri", "RunicSpellbreaker", "Snowball", "SirensSong", "TabletOfLife", "ConjureEidolon",
 	"BookOfLife", "Earthquake", "FiresOfJudgment", "Famine", "OccultSingularity",
@@ -45,7 +53,7 @@ const TACTICAL_CARDS := [
 	"Banishment", "SpellDemolition", "Sap", "SepLemutti", "Smite", "VoidShield", "ObsidianReflection",
 	"TheInferno", "TheDeluge", "Dromi", "Gleipnir", "SapStrength", "VisionOfTartarus", "VisionOfOdin", "Hermes",
 	"Drought", "HeavySnow", "Storm", "SavingGrace", "JiangZiyaFisherOfKings", "ShroudOfTheAncients", "WildMagic",
-	"FairyBlast", "TheChangelingExchange", "CompelledByTheSecretName", "GorgonsStare",
+	"FairyBlast", "TheChangelingExchange", "CompelledByTheSecretName", "GorgonsGaze",
 ]
 const ACTIVE_POWERS := ["AcceleratedFate", "OraclesSight", "BerserkerMead", "MechFactory", "Palisade", "ManaGuard"]
 const BOARD_ABILITIES := ["Alu", "Lindwyrm", "Lamashatu", "ClayEaters", "AncientPyre", "Watchtower", "Gawain", "Beyla", "Nimue", "JiangZiyaFisherOfKings",
@@ -610,7 +618,7 @@ static func _disable_gain(bot, target: Card, values: Dictionary, duration: float
 		gain += float(values[restriction]) * maxf(0.0, proposed - _disable_weight(existing.get(restriction, 0.0)))
 	return roundi(gain)
 
-# Petrification (Bane of the Svartalfar, Gorgon's Stare) is priced as the full
+# Petrification (Bane of the Svartalfar, Gorgon's Gaze) is priced as the full
 # "petrified" disable bundle on the authority's own status model: the body keeps
 # its resilience wall but cannot attack, intercept, move, act, or use abilities.
 static func petrify_disable_gain(bot, target: Card) -> int:
@@ -809,7 +817,7 @@ static func removal_targets(bot, source: Card, target: Card = null, action: Card
 			targeted = false
 			destroys = not source is BaneOfTheSvartalfar
 			victims = wipe_cards(bot, source)
-		"GorgonsStare":
+		"GorgonsGaze":
 			targeted = false
 			# Petrification disables the body instead of destroying it, so
 			# destruction guards and turn destruction wards do not apply.
@@ -1268,7 +1276,7 @@ static func wipe_cards(bot, card: Card) -> Array:
 		if not visible(bot, target):
 			if id == "TheInferno" and target.current_zone in bot.opponent.frontline_zones:
 				result.append(target)
-			elif id == "GorgonsStare" and _is_hidden_gorgons_stare_victim(bot, target):
+			elif id == "GorgonsGaze" and _is_hidden_gorgons_gaze_victim(bot, target):
 				result.append(target)
 			continue
 		var doomed := false
@@ -1280,7 +1288,7 @@ static func wipe_cards(bot, card: Card) -> Array:
 			"FiresOfJudgment": doomed = card._is_doomed_card(target, bot.opponent)
 			"Famine": doomed = card._should_destroy(target)
 			"BaneOfTheSvartalfar": doomed = card._should_petrify(target)
-			"GorgonsStare": doomed = target.card_type == Card.CardType.CREATURE \
+			"GorgonsGaze": doomed = target.card_type == Card.CardType.CREATURE \
 				and not target.is_god \
 				and target.get_controller() == bot.opponent
 		if doomed:
@@ -1292,11 +1300,11 @@ static func wipe_cards(bot, card: Card) -> Array:
 		return card.get_strongest_creatures(bot.game_manager)
 	return result
 
-# Gorgon's Stare reveals before petrifying, so a hidden opposing creature is a
+# Gorgon's Gaze reveals before petrifying, so a hidden opposing creature is a
 # guaranteed victim without reading its identity. A hidden prepared card is a
 # spell, hex, or charm instead (is_prepared is state, not identity), so only
 # hidden stealth/face-down creatures count.
-static func _is_hidden_gorgons_stare_victim(bot, target: Card) -> bool:
+static func _is_hidden_gorgons_gaze_victim(bot, target: Card) -> bool:
 	if target == null or target.is_prepared:
 		return false
 	return target.current_zone != null \
@@ -1610,12 +1618,12 @@ static func effect_score(bot, card: Card, target: Card = null, action: CardActio
 					or card.get_qualified_creatures(bot.game_manager).is_empty():
 				return BAD
 			gain = mana_gain_value(bot, HeroicStand.MANA_GAIN)
-		"TheInferno", "TheDeluge", "Earthquake", "FiresOfJudgment", "Famine", "OccultSingularity", "FalloftheMighty", "BaneOfTheSvartalfar", "GorgonsStare":
+		"TheInferno", "TheDeluge", "Earthquake", "FiresOfJudgment", "Famine", "OccultSingularity", "FalloftheMighty", "BaneOfTheSvartalfar", "GorgonsGaze":
 			gain = 0
 			var removed: Array = []
 			for doomed in removal_targets(bot, card, target, action):
 				var amount := value(bot, doomed)
-				if id == "BaneOfTheSvartalfar" or id == "GorgonsStare":
+				if id == "BaneOfTheSvartalfar" or id == "GorgonsGaze":
 					amount = petrify_disable_gain(bot, doomed)
 				elif doomed.get_controller() == bot.opponent:
 					amount -= _debilitation_discount(bot, doomed) + _own_dromi_drain_loss(bot, doomed)
@@ -1627,10 +1635,10 @@ static func effect_score(bot, card: Card, target: Card = null, action: CardActio
 				# A wipe the bot casts itself can be preceded by Mummu's
 				# Entropic Force: every own doomed card worth more shelved
 				# than destroyed banks into the deck and pockets level-1 mana
-				# before the sweep resolves (Bane and Gorgon's Stare petrify
+				# before the sweep resolves (Bane and Gorgon's Gaze petrify
 				# instead of destroying, so nothing is saved by shelving
 				# ahead of them).
-				if action == null and id != "BaneOfTheSvartalfar" and id != "GorgonsStare" \
+				if action == null and id != "BaneOfTheSvartalfar" and id != "GorgonsGaze" \
 						and doomed.get_controller() == bot.bot_player:
 					gain += bot._mummu_wipe_shelve_credit(doomed)
 				removed.append(doomed)
@@ -1902,13 +1910,13 @@ static func summon_impact_silenced_by_storm(bot, creature: Card, removed: Array 
 			return true
 	return false
 
-static func wake_gain(bot, source: Card, norse_only: bool = false) -> int:
+static func wake_gain(bot, source: Card, both_sides: bool = false) -> int:
 	var gain := 0
 	for player in [bot.bot_player, bot.opponent]:
-		if player == bot.opponent and not norse_only:
+		if player == bot.opponent and not both_sides:
 			continue
 		for creature in bot._get_board_creatures(player):
-			if not visible(bot, creature) or not creature.is_sleeping or (norse_only and creature.culture != "Norse"):
+			if not visible(bot, creature) or not creature.is_sleeping:
 				continue
 			if bot.game_manager.is_immune_to_source(creature, source):
 				continue
@@ -2289,8 +2297,8 @@ static func preparation_score(bot, card: Card) -> int:
 			for target in bot._get_board_creatures(bot.opponent):
 				gain = maxi(gain, target_score(bot, card, target))
 		return maxi(750, gain - CARD_VALUE - mana_penalty(bot, bot._get_play_cost(card, true)))
-	if id == "GorgonsStare":
-		# Petrify pricing, not destruction pricing: the stare buys out every
+	if id == "GorgonsGaze":
+		# Petrify pricing, not destruction pricing: the gaze buys out every
 		# opposing creature's attack, intercept, move, and ability at once.
 		var gain := 0
 		for target in wipe_cards(bot, card):
@@ -2546,6 +2554,16 @@ static func unlock_score(bot, power: PowerCard, unlock_cost: int = -1) -> int:
 		for card in bot._get_board_creatures(bot.bot_player):
 			if card.creature_mode == Card.CreatureMode.DEFENSIVE:
 				gain += 2000
+		# The unlock also buys the walls still coming: a high-RES body in hand
+		# can be summoned into defensive stance within a turn or two, and the
+		# deck's high-RES share keeps the passive paying across the match.
+		for card in bot.bot_player.hand_zone.cards + bot.bot_player.deck_zone.get_unordered_deck_cards():
+			if card.card_type != Card.CardType.CREATURE:
+				continue
+			if bot._get_projected_resilience(card) < FEROCIOUS_DEFENCE_HIGH_RES:
+				continue
+			gain += FEROCIOUS_DEFENCE_HAND_GAIN if card.current_zone == bot.bot_player.hand_zone \
+					else FEROCIOUS_DEFENCE_DECK_GAIN
 	elif id == "AdvancedBuildingTechniques":
 		# Price the unlock by the ward payments the bot would actually make on
 		# structures it can build: structures in hand it can play this turn, or

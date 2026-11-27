@@ -81,7 +81,7 @@ Each entry gives proposed wording, an edit to make, or a reason to retain the ex
 | [Askelladen](../scripts/cards/Creatures/Askelladen.gd) | “When this face-up creature attacks or is attacked by a creature with equal or lower SPD, you may Shelve both.” Check the legal attacker and defender types before replacing the current “card” with “creature.” |
 | [Aurboða](../scripts/cards/Creatures/Aurboda.gd) | Use “Pierce (Slay): Convert 7 Followers.” |
 | [Berserker](../scripts/cards/Creatures/Berserker.gd) | Lead with “This turn, this gains +[bonus] STR and Immortal.” Spell out whose attack causes Sleep and preserve the start-of-your-next-turn wake timing. |
-| [Beyla](../scripts/cards/Creatures/Beyla.gd) | Keep separate Revive lines. The contrast players need is “all Norse creatures” for Impact and “all friendly creatures” for the paid ability. |
+| [Beyla](../scripts/cards/Creatures/Beyla.gd) | Keep separate Revive lines. The contrast players need is “all creatures” for Impact and “all friendly creatures” for the paid ability. |
 | [Blessed Knights](../scripts/cards/Creatures/BlessedKnights.gd) | Use “Blessed Ward (Impact): Choose Hexes, creature abilities or Powers. This card and all cards with its name are immune to the chosen category this turn.” |
 | [Brown Bear](../scripts/cards/Creatures/BrownBear.gd) | Leave the effect field empty. |
 | [Byggvir](../scripts/cards/Creatures/Byggvir.gd) | Use “Brewing (Reveal): Choose one” followed by the two Mead Power options and the Mead card recovery. “Graveyard” is the only zone name needed. |

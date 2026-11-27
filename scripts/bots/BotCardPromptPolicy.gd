@@ -30,6 +30,7 @@ const TARGET_COMMANDS := {
 	"wolf_adolescent_maturation": "wolf_adolescent_maturation_choice",
 	"humbaba_augury": "humbaba_augury_choice",
 	"tonal_extraction": "tonal_extraction_choice",
+	"compelled_attack_target": "compelled_attack_choice",
 }
 const HARMFUL_TARGET_PROMPTS := [
 	"lailoken_reveal", "masmassu_priest_reveal",
@@ -64,6 +65,25 @@ static func build_command(bot, type: String, data: Dictionary) -> Dictionary:
 			command["target_uid"] = _best_fourth_sage_target(bot, source, data.get("target_uids", []))
 		elif type == "seventh_sage_utuabzu_impact":
 			command["target_uid"] = _best_seventh_sage_channel_target(bot, data.get("target_uids", []))
+		elif type == "compelled_attack_target":
+			command["attacker_uid"] = str(data.get("attacker_uid", ""))
+			var compelled_attacker: Card = bot.game_manager.get_card_by_uid(command["attacker_uid"])
+			var compelled_candidates: Array[Card] = []
+			for compelled_uid in data.get("target_uids", []):
+				var candidate: Card = bot.game_manager.get_card_by_uid(str(compelled_uid))
+				if candidate != null:
+					compelled_candidates.append(candidate)
+			# Attacking the caster's followers deals guaranteed damage with no
+			# risk to the compelled creature, so it is the bot's default pick.
+			if bool(data.get("player_target", false)) \
+					and (compelled_candidates.is_empty() or _compelled_followers_attack_preferred(bot, compelled_attacker, compelled_candidates)):
+				var compelled_controller = compelled_attacker.get_controller() if compelled_attacker != null else null
+				if compelled_controller != null:
+					var defender_player: Player = bot.game_manager.get_opponent(compelled_controller)
+					if defender_player != null:
+						command["target_player_index"] = bot.game_manager.players.find(defender_player)
+			if not command.has("target_player_index"):
+				command["target_uid"] = _best_compelled_attack_target(bot, compelled_attacker, compelled_candidates)
 		elif type == "sixth_sage_an_enlilda_impact" and source is SixthSageAnEnlilda:
 			command["target_uid"] = _best_conjure_home_target(bot, source, data.get("target_uids", []))
 		elif type == "tonal_extraction" and source is TonalExtraction:
@@ -417,6 +437,52 @@ static func _best_conjure_home_target(bot, source: Card, target_uids: Array) -> 
 static func _best_uid(bot, data: Dictionary, key: String, harmful: bool) -> String:
 	var ranked := _ranked_uids(bot, data, key, harmful)
 	return ranked[0] if not ranked.is_empty() else ""
+
+## True when hitting the caster's followers beats every offered creature
+## target: the followers attack deals guaranteed damage and never trades away
+## the compelled body, while mutual combat usually loses the bot's creature.
+static func _compelled_followers_attack_preferred(_bot, attacker: Card, candidates: Array[Card]) -> bool:
+	if attacker == null or candidates.is_empty():
+		return true
+	# Only deviate when a clean kill is on the table: the attacker destroys a
+	# high-value enemy body in combat without dying itself.
+	var attacker_strength := attacker.get_effective_strength()
+	var attacker_resilience := attacker.get_effective_resilience()
+	var best_kill_score := 0
+	for candidate in candidates:
+		if candidate == null or candidate.card_type != Card.CardType.CREATURE:
+			continue
+		if attacker_strength < candidate.get_effective_resilience():
+			continue
+		if candidate.get_effective_strength() >= attacker_resilience:
+			continue
+		var kill_score := 100 + candidate.get_effective_level() * 10 + candidate.get_effective_strength()
+		best_kill_score = maxi(best_kill_score, kill_score)
+	# Followers damage is roughly the attacker's strength; prefer combat only
+	# when it removes meaningfully more value than that.
+	return best_kill_score <= attacker_strength * 2
+
+static func _best_compelled_attack_target(_bot, attacker: Card, candidates: Array[Card]) -> String:
+	if attacker == null or candidates.is_empty():
+		return ""
+	var attacker_strength := attacker.get_effective_strength()
+	var attacker_resilience := attacker.get_effective_resilience()
+	var best_card: Card = null
+	var best_score := -1
+	for candidate in candidates:
+		if candidate == null:
+			continue
+		var score := candidate.get_effective_level() * 10 + candidate.get_effective_strength()
+		if attacker_strength >= candidate.get_effective_resilience() \
+				and candidate.get_effective_strength() < attacker_resilience:
+			score += 200  # clean kill: the attacker survives the combat
+		elif candidate.get_effective_strength() >= attacker_resilience:
+			score -= 100  # the compelled body dies in this combat
+		if score > best_score:
+			best_score = score
+			best_card = candidate
+	return best_card.uid if best_card != null else str(candidates[0].uid)
+
 
 static func _select_uids(bot, data: Dictionary, limit: int, lowest: bool = false) -> Array[String]:
 	var ranked := _ranked_uids(bot, data, "target_uids", false, lowest)
