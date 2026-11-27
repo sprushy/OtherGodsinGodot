@@ -134,6 +134,7 @@ func run() -> bool:
 	_check_bot_violent_delights_upkeep(failures)
 	_check_bot_shift_and_extraction(failures)
 	_check_bot_combat_buff_value(failures)
+	_check_bot_lamashatu_suckle(failures)
 	_check_bot_jiang_counterstroke(failures)
 	_check_bot_reveal_defense(failures)
 	_check_bot_exorcism_attached_sources(failures)
@@ -5265,6 +5266,97 @@ func _check_bot_combat_buff_value(failures: PackedStringArray) -> void:
 	asaruludu.add_buff("Preflight lasting resilience reduction", 0, -AncientPyre.EFFECT_AMOUNT, 0)
 	if open_defense <= 0 or BotCardStrategyScript.target_score(bot, pyre, asaruludu) != 0:
 		failures.append("Bot did not distinguish a resilience debuff that opens a fight from a redundant stack")
+	bot.detach()
+
+func _check_bot_lamashatu_suckle(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var lamashatu := Lamashatu.new()
+	lamashatu.card_owner = player
+	player.reserve_zones[0].add_card(lamashatu)
+	var animal := PictishBeast.new()
+	animal.card_owner = player
+	animal.creature_mode = Card.CreatureMode.DEFENSIVE
+	animal.level = 3
+	animal.speed = 2
+	player.reserve_zones[1].add_card(animal)
+	var base_stats := Vector4i(animal.level, animal.strength, animal.resilience, animal.speed)
+	var equipment := RunicShortsword.new()
+	if BotCardStrategyScript.stat_gain(bot, equipment, animal) <= 0 \
+			or BotCardStrategyScript.stat_gain(bot, equipment, animal, null, true) != 0:
+		failures.append("Bot did not give persistent Equipment stats value beyond the combat forecast")
+	for activation in [1, 2]:
+		if activation == 2:
+			var aura_baseline := BotCardStrategyScript.target_score(bot, lamashatu, animal)
+			var cernunnos := Cernunnos.new()
+			cernunnos.card_owner = player
+			player.god_zone.add_card(cernunnos)
+			if BotCardStrategyScript.target_score(bot, lamashatu, animal) <= aura_baseline:
+				failures.append("Bot did not value Suckle reaching Cernunnos's Level 5 threshold")
+			player.god_zone.remove_card(cernunnos)
+		if BotCardStrategyScript.stat_gain(bot, lamashatu, animal, null, true) != 0 or not bot._take_main_phase_action():
+			failures.append("Bot did not plan Suckle for lasting growth in Reserve")
+			break
+		for _step in range(8):
+			manager.advance_priority()
+		var stats := Vector4i(animal.get_effective_level(), animal.get_effective_strength(),
+				animal.get_effective_resilience(), animal.get_effective_speed())
+		if stats != base_stats + Vector4i(1, 5, 5, 1) * activation or lamashatu.can_activate(game):
+			failures.append("Suckle did not stack all four stats while respecting its once-per-turn limit")
+			break
+		lamashatu.on_turn_end(game)
+		game.turn_number += 2
+		game._upkeep_resolved_turn = game.turn_number
+
+	var baseline := BotCardStrategyScript.target_score(bot, lamashatu, animal)
+	var lindwyrm := Lindwyrm.new()
+	lindwyrm.card_owner = opponent
+	lindwyrm.level = animal.get_effective_level() + 2
+	lindwyrm.creature_mode = Card.CreatureMode.DEFENSIVE
+	opponent.reserve_zones[0].add_card(lindwyrm)
+	if BotCardStrategyScript.target_score(bot, lamashatu, animal) <= baseline:
+		failures.append("Bot did not value +1 Level taking Suckle's target out of Devour range")
+
+	player.move_card(animal, player.frontline_zones[0])
+	animal.creature_mode = Card.CreatureMode.AGGRESSIVE
+	var gilgamesh := Gilgamesh.new()
+	gilgamesh.card_owner = opponent
+	gilgamesh.creature_mode = Card.CreatureMode.AGGRESSIVE
+	gilgamesh.level = animal.get_effective_level()
+	gilgamesh.strength = animal.get_effective_strength()
+	opponent.frontline_zones[0].add_card(gilgamesh)
+	var attack := CardAction.new()
+	attack.type = CardAction.Type.ATTACK
+	attack.attacker = animal
+	attack.target = gilgamesh
+	attack.source_player = player
+	var projected_stats := {animal: Vector3i(5, 5, 1)}
+	var stats_only := bot._estimate_raw_attack_economy(attack, projected_stats)
+	projected_stats[BotCardStrategyScript.PROJECTED_LEVELS_KEY] = {animal: 1}
+	var with_level := bot._estimate_raw_attack_economy(attack, projected_stats)
+	if gilgamesh not in stats_only["casualties"] or animal not in with_level["casualties"]:
+		failures.append("Bot's projected Suckle level did not account for Gilgamesh's Inspired Strength")
+
+	opponent.frontline_zones[0].remove_card(gilgamesh)
+	opponent.reserve_zones[0].remove_card(lindwyrm)
+	var before_strength := animal.get_effective_strength()
+	opponent.followers = before_strength + Lamashatu.SUCKLE_STRENGTH_BONUS
+	if not bot._take_main_phase_action():
+		failures.append("Bot did not start a lethal attack line with Suckle")
+	for _step in range(8):
+		manager.advance_priority()
+	if animal.get_effective_strength() != before_strength + Lamashatu.SUCKLE_STRENGTH_BONUS \
+			or game.has_resolved_attack_this_turn:
+		failures.append("Bot attacked before applying Suckle for lethal damage")
 	bot.detach()
 
 func _check_bot_jiang_counterstroke(failures: PackedStringArray) -> void:

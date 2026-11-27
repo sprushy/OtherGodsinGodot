@@ -17,13 +17,13 @@ func _init() -> void:
 	name_at_bottom = true
 	artist = "Ricardo Zoppello"
 
-func applies_to(card: Card) -> bool:
+func applies_to(card: Card, level_delta: int = 0) -> bool:
 	return (
 		not is_muted
 		and card != null
 		and card.card_type == Card.CardType.CREATURE
 		and card.has_type("Animal")
-		and card.get_effective_level() >= 5
+		and card.get_effective_level(level_delta) >= 5
 		and card.counts_as_on_field()
 	)
 

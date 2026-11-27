@@ -39,13 +39,13 @@ func get_combat_strength_against(opponent: Card, strength_delta: int = 0) -> int
 		# The hook replaces this bonus on entry, including during priority previews.
 		if buff.get("source", "") != INSPIRED_SOURCE:
 			total += int(buff.get("str", 0))
-	return maxi(0, total + _get_inspired_strength_bonus(opponent))
+	return maxi(0, total + get_inspired_strength_bonus(opponent))
 
-func _get_inspired_strength_bonus(opponent: Card) -> int:
+func get_inspired_strength_bonus(opponent: Card, own_level_delta: int = 0, opposing_level_delta: int = 0) -> int:
 	# Combat reveals stealth before running attack/defend hooks.
 	if abilities_suppressed_by_effects() or opponent == null or opponent.card_type != Card.CardType.CREATURE:
 		return 0
-	return STR_PER_LEVEL * maxi(0, opponent.get_effective_level() - get_effective_level())
+	return STR_PER_LEVEL * maxi(0, opponent.get_effective_level(opposing_level_delta) - get_effective_level(own_level_delta))
 
 func on_after_combat(_game_manager: GameManager, _opposing_card: Card) -> void:
 	_remove_inspired_strength()
@@ -60,7 +60,7 @@ func _apply_inspired_strength(game_manager: GameManager, opponent: Card) -> void
 	_remove_inspired_strength()
 	if abilities_suppressed():
 		return
-	var bonus := _get_inspired_strength_bonus(opponent)
+	var bonus := get_inspired_strength_bonus(opponent)
 	if bonus <= 0:
 		return
 	var diff := opponent.get_effective_level() - get_effective_level()

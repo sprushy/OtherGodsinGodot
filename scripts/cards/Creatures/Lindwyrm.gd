@@ -77,7 +77,7 @@ func get_valid_devour_targets(game_manager: GameManager) -> Array[Card]:
 			continue
 		for zone in player.frontline_zones + player.reserve_zones:
 			for card in zone.cards:
-				if _is_valid_devour_target(card):
+				if is_valid_devour_target(card):
 					valid_targets.append(card)
 	return valid_targets
 
@@ -161,10 +161,10 @@ func _emit_devour_result(callback: Callable, feedback: String) -> void:
 	if callback.is_valid():
 		callback.call(feedback)
 
-func _is_valid_devour_target(card: Card) -> bool:
+func is_valid_devour_target(card: Card, source_level_delta: int = 0, target_level_delta: int = 0) -> bool:
 	return card != null \
 		and card != self \
 		and card.card_type == Card.CardType.CREATURE \
 		and card.current_zone != null \
 		and card.current_zone.is_board_zone() \
-		and card.get_effective_level() <= get_effective_level() - 2
+		and card.get_effective_level(target_level_delta) <= get_effective_level(source_level_delta) - 2

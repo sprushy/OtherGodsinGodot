@@ -3138,14 +3138,13 @@ func _projected_opponent_removal_loss(target: Card, removed: Array = []) -> int:
 		var loss := _get_card_economic_value(target)
 		if source is Lindwyrm:
 			# Devour is free growth: feeding it costs the body AND upgrades the threat.
-			loss += _lindwyrm_devour_growth_value()
+			loss += _lindwyrm_devour_growth_value(source, target)
 		worst = maxi(worst, loss)
 	return worst
 
 # Legal reach for the standing removal keys. The engine's own zone-scoped
 # get_valid_targets cannot see a projected body (a preview is not a member
-# of any zone's card list yet), so each key's target rule is restated here
-# and must stay in sync with the card script.
+# of any zone's card list yet), so check the target rules directly.
 func _activated_removal_reaches(source: Card, target: Card) -> bool:
 	if source == null or target == null or target == source:
 		return false
@@ -3153,8 +3152,7 @@ func _activated_removal_reaches(source: Card, target: Card) -> bool:
 		return false
 	match CardStrategy.key(source):
 		"Lindwyrm":
-			return target.card_type == Card.CardType.CREATURE \
-					and target.get_effective_level() <= source.get_effective_level() - 2
+			return (source as Lindwyrm).is_valid_devour_target(target)
 		"ClayEaters":
 			return target.card_type == Card.CardType.STRUCTURE \
 					or (target.card_type == Card.CardType.CREATURE and target.has_type("Stone"))
@@ -3601,6 +3599,11 @@ func _get_best_strategy_action(attacks: Array[Dictionary], attack: Dictionary, d
 					"command": {"type": "activate_card_ability", "source_uid": card.uid, "target_uid": target.uid if target != null else ""},
 					"score": score,
 				}
+				if card is Lamashatu and score > 0 and target in attack.get("attackers", []) \
+						and int(attack.get("mana_required", 0)) + action_tax <= brew_budget:
+					var fight_gain := CardStrategy.stat_gain(self, card, target, null, true)
+					if fight_gain > 0:
+						plan["combat_score"] = int(attack.get("score", 0)) + fight_gain
 				if bot_player.mana < cost + action_tax:
 					# The brew funds this activation: tag it so the Mead is
 					# submitted first and the next pass takes the paid action.
@@ -3608,7 +3611,7 @@ func _get_best_strategy_action(attacks: Array[Dictionary], attack: Dictionary, d
 				if not removed.is_empty():
 					var committed := card as Card if card is Lindwyrm or card is Nimue else null
 					if card is Lindwyrm:
-						plan["score"] += _lindwyrm_devour_growth_value()
+						plan["score"] += _lindwyrm_devour_growth_value(card, target)
 					_record_targeted_removal(removals, plan, card, target, removed, cost + action_tax, committed)
 					plan = _plan_removal_setup(plan, attacks, attack, danger, removed, cost + action_tax, committed)
 				else:
@@ -3797,8 +3800,9 @@ func _plan_removal_setup(plan: Dictionary, attacks: Array[Dictionary], baseline:
 			best = combined
 	return best
 
-func _lindwyrm_devour_growth_value() -> int:
-	return Lindwyrm.DEVOUR_STRENGTH_BONUS * 100 + Lindwyrm.DEVOUR_RESILIENCE_BONUS * 50
+func _lindwyrm_devour_growth_value(source: Lindwyrm, victim: Card) -> int:
+	return CardStrategy.lasting_stat_gain(self, source, Lindwyrm.DEVOUR_STRENGTH_BONUS,
+			Lindwyrm.DEVOUR_RESILIENCE_BONUS, Lindwyrm.DEVOUR_SPEED_BONUS, Lindwyrm.DEVOUR_LEVEL_BONUS, victim)
 
 func _plan_summoned_removal_ability(attacks: Array[Dictionary], baseline: Dictionary, danger: int) -> Dictionary:
 	var best := {}
@@ -3852,7 +3856,7 @@ func _plan_summoned_removal_ability(attacks: Array[Dictionary], baseline: Dictio
 				if removal_score <= CardStrategy.BAD:
 					continue
 				if source is Lindwyrm:
-					removal_score += _lindwyrm_devour_growth_value()
+					removal_score += _lindwyrm_devour_growth_value(source, target)
 				removed += sacrifices
 				# The recruit spends its major action on removal, leaving the
 				# creatures already on board to take the attacks.
@@ -10993,6 +10997,11 @@ func _estimate_raw_attack_economy(action: CardAction, stats: Dictionary, project
 	var attacker_stats: Vector3i = stats.get(attacker, Vector3i.ZERO)
 	var partner_stats: Vector3i = stats.get(partner, Vector3i.ZERO)
 	var defender_stats: Vector3i = stats.get(defender, Vector3i.ZERO)
+	var projected_levels: Dictionary = stats.get(CardStrategy.PROJECTED_LEVELS_KEY, {})
+	if not projected_levels.is_empty():
+		attacker_stats.x += _projected_inspired_strength_delta(attacker, defender, projected_levels)
+		partner_stats.x += _projected_inspired_strength_delta(partner, defender, projected_levels)
+		defender_stats.x += _projected_inspired_strength_delta(defender, attacker, projected_levels)
 	var attacker_strength := _get_vision_adjusted_strength(attacker, attacker_stats.x, defender)
 	var support_strength := _get_vision_adjusted_strength(partner, partner_stats.x, defender)
 	attacker_strength += support_strength
@@ -11046,6 +11055,12 @@ func _estimate_raw_attack_economy(action: CardAction, stats: Dictionary, project
 			_add_combat_casualty(result, defender, attacker, her_attack, projected_guards)
 			_add_combat_casualty(result, defender, partner, her_attack, projected_guards)
 	return result
+
+func _projected_inspired_strength_delta(card: Card, opposing_card: Card, projected_levels: Dictionary) -> int:
+	if not (card is Gilgamesh) or not CardStrategy.visible(self, card) or (card.is_stealth and card.has_veil_of_night()):
+		return 0
+	return card.get_inspired_strength_bonus(opposing_card, projected_levels.get(card, 0), projected_levels.get(opposing_card, 0)) \
+			- card.get_inspired_strength_bonus(opposing_card)
 
 func _add_combat_casualty(
 	result: Dictionary,

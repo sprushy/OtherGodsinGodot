@@ -6,6 +6,7 @@ const BAD := -1000000
 const CARD_VALUE := 5000
 const EQUIPMENT_COMMITMENT_VALUE := 1000
 const MANA_VALUE := 1000
+const PROJECTED_LEVELS_KEY := "_projected_level_bonuses"
 @warning_ignore("integer_division")
 const FOLLOWER_VALUE := CARD_VALUE / 25
 # A face-up Kur-Jara on board is a repeatable value engine: Tree of Life
@@ -879,7 +880,8 @@ static func stat_changes(bot, card: Card, target: Card) -> Dictionary:
 		"Lamashatu":
 			return {
 				"str": Lamashatu.SUCKLE_STRENGTH_BONUS, "res": Lamashatu.SUCKLE_RESILIENCE_BONUS,
-				"spd": Lamashatu.SUCKLE_SPEED_BONUS,
+				"spd": Lamashatu.SUCKLE_SPEED_BONUS, "lvl": Lamashatu.SUCKLE_LEVEL_BONUS,
+				"lasting": true,
 			}
 		"SevenLeagueBoots":
 			var old_base: int = target.speed
@@ -893,14 +895,66 @@ static func stat_changes(bot, card: Card, target: Card) -> Dictionary:
 		return {"str": card.strength_modifier, "res": card.resilience_modifier, "spd": card.speed_modifier}
 	return {}
 
-static func stat_gain(bot, card: Card, target: Card, action: CardAction = null) -> int:
+static func stat_gain(bot, card: Card, target: Card, action: CardAction = null, current_turn_only: bool = false) -> int:
 	if target.negates_external_effects() and card != target:
 		return 0
 	var changes := stat_changes(bot, card, target)
-	# Fifa lasts through the recipient's next fight. Equipment and Suckle
-	# can also matter on a later turn. The other supported buffs expire this turn.
-	var future_turns := 2 if card is EquipmentCard or card is Lamashatu or card is FifaTheMagicalArrow else 0
-	return combat_gain(bot, target, int(changes.get("str", 0)), int(changes.get("res", 0)), action, int(changes.get("spd", 0)), future_turns)
+	var strength := int(changes.get("str", 0))
+	var resilience := int(changes.get("res", 0))
+	var speed := int(changes.get("spd", 0))
+	var level := int(changes.get("lvl", 0))
+	var lasting := card is EquipmentCard or bool(changes.get("lasting", false))
+	# Fifa can carry into a later fight, where it is spent.
+	var future_turns := 2 if not current_turn_only and (lasting or card is FifaTheMagicalArrow) else 0
+	var combat := combat_gain(bot, target, strength, resilience, action, speed, future_turns, level)
+	if lasting and action == null and not current_turn_only:
+		combat = maxi(combat, lasting_stat_gain(bot, target, strength, resilience, speed, level))
+	return combat
+
+static func lasting_stat_gain(bot, target: Card, strength: int, resilience: int, speed: int, level_delta: int = 0, removed: Card = null) -> int:
+	if not visible(bot, target) or expires_after_combat(target):
+		return 0
+	var level_value := 0
+	if level_delta > 0:
+		level_value = _level_devour_gain(bot, target, level_delta, removed)
+		for god: Card in bot.bot_player.god_zone.cards + bot.opponent.god_zone.cards:
+			if god is Cernunnos and visible(bot, god) and not god.is_face_down \
+					and not god.applies_to(target) and god.applies_to(target, level_delta):
+				# The aura refreshes through the god's board and turn hooks.
+				strength += Cernunnos.BUFF_STRENGTH
+				speed += Cernunnos.BUFF_SPEED
+				break
+	var before_str := target.get_effective_strength()
+	var after_str := target.get_effective_strength(strength)
+	var before_res := target.get_effective_resilience()
+	var after_res := target.get_effective_resilience(resilience)
+	var board_gain := _strength_reach_points(after_str) - _strength_reach_points(before_str) \
+			+ _resilience_survival_points(after_res) - _resilience_survival_points(before_res)
+	# Even a creature above the usual combat range can gain Follower damage or survive a larger hit.
+	var stat_floor := 40 * (after_str - before_str + after_res - before_res)
+	return maxi(board_gain, stat_floor) + 200 * (target.get_effective_speed(speed) - target.get_effective_speed()) + level_value
+
+static func _level_devour_gain(bot, target: Card, level_delta: int, removed: Card) -> int:
+	var opposing_player: Player = bot.game_manager.get_opponent(target.get_controller())
+	var devour_value := 0
+	var best_before := 0
+	var best_after := 0
+	for enemy: Card in bot._get_board_creatures(opposing_player):
+		if enemy == removed or not visible(bot, enemy):
+			continue
+		if enemy is Lindwyrm and not enemy.is_face_down and not enemy.abilities_suppressed() \
+				and enemy.is_valid_devour_target(target) and not enemy.is_valid_devour_target(target, 0, level_delta) \
+				and can_remove_from_board(bot, enemy, target, true):
+			devour_value = value(bot, target)
+		if target is Lindwyrm and not target.is_face_down and not target.abilities_suppressed() \
+				and target.is_valid_devour_target(enemy, level_delta) and can_remove_from_board(bot, target, enemy, true):
+			var enemy_value := value(bot, enemy)
+			best_after = maxi(best_after, enemy_value)
+			if target.is_valid_devour_target(enemy):
+				best_before = maxi(best_before, enemy_value)
+	# Devour is a possible later action, so price the change in access at a fraction of a body.
+	@warning_ignore("integer_division")
+	return (devour_value + best_after - best_before) / 4
 
 static func combat_projection(bot, action: CardAction) -> Dictionary:
 	var pending := {}
@@ -929,14 +983,16 @@ static func combat_projection(bot, action: CardAction) -> Dictionary:
 				pending[target_card] = pending.get(target_card, Vector3i.ZERO) + changes
 	return {"attack": action if action != null and action.type == CardAction.Type.ATTACK else null, "stats": pending}
 
-static func combat_gain(bot, target: Card, str_delta: int, res_delta: int = 0, action: CardAction = null, speed_delta: int = 0, future_turns: int = 0) -> int:
+static func combat_gain(bot, target: Card, str_delta: int, res_delta: int = 0, action: CardAction = null, speed_delta: int = 0, future_turns: int = 0, level_delta: int = 0) -> int:
 	var delta := Vector3i(str_delta, res_delta, speed_delta)
-	if delta == Vector3i.ZERO or not visible(bot, target):
+	if (delta == Vector3i.ZERO and level_delta == 0) or not visible(bot, target):
 		return 0
 	var projection := combat_projection(bot, action)
 	var pending: Dictionary = projection["stats"]
 	var proposed := pending.duplicate()
 	proposed[target] = pending.get(target, Vector3i.ZERO) + delta
+	if level_delta != 0:
+		proposed[PROJECTED_LEVELS_KEY] = {target: level_delta}
 	if action != null:
 		var attack := projection["attack"] as CardAction
 		if attack != null:
@@ -956,6 +1012,8 @@ static func combat_gain(bot, target: Card, str_delta: int, res_delta: int = 0, a
 		var after_expiry: Dictionary = bot._forecast_expired_combat_stats(turn_offset)
 		var projected_stats := after_expiry.duplicate()
 		projected_stats[target] = after_expiry.get(target, Vector3i.ZERO) + delta
+		if level_delta != 0:
+			projected_stats[PROJECTED_LEVELS_KEY] = proposed[PROJECTED_LEVELS_KEY]
 		var gain: int = bot._forecast_stat_combat_gain(target, after_expiry, projected_stats, turn_offset)
 		# Use the best single opportunity. The fights can be alternatives, and
 		# a next-combat buff is spent once the recipient fights.
@@ -1058,15 +1116,15 @@ static func target_score(bot, card: Card, target: Card, action: CardAction = nul
 			var fairy_value := value(bot, target)
 			fairy_score += _disable_gain(bot, target, {"cannot_attack": fairy_value * 0.5, "cannot_intercept": fairy_value * 0.3, "cannot_move": fairy_value * 0.2})
 			return fairy_score
-		"FifaTheMagicalArrow", "BerserkerMead", "Lamashatu":
+		"Lamashatu":
+			if not own or target.negates_external_effects():
+				return BAD
+			return stat_gain(bot, card, target, action)
+		"FifaTheMagicalArrow", "BerserkerMead":
 			if not own:
 				return BAD
 			if key(card) == "BerserkerMead" and target.has_status_effect("berserker_mead_guard"):
 				return BAD
-			if key(card) == "Lamashatu":
-				for buff in target.active_buffs:
-					if buff.get("source_card") == card and buff.get("effect_type") == "suckle":
-						return BAD
 			var score := stat_gain(bot, card, target, action)
 			if key(card) == "BerserkerMead" and not target.is_immune_to_sleep():
 				score -= 1500 # Sleeping through the next turn costs another action.

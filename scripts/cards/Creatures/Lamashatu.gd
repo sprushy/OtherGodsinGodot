@@ -21,7 +21,7 @@ func _init() -> void:
 	resilience = 26
 	strength = 23
 	targets = true
-	ability_text = "[b]Suckle[/b] ([b]Activate[/b], once per turn): Give another friendly Demon or Animal +1 LVL, +5 STR, +5 RES, and +1 SPD."
+	ability_text = "[b]Suckle[/b] ([b]Activate[/b], once per turn): Give another friendly Demon or Animal +1 LVL, +5 STR, +5 RES, and +1 SPD. These bonuses stack."
 	flavor_text = ""
 	culture = "Ancient"
 	artist = "Ricardo Zoppello"
@@ -76,7 +76,6 @@ func activate(game_manager: GameManager, target: Card = null) -> void:
 		)
 		return
 
-	target.remove_buffs_from_source_card(self, "suckle")
 	target.add_buff(
 		SUCKLE_SOURCE,
 		SUCKLE_STRENGTH_BONUS,

@@ -108,9 +108,11 @@ Automatic-response hexes honor `requires_priority_target_selection()` instead
 of requiring an irrelevant target UID for counterspells. Passive powers are
 never generically activated. Mana Guard submits an explicit amount based on
 visible frontline pressure and existing Guard; Oracle's Sight and Mana Guard
-are limited to one planned activation per bot turn. Duplicate bindings,
-pending Clay-Eaters targets, and existing Lamashatu/Berserker Mead buffs are
-avoided. Priority removal responses also skip a body already named by another
+are limited to one planned activation per bot turn. The bot avoids duplicate bindings,
+pending Clay-Eaters targets, and repeat Berserker Mead buffs. Suckle, Devour, and
+Equipment share valuation for lasting stat gains. Suckle can stack on the same
+creature over multiple turns.
+Priority removal responses also skip a body already named by another
 removal waiting on the stack, so a second Divine Lightning is not aimed at a
 target the first copy is about to destroy. Supported spells may be prepared
 when Drought requires it.

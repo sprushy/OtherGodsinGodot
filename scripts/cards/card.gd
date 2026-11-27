@@ -830,8 +830,8 @@ func get_effective_speed(speed_delta: int = 0) -> int:
 		base_speed += buff.get("spd", 0)
 	return clampi(base_speed + speed_delta, 1, 7)
 
-func get_effective_level() -> int:
-	var total := level
+func get_effective_level(level_delta: int = 0) -> int:
+	var total := level + level_delta
 	for buff in _get_effective_buffs():
 		total += buff.get("lvl", 0)
 	return max(1, total)
