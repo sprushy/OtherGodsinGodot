@@ -94,6 +94,7 @@ var _pending_ui_sound_cues: Array[String] = []
 # (e.g. an in-process bot-match server on a hosting client), so their rule
 # events do not play sounds over the locally rendered game.
 var sfx_enabled: bool = true
+var log_player_feedback: bool = true
 var _upkeep_resolved_turn: int = -1
 var _upkeep_started_turn: int = -1
 var _temporary_summon_cost_modifiers: Array[Dictionary] = []
@@ -297,7 +298,8 @@ func note_player_feedback(text: String) -> void:
 		return
 	last_player_feedback_text = trimmed_text
 	_pending_player_feedback_texts.append(trimmed_text)
-	print(trimmed_text)
+	if log_player_feedback:
+		print(trimmed_text)
 
 func get_activation_mana_unavailable_text(card: Card = null) -> String:
 	if card != null and str(card.card_name).strip_edges() != "":
@@ -3947,7 +3949,7 @@ func _is_protected_from_enslavement(creature: Card) -> bool:
 				return true
 	return false
 
-func get_enslave_failure_reason(creature: Card, new_controller: Player) -> String:
+func get_enslave_failure_reason(creature: Card, new_controller: Player, check_space: bool = true) -> String:
 	if creature == null or new_controller == null:
 		return "No creature was selected."
 	if creature.card_type != Card.CardType.CREATURE or creature.is_god:
@@ -3956,8 +3958,7 @@ func get_enslave_failure_reason(creature: Card, new_controller: Player) -> Strin
 		return creature.card_name + " is not on the field."
 	if _is_protected_from_enslavement(creature):
 		return creature.card_name + " is protected from enslavement."
-	var destination := _find_creature_control_destination(new_controller, creature.current_zone.zone_type, creature.current_zone.zone_index)
-	if destination == null:
+	if check_space and _find_creature_control_destination(new_controller, creature.current_zone.zone_type, creature.current_zone.zone_index) == null:
 		return "There is no open zone to place " + creature.card_name + "."
 	return ""
 
@@ -4148,7 +4149,7 @@ func ascend_creature(creature: Card, player: Player, mode: String = "replace") -
 	creature.wake_up()
 	note_player_feedback("%s ascends to replace your God." % god_name)
 
-func _find_creature_control_destination(player: Player, zone_type: int, zone_index: int) -> Zone:
+func _find_creature_control_destination(player: Player, zone_type: int, zone_index: int, open_zones: Variant = null) -> Zone:
 	var preferred_rows: Array[Array] = []
 	if zone_type == Zone.ZoneType.FRONTLINE:
 		preferred_rows = [player.frontline_zones, player.reserve_zones]
@@ -4157,10 +4158,10 @@ func _find_creature_control_destination(player: Player, zone_type: int, zone_ind
 	for row in preferred_rows:
 		if zone_index >= 0 and zone_index < row.size():
 			var preferred_zone := row[zone_index] as Zone
-			if preferred_zone.cards.is_empty():
+			if preferred_zone.cards.is_empty() if open_zones == null else preferred_zone in open_zones:
 				return preferred_zone
 		for zone in row:
-			if zone.cards.is_empty():
+			if zone.cards.is_empty() if open_zones == null else zone in open_zones:
 				return zone
 	return null
 

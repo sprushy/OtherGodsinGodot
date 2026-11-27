@@ -109,6 +109,7 @@ func run() -> bool:
 	_check_bot_fenrir_creature_lethal(failures)
 	_check_bot_wolf_master(failures)
 	_check_bot_main_phase_combat_order(failures)
+	_check_bot_turn_line_projection(failures)
 	_check_bot_askelladen_combat_lookahead(failures)
 	_check_bot_grindylow_combat_lookahead(failures)
 	_check_bot_opponent_turn_lookahead(failures)
@@ -1916,6 +1917,23 @@ func _check_ranked_bot_manifestations(failures: PackedStringArray) -> void:
 			if not bot._get_board_creatures(player).has(birth_target):
 				failures.append("Ranked Tiamat did not use Birth after Take the Field")
 		elif god is TezcatlipocaTheSmokingMirror:
+			var huginn := Huginn.new()
+			huginn.card_owner = opponent
+			huginn.creature_mode = Card.CreatureMode.DEFENSIVE
+			opponent.frontline_zones[0].add_card(huginn)
+			var strong_offerings: Array[Card] = [GidimEnsi.new(), Thiazi.new(), Thiazi.new(), UriskGrovekeepers.new()]
+			for i in strong_offerings.size():
+				var offering := strong_offerings[i]
+				offering.card_owner = player
+				player.frontline_zones[i].add_card(offering)
+				offering.spend_major_creature_action()
+			game_manager.has_resolved_attack_this_turn = true
+			if not bot._plan_god_manifestation().is_empty():
+				failures.append("Necoc Yaotl traded Gidim Ensi, two Thiazis and Urisk Grovekeepers for Active Tezcatlipoca and Huginn after combat")
+			for offering in strong_offerings:
+				offering.current_zone.remove_card(offering)
+			huginn.current_zone.remove_card(huginn)
+			game_manager.has_resolved_attack_this_turn = false
 			var offerings: Array[Card] = []
 			for i in range(TezcatlipocaTheSmokingMirror.REQUIRED_NECOC_YAOTL_SACRIFICES + 1):
 				var offering := Asakku.new()
@@ -3540,6 +3558,54 @@ func _check_bot_counterattack_lookahead(failures: PackedStringArray) -> void:
 		failures.append("Bot counted a counterattack from a creature still asleep")
 	bot.detach()
 
+
+func _check_bot_turn_line_projection(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var attacker := BrownBear.new()
+	attacker.card_owner = player
+	attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
+	player.reserve_zones[0].add_card(attacker)
+	var unknown_draw := Huginn.new()
+	unknown_draw.card_owner = player
+	player.deck_zone.add_card(unknown_draw)
+	var hidden_answer := Smite.new()
+	hidden_answer.card_owner = opponent
+	opponent.hand_zone.add_card(hidden_answer)
+	var draw_power := AcceleratedFate.new()
+	draw_power.card_owner = player
+	draw_power.is_face_down = false
+	player.power_zones[0].add_card(draw_power)
+	player.mana = AcceleratedFate.DRAW_COST
+	var snapshot := bot.TurnProjection.capture(bot)
+	if not snapshot["players"][0]["deck"][0].get("hidden", false) \
+			or not snapshot["players"][1]["hand"][0].get("hidden", false):
+		failures.append("Bot turn projection exposed an unknown draw or an unrevealed opponent card")
+	var projection := bot.TurnProjection.new(bot, snapshot)
+	var known_draw := projection.play(0, {"type": "activate_power", "power_uid": draw_power.uid, "target_uid": ""})
+	if known_draw or projection.game.players[0].hand_zone.cards.size() != 1:
+		failures.append("Bot turn projection treated an unknown draw as a resolved, known continuation")
+	projection.release()
+	var actions: Array[Dictionary] = [
+		{"score": 1800, "command": {"type": "change_mode", "card_uid": attacker.uid, "mode": Card.CreatureMode.DEFENSIVE}},
+		{"score": 100, "command": {"type": "creature_move", "card_uid": attacker.uid, "player_index": 0,
+			"zone_type": Zone.ZoneType.FRONTLINE, "zone_index": 0}},
+	]
+	if not bot._execute_best_main_phase_line(actions, [], {}, 0, 0) or attacker.current_zone != player.frontline_zones[0] \
+			or attacker.creature_mode != Card.CreatureMode.AGGRESSIVE:
+		failures.append("Bot chose the higher immediate score over the move that opened the better attack line")
+	if opponent.followers != 100 or hidden_answer.current_zone != opponent.hand_zone or player.deck_zone.cards[0] != unknown_draw:
+		failures.append("Bot turn projection changed live followers, hand or deck before executing the continuation")
+	bot.detach()
 
 func _check_bot_main_phase_combat_order(failures: PackedStringArray) -> void:
 	var game := _new_fixture_game()
@@ -6154,7 +6220,7 @@ func _check_bot_next_turn_lethal(failures: PackedStringArray) -> void:
 	var tez := TezcatlipocaTheSmokingMirror.new()
 	tez.card_owner = player
 	player.god_zone.add_card(tez)
-	var offering: Dictionary = bot._plan_god_manifestation({}, danger).get("command", {})
+	var offering: Dictionary = bot._plan_god_manifestation(danger).get("command", {})
 	if offering.get("target_uid") != weak.uid:
 		failures.append("Necoc Yaotl failed to sacrifice the creature exposing its followers to lethal")
 	player.god_zone.remove_card(tez)

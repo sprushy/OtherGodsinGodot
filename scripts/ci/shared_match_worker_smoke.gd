@@ -40,7 +40,8 @@ class VolunteerLobbyClient extends LobbyClient:
 		_top_50: bool = false,
 		_best_of: int = 1,
 		_below_top_50: bool = false,
-		_god_name: String = ""
+		_god_name: String = "",
+		_new_bots_only: bool = false
 	) -> void:
 		pass
 
@@ -162,7 +163,8 @@ func _check_volunteer_matches(decks: Array[Dictionary], failures: PackedStringAr
 	_match_ids.assign(["volunteer_smoke_%d_a" % OS.get_process_id(), "volunteer_smoke_%d_b" % OS.get_process_id()])
 	for match_id in _match_ids:
 		menu._request_local_bot_match(false)
-		lobby_client.bot_work_assignment_received.emit({"job_id": match_id, "decks": decks})
+		var best_of := 3 if match_id == _match_ids[0] else 1
+		lobby_client.bot_work_assignment_received.emit({"job_id": match_id, "decks": decks, "best_of": best_of})
 	var supervisor = menu._local_bot_match_supervisor
 	var deadline := Time.get_ticks_msec() + TEST_TIMEOUT_MSEC
 	if lobby_client.started != _match_ids or supervisor == null or supervisor.active_matches.size() != MATCH_COUNT:
@@ -202,15 +204,23 @@ func _check_volunteer_completion(menu, lobby_client: VolunteerLobbyClient, failu
 		await create_timer(0.1).timeout
 	if not events.has("match_join_ok") or not events.has("full_state"):
 		failures.append("A local spectator did not receive the shared match state.")
-	finishing.game_manager.forfeit_game(finishing.game_manager.players[1])
+	var series_advanced := true
+	for game_number in [2, 3]:
+		if not await _check_volunteer_series_transition(finishing, game_number, failures):
+			series_advanced = false
+			break
 	var deadline := Time.get_ticks_msec() + TEST_TIMEOUT_MSEC
-	while lobby_client.submitted.is_empty() and Time.get_ticks_msec() < deadline:
-		await create_timer(0.1).timeout
-	if not events.has("series_ended"):
-		failures.append("The shared match closed before delivering the spectator recap.")
+	if series_advanced:
+		finishing.game_manager.forfeit_game(finishing.game_manager.players[1])
+		while lobby_client.submitted.is_empty() and Time.get_ticks_msec() < deadline:
+			await create_timer(0.1).timeout
+		if not events.has("series_ended"):
+			failures.append("The shared match closed before delivering the spectator recap.")
 	spectator.shutdown()
 	if is_instance_valid(transport):
 		transport.queue_free()
+	if not series_advanced:
+		return
 	if lobby_client.submitted.size() != 1 or lobby_client.submitted[0].get("job_id") != finished_id \
 			or lobby_client.submitted[0].get("winner_index") != 0:
 		failures.append("Volunteer hosting did not report the finished match's result exactly once.")
@@ -226,6 +236,21 @@ func _check_volunteer_completion(menu, lobby_client: VolunteerLobbyClient, failu
 		await create_timer(0.1).timeout
 	if not is_instance_valid(survivor) or survivor.game_manager.turn_number <= turn_after_completion:
 		failures.append("The surviving volunteer match did not advance after the first finished.")
+
+func _check_volunteer_series_transition(runtime: HeadlessMatchServer, game_number: int, failures: PackedStringArray) -> bool:
+	# Simulate a previous game that finished close to the stall deadline.
+	var old_progress := Time.get_ticks_msec() - 30_000
+	runtime._bot_review_progress_msec = old_progress
+	var losing_index := 1 if game_number == 2 else 0
+	runtime.game_manager.forfeit_game(runtime.game_manager.players[losing_index])
+	var deadline := Time.get_ticks_msec() + 5_000
+	while is_instance_valid(runtime) and Time.get_ticks_msec() < deadline:
+		if int(runtime.match_session.series_game_number) == game_number and runtime._bot_review_turn == runtime.game_manager.turn_number \
+				and runtime._bot_review_turn > 0 and runtime._bot_review_progress_msec > old_progress:
+			return true
+		await create_timer(0.1).timeout
+	failures.append("The bot stall detector did not track turns in game %d of the watched series." % game_number)
+	return false
 
 func _all_matches_started(supervisor) -> bool:
 	if _match_ids.size() != MATCH_COUNT:

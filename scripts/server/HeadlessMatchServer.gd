@@ -256,7 +256,8 @@ func maybe_start_match_if_ready() -> bool:
 	_match_started = true
 	_initial_join_deadline_unix = 0
 	if match_session.is_bot_self_play():
-		_start_bot_review()
+		_bot_review_started_msec = maxi(1, Time.get_ticks_msec())
+		_track_bot_review_game()
 	_attach_server_bots_for_match()
 	game_manager.start_turn()
 	_poll_server_bots()
@@ -643,6 +644,8 @@ func _start_next_series_game() -> void:
 		match_manager.move_validated.connect(_on_ranked_clock_move_validated)
 	headless_match_host.enable_authoritative_broadcasts()
 	game_event_broadcaster = headless_match_host.game_event_broadcaster
+	if _bot_review_started_msec > 0:
+		_track_bot_review_game()
 	_attach_server_bots_for_match()
 	headless_match_host.broadcast_next_series_game()
 	game_manager.start_turn()
@@ -796,9 +799,9 @@ func _write_status_file(status_override: String = "", reason: String = "") -> vo
 	file.flush()
 	file.close()
 
-func _start_bot_review() -> void:
-	_bot_review_started_msec = maxi(1, Time.get_ticks_msec())
-	_bot_review_progress_msec = _bot_review_started_msec
+func _track_bot_review_game() -> void:
+	_bot_review_turn = 0
+	_bot_review_progress_msec = Time.get_ticks_msec()
 	game_manager.turn_started.connect(_on_bot_review_turn_started)
 	game_manager.card_summoned.connect(_on_bot_review_summon)
 	game_manager.hand_card_entered_play.connect(_on_bot_review_hand_play)

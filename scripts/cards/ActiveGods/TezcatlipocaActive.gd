@@ -207,7 +207,7 @@ func get_effective_resilience(resilience_delta: int = 0) -> int:
 		total += JAGUAR_FORM_RESILIENCE_DELTA
 	return max(0, total)
 
-func get_valid_titlacauan_targets(game_manager: GameManager) -> Array[Card]:
+func get_valid_titlacauan_targets(game_manager: GameManager, check_space: bool = true) -> Array[Card]:
 	var valid_targets: Array[Card] = []
 	var controller := get_controller()
 	if game_manager == null or controller == null:
@@ -217,7 +217,7 @@ func get_valid_titlacauan_targets(game_manager: GameManager) -> Array[Card]:
 		return valid_targets
 	for zone in opponent.frontline_zones + opponent.reserve_zones:
 		for card in zone.cards:
-			if _is_valid_titlacauan_target(game_manager, card):
+			if _is_valid_titlacauan_target(game_manager, card, check_space):
 				valid_targets.append(card)
 	return valid_targets
 
@@ -333,7 +333,7 @@ func get_hover_detail_lines(_viewer: Player = null) -> Array[String]:
 		"[b]The Smoking Mirror[/b]: Convert half the Followers that would have been destroyed instead.",
 	]
 
-func _is_valid_titlacauan_target(game_manager: GameManager, target: Card) -> bool:
+func _is_valid_titlacauan_target(game_manager: GameManager, target: Card, check_space: bool) -> bool:
 	return target != null \
 		and target.card_type == Card.CardType.CREATURE \
 		and not target.is_god \
@@ -341,7 +341,7 @@ func _is_valid_titlacauan_target(game_manager: GameManager, target: Card) -> boo
 		and target.current_zone != null \
 		and target.current_zone.is_board_zone() \
 		and target.get_controller() != get_controller() \
-		and game_manager.can_enslave_creature(target, get_controller()) \
+		and game_manager.get_enslave_failure_reason(target, get_controller(), check_space).is_empty() \
 		and not game_manager.is_immune_to_source(target, self)
 
 func _passives_are_active() -> bool:

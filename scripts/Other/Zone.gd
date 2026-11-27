@@ -23,6 +23,7 @@ const ShuffleDeckSoundPlayerScript = preload("res://scripts/audio/ShuffleDeckSou
 @export var zone_index: int = -1
 var cards: Array[Card] = []
 var zone_owner: Player
+var shuffle_rng: RandomNumberGenerator
 # Owner-authoritative knowledge of deck positions. Never treated as public on
 # its own: the deck owner always knows their primed/shelved cards, but opponents
 # only learn a card's identity when it was publicly known entering the deck.
@@ -102,7 +103,14 @@ func shuffle_deck() -> void:
 		if card != null and card.has_status_effect("publicly_revealed"):
 			card.remove_status_effects_by_name("publicly_revealed")
 	clear_deck_knowledge()
-	cards.shuffle()
+	if shuffle_rng == null:
+		cards.shuffle()
+	else:
+		for index in range(cards.size() - 1, 0, -1):
+			var other := shuffle_rng.randi_range(0, index)
+			var card := cards[index]
+			cards[index] = cards[other]
+			cards[other] = card
 
 func prime_card(card: Card, identity_public = null) -> void:
 	cards.erase(card)

@@ -323,7 +323,7 @@ func _get_champions_call_open_zone() -> Zone:
 	var open_zones := get_champions_call_open_zones()
 	return open_zones[0] if not open_zones.is_empty() else null
 
-func get_champions_call_open_zones() -> Array[Zone]:
+func get_champions_call_open_zones(vacating: Array[Card] = []) -> Array[Zone]:
 	var zones: Array[Zone] = []
 	if card_owner == null:
 		return zones
@@ -331,12 +331,12 @@ func get_champions_call_open_zones() -> Array[Zone]:
 	for index in preferred_frontline:
 		if index >= 0 and index < card_owner.frontline_zones.size():
 			var zone := card_owner.frontline_zones[index]
-			if zone.cards.is_empty():
+			if zone.cards.all(func(card: Card) -> bool: return card in vacating):
 				zones.append(zone)
 	for index in preferred_frontline:
 		if index >= 0 and index < card_owner.reserve_zones.size():
 			var zone := card_owner.reserve_zones[index]
-			if zone.cards.is_empty():
+			if zone.cards.all(func(card: Card) -> bool: return card in vacating):
 				zones.append(zone)
 	return zones
 
