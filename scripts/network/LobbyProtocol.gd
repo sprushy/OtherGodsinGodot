@@ -309,6 +309,9 @@ static func validate_request(message: Dictionary) -> String:
 			var below_top_50 = payload.get("below_top_50", false)
 			if not below_top_50 is bool or (below_top_50 and (top_50 or not bot_id.is_empty())):
 				return "Invalid below top 50 bot match request."
+			var new_bots_only = payload.get("new_bots_only", false)
+			if not new_bots_only is bool or (new_bots_only and (top_50 or below_top_50 or not bot_id.is_empty())):
+				return "Invalid new bot batch match request."
 			if payload.has("best_of") and payload.get("best_of") not in [1, 3]:
 				return "Invalid bot work match format."
 		SEED_BOT_LEAGUE, FINALIZE_BOT_LEAGUE:

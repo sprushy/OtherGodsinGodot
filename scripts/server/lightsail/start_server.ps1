@@ -237,8 +237,15 @@ try {
     $serverProcess = Start-Process @startArgs
     Write-Log "Startup: launched server process PID $($serverProcess.Id)."
 
+    $startupTimeoutSeconds = 10
+    $serverData = Join-Path $Root 'server_runtime\server_data'
+    $hermesMigrationMarker = Join-Path $serverData '.hermes_psychopompos_v1\complete'
+    if ((Test-Path -LiteralPath $serverData -PathType Container) -and -not (Test-Path -LiteralPath $hermesMigrationMarker)) {
+        # The first updated lobby scans archived results before opening listeners.
+        $startupTimeoutSeconds = 120
+    }
     $listenerReady = $false
-    foreach ($attempt in 1..10) {
+    foreach ($attempt in 1..$startupTimeoutSeconds) {
         Start-Sleep -Seconds 1
         if (Test-LobbyListener) {
             $listenerReady = $true
@@ -257,7 +264,7 @@ try {
     }
 
     Write-ListenerStatus
-    $startupFailure = "Startup: required lobby listeners on UDP $LobbyPort and WebSocket TCP $WebSocketPort did not become ready within 10s. Check $godotLogPath and $tracePath."
+    $startupFailure = "Startup: required lobby listeners on UDP $LobbyPort and WebSocket TCP $WebSocketPort did not become ready within ${startupTimeoutSeconds}s. Check $godotLogPath and $tracePath."
     Write-Log $startupFailure
     throw $startupFailure
 } finally {

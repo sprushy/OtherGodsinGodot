@@ -5111,6 +5111,9 @@ func get_card_visual_global_rect() -> Rect2:
 
 func _get_card_hover_avoid_rect() -> Rect2:
 	var avoid_rect := get_card_visual_global_rect().merge(get_global_rect())
+	if is_instance_valid(_prepared_magical_cover_art):
+		var cover := _prepared_magical_cover_art
+		avoid_rect = avoid_rect.merge(cover.get_global_transform() * Rect2(Vector2.ZERO, cover.size))
 	for badge in _clickable_badges:
 		if is_instance_valid(badge) and badge.is_visible_in_tree() and not badge.is_queued_for_deletion():
 			avoid_rect = avoid_rect.merge(badge.get_global_transform() * Rect2(Vector2.ZERO, badge.size))
@@ -6498,10 +6501,15 @@ func _input(event: InputEvent) -> void:
 		_hide_ability_popup()
 
 func _process(_delta: float) -> void:
-	# Failsafe only when not pinned and no hide already pending
-	if _pinned or _hide_pending:
-		return
 	if not is_inside_tree() or is_queued_for_deletion() or get_viewport() == null:
+		return
+	# A board relayout can move the card into an already placed popup.
+	if is_instance_valid(_popup) and _popup.visible:
+		var avoid_rect := _get_card_hover_avoid_rect()
+		var popup_rect := _popup.get_global_transform() * Rect2(Vector2.ZERO, _popup.size)
+		if popup_rect.intersects(avoid_rect):
+			CardDetailContentBuilderScript.place_hover_panel(_popup, get_card_visual_global_rect(), avoid_rect)
+	if _pinned or _hide_pending:
 		return
 	var mouse_pos := get_global_mouse_position()
 	var zone_rect := get_global_rect()
@@ -6560,7 +6568,8 @@ func _show_ability_popup() -> void:
 	popup_root.top_level = true
 	popup_root.z_as_relative = false
 	popup_root.z_index = POPUP_Z_INDEX
-	popup_root.visible = false
+	# Lay out the visible containers offscreen before placing the popup.
+	popup_root.position = Vector2(-10000.0, -10000.0)
 
 	var popup := PanelContainer.new()
 	var pstyle := StyleBoxFlat.new()
@@ -6655,24 +6664,29 @@ func _show_ability_popup() -> void:
 	await get_tree().process_frame
 	# Nested active-god previews need another container layout pass before sizing.
 	await get_tree().process_frame
-	if not is_instance_valid(popup_root) or not is_instance_valid(popup):
+	if not is_instance_valid(popup_root) or popup_root.is_queued_for_deletion() or _popup != popup_root:
 		return
-	if popup_root.is_queued_for_deletion() or _popup != popup_root:
+	var layout_popup := _layout_ability_popup.bind(popup_root, popup, keywords_panel, active_god_preview != null)
+	popup.minimum_size_changed.connect(layout_popup, CONNECT_DEFERRED)
+	if keywords_panel != null:
+		keywords_panel.minimum_size_changed.connect(layout_popup, CONNECT_DEFERRED)
+	layout_popup.call()
+
+func _layout_ability_popup(popup_root: Control, popup: Control, keywords_panel: Control, prefer_sides: bool) -> void:
+	if popup_root != _popup or popup_root.is_queued_for_deletion():
 		return
-	var popup_vp_size_shared := get_viewport_rect().size
-	var popup_size := popup.get_combined_minimum_size()
-	popup.size = popup_size
+	popup.reset_size()
+	var popup_size := popup.size
 	popup.position = Vector2.ZERO
 
 	var keyword_size := Vector2.ZERO
-	var keywords_on_left := false
 	if keywords_panel != null and is_instance_valid(keywords_panel):
-		keyword_size = keywords_panel.get_combined_minimum_size()
-		var room_on_right := popup_vp_size_shared.x - (global_position.x + popup_size.x) - 4.0
+		keywords_panel.reset_size()
+		keyword_size = keywords_panel.size
+		var room_on_right := get_viewport_rect().size.x - (global_position.x + popup_size.x) - 4.0
 		var room_on_left := global_position.x - keyword_size.x - KEYWORD_PANEL_GAP - 4.0
-		keywords_on_left = room_on_right < keyword_size.x + KEYWORD_PANEL_GAP and room_on_left > 0.0
+		var keywords_on_left := room_on_right < keyword_size.x + KEYWORD_PANEL_GAP and room_on_left > 0.0
 		keywords_panel.position = Vector2.ZERO if keywords_on_left else Vector2(popup_size.x + KEYWORD_PANEL_GAP, 0.0)
-		keywords_panel.size = keyword_size
 		if keywords_on_left:
 			popup.position = Vector2(keyword_size.x + KEYWORD_PANEL_GAP, 0.0)
 
@@ -6683,7 +6697,7 @@ func _show_ability_popup() -> void:
 	popup_root.size = popup_root_size
 	var card_rect := get_card_visual_global_rect()
 	CardDetailContentBuilderScript.place_hover_panel(
-		popup_root, card_rect, _get_card_hover_avoid_rect(), active_god_preview != null
+		popup_root, card_rect, _get_card_hover_avoid_rect(), prefer_sides
 	)
 
 func _hide_ability_popup() -> void:

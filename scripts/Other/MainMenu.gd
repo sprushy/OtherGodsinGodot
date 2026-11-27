@@ -177,6 +177,7 @@ var _stop_hosting_bot_matches_button: Button
 var _host_own_bot_button: Button
 var _host_bot_gauntlet_button: Button
 var _host_god_bot_match_button: Button
+var _host_new_bot_batch_button: Button
 var _god_bot_match_dialog: AcceptDialog
 var _god_bot_match_option: OptionButton
 var _god_bot_match_names: Array[String] = []
@@ -209,6 +210,9 @@ var _bo3_bot_hosting := false
 # _god_bot_hosting_name.
 var _god_bot_hosting := false
 var _god_bot_hosting_name := ""
+# Debug-only: continuously run matches for bots built with the current deck
+# rubrics until they reach 20 games, then start a fresh batch.
+var _new_bot_batch_hosting := false
 # True while the default "host one bot match on sign in" mode is active. It
 # keeps exactly one bot match running and recurs when it finishes, but gives way
 # whenever the player needs the space to play or spectate.
@@ -217,6 +221,7 @@ var _pending_local_bot_match_modes: Array[bool] = []
 # Series format (1 or 3) for each pending volunteer request, parallel to
 # _pending_local_bot_match_modes.
 var _pending_local_bot_match_best_of: Array[int] = []
+var _pending_new_bot_batch: Array[bool] = []
 var _local_bot_match_workers: Dictionary = {}
 var _local_bot_match_supervisor: MatchSupervisor
 var _local_bot_match_lease_timer: Timer
@@ -3104,6 +3109,13 @@ func _build_seek_tabs() -> void:
 		_host_below_top_50_bot_matches_button.pressed.connect(_on_host_below_top_50_bot_matches_pressed)
 		_host_below_top_50_bot_matches_button.hide()
 		seek_row_top.add_child(_host_below_top_50_bot_matches_button)
+		_host_new_bot_batch_button = Button.new()
+		_host_new_bot_batch_button.name = "HostNewBotBatchButton"
+		_host_new_bot_batch_button.text = "Host New Bot Batch"
+		_host_new_bot_batch_button.tooltip_text = "Debug only: build bots with the current rubrics and run matches until each has 20 games."
+		_host_new_bot_batch_button.pressed.connect(_on_host_new_bot_batch_pressed)
+		_host_new_bot_batch_button.hide()
+		seek_row_top.add_child(_host_new_bot_batch_button)
 	_stop_hosting_bot_matches_button = Button.new()
 	_stop_hosting_bot_matches_button.text = "Stop Hosting Bot Matches"
 	_stop_hosting_bot_matches_button.pressed.connect(_on_stop_hosting_bot_matches_pressed)
@@ -3285,6 +3297,7 @@ func _on_host_bot_match_pressed(top_50: bool = false) -> void:
 	_below_top_50_bot_hosting = false
 	_bo3_bot_hosting = false
 	_god_bot_hosting = false
+	_new_bot_batch_hosting = false
 	_request_continuous_bot_match()
 
 func _on_host_below_top_50_bot_matches_pressed() -> void:
@@ -3299,6 +3312,23 @@ func _on_host_below_top_50_bot_matches_pressed() -> void:
 	_below_top_50_bot_hosting = true
 	_bo3_bot_hosting = false
 	_god_bot_hosting = false
+	_new_bot_batch_hosting = false
+	_request_continuous_bot_match()
+
+func _on_host_new_bot_batch_pressed() -> void:
+	if not OS.is_debug_build() or lobby_client == null or not lobby_client.can_host_below_top_50_bot_matches:
+		return
+	if _bot_match_hosting_enabled and _new_bot_batch_hosting:
+		_on_stop_hosting_bot_matches_pressed()
+		return
+	_bot_match_hosting_enabled = true
+	_default_bot_hosting = false
+	_top_50_bot_hosting = false
+	_below_top_50_bot_hosting = false
+	_bo3_bot_hosting = false
+	_god_bot_hosting = false
+	_new_bot_batch_hosting = true
+	status_label.text = "Hosting matches for new rubric bots..."
 	_request_continuous_bot_match()
 
 func _on_host_bo3_bot_matches_pressed() -> void:
@@ -3311,6 +3341,7 @@ func _on_host_bo3_bot_matches_pressed() -> void:
 	_below_top_50_bot_hosting = false
 	_bo3_bot_hosting = true
 	_god_bot_hosting = false
+	_new_bot_batch_hosting = false
 	_request_continuous_bot_match()
 
 func _on_host_god_bot_matches_pressed() -> void:
@@ -3400,6 +3431,7 @@ func _request_local_bot_match(continuous: bool, bot_id: String = "", god_name: S
 		lobby_client.bot_work_result_received.connect(_on_local_bot_work_result)
 	_pending_local_bot_match_modes.append(continuous)
 	_pending_local_bot_match_best_of.append(3 if _bo3_bot_hosting else 1)
+	_pending_new_bot_batch.append(_new_bot_batch_hosting)
 	_custom_bot_ids_pending.append(bot_id)
 	_custom_bot_gods_pending.append(god_name)
 	_update_host_bot_match_button()
@@ -3414,7 +3446,8 @@ func _request_local_bot_match(continuous: bool, bot_id: String = "", god_name: S
 		continuous and _top_50_bot_hosting,
 		3 if _bo3_bot_hosting else 1,
 		continuous and _below_top_50_bot_hosting,
-		god_name
+		god_name,
+		continuous and _new_bot_batch_hosting
 	)
 
 func _open_my_bot_picker(for_gauntlet: bool = false) -> void:
@@ -3556,6 +3589,7 @@ func _start_selected_god_bot_match() -> void:
 	_below_top_50_bot_hosting = false
 	_bo3_bot_hosting = false
 	_god_bot_hosting = true
+	_new_bot_batch_hosting = false
 	_request_continuous_bot_match()
 
 func _update_host_bot_match_button() -> void:
@@ -3564,7 +3598,7 @@ func _update_host_bot_match_button() -> void:
 	var signed_in := lobby_client != null and lobby_client.is_authenticated()
 	var regular_hosting := _bot_match_hosting_enabled and not _default_bot_hosting \
 		and not _top_50_bot_hosting and not _below_top_50_bot_hosting and not _bo3_bot_hosting \
-		and not _god_bot_hosting
+		and not _god_bot_hosting and not _new_bot_batch_hosting
 	var top_50_hosting := _bot_match_hosting_enabled and _top_50_bot_hosting
 	var below_top_50_hosting := _bot_match_hosting_enabled and _below_top_50_bot_hosting
 	var bo3_hosting := _bot_match_hosting_enabled and _bo3_bot_hosting
@@ -3608,6 +3642,12 @@ func _update_host_bot_match_button() -> void:
 		_host_god_bot_match_button.visible = OS.is_debug_build() and can_host_god
 		_host_god_bot_match_button.text = "Stop God Bot Hosting" if god_hosting else "Host God Bot Matches"
 		_host_god_bot_match_button.disabled = not god_hosting and (not can_host_god or capacity <= 0)
+	if is_instance_valid(_host_new_bot_batch_button):
+		var can_host_batch := signed_in and lobby_client.can_host_below_top_50_bot_matches
+		var batch_hosting := _bot_match_hosting_enabled and _new_bot_batch_hosting
+		_host_new_bot_batch_button.visible = OS.is_debug_build() and can_host_batch
+		_host_new_bot_batch_button.text = "Stop New Bot Batch" if batch_hosting else "Host New Bot Batch"
+		_host_new_bot_batch_button.disabled = not batch_hosting and (not can_host_batch or capacity <= 0)
 
 func _get_local_bot_match_capacity() -> int:
 	if OS.get_name() not in ["Windows", "macOS", "Linux"] or OS.get_processor_count() < 4:
@@ -3802,6 +3842,8 @@ func _on_local_bot_work_result(job_id: String, success: bool, message: String) -
 			continuous_request = _pending_local_bot_match_modes.pop_front()
 		if not _pending_local_bot_match_best_of.is_empty():
 			_pending_local_bot_match_best_of.pop_front()
+		if not _pending_new_bot_batch.is_empty():
+			_pending_new_bot_batch.pop_front()
 		if not _custom_bot_ids_pending.is_empty():
 			_custom_bot_ids_pending.pop_front()
 		if not _custom_bot_gods_pending.is_empty():
@@ -3986,6 +4028,7 @@ func _stop_local_bot_match_worker() -> void:
 	_below_top_50_bot_hosting = false
 	_god_bot_hosting = false
 	_god_bot_hosting_name = ""
+	_new_bot_batch_hosting = false
 	_watch_next_local_bot_match_pending = false
 	if is_instance_valid(_bot_match_retry_timer):
 		_bot_match_retry_timer.stop()
@@ -3993,6 +4036,7 @@ func _stop_local_bot_match_worker() -> void:
 		_local_bot_match_lease_timer.stop()
 	_pending_local_bot_match_modes.clear()
 	_pending_local_bot_match_best_of.clear()
+	_pending_new_bot_batch.clear()
 	_custom_bot_ids_pending.clear()
 	_custom_bot_gods_pending.clear()
 	_bo3_bot_hosting = false
@@ -4029,6 +4073,7 @@ func _maybe_start_default_bot_hosting() -> void:
 	_top_50_bot_hosting = false
 	_below_top_50_bot_hosting = false
 	_god_bot_hosting = false
+	_new_bot_batch_hosting = false
 	_bot_match_hosting_enabled = true
 	# Host exactly one match at a time by default; it recurs when it finishes.
 	_request_continuous_bot_match(1)

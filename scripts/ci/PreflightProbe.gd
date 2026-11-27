@@ -88,6 +88,7 @@ func run() -> bool:
 	_check_community_bot_quarantine(failures)
 	_check_community_bot_replay_identity(failures)
 	_check_ranked_bot_deck_generation(failures)
+	_check_new_rubric_bot_batch(failures)
 	_check_bot_sideboarding(failures)
 	_check_ranked_bot_manifestations(failures)
 	_check_bot_power_followthrough(failures)
@@ -106,6 +107,7 @@ func run() -> bool:
 	_check_bot_fenrir_creature_lethal(failures)
 	_check_bot_wolf_master(failures)
 	_check_bot_main_phase_combat_order(failures)
+	_check_bot_equipment_forecast(failures)
 	_check_bot_hyena_stealth_attack(failures)
 	_check_bot_aurboda_pierce(failures)
 	_check_bot_tablet_of_life_payoff(failures)
@@ -1691,6 +1693,55 @@ func _check_ranked_bot_deck_generation(failures: PackedStringArray) -> void:
 	if player.hand_zone.cards.size() != 1 or player.deck_zone.cards.size() != deck_size \
 			or player.mana != 0 or not game_manager.has_resolved_turn_upkeep():
 		failures.append("Ranked Tiamat did not use Matriarch Rule to take a Brood creature on turn one")
+
+func _check_new_rubric_bot_batch(failures: PackedStringArray) -> void:
+	var valid_reason := LobbyProtocolScript.validate_request(LobbyProtocolScript.make_message(
+		LobbyProtocolScript.REQUEST_BOT_WORK,
+		{"new_bots_only": true}))
+	if not valid_reason.is_empty():
+		failures.append("lobby guard rejected a new bot batch work request: %s" % valid_reason)
+	for invalid_batch_work in [
+		{"new_bots_only": true, "top_50": true},
+		{"new_bots_only": true, "below_top_50": true},
+		{"new_bots_only": true, "bot_id": "owned_bot"},
+		{"new_bots_only": "true"},
+	]:
+		var invalid_reason := LobbyProtocolScript.validate_request(LobbyProtocolScript.make_message(
+			LobbyProtocolScript.REQUEST_BOT_WORK,
+			invalid_batch_work))
+		if invalid_reason.is_empty():
+			failures.append("lobby guard accepted invalid new bot batch work: %s" % JSON.stringify(invalid_batch_work))
+	var lobby := RecordingLobby.new()
+	lobby._generate_new_rubric_bot_batch(1, 2)
+	var batch := lobby._get_new_rubric_bot_batch(1)
+	var decks: Dictionary = batch.get("decks", {})
+	var records: Dictionary = batch.get("records", {})
+	if decks.size() < 2:
+		failures.append("new rubric bot batch did not generate at least two decks")
+		lobby.free()
+		return
+	var first_pair := lobby._select_new_rubric_bot_pair({}, 1)
+	if first_pair.size() != 2:
+		failures.append("new rubric bot batch could not select an initial pair")
+		lobby.free()
+		return
+	var finished_ids: Array[String] = []
+	for raw_id in decks.keys():
+		var list_id := str(raw_id)
+		finished_ids.append(list_id)
+		var record: Dictionary = records.get(list_id, {})
+		record["games"] = LobbyServerScript.NEW_BOT_BATCH_GAME_LIMIT
+		records[list_id] = record
+	var refreshed_pair := lobby._select_new_rubric_bot_pair({}, 1)
+	if refreshed_pair.size() != 2:
+		failures.append("new rubric bot batch did not refresh after every bot reached the game limit")
+	else:
+		for picked: Dictionary in refreshed_pair:
+			var picked_id := str(picked.get("bot_list_id", picked.get("list_id", "")))
+			if finished_ids.has(picked_id):
+				failures.append("new rubric bot batch reused a bot with %d games" % LobbyServerScript.NEW_BOT_BATCH_GAME_LIMIT)
+				break
+	lobby.free()
 
 func _check_ranked_bot_manifestations(failures: PackedStringArray) -> void:
 	var factory := PracticeAutofillDeckFactory.new()
@@ -4738,6 +4789,82 @@ func _check_bot_shift_and_extraction(failures: PackedStringArray) -> void:
 	if power.is_face_down or player.mana != 0 or not serpent.is_shapeshift_locked() \
 			or spirit == null or spirit.get_effective_strength() != 26 or not spirit.has_type("Human"):
 		failures.append("Bot did not extract the Serpent's higher-valued alternate form through the unlock command")
+	bot.detach()
+
+func _check_bot_equipment_forecast(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 5
+	game._upkeep_resolved_turn = game.turn_number
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var lane := player.frontline_zones[0]
+	var bearer := CreatureCard.new()
+	bearer.card_owner = player
+	bearer.strength = 10
+	bearer.speed = 2
+	bearer.creature_mode = Card.CreatureMode.AGGRESSIVE
+	lane.add_card(bearer)
+	var blocker := CreatureCard.new()
+	blocker.card_owner = opponent
+	blocker.resilience = 21
+	blocker.creature_mode = Card.CreatureMode.DEFENSIVE
+	opponent.frontline_zones[0].add_card(blocker)
+	var sword := RunicShortsword.new()
+	sword.card_owner = player
+	player.hand_zone.add_card(sword)
+	if not bot._plan_combat_equipment(0, 0).is_empty():
+		failures.append("Bot planned a Shortsword attack that still loses to the blocker")
+	var bow := ReedBow.new()
+	bow.card_owner = player
+	player.hand_zone.add_card(bow)
+	if not bot._take_main_phase_action() or sword.equipped_on != bearer or not bot._take_main_phase_action() \
+			or bow.equipped_on != bearer or bearer.get_effective_strength() != 22:
+		failures.append("Bot did not equip both free weapons before the attack they win together")
+	player.move_card(bearer, player.graveyard_zone)
+	var gawain := Gawain.new()
+	gawain.card_owner = player
+	player.hand_zone.add_card(gawain)
+	var boots := SevenLeagueBoots.new()
+	boots.card_owner = player
+	player.hand_zone.add_card(boots)
+	var shield := VoidShield.new()
+	shield.card_owner = opponent
+	shield.is_prepared = true
+	shield.is_face_down = true
+	opponent.reserve_zones[0].add_card(shield)
+	game.prepared_hexes[shield] = game.turn_number - 1
+	player.mana = 4
+	var summon_lane := bot._get_first_open_summon_zone(player)
+	var hidden_hexes := bot._count_unidentified_attack_hexes()
+	var unfunded := bot._upkeep_equipment_plan(4, summon_lane, gawain, hidden_hexes)
+	var funded := bot._upkeep_equipment_plan(8, summon_lane, gawain, hidden_hexes)
+	if hidden_hexes != 1 or not unfunded.is_empty() or funded.get("command", {}).get("card_uid") != boots.uid:
+		failures.append("Bot did not distinguish paying for Gawain from paying for Gawain and the Boots")
+	shield.speed = 7
+	if bot._upkeep_equipment_plan(8, summon_lane, gawain, hidden_hexes) != funded:
+		failures.append("Bot used the hidden Hex's actual speed in its equipment forecast")
+	shield.speed = 3
+	blocker.creature_mode = Card.CreatureMode.AGGRESSIVE
+	blocker.strength = 5
+	opponent.followers = 20
+	var upkeep := bot._choose_upkeep_option(summon_lane)
+	if upkeep.get("choice") != "mana" or not upkeep.get("prioritize_mana", false):
+		failures.append("Bot did not take upkeep mana for a winning Gawain and Boots attack")
+	opponent.followers = 100
+	blocker.creature_mode = Card.CreatureMode.DEFENSIVE
+	shield.is_face_down = false
+	player.mana = 2
+	player.move_card(gawain, summon_lane)
+	gawain.creature_mode = Card.CreatureMode.AGGRESSIVE
+	gawain.on_summon(game)
+	if not bot._take_main_phase_action() or boots.equipped_on != gawain or gawain.get_effective_speed() != 7:
+		failures.append("Bot did not equip the Boots before attacking into a known Void Shield")
 	bot.detach()
 
 func _check_bot_combat_buff_value(failures: PackedStringArray) -> void:

@@ -3,6 +3,8 @@ extends Node2D
 const LobbyServerScript = preload("res://scripts/server/LobbyServer.gd")
 const JsonStoreScript = preload("res://scripts/server/JsonStore.gd")
 const LobbyProtocolScript = preload("res://scripts/network/LobbyProtocol.gd")
+const HermesLadderMigration = preload("res://scripts/server/HermesLadderMigration.gd")
+const ServerPathsScript = preload("res://scripts/server/ServerPaths.gd")
 const DEFAULT_LOBBY_HOST_SETTING := "application/config/default_lobby_host"
 ## Server runtimes are event-driven (lobby RPC, prompts, bot step delays, 1 s
 ## status heartbeats); without a cap an idle match or lobby process iterates
@@ -31,6 +33,10 @@ func _boot_server_runtime() -> void:
 	_boot_lobby_runtime(_launch_args)
 
 func _boot_lobby_runtime(launch_args: Dictionary) -> void:
+	if OS.has_feature("dedicated_server"):
+		# Repair old stores before the lobby or any match workers read them.
+		# The on-disk marker makes all later launches skip the scan.
+		HermesLadderMigration.run(ServerPathsScript.get_server_data_file_path(""))
 	var configured_default_host: String = str(ProjectSettings.get_setting(DEFAULT_LOBBY_HOST_SETTING, "")).strip_edges()
 	var advertised_host: String = str(launch_args.get("lobby_host", configured_default_host)).strip_edges()
 	if advertised_host.is_empty():

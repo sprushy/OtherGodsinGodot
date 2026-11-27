@@ -606,7 +606,8 @@ func request_bot_work(
 	top_50: bool = false,
 	best_of: int = 1,
 	below_top_50: bool = false,
-	god_name: String = ""
+	god_name: String = "",
+	new_bots_only: bool = false
 ) -> void:
 	if is_authenticated():
 		var payload := {"bot_id": bot_id, "excluded_list_ids": excluded_list_ids}
@@ -614,6 +615,8 @@ func request_bot_work(
 			payload["top_50"] = true
 		if below_top_50:
 			payload["below_top_50"] = true
+		if new_bots_only:
+			payload["new_bots_only"] = true
 		if best_of == 3:
 			payload["best_of"] = 3
 		if not god_name.is_empty():

@@ -566,6 +566,17 @@ func _choose_upkeep_option(zone: Zone) -> Dictionary:
 	var dig_gain := _expected_deck_dig_gain(draw_budget, _forecast_incoming_follower_loss())
 	var mana_option := mana_score + CardStrategy.mana_gain_value(self, mana_gain)
 	var draw_option := draw_score + int(float(draw_card_value) * draw_need) + dig_gain
+	if mana_budget > draw_budget and _has_paid_combat_equipment():
+		var hidden_hexes := _count_unidentified_attack_hexes()
+		var draw_equipment := _upkeep_equipment_plan(draw_budget, zone, best_now, hidden_hexes)
+		var mana_equipment := _upkeep_equipment_plan(mana_budget, zone, best_with_bonus, hidden_hexes)
+		if best_now != null and best_now != best_with_bonus:
+			var alternate := _plan_combat_equipment(mana_budget, hidden_hexes, best_now, zone)
+			if _is_better_strategy_plan(alternate, mana_equipment):
+				mana_equipment = alternate
+		if bool(mana_equipment.get("lethal", false)) and not bool(draw_equipment.get("lethal", false)):
+			return {"choice": "mana", "prioritize_mana": true}
+		mana_option += maxi(0, int(mana_equipment.get("score", 0)) - int(draw_equipment.get("score", 0)))
 	# The Matriarch take is a third, mutually exclusive choice: it grants no
 	# draw and no mana. Mana income decaying does not make it good — the random
 	# deck card stays the real rival — so it only wins by outscoring both.
@@ -940,7 +951,14 @@ func _take_main_phase_action() -> bool:
 	var attacks := _get_combat_candidates(mana_budget)
 	var combat := _plan_combat(attacks, [], null, 0, null, mana_budget)
 	var attack := combat
-	if bool(combat.get("lethal", false)):
+	var hidden_hexes := _count_unidentified_attack_hexes()
+	var lethal := bool(combat.get("lethal", false))
+	if lethal and not _combat_opener_risks_hex(combat, attacks, hidden_hexes):
+		return _submit_attack_line(combat, true, mana_budget)
+	var equipment := _plan_combat_equipment(mana_budget, hidden_hexes)
+	if bool(equipment.get("lethal", false)) and _submit_strategy_plan(equipment):
+		return true
+	if lethal:
 		return _submit_attack_line(combat, true, mana_budget)
 	var hermes_plan := _plan_hermes_speed(attacks, combat, mana_budget)
 	if bool(hermes_plan.get("lethal", false)):
@@ -970,6 +988,20 @@ func _take_main_phase_action() -> bool:
 		return true
 	var summon := _plan_creature_summon(danger, attacks, combat)
 	var attack_setup: Dictionary = summon.get("attack_setup", {})
+	var summon_command: Dictionary = summon.get("command", {})
+	if summon_command.get("type") == "play_creature" and summon_command.get("mode") == Card.CreatureMode.AGGRESSIVE \
+			and not summon_command.get("stealth", false) and summon_command.get("zone_type") == Zone.ZoneType.FRONTLINE:
+		var recruit := game_manager.get_card_by_uid(str(summon_command["card_uid"]))
+		var zone := bot_player.frontline_zones[int(summon_command["zone_index"])]
+		var equipped_summon := _plan_combat_equipment(mana_budget, hidden_hexes, recruit, zone)
+		if not equipped_summon.is_empty():
+			summon["score"] = int(summon["score"]) + int(equipped_summon["score"])
+			summon["combat_score"] = maxi(int(summon.get("combat_score", 0)), int(equipped_summon["combat_score"]))
+			summon["brew_setup"] = bool(summon.get("brew_setup", false)) or bool(equipped_summon["brew_setup"])
+			if bool(equipped_summon["lethal"]) and _get_known_entry_responses(recruit, zone, false).is_empty():
+				summon["lethal"] = true
+			if danger < bot_player.followers and _is_better_strategy_plan(summon, attack_setup):
+				attack_setup = summon
 	var removals: Array[Dictionary] = []
 	var play := _get_best_strategy_action(attacks, combat, danger, removals)
 	var recruit_removal := _plan_summoned_removal_ability(attacks, combat, danger)
@@ -978,7 +1010,7 @@ func _take_main_phase_action() -> bool:
 	var paired_removal := _plan_paired_removals(removals, attacks, combat, danger)
 	var deck_ability := _plan_deck_god_ability(danger, attacks, combat, mana_budget)
 	var combat_score := int(combat.get("score", 0))
-	var setups := [play, god_removal, power_activation, attack_setup, recruit_removal, paired_removal, aspect_shift, deck_ability]
+	var setups := [play, god_removal, power_activation, attack_setup, recruit_removal, paired_removal, aspect_shift, deck_ability, equipment]
 	setups.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return _is_better_strategy_plan(a, b))
 	for setup in setups:
 		var gain := int(setup.get("score", 0))
@@ -992,7 +1024,7 @@ func _take_main_phase_action() -> bool:
 	var defenses := [
 		play, manifestation, unlock, _plan_defensive_stance(danger), god_removal,
 		summon, recruit_removal, paired_removal, deck_ability, power_activation, support, hermes_plan,
-		_plan_equipment_pickup(), shift, aspect_shift,
+		_plan_equipment_pickup(), shift, aspect_shift, equipment,
 	]
 	if danger >= bot_player.followers:
 		defenses.append(_plan_defensive_attack(attacks, danger))
@@ -1026,7 +1058,7 @@ func _take_main_phase_action() -> bool:
 		# A setup that improves the combat line can take priority even if its
 		# standalone value is smaller than the attack already available.
 		if not attack.is_empty() and int(plan.get("score", 0)) < setup_threshold \
-				and int(plan.get("combat_score", 0)) <= attack_score:
+				and int(plan.get("combat_score", 0)) <= attack_score and not plan.get("equipment_setup", false):
 			delayed.append(plan)
 		elif _submit_strategy_plan(plan):
 			return true
@@ -4752,6 +4784,163 @@ func _try_prepare_strategy_card() -> bool:
 			best_score = score
 	return _submit_prepare_card(best_card, zone, true) if best_card != null else false
 
+func _combat_equipment_in_hand() -> Array[Card]:
+	return bot_player.hand_zone.cards.filter(func(card: Card) -> bool:
+		return card is EquipmentCard and CardStrategy.key(card) in CardStrategy.EQUIPMENT \
+			and not (card is DraupnirTheMultiplying or card is Gambanteinn) \
+			and card.discard_cost == 0 and card.sacrifice_cost == 0 and card.banish_cost == 0 and card.shelve_cost == 0
+	)
+
+func _has_paid_combat_equipment() -> bool:
+	return _combat_equipment_in_hand().any(func(card: Card) -> bool: return _get_play_cost(card, false) > 0)
+
+func _upkeep_equipment_plan(mana_budget: int, zone: Zone, recruit: Card, hidden_hexes: int) -> Dictionary:
+	var best := _plan_combat_equipment(mana_budget, hidden_hexes)
+	if recruit != null:
+		var after_summon := _plan_combat_equipment(mana_budget, hidden_hexes, recruit, zone)
+		if _is_better_strategy_plan(after_summon, best):
+			best = after_summon
+	return best
+
+func _count_unidentified_attack_hexes() -> int:
+	var count := 0
+	for card: Card in game_manager.prepared_hexes:
+		# Preparation and its timing are public. The identity, speed and
+		# effect of the face-down Hex stay private.
+		if card.get_controller() == opponent and card.is_prepared and not CardStrategy.visible(self, card) \
+				and int(game_manager.prepared_hexes[card]) < game_manager.turn_number:
+			count += 1
+	return count
+
+func _unidentified_hex_risk(candidate: Dictionary, hidden_hexes: int) -> float:
+	# Most attack-triggered Hexes are Speed 3. Some can react at 4 or 5.
+	# A creature target also exposes the attacker to cards like Void Shield.
+	var speed := int(candidate["speed"])
+	if hidden_hexes == 0 or speed > 5:
+		return 0.0
+	var replies: Dictionary = candidate["replies"]
+	var creature_combat := candidate["target"] is CreatureCard or replies.keys().any(
+		func(reply: Card) -> bool: return reply.card_type == Card.CardType.CREATURE
+	)
+	var risk := minf(0.55, hidden_hexes * (0.36 if creature_combat else 0.24))
+	return risk if speed <= 3 else risk * (0.65 if speed == 4 else 0.35)
+
+func _combat_opener_risks_hex(line: Dictionary, attacks: Array[Dictionary], hidden_hexes: int) -> bool:
+	return hidden_hexes > 0 and attacks.any(func(candidate: Dictionary) -> bool:
+		return candidate["attacker"] == line.get("attacker") and candidate["target"] == line.get("target") \
+			and _unidentified_hex_risk(candidate, hidden_hexes) > 0.0
+	)
+
+func _plan_combat_equipment(mana_budget: int, hidden_hexes: int, recruit: Card = null, zone: Zone = null) -> Dictionary:
+	var gear := _combat_equipment_in_hand()
+	if gear.is_empty() or game_manager.turn_number <= 1:
+		return {}
+	if recruit != null:
+		# Leave summons with extra payments to the full summon planner.
+		if zone == null or zone.zone_type != Zone.ZoneType.FRONTLINE or bot_player.has_summoned_this_turn \
+				or recruit.sacrifice_cost > 0 or recruit.discard_cost > 0 or recruit.banish_cost > 0 or recruit.shelve_cost > 0 \
+				or _known_entry_response_penalty(recruit, zone, false) > 0:
+			return {}
+		return _plan_equipment_for_bearer(recruit, gear, mana_budget, hidden_hexes, zone)
+	var best := {}
+	for bearer in _get_attack_ready_creatures(mana_budget):
+		if not match_manager.can_attack(bearer) or not bearer.can_receive_equipment():
+			continue
+		var plan := _plan_equipment_for_bearer(bearer, gear, mana_budget, hidden_hexes)
+		if _is_better_strategy_plan(plan, best):
+			best = plan
+	return best
+
+func _plan_equipment_for_bearer(bearer: Card, gear: Array[Card], mana_budget: int, hidden_hexes: int, zone: Zone = null) -> Dictionary:
+	var summoning := zone != null
+	var summon_cost := _get_play_cost(bearer, false) if summoning else 0
+	var attack_cost := game_manager.get_creature_action_mana_cost(bearer, "attack")
+	var gear_budget := mana_budget - summon_cost - attack_cost
+	if gear_budget < 0 or bearer.negates_external_effects():
+		return {}
+	var partner := match_manager._get_declared_attack_partner(bearer) if not summoning else null
+	var attacks := _get_summon_attack_candidates(bearer, zone, mana_budget) if summoning \
+		else _get_attack_candidates(bearer, partner)
+	if attacks.is_empty():
+		return {}
+	var baseline := _best_equipment_attack(attacks, mana_budget - summon_cost, hidden_hexes, zone, bearer if summoning else null)
+	if bool(baseline.get("lethal", false)):
+		return {}
+
+	# Search up to three pieces together. Identical stat and cost combinations
+	# need just one combat forecast, even when several copies are in hand.
+	var loadouts: Array[Dictionary] = [{"first": null, "stats": Vector3i.ZERO, "cost": 0, "pieces": 0, "boots": false}]
+	var seen := {}
+	var mana_prices := {}
+	var best := {}
+	for card in gear:
+		var cost := _get_play_cost(card, false)
+		if cost > gear_budget or not card.can_equip_to(bearer):
+			continue
+		if not summoning and cost <= bot_player.mana and game_manager.has_resolved_turn_upkeep() \
+				and not game_manager.can_play_card(bot_player, card, bearer.current_zone):
+			continue
+		var changes := CardStrategy.stat_changes(self, card, bearer)
+		var delta := Vector3i(int(changes.get("str", 0)), int(changes.get("res", 0)), int(changes.get("spd", 0)))
+		if delta == Vector3i.ZERO or (card is SevenLeagueBoots and delta.z < 0):
+			continue
+		var previous_count := loadouts.size()
+		for index in range(previous_count):
+			var loadout := loadouts[index]
+			var pieces := int(loadout["pieces"]) + 1
+			var total_cost := int(loadout["cost"]) + cost
+			var boots := card is SevenLeagueBoots
+			if pieces > 3 or total_cost > gear_budget or (boots and bool(loadout["boots"])):
+				continue
+			var stats: Vector3i = loadout["stats"] + delta
+			var key := [stats, total_cost, pieces, boots or bool(loadout["boots"])]
+			if seen.has(key):
+				continue
+			seen[key] = true
+			var first: Card = card if boots or pieces == 1 else loadout["first"]
+			loadouts.append({"first": first, "stats": stats, "cost": total_cost, "pieces": pieces, "boots": key[3]})
+			var projected := _get_attack_candidates(bearer, partner, summoning, null, 0, null, {bearer: stats}, zone)
+			var line := _best_equipment_attack(projected, mana_budget - summon_cost - total_cost, hidden_hexes, zone, bearer if summoning else null)
+			if not mana_prices.has(total_cost):
+				mana_prices[total_cost] = CardStrategy.mana_penalty(self, total_cost, mana_budget - summon_cost, false, false, not summoning)
+			var gain := int(line.get("score", 0)) - int(baseline.get("score", 0)) \
+				- pieces * CardStrategy.EQUIPMENT_COMMITMENT_VALUE - int(mana_prices[total_cost])
+			if gain <= 0 and not bool(line.get("lethal", false)):
+				continue
+			var destination := zone if summoning else bearer.current_zone
+			var plan := {
+				"score": gain, "combat_score": int(line.get("combat_score", 0)),
+				"lethal": bool(line.get("lethal", false)), "combined_setup": true, "equipment_setup": true,
+				"brew_setup": _brew_enables_spend(summon_cost + total_cost + attack_cost),
+				"command": {"type": "play_card", "card_uid": first.uid, "player_index": player_index,
+					"zone_type": destination.zone_type, "zone_index": destination.zone_index},
+			}
+			if _is_better_strategy_plan(plan, best):
+				best = plan
+	return best
+
+func _best_equipment_attack(attacks: Array[Dictionary], mana: int, hidden_hexes: int, zone: Zone, recruit: Card) -> Dictionary:
+	var best := {}
+	for candidate in attacks:
+		var cost := int(candidate["mana_cost"])
+		if cost > mana:
+			continue
+		var result := _project_attack(candidate, [], zone, recruit, mana - cost)
+		if result.is_empty() or bool(result.get("opponent_wins", false)):
+			continue
+		var risk := _unidentified_hex_risk(candidate, hidden_hexes)
+		var lethal := bool(result.get("bot_wins", false)) and risk == 0.0
+		result = result.duplicate()
+		result["bot_wins"] = lethal
+		var combat_score := _score_attack_economy(result) - cost * _mana_rate()
+		var score := combat_score
+		if risk > 0.0:
+			score -= roundi(risk * (ECON_CARD_VALUE + clampi(combat_score, 0, ECON_CARD_VALUE * 2)))
+		var line := {"lethal": lethal, "score": score, "combat_score": combat_score}
+		if _is_better_strategy_plan(line, best):
+			best = line
+	return best
+
 func _plan_strategy_support(danger: int = -1) -> Dictionary:
 	var best_card: Card = null
 	var best_zone: Zone = null
@@ -6730,7 +6919,7 @@ func _get_combat_candidates(projected_mana: int = -1) -> Array[Dictionary]:
 			candidates.append_array(_get_attack_candidates(attacker, match_manager._get_declared_attack_partner(attacker)))
 	return candidates
 
-func _get_attack_candidates(attacker: Card, partner: Card, projected_summon: bool = false, modified_card: Card = null, speed_delta: int = 0, shifted_form: Card = null, summon_stats: Dictionary = {}, projected_zone: Zone = null, only_target: Card = null) -> Array[Dictionary]:
+func _get_attack_candidates(attacker: Card, partner: Card, projected_summon: bool = false, modified_card: Card = null, speed_delta: int = 0, shifted_form: Card = null, projected_stats: Dictionary = {}, projected_zone: Zone = null, only_target: Card = null) -> Array[Dictionary]:
 	var candidates: Array[Dictionary] = []
 	var targets: Array = [only_target] if only_target != null else [opponent]
 	if only_target == null:
@@ -6741,23 +6930,24 @@ func _get_attack_candidates(attacker: Card, partner: Card, projected_summon: boo
 	if projected_zone != null:
 		attacker_form = _preview_board_creature(attacker_form, projected_zone)
 		attacker_form.creature_mode = Card.CreatureMode.AGGRESSIVE
-	var impact_stats: Vector3i = summon_stats.get(attacker, Vector3i.ZERO) if projected_summon else Vector3i.ZERO
+	var attacker_stats: Vector3i = projected_stats.get(attacker, Vector3i.ZERO)
 	var declared_form := attacker_form
 	if attacker_form.will_reveal_in_combat():
 		# The lead attacker normally reveals before the interception window.
 		declared_form = _preview_board_creature(attacker_form, attacker_form.current_zone)
 		declared_form.is_stealth = false
 		declared_form.is_face_down = false
-	var attack_speed := declared_form.get_effective_speed(impact_stats.z + (speed_delta if attacker == modified_card else 0))
+	var attack_speed := declared_form.get_effective_speed(attacker_stats.z + (speed_delta if attacker == modified_card else 0))
 	var partner_form := partner
 	if partner != null:
 		partner_form = shifted_form if shifted_form != null and partner == modified_card else partner
-		attack_speed = mini(attack_speed, partner_form.get_effective_speed(speed_delta if partner == modified_card else 0))
+		var partner_stats: Vector3i = projected_stats.get(partner, Vector3i.ZERO)
+		attack_speed = mini(attack_speed, partner_form.get_effective_speed(partner_stats.z + (speed_delta if partner == modified_card else 0)))
 	var allied_attackers := [partner_form] if partner_form != null else []
 	var projected_strength_delta := _get_projected_strength(attacker) - attacker.get_effective_strength() if projected_summon else 0
-	var stats := {}
+	var stats := projected_stats.duplicate()
 	if projected_summon:
-		stats[attacker] = impact_stats + Vector3i(projected_strength_delta, 0, 0)
+		stats[attacker] = attacker_stats + Vector3i(projected_strength_delta, 0, 0)
 	elif shifted_form != null:
 		stats[modified_card] = _shift_stat_changes(modified_card, shifted_form)
 	elif modified_card != null:
@@ -6810,7 +7000,7 @@ func _get_attack_candidates(attacker: Card, partner: Card, projected_summon: boo
 					replies[hidden] = {}
 		candidates.append({
 			"attacker": attacker, "partner": partner, "target": target, "base": base, "replies": replies,
-			"barriers": barriers,
+			"barriers": barriers, "speed": attack_speed,
 			"mana_cost": game_manager.get_creature_action_mana_cost(attacker, "attack"),
 		})
 	return candidates

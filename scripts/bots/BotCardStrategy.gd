@@ -4,6 +4,7 @@ extends RefCounted
 # always come from the authoritative card/manager before these scores are used.
 const BAD := -1000000
 const CARD_VALUE := 5000
+const EQUIPMENT_COMMITMENT_VALUE := 1000
 const MANA_VALUE := 1000
 @warning_ignore("integer_division")
 const FOLLOWER_VALUE := CARD_VALUE / 25
@@ -263,7 +264,7 @@ static func combat_visible(bot, action: CardAction) -> bool:
 	var defender: Card = bot._get_attack_defender_card(action)
 	return defender == null or visible(bot, defender)
 
-static func mana_penalty(bot, amount: int, available_mana: int = -1, ignore_altar_hold := false, ignore_tutor_hold := false) -> int:
+static func mana_penalty(bot, amount: int, available_mana: int = -1, ignore_altar_hold := false, ignore_tutor_hold := false, reserve_summon := true) -> int:
 	# Spending prices each paid point of mana at its own marginal rate: the
 	# last points of a large stock are nearly free once nothing in the deck
 	# can still use them, while early points of a tight stock are expensive.
@@ -272,7 +273,7 @@ static func mana_penalty(bot, amount: int, available_mana: int = -1, ignore_alta
 	var score := 0
 	for index in range(spend):
 		score += marginal_mana_value(bot, stock - index)
-	if spend > 0 and not bot.bot_player.has_summoned_this_turn:
+	if spend > 0 and reserve_summon and not bot.bot_player.has_summoned_this_turn:
 		var creature: Card = bot._get_best_affordable_hand_creature(0)
 		if creature != null and bot._get_play_cost(creature, false) > bot.bot_player.mana - spend:
 			@warning_ignore("integer_division")
@@ -1991,8 +1992,14 @@ static func equipment_score(bot, equipment: Card, bearer: Card) -> int:
 	if not equipment.can_equip_to(bearer) or bearer.is_sleeping:
 		return BAD
 	if key(equipment) == "DraupnirTheMultiplying":
-		# Three end-turn payments are more likely on a protected reserve bearer.
-		return (6500 if bearer.current_zone in bot.bot_player.reserve_zones else 5500) - CARD_VALUE
+		if not bot.game_manager.can_player_gain_mana_now(bot.bot_player):
+			return 0
+		# Price the first payment at the mana stock the bot actually has.
+		# Discount later payouts if the bearer is exposed on the frontline.
+		var reserve: bool = bearer.current_zone in bot.bot_player.reserve_zones
+		var income := mana_gain_value(bot, DraupnirTheMultiplying.MANA_GAIN)
+		var later := mana_gain_value(bot, DraupnirTheMultiplying.MANA_GAIN, bot.bot_player.mana + DraupnirTheMultiplying.MANA_GAIN)
+		return income + roundi(later * (1.5 if reserve else 1.0)) - CARD_VALUE / 2
 	if equipment is Gambanteinn:
 		for enemy in bot._get_board_creatures(bot.opponent):
 			if visible(bot, enemy) and not enemy.is_sleeping \
@@ -2022,7 +2029,9 @@ static func equipment_score(bot, equipment: Card, bearer: Card) -> int:
 			action.attacker = bearer
 			action.target = defender
 			gain = maxi(gain, combat_gain(bot, bearer, equipment.strength_modifier + 8, 0, action))
-	return gain + 2000 - CARD_VALUE - mana_penalty(bot, activation_cost(bot, equipment))
+	var cost := activation_cost(bot, equipment)
+	var commitment := EQUIPMENT_COMMITMENT_VALUE if cost == 0 else CARD_VALUE - 2000
+	return gain - commitment - mana_penalty(bot, cost)
 
 static func equipment_pickup_score(bot, equipment: EquipmentCard, bearer: Card) -> int:
 	if equipment == null or bearer == null or not equipment.can_equip_to(bearer):

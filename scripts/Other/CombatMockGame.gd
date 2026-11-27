@@ -12016,10 +12016,21 @@ func _position_hand_hover_preview() -> void:
 	preview.size = preview_sz
 	if keywords_panel != null and is_instance_valid(keywords_panel):
 		keywords_panel.size = keywords_sz
-	# Never cover the hovered hand card: the preview rises above the local
-	# hand card and drops below the enemy peek, scaling down only if it must.
-	var source_rect: Rect2 = vc.get_global_transform() * Rect2(Vector2.ZERO, vc.size)
-	CardDetailContentBuilderScript.place_hover_panel(preview, source_rect, source_rect, false)
+	var viewport_margin := 4.0
+	var preview_scale := minf(
+		1.0,
+		minf(
+			maxf(0.25, (vp_size.x - viewport_margin * 2.0) / maxf(preview_sz.x, 1.0)),
+			maxf(0.25, (vp_size.y - viewport_margin * 2.0) / maxf(preview_sz.y, 1.0))
+		)
+	)
+	preview.scale = Vector2(preview_scale, preview_scale)
+	var scaled_preview_sz := preview_sz * preview_scale
+	var desired_px := card_cx - (large_vc.position.x + card_sz.x * 0.5)
+	var px := clampf(desired_px, viewport_margin, maxf(viewport_margin, vp_size.x - scaled_preview_sz.x - viewport_margin))
+	var py := viewport_margin if source_side < 0 else maxf(viewport_margin, vp_size.y - scaled_preview_sz.y - viewport_margin)
+	preview.global_position = Vector2(px, py)
+	preview.visible = true
 
 func _refresh_hand_hover_from_mouse() -> void:
 	if _is_match_replay_open():

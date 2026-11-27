@@ -35,6 +35,10 @@ const ADMIN_USERNAMES_ENV := "OTHERGODS_ADMIN_USERNAMES"
 const MAX_BOT_SELF_PLAY := 10
 const MAX_CLIENT_BOT_WORKERS_PER_ACCOUNT := 6
 const LEAGUE_ROUND_ROBIN_DEFAULT_MATCHES_PER_BOT := 50
+# Debug-only rubric evaluation: a batch of freshly built bots plays until each
+# has this many games, then the lobby builds fresh bots from the same rules.
+const NEW_BOT_BATCH_GAME_LIMIT := 20
+const NEW_BOT_BATCH_SIZE := 8
 const BOT_SELF_PLAY_LIMIT_ENV := "OTHERGODS_BOT_SELF_PLAY_LIMIT"
 const BOT_SELF_PLAY_FRAME_LIMIT := 0.055
 const BOT_SELF_PLAY_MEMORY_RESERVE := 512 * 1024 * 1024
@@ -124,6 +128,9 @@ var _punch_ready_last_msec_by_key: Dictionary = {}
 var _next_bot_self_play_block_log_msec := 0
 var _client_bot_jobs: Dictionary = {}
 var _pending_league_pairings: Array = []
+# Debug-only rubric batches, keyed by match format. Each value holds `serial`,
+# `decks` (list id -> deck submission), and `records` (list id -> game counts).
+var _new_rubric_bot_batches: Dictionary = {}
 var _local_bot_matches_by_id: Dictionary = {}
 var _spectator_acks_by_key: Dictionary = {}
 var _issue_report_last_submit_by_peer: Dictionary = {}
@@ -1252,6 +1259,12 @@ func _handle_request_bot_work(peer_id: int, payload: Dictionary = {}) -> void:
 			"job_id": "", "success": false, "message": "Only debug clients can host bot matches below the top 50.",
 		})
 		return
+	var new_bots_only := bool(payload.get("new_bots_only", false))
+	if new_bots_only and not _can_host_below_top_50_bot_matches(session):
+		_send_to_peer(peer_id, LobbyProtocolScript.BOT_WORK_RESULT, {
+			"job_id": "", "success": false, "message": "Only debug clients can host new bot batch matches.",
+		})
+		return
 	var requested_god := str(payload.get("god_name", "")).strip_edges()
 	if not requested_god.is_empty() and not _can_host_below_top_50_bot_matches(session):
 		_send_to_peer(peer_id, LobbyProtocolScript.BOT_WORK_RESULT, {
@@ -1279,7 +1292,7 @@ func _handle_request_bot_work(peer_id: int, payload: Dictionary = {}) -> void:
 	# Serve pending league round-robin pairings first so volunteers play the
 	# scheduled tournament matches instead of random self-play pairs.
 	var pending_index := -1
-	if not top_50 and not below_top_50 and requested_god.is_empty():
+	if not top_50 and not below_top_50 and not new_bots_only and requested_god.is_empty():
 		for index in range(_pending_league_pairings.size()):
 			if int((_pending_league_pairings[index] as Dictionary).get("best_of", 1)) == best_of:
 				pending_index = index
@@ -1321,7 +1334,17 @@ func _handle_request_bot_work(peer_id: int, payload: Dictionary = {}) -> void:
 	var requested_bot_id := str(payload.get("bot_id", "")).strip_edges()
 	var deck_a: Dictionary
 	var deck_b: Dictionary
-	if not requested_bot_id.is_empty():
+	if new_bots_only:
+		var batch_pair := _select_new_rubric_bot_pair(busy, best_of)
+		if batch_pair.size() != 2:
+			_send_to_peer(peer_id, LobbyProtocolScript.BOT_WORK_RESULT, {
+				"job_id": "", "success": false,
+				"message": "No new rubric bot batch is available for this computer right now.",
+			})
+			return
+		deck_a = batch_pair[0]
+		deck_b = batch_pair[1]
+	elif not requested_bot_id.is_empty():
 		busy[requested_bot_id] = true
 		var owned_bot := _find_community_bot(str(session["account_id"]), requested_bot_id, best_of)
 		if owned_bot.is_empty():
@@ -1418,6 +1441,7 @@ func _handle_request_bot_work(peer_id: int, payload: Dictionary = {}) -> void:
 		"best_of": best_of,
 		"expires_unix": int(Time.get_unix_time_from_system()) + 600,
 		"status": "assigned",
+		"new_bot_evaluation": new_bots_only,
 	}
 	_send_to_peer(peer_id, LobbyProtocolScript.BOT_WORK_ASSIGNMENT, {
 		"job_id": job_id,
@@ -2277,42 +2301,51 @@ func _handle_submit_bot_work_result(peer_id: int, payload: Dictionary) -> void:
 	var job: Dictionary = _client_bot_jobs.get(job_id, {})
 	var session := _get_session_for_peer(peer_id)
 	var accepted := false
+	var success_message := "Bot match added to the shared ladder."
+	var is_evaluation_match := bool(job.get("new_bot_evaluation", false))
 	if not job.is_empty() and not session.is_empty() \
 			and str(job.get("account_id", "")) == str(session.get("account_id", "")) \
 			and int(job.get("expires_unix", 0)) >= Time.get_unix_time_from_system():
 		var first: Dictionary = job["deck_a"]
 		var second: Dictionary = job["deck_b"]
-		var first_id := "%s%s" % [BOT_SESSION_PREFIX, _generate_id(10)]
-		var second_id := "%s%s" % [BOT_SESSION_PREFIX, _generate_id(10)]
-		var player_ids: Array[String] = [first_id, second_id]
-		var decks := {first_id: first, second_id: second}
-		var identities := {
-			first_id: {"is_bot": true, "player_name": first["deck_name"]},
-			second_id: {"is_bot": true, "player_name": second["deck_name"]},
-		}
-		var match_id := "volunteer_%s" % job_id
-		var match_session := MatchSessionScript.new(match_id, match_id, "127.0.0.1", 0, player_ids, decks, identities)
-		match_session.is_ranked = true
-		match_session.configure_series_format(int(job.get("best_of", 1)))
-		var winner_index := int(payload["winner_index"])
-		var result: Dictionary = match_history_store.record_completed_match(
-			match_session,
-			winner_index,
-			1 - winner_index,
-			str(first["god_name"]) if winner_index == 0 else str(second["god_name"]),
-			str(second["god_name"]) if winner_index == 0 else str(first["god_name"]),
-			{"turns": clampi(int(payload.get("turns", 1)), 1, 1000)}
-		)
-		accepted = bool(result.get("success", false))
+		var winner_index := int(payload.get("winner_index", -1))
+		if is_evaluation_match:
+			accepted = _record_new_rubric_bot_result(
+				int(job.get("best_of", 1)), first, second, winner_index
+			)
+			success_message = "New rubric bot match recorded in the debug batch."
+		else:
+			var first_id := "%s%s" % [BOT_SESSION_PREFIX, _generate_id(10)]
+			var second_id := "%s%s" % [BOT_SESSION_PREFIX, _generate_id(10)]
+			var player_ids: Array[String] = [first_id, second_id]
+			var decks := {first_id: first, second_id: second}
+			var identities := {
+				first_id: {"is_bot": true, "player_name": first["deck_name"]},
+				second_id: {"is_bot": true, "player_name": second["deck_name"]},
+			}
+			var match_id := "volunteer_%s" % job_id
+			var match_session := MatchSessionScript.new(match_id, match_id, "127.0.0.1", 0, player_ids, decks, identities)
+			match_session.is_ranked = true
+			match_session.configure_series_format(int(job.get("best_of", 1)))
+			var result: Dictionary = match_history_store.record_completed_match(
+				match_session,
+				winner_index,
+				1 - winner_index,
+				str(first["god_name"]) if winner_index == 0 else str(second["god_name"]),
+				str(second["god_name"]) if winner_index == 0 else str(first["god_name"]),
+				{"turns": clampi(int(payload.get("turns", 1)), 1, 1000)}
+			)
+			accepted = bool(result.get("success", false))
 		if accepted:
 			_client_bot_jobs.erase(job_id)
-			_invalidate_ladder_cache()
+			if not is_evaluation_match:
+				_invalidate_ladder_cache()
 	_send_to_peer(peer_id, LobbyProtocolScript.BOT_WORK_RESULT, {
 		"job_id": job_id,
 		"success": accepted,
-		"message": "Bot match added to the shared ladder." if accepted else "Bot match could not be recorded.",
+		"message": success_message if accepted else "Bot match could not be recorded.",
 	})
-	if accepted:
+	if accepted and not is_evaluation_match:
 		_broadcast_room_lists()
 		_broadcast_bot_match_history()
 
@@ -3180,6 +3213,162 @@ func _busy_bot_list_ids() -> Dictionary:
 			if not list_id.is_empty():
 				busy[list_id] = true
 	return busy
+
+# --- Debug rubric bot batches -------------------------------------------------
+# These batches are deliberately kept out of the ranked pools: the debug button
+# is for evaluating the current deck-building rubrics, not for changing ladder
+# records. Each batch lives in memory on the lobby and is replaced once every
+# bot in it has reached NEW_BOT_BATCH_GAME_LIMIT games.
+
+func _get_new_rubric_bot_batch(best_of: int) -> Dictionary:
+	var format := 3 if int(best_of) == 3 else 1
+	if not _new_rubric_bot_batches.has(format):
+		_new_rubric_bot_batches[format] = {
+			"serial": 0,
+			"decks": {},
+			"records": {},
+		}
+	return _new_rubric_bot_batches[format]
+
+func _generate_new_rubric_bot_batch(best_of: int, minimum_new_bots: int = NEW_BOT_BATCH_SIZE) -> void:
+	_ensure_deck_validator()
+	_ensure_server_bot_deck_factory()
+	if server_bot_deck_factory == null:
+		return
+	var god_names: Array[String] = server_bot_deck_factory.get_ranked_god_names()
+	god_names.sort()
+	if god_names.is_empty():
+		return
+	var format := 3 if int(best_of) == 3 else 1
+	var batch := _get_new_rubric_bot_batch(format)
+	var serial := int(batch.get("serial", 0)) + 1
+	# Append instead of replacing: a result from a match still in flight must
+	# still find its bot when the new batch has already been generated.
+	var decks: Dictionary = batch.get("decks", {})
+	var records: Dictionary = batch.get("records", {})
+	var base_seed := int(Time.get_unix_time_from_system()) + serial * 100000
+	var generated := 0
+	var index := 0
+	while generated < minimum_new_bots and index < minimum_new_bots * 8:
+		var god_name := str(god_names[index % god_names.size()])
+		var deck: Dictionary = {}
+		for attempt in range(32):
+			deck = server_bot_deck_factory.build_random_deck(
+				base_seed + index * 1000 + attempt, god_name, true
+			)
+			if not deck.is_empty() and not (deck.get("cards", {}) as Dictionary).is_empty():
+				break
+			deck = {}
+		index += 1
+		if deck.is_empty():
+			continue
+		var validated := _validate_server_bot_deck(deck)
+		if validated.is_empty():
+			continue
+		var list_id := "newrubric_%d_%d" % [serial, index]
+		var bot_name := "%s New Bot %d-%d" % [
+			RankedBotDeckPoolScript.display_god_name(god_name), serial, index
+		]
+		validated["list_id"] = list_id
+		validated["bot_list_id"] = list_id
+		validated["deck_name"] = bot_name
+		validated["bot_name"] = bot_name
+		validated["bot_god_name"] = god_name
+		validated["bot_stars"] = 0
+		validated["bot_win_streak"] = 0
+		decks[list_id] = validated
+		records[list_id] = {"wins": 0, "losses": 0, "draws": 0, "games": 0}
+		generated += 1
+	batch["serial"] = serial
+	batch["decks"] = decks
+	batch["records"] = records
+	print("[New Bot Batch] generated %d rubric bots (serial %d, best_of %d)" % [generated, serial, format])
+
+func _ensure_new_rubric_bot_batch(best_of: int) -> void:
+	var batch := _get_new_rubric_bot_batch(best_of)
+	var decks: Dictionary = batch.get("decks", {})
+	if decks.size() < 2:
+		_generate_new_rubric_bot_batch(best_of, maxi(2, 2 - decks.size()))
+
+func _select_new_rubric_bot_pair(busy: Dictionary, best_of: int) -> Array[Dictionary]:
+	_ensure_new_rubric_bot_batch(best_of)
+	var format := 3 if int(best_of) == 3 else 1
+	var batch := _get_new_rubric_bot_batch(format)
+	var decks: Dictionary = batch.get("decks", {})
+	var records: Dictionary = batch.get("records", {})
+	var eligible: Array[String] = []
+	for raw_id in decks.keys():
+		var list_id := str(raw_id)
+		if busy.has(list_id):
+			continue
+		var record: Dictionary = records.get(list_id, {})
+		if int(record.get("games", 0)) >= NEW_BOT_BATCH_GAME_LIMIT:
+			continue
+		eligible.append(list_id)
+	if eligible.size() < 2:
+		# Everything left in the batch is busy or finished: add fresh rubric
+		# bots without dropping records for matches that are still in flight.
+		_generate_new_rubric_bot_batch(format, maxi(2, 3 - eligible.size()))
+		batch = _get_new_rubric_bot_batch(format)
+		decks = batch.get("decks", {})
+		records = batch.get("records", {})
+		eligible.clear()
+		for raw_id in decks.keys():
+			var list_id := str(raw_id)
+			if busy.has(list_id):
+				continue
+			var record: Dictionary = records.get(list_id, {})
+			if int(record.get("games", 0)) >= NEW_BOT_BATCH_GAME_LIMIT:
+				continue
+			eligible.append(list_id)
+	if eligible.size() < 2:
+		return []
+	eligible.sort_custom(func(first, second) -> bool:
+		var first_record: Dictionary = records[first]
+		var second_record: Dictionary = records[second]
+		return int(first_record.get("games", 0)) < int(second_record.get("games", 0))
+	)
+	# Prefer the least-played half of the batch, then pick randomly inside it.
+	var candidate_count := maxi(2, mini(eligible.size(), maxi(2, eligible.size() / 2)))
+	var first_index := _bot_deck_rng.randi_range(0, candidate_count - 1)
+	var first_id := eligible[first_index]
+	eligible.remove_at(first_index)
+	var second_id := eligible[_bot_deck_rng.randi_range(0, eligible.size() - 1)]
+	return [
+		(decks[first_id] as Dictionary).duplicate(true),
+		(decks[second_id] as Dictionary).duplicate(true),
+	]
+
+func _record_new_rubric_bot_result(
+	best_of: int, first: Dictionary, second: Dictionary, winner_index: int
+) -> bool:
+	var format := 3 if int(best_of) == 3 else 1
+	var batch := _get_new_rubric_bot_batch(format)
+	var records: Dictionary = batch.get("records", {})
+	var first_id := str(first.get("bot_list_id", first.get("list_id", "")))
+	var second_id := str(second.get("bot_list_id", second.get("list_id", "")))
+	if first_id.is_empty() or second_id.is_empty() or first_id == second_id:
+		return false
+	if not records.has(first_id) or not records.has(second_id):
+		return false
+	var first_record: Dictionary = records[first_id]
+	var second_record: Dictionary = records[second_id]
+	if winner_index == 0:
+		first_record["wins"] = int(first_record.get("wins", 0)) + 1
+		second_record["losses"] = int(second_record.get("losses", 0)) + 1
+	elif winner_index == 1:
+		second_record["wins"] = int(second_record.get("wins", 0)) + 1
+		first_record["losses"] = int(first_record.get("losses", 0)) + 1
+	else:
+		first_record["draws"] = int(first_record.get("draws", 0)) + 1
+		second_record["draws"] = int(second_record.get("draws", 0)) + 1
+	for record in [first_record, second_record]:
+		record["games"] = int(record.get("wins", 0)) \
+			+ int(record.get("losses", 0)) + int(record.get("draws", 0))
+	print("[New Bot Batch] recorded match: %s vs %s (serial %d, best_of %d)" % [
+		first_id, second_id, int(batch.get("serial", 0)), format
+	])
+	return true
 
 func _build_fresh_bot_deck_submission(extra_reserved: Dictionary = {}, best_of: int = 1, forced_god_name: String = "") -> Dictionary:
 	_ensure_server_bot_deck_factory()
