@@ -15,7 +15,9 @@ const EARLY_QUARANTINE_WIN_RATE_DENOMINATOR := 20
 # its next result.
 const QUARANTINE_RELEASE_WIN_RATE_NUMERATOR := 3
 const QUARANTINE_RELEASE_WIN_RATE_DENOMINATOR := 5
-const EXPLORATION_CHANCE := 0.20
+# Self-play pairings spend 30% of matches on exploration instead of always
+# using the rating-weighted pair.
+const EXPLORATION_CHANCE := 0.30
 # How many of the worst bots per god are kept as quarantined bad bots for
 # forced matchmaking (Iron V and post-loss Iron/Bronze pairing).
 const QUARANTINED_PER_GOD := 1
@@ -1290,7 +1292,21 @@ func _apply_result(result: Dictionary) -> void:
 				victim_index = i
 			elif current_priority == victim_priority and _get_played_match_count(current) < _get_played_match_count(victim):
 				victim_index = i
+		var displaced: Dictionary = lists[victim_index]
 		lists.remove_at(victim_index)
+		# The displaced incumbent is held in the quarantine pool (like other
+		# retired weak bots) instead of vanishing, so its identity survives for
+		# cross-format mirroring and forced matchmaking can still use it.
+		_hold_retired_list(pool, displaced)
+		var displaced_id := str(displaced.get("list_id", ""))
+		if not displaced_id.is_empty() and str(pool.get("quarantined_id", "")) == displaced_id:
+			# The displaced list was an active trial's incumbent; pause that
+			# trial so its resolution cannot target an unrelated list later.
+			pool["quarantined_id"] = ""
+			var paused_challenger: Dictionary = pool["challenger"]
+			if not paused_challenger.is_empty():
+				pool["pending"].push_front(paused_challenger)
+				pool["challenger"] = {}
 	if lists.size() < LISTS_PER_GOD:
 		_name_list(new_list, lists)
 		lists.append(new_list)
@@ -1330,12 +1346,13 @@ func _should_retire_early(list: Dictionary) -> bool:
 			< EARLY_QUARANTINE_WIN_RATE_NUMERATOR * games_played
 	return 3 * int(list["losses"]) >= 2 * games_played
 
-func _retire_list(pool: Dictionary, list: Dictionary) -> void:
+## Quarantine bookkeeping shared by every retirement path: retired weak bots
+## are held for forced matchmaking (Iron V and post-loss Iron/Bronze pairing)
+## instead of discarded, and can earn their way back through the release rule.
+func _hold_retired_list(pool: Dictionary, list: Dictionary) -> void:
 	var list_id := str(list.get("list_id", ""))
 	if list_id.is_empty():
 		return
-	# Quarantine retired weak bots but hold onto them for forced matchmaking
-	# (Iron V and post-loss Iron/Bronze pairing) instead of discarding them.
 	var qids: Array = pool.get("quarantined_ids", []).duplicate()
 	if not (list_id in qids):
 		qids.append(list_id)
@@ -1349,6 +1366,14 @@ func _retire_list(pool: Dictionary, list: Dictionary) -> void:
 	if not already_held:
 		qlists.append(list.duplicate(true))
 		pool["quarantined_lists"] = qlists
+
+func _retire_list(pool: Dictionary, list: Dictionary) -> void:
+	var list_id := str(list.get("list_id", ""))
+	if list_id.is_empty():
+		return
+	# Quarantine retired weak bots but hold onto them for forced matchmaking
+	# (Iron V and post-loss Iron/Bronze pairing) instead of discarding them.
+	_hold_retired_list(pool, list)
 	if pool["challenger"].get("list_id", "") == list_id:
 		pool["challenger"] = {}
 		pool["quarantined_id"] = ""
@@ -1382,7 +1407,13 @@ func _resolve_trial(pool: Dictionary) -> void:
 			break
 	var incumbent: Dictionary = lists[incumbent_index]
 	if _has_stronger_record(challenger, incumbent):
-		lists[incumbent_index] = challenger
+		# The displaced incumbent is held in the quarantine pool (like other
+		# retired weak bots) instead of vanishing, so its identity survives for
+		# cross-format mirroring and forced matchmaking can still use it.
+		# _retire_list also graduates the winning challenger into the freed
+		# slot, clears the trial state, and starts the next pending trial.
+		_retire_list(pool, incumbent)
+		return
 	pool["quarantined_id"] = ""
 	pool["challenger"] = {}
 	if not pool["pending"].is_empty():
@@ -1461,3 +1492,305 @@ func _name_list(list: Dictionary, other_lists: Array) -> void:
 	list["deck_name"] = chosen_name
 	if not list_id.is_empty():
 		_assigned_names_by_list_id[list_id] = chosen_name
+
+## Cross-format bot identity reconciliation. Bo1 and Bo3 replay separate result
+## streams, so left alone each ladder mints its own identities and one display
+## name can mean two different decks across formats. Reconciling with the other
+## format's pool makes one bot identity (deck content plus display name) mean
+## the same thing on both ladders:
+## - Entries are matched by list id (community submissions, league lists, and
+##   established bots) or, for anonymous generated decks, by deck fingerprint.
+## - Each identity resolves one display name; when two identities claim the
+##   same name, the secondary-format origin is renamed, never the primary one.
+## - An identity that exists on only one ladder is mirrored onto the other
+##   with a zeroed record, so both ladders show the same bot rosters.
+## Records, stars, quarantine, challenger trials, and retirement stay fully
+## per-format: matching never copies or resets them, and mirrors start empty.
+func sync_shared_identities(other, self_is_primary: bool) -> Dictionary:
+	if other == null or other == self:
+		return {}
+	var primary = self if self_is_primary else other
+	var secondary = other if self_is_primary else self
+	var sides: Array = []
+	sides.append_array(_collect_identity_sides(primary))
+	sides.append_array(_collect_identity_sides(secondary))
+	if sides.is_empty():
+		return {}
+	# Phase 1: bucket every entry by its identity key.
+	var buckets := {}
+	for side: Dictionary in sides:
+		var key := _identity_bucket_key(side["entry"])
+		if not buckets.has(key):
+			buckets[key] = []
+		(buckets[key] as Array).append(side)
+	# Phase 2: merge anonymous buckets that share a fingerprint across pools,
+	# so the same deck minted under two format-local ids becomes one identity.
+	# Same-pool twins stay separate: they are distinct roster entries there.
+	var identities: Array = []
+	var merged_keys := {}
+	for raw_key in buckets.keys():
+		var key := str(raw_key)
+		if merged_keys.has(key):
+			continue
+		merged_keys[key] = true
+		var group: Array = buckets[key]
+		var anchor: Dictionary = group[0]
+		var anchor_entry: Dictionary = anchor["entry"]
+		var anchor_fp := str(anchor_entry.get("fingerprint", ""))
+		if _is_anonymous_entry(anchor_entry) and not anchor_fp.is_empty():
+			for raw_other_key in buckets.keys():
+				var other_key := str(raw_other_key)
+				if merged_keys.has(other_key):
+					continue
+				var other_group: Array = buckets[other_key]
+				var other_anchor: Dictionary = other_group[0]
+				if other_anchor["pool"] == anchor["pool"] \
+						or not _is_anonymous_entry(other_anchor["entry"]) \
+						or str(other_anchor["entry"].get("fingerprint", "")) != anchor_fp:
+					continue
+				group.append_array(other_group)
+				merged_keys[other_key] = true
+		var identity := {"god_name": str(anchor["god_name"]), "entries": group, "ids": {}, "has_owner": false}
+		for side: Dictionary in group:
+			var entry: Dictionary = side["entry"]
+			var list_id := str(entry.get("list_id", "")).strip_edges()
+			if not list_id.is_empty():
+				identity["ids"][list_id] = true
+			if not str(entry.get("owner_name", "")).strip_edges().is_empty():
+				identity["has_owner"] = true
+		identities.append(identity)
+	# Phase 3: resolve one display name per identity, primary claims first.
+	var resolved_names: Array = []
+	var name_origins: Array = []
+	for identity in identities:
+		var resolved := ""
+		var origin := ""
+		if bool(identity["has_owner"]):
+			# Community submissions keep their author-chosen name verbatim.
+			var owner_entry: Dictionary = _first_entry_on_side(identity, primary)
+			if owner_entry.is_empty():
+				owner_entry = _first_entry_on_side(identity, secondary)
+			resolved = str(owner_entry.get("deck_name", ""))
+			origin = "owner"
+		else:
+			for side_info in [["primary", primary], ["secondary", secondary]]:
+				var claim := _identity_side_name_claim(identity, side_info[1])
+				if not claim.is_empty():
+					resolved = claim
+					origin = str(side_info[0])
+					break
+		if origin.is_empty():
+			# Every claim was generic; keep the primary side's current name.
+			var fallback: Dictionary = _first_entry_on_side(identity, primary)
+			if fallback.is_empty():
+				fallback = _first_entry_on_side(identity, secondary)
+			resolved = str(fallback.get("deck_name", ""))
+			origin = "primary"
+		resolved_names.append(resolved)
+		name_origins.append(origin)
+	# Phase 4: settle name collisions. Owner submissions are never renamed;
+	# every other conflict yields to the primary-format identity.
+	var by_name := {}
+	for index in range(identities.size()):
+		var name_key := str(resolved_names[index]).strip_edges().to_lower()
+		if name_key.is_empty():
+			continue
+		if not by_name.has(name_key):
+			by_name[name_key] = []
+		(by_name[name_key] as Array).append(index)
+	var used_names := {}
+	for index in range(identities.size()):
+		var used_key := str(resolved_names[index]).strip_edges().to_lower()
+		if not used_key.is_empty():
+			used_names[used_key] = true
+	var renamed := 0
+	for raw_name_key in by_name.keys():
+		var colliding: Array = by_name[raw_name_key]
+		if colliding.size() < 2:
+			continue
+		colliding.sort_custom(func(first, second) -> bool:
+			var first_priority := _identity_conflict_priority(identities[first], str(name_origins[first]))
+			var second_priority := _identity_conflict_priority(identities[second], str(name_origins[second]))
+			if first_priority != second_priority:
+				return first_priority > second_priority
+			return int(first) < int(second))
+		for rank in range(1, colliding.size()):
+			var index: int = colliding[rank]
+			if str(name_origins[index]) == "owner" or bool(identities[index]["has_owner"]):
+				continue
+			var god := display_god_name(str(identities[index]["god_name"]))
+			var renamed_value := _make_unique_bot_name(god, _first_entry_of(identities[index]), used_names)
+			resolved_names[index] = renamed_value
+			used_names[renamed_value.to_lower()] = true
+			renamed += 1
+	# Phase 5: write the resolved names into both pools' entries and assigned
+	# name maps. One shared map keeps future replays, naming passes, and the
+	# two ladders in agreement about which name belongs to which identity.
+	for index in range(identities.size()):
+		var identity: Dictionary = identities[index]
+		var resolved := str(resolved_names[index]).strip_edges()
+		if resolved.is_empty():
+			continue
+		for side: Dictionary in identity["entries"]:
+			var entry: Dictionary = side["entry"]
+			if str(entry.get("deck_name", "")) != resolved:
+				entry["deck_name"] = resolved
+				side["pool"]._state_changed = true
+		for raw_list_id in (identity["ids"] as Dictionary).keys():
+			var list_id := str(raw_list_id)
+			for pool in [self, other]:
+				if str(pool._assigned_names_by_list_id.get(list_id, "")) != resolved:
+					pool._assigned_names_by_list_id[list_id] = resolved
+					pool._state_changed = true
+	# Phase 6: mirror ladder identities the other format has never seen, with a
+	# zeroed record. Quarantined holds, active trials, and pending challengers
+	# are not mirrored: those states belong to each format's own lifecycle.
+	var mirrored := 0
+	for index in range(identities.size()):
+		var identity: Dictionary = identities[index]
+		var resolved := str(resolved_names[index]).strip_edges()
+		var primary_ladder: Dictionary = _first_ladder_entry_on_side(identity, primary)
+		if not primary_ladder.is_empty() and _side_has_no_entries(identity, secondary) \
+				and _mirror_ladder_entry(secondary, primary_ladder, resolved):
+			mirrored += 1
+		var secondary_ladder: Dictionary = _first_ladder_entry_on_side(identity, secondary)
+		if not secondary_ladder.is_empty() and _side_has_no_entries(identity, primary) \
+				and _mirror_ladder_entry(primary, secondary_ladder, resolved):
+			mirrored += 1
+	return {"mirrored": mirrored, "renamed": renamed}
+
+func _collect_identity_sides(pool) -> Array:
+	var sides: Array = []
+	for god_name in pool._by_god.keys():
+		var god_pool: Dictionary = pool._by_god[god_name]
+		for location in ["lists", "pending", "quarantined_lists"]:
+			for entry: Dictionary in god_pool.get(location, []):
+				sides.append({"pool": pool, "god_name": str(god_name), "location": location, "entry": entry})
+		var challenger: Dictionary = god_pool.get("challenger", {})
+		if not challenger.is_empty():
+			sides.append({"pool": pool, "god_name": str(god_name), "location": "challenger", "entry": challenger})
+	return sides
+
+func _identity_bucket_key(entry: Dictionary) -> String:
+	var list_id := str(entry.get("list_id", "")).strip_edges()
+	var fingerprint := str(entry.get("fingerprint", ""))
+	# League seeds reuse "league_<god>_<index>" ids across formats for
+	# different decks, so league identities key on id plus fingerprint.
+	if _is_league_entry(entry):
+		return "L|%s|%s" % [list_id, fingerprint]
+	if not list_id.is_empty():
+		return "I|%s" % list_id
+	return "F|%s" % fingerprint
+
+func _is_league_entry(entry: Dictionary) -> bool:
+	return bool(entry.get("league_list", false)) or str(entry.get("list_id", "")).begins_with("league_")
+
+func _is_anonymous_entry(entry: Dictionary) -> bool:
+	return not _is_league_entry(entry) \
+			and str(entry.get("owner_name", "")).strip_edges().is_empty() \
+			and not bool(entry.get("is_community_bot", false))
+
+func _identity_side_name_claim(identity: Dictionary, pool) -> String:
+	var ids: Array = (identity["ids"] as Dictionary).keys()
+	ids.sort()
+	for raw_id in ids:
+		var candidate := str(pool._assigned_names_by_list_id.get(str(raw_id), "")).strip_edges()
+		if _is_valid_name_claim(candidate, str(identity["god_name"])):
+			return candidate
+	var entry: Dictionary = _first_entry_on_side(identity, pool)
+	if not entry.is_empty():
+		var candidate := str(entry.get("deck_name", "")).strip_edges()
+		if _is_valid_name_claim(candidate, str(identity["god_name"])):
+			return candidate
+	return ""
+
+func _is_valid_name_claim(name: String, god_name: String) -> bool:
+	if name.is_empty() or _is_generic_bot_name(name):
+		return false
+	return not _is_numbered_fallback_name(name, display_god_name(god_name))
+
+func _identity_conflict_priority(identity: Dictionary, origin: String) -> int:
+	if origin == "owner" or bool(identity.get("has_owner", false)):
+		return 2
+	return 1 if origin == "primary" else 0
+
+func _first_entry_of(identity: Dictionary) -> Dictionary:
+	var entries: Array = identity["entries"]
+	if entries.is_empty():
+		return {}
+	return entries[0]["entry"]
+
+func _first_entry_on_side(identity: Dictionary, pool) -> Dictionary:
+	var location_rank := {"lists": 0, "challenger": 1, "pending": 2, "quarantined_lists": 3}
+	var best: Dictionary = {}
+	var best_rank := 99
+	for side: Dictionary in identity["entries"]:
+		if side["pool"] != pool:
+			continue
+		var rank := int(location_rank.get(str(side["location"]), 9))
+		if rank < best_rank:
+			best_rank = rank
+			best = side["entry"]
+	return best
+
+func _first_ladder_entry_on_side(identity: Dictionary, pool) -> Dictionary:
+	for side: Dictionary in identity["entries"]:
+		if side["pool"] == pool and str(side["location"]) == "lists":
+			return side["entry"]
+	return {}
+
+func _side_has_no_entries(identity: Dictionary, pool) -> bool:
+	for side: Dictionary in identity["entries"]:
+		if side["pool"] == pool:
+			return false
+	return true
+
+func _new_god_pool() -> Dictionary:
+	return {"lists": [], "challenger": {}, "pending": [], "quarantined_id": "", "quarantined_ids": [], "quarantined_lists": []}
+
+func _mirror_ladder_entry(target, source_entry: Dictionary, deck_name: String) -> bool:
+	var list_id := str(source_entry.get("list_id", "")).strip_edges()
+	if list_id.is_empty():
+		return false
+	var god_name := str(source_entry.get("god_name", "")).strip_edges()
+	if god_name.is_empty():
+		return false
+	var target_pool: Dictionary = target._by_god.get_or_add(god_name, _new_god_pool())
+	# Never mirror into a pool that already holds the list id (league seeds
+	# reuse ids across formats) or the same anonymous deck under another id.
+	var fingerprint := str(source_entry.get("fingerprint", ""))
+	var active_challenger: Dictionary = target_pool.get("challenger", {})
+	if not active_challenger.is_empty() and str(active_challenger.get("list_id", "")) == list_id:
+		return false
+	for location in ["lists", "pending", "quarantined_lists"]:
+		for held: Dictionary in target_pool.get(location, []):
+			if str(held.get("list_id", "")) == list_id:
+				return false
+	if _is_anonymous_entry(source_entry) and not fingerprint.is_empty():
+		for location in ["lists", "pending", "quarantined_lists"]:
+			for held: Dictionary in target_pool.get(location, []):
+				if _is_anonymous_entry(held) and str(held.get("fingerprint", "")) == fingerprint:
+					return false
+	var mirrored := {
+		"list_id": list_id,
+		"fingerprint": fingerprint,
+		"god_name": god_name,
+		"deck_name": deck_name,
+		"cards": (source_entry.get("cards", {}) as Dictionary).duplicate(true),
+		"reinforcements": (source_entry.get("reinforcements", {}) as Dictionary).duplicate(true),
+		"special_setup": (source_entry.get("special_setup", {}) as Dictionary).duplicate(true),
+		"wins": 0,
+		"losses": 0,
+		"draws": 0,
+		"stars": 0,
+		"win_streak": 0,
+		"self_play_name": str(source_entry.get("self_play_name", "")),
+		"owner_name": str(source_entry.get("owner_name", "")).strip_edges(),
+	}
+	if bool(source_entry.get("is_community_bot", false)):
+		mirrored["is_community_bot"] = true
+	if bool(source_entry.get("excluded_from_matchmaking", false)):
+		mirrored["excluded_from_matchmaking"] = true
+	(target_pool["lists"] as Array).append(mirrored)
+	target._state_changed = true
+	return true

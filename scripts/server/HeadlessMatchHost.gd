@@ -27,6 +27,8 @@ var series_between_games: bool = false
 
 var _is_host: bool = false
 var _is_client: bool = false
+var _main_decks_before_reinforcements: Dictionary = {}
+var _last_reinforcement_changes: Array[Dictionary] = []
 
 func attach(p_game_manager: GameManager, p_match_manager: MatchManager, p_prompt_router) -> void:
 	game_manager = p_game_manager
@@ -36,6 +38,58 @@ func attach(p_game_manager: GameManager, p_match_manager: MatchManager, p_prompt
 func configure_match_session(p_match_session) -> void:
 	match_session = p_match_session
 	_refresh_spectator_reveal_flag()
+
+func begin_reinforcement_phase() -> void:
+	series_between_games = true
+	_main_decks_before_reinforcements.clear()
+	for session_id in match_session.player_session_ids:
+		var submission: Dictionary = match_session.player_decks_by_session.get(session_id, {})
+		var cards: Dictionary = submission.get("cards", {})
+		_main_decks_before_reinforcements[session_id] = cards.duplicate()
+
+func broadcast_spectator_reinforcement_phase() -> void:
+	for peer_id in network_manager.spectator_peer_ids:
+		_send_spectator_reinforcement_phase(int(peer_id))
+
+func _send_spectator_reinforcement_phase(peer_id: int) -> void:
+	network_manager.broadcast_event_to_peer(peer_id, "series_game_ended", {
+		"winner_index": game_manager.players.find(game_manager.winning_player),
+		"series": match_session.get_series_snapshot(),
+		"result_message": game_manager.get_game_result_message(),
+	})
+
+func broadcast_next_series_game() -> void:
+	var payload := {"series": match_session.get_series_snapshot()}
+	for peer_id in network_manager.player_peer_ids.values():
+		if int(peer_id) != 1:
+			network_manager.broadcast_event_to_peer(int(peer_id), "series_game_started", payload)
+	_last_reinforcement_changes.clear()
+	for session_id in match_session.player_session_ids:
+		var submission: Dictionary = match_session.player_decks_by_session.get(session_id, {})
+		var previous: Dictionary = _main_decks_before_reinforcements[session_id]
+		var current: Dictionary = submission.get("cards", {})
+		_last_reinforcement_changes.append({
+			"out": _get_removed_card_counts(previous, current),
+			"in": _get_removed_card_counts(current, previous),
+		})
+	_main_decks_before_reinforcements.clear()
+	for peer_id in network_manager.spectator_peer_ids:
+		_send_spectator_series_game_started(int(peer_id))
+
+func _send_spectator_series_game_started(peer_id: int) -> void:
+	# Only authenticated spectators receive the confirmed card changes.
+	network_manager.broadcast_event_to_peer(peer_id, "series_game_started", {
+		"series": match_session.get_series_snapshot(),
+		"reinforcement_changes": _last_reinforcement_changes,
+	})
+
+static func _get_removed_card_counts(before: Dictionary, after: Dictionary) -> Dictionary:
+	var removed := {}
+	for card_name in before:
+		var count := int(before[card_name]) - int(after.get(card_name, 0))
+		if count > 0:
+			removed[card_name] = count
+	return removed
 
 ## Bot self-play matches have no human seats and the host assigns every
 ## spectator the full visible-player set, so spectator log labels name
@@ -249,9 +303,9 @@ func _on_match_join_requested(join_request: Dictionary, sender_info: Dictionary)
 		network_manager.approve_match_join(peer_id, -1, match_session.to_spectator_match_info(observer_session_id))
 		network_manager.set_spectator_visible_player_indices(peer_id, visible_player_indices)
 		if series_between_games:
-			network_manager.broadcast_event_to_peer(peer_id, "series_game_ended", {
-				"series": match_session.get_series_snapshot(),
-			})
+			_send_spectator_reinforcement_phase(peer_id)
+		elif not _last_reinforcement_changes.is_empty() and not game_manager.is_game_over:
+			_send_spectator_series_game_started(peer_id)
 		var spectator_state := GameState.serialize(game_manager, GameState.SPECTATOR_VIEWER_INDEX, visible_player_indices)
 		network_manager.broadcast_event_to_peer(peer_id, "full_state", {
 			state = spectator_state,

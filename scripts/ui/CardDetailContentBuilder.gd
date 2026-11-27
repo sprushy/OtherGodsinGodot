@@ -11,6 +11,13 @@ const _DECKBUILDER_SCROLLBAR_CONTENT_CLEARANCE := 32.0
 const _DROMI_BINDING_NAME := "Dromi"
 const _DROMI_BINDING_HOVER_TEXT := "Cannot attack. Losing 7 followers on opponent's turn start - Dromi"
 const PUBLICLY_IDENTIFIED_HOVER_TEXT := "opponent can see this card"
+const _POISON_STATUS_NAME := "poison"
+const _STATUS_SLEEP_COLOR := Color(0.70, 0.86, 1.0)
+const _STATUS_PARALYZE_COLOR := Color(1.0, 0.85, 0.45)
+const _STATUS_PETRIFY_COLOR := Color(1.0, 0.45, 0.45)
+const _STATUS_POISON_COLOR := Color(0.62, 0.95, 0.55)
+const _STATUS_SILENCE_COLOR := Color(1.0, 0.78, 0.86)
+const _STATUS_ENSLAVE_COLOR := Color(1.0, 0.60, 0.35)
 
 static func build_visual_hover_body(card: Card, viewer: Player, config: Dictionary = {}) -> Control:
 	var content_width := float(config.get("content_width", 300.0))
@@ -521,6 +528,8 @@ static func build_board_popup_body(card: Card, viewer: Player, config: Dictionar
 	if is_hidden_card:
 		return vbox
 
+	_add_status_keyword_row(vbox, card, game_manager)
+
 	if card.is_publicly_identified(game_manager):
 		vbox.add_child(_make_label(PUBLICLY_IDENTIFIED_HOVER_TEXT, 13, Color(1.0, 0.72, 0.72), true))
 
@@ -544,46 +553,6 @@ static func build_board_popup_body(card: Card, viewer: Player, config: Dictionar
 				true
 			))
 
-		if card.is_petrified():
-			vbox.add_child(_make_label(
-				"Status: Petrified Creature",
-				13,
-				Color(1.0, 0.35, 0.35)
-			))
-		if card.is_silenced():
-			vbox.add_child(_make_label(
-				"Status: Silenced",
-				13,
-				Color(1.0, 0.78, 0.86)
-			))
-		elif card.is_muted and card.mute_turns_remaining > 0:
-			vbox.add_child(_make_label(
-				"Status: Muted (%d turn%s)" % [
-					card.mute_turns_remaining,
-					"" if card.mute_turns_remaining == 1 else "s"
-				],
-				13,
-				Color(1.0, 0.78, 0.86)
-			))
-		if card.is_enslaved():
-			var enslaved_line := "Status: Enslaved"
-			var enslaver := card.get_controller()
-			if enslaver != null and enslaver.player_name != "":
-				enslaved_line += " (fighting for %s)" % enslaver.player_name
-			vbox.add_child(_make_label(
-				enslaved_line,
-				13,
-				Color(1.0, 0.6, 0.35)
-			))
-		if game_manager != null and card.card_type == Card.CardType.STRUCTURE:
-			var forcing_silencer = game_manager.get_structure_summon_forcing_silencer(card)
-			if forcing_silencer != null:
-				vbox.add_child(_make_label(
-					"Status: Silenced until %s leaves the field" % forcing_silencer.card_name,
-					13,
-					Color(1.0, 0.78, 0.86)
-				))
-
 	if not is_hidden_card and not card.is_god:
 		vbox.add_child(_make_level_symbol_row(card, 13.0))
 
@@ -596,9 +565,6 @@ static func build_board_popup_body(card: Card, viewer: Player, config: Dictionar
 
 	if card.card_type == Card.CardType.CREATURE and not card.is_god:
 		if not is_hidden_card:
-			if card.is_sleeping:
-				vbox.add_child(_make_label("Sleeping", 13, Color(0.7, 0.86, 1.0)))
-
 			var stats_rtl := _make_rich_text(_build_board_creature_stats_text(card), 14, Color.WHITE, 0.0)
 			var tooltip_lines := _build_board_creature_tooltips(card)
 			if tooltip_lines.size() > 0:
@@ -699,6 +665,79 @@ static func build_board_popup_body(card: Card, viewer: Player, config: Dictionar
 		vbox.add_child(_make_label(card.flavor_text, 13, Color(0.55, 0.55, 0.55), true))
 
 	return vbox
+
+static func _add_status_keyword_row(vbox: VBoxContainer, card: Card, game_manager = null) -> void:
+	if vbox == null:
+		return
+	var segments := _get_status_keyword_segments(card, game_manager)
+	if segments.is_empty():
+		return
+	# Statuses are the first hover entries, so they lead the popup body.
+	vbox.add_child(_make_rich_text(
+		BaseCard.apply_keyword_hints(_BULLET_SEPARATOR.join(segments)),
+		14,
+		Color.WHITE,
+		_BOARD_POPUP_WIDTH
+	))
+
+static func _get_status_keyword_segments(card: Card, game_manager = null) -> Array[String]:
+	var segments: Array[String] = []
+	if card == null:
+		return segments
+	if card.is_sleeping:
+		segments.append(_make_status_keyword_segment("Sleep", "", _STATUS_SLEEP_COLOR))
+	if card.is_paralyzed():
+		segments.append(_make_status_keyword_segment("Paralyze", "", _STATUS_PARALYZE_COLOR))
+	if card.is_petrified():
+		segments.append(_make_status_keyword_segment("Petrify", "", _STATUS_PETRIFY_COLOR))
+	var poison_stacks := _get_poison_status_stack_count(card)
+	if poison_stacks > 0:
+		segments.append(_make_status_keyword_segment(
+			"Poison",
+			"" if poison_stacks == 1 else "×%d" % poison_stacks,
+			_STATUS_POISON_COLOR
+		))
+	if card.is_silenced():
+		segments.append(_make_status_keyword_segment("Silence", "", _STATUS_SILENCE_COLOR))
+	elif card.is_muted and card.mute_turns_remaining > 0:
+		segments.append(_make_status_keyword_segment(
+			"Mute",
+			"(%d turn%s)" % [
+				card.mute_turns_remaining,
+				"" if card.mute_turns_remaining == 1 else "s"
+			],
+			_STATUS_SILENCE_COLOR
+		))
+	if card.is_enslaved():
+		var enslaved_detail := ""
+		var enslaver := card.get_controller()
+		if enslaver != null and enslaver.player_name != "":
+			enslaved_detail = "(fighting for %s)" % enslaver.player_name
+		segments.append(_make_status_keyword_segment("Enslave", enslaved_detail, _STATUS_ENSLAVE_COLOR))
+	if game_manager != null and card.card_type == Card.CardType.STRUCTURE:
+		var forcing_silencer = game_manager.get_structure_summon_forcing_silencer(card)
+		if forcing_silencer != null:
+			segments.append(_make_status_keyword_segment(
+				"Silence",
+				"(until %s leaves the field)" % forcing_silencer.card_name,
+				_STATUS_SILENCE_COLOR
+			))
+	return segments
+
+static func _make_status_keyword_segment(keyword: String, detail: String, color: Color) -> String:
+	var segment := "[b]" + keyword + "[/b]"
+	if detail != "":
+		segment += " " + detail
+	return "[color=" + color.to_html(false) + "]" + segment + "[/color]"
+
+static func _get_poison_status_stack_count(card: Card) -> int:
+	var count := 0
+	if card == null:
+		return count
+	for status in card._get_effective_statuses():
+		if status.get("name", "") == _POISON_STATUS_NAME:
+			count += 1
+	return count
 
 static func _get_hover_detail_lines(card: Card, viewer: Player) -> Array[String]:
 	var lines := card.get_hover_detail_lines(viewer)

@@ -73,7 +73,7 @@ const GUAN_YU_MANOEUVRE_BADGE_TEXTURE := preload("res://images/ability_badges/Gu
 const ODIN_RUNIC_KNOWLEDGE_BADGE_TEXTURE := preload("res://images/ability_badges/OdinRunicKnowledgeBadge.png")
 const E2_ABZU_RETURN_BADGE_TEXTURE := preload("res://images/ability_badges/E2AbzuReturnBadge.png")
 const E2_ABZU_VOID_BADGE_TEXTURE := preload("res://images/ability_badges/E2AbzuVoidBadge.png")
-const TEZ_BLOODSTREAK_TEXTURE := preload("res://images/Bloodstreak.png")
+const BloodStreaksScript = preload("res://scripts/ui/BloodStreaks.gd")
 const INTERCEPT_PREVIEW_BADGE_TEXTURE := preload("res://images/ui/intercept/InterceptorBadge.png")
 const STEALTH_INTERCEPT_PREVIEW_QUESTION_TEXTURE := preload("res://images/ui/intercept/StealthInterceptorQuestionBadge.png")
 const STEAL_ATTACK_TARGET_TEXTURE := preload("res://images/ui/attack_targets/StealGlove.png")
@@ -2937,28 +2937,7 @@ func _hide_badge_hover_popup() -> void:
 	_update_hover_polling()
 
 func _add_tez_bloodstreaks(badge: Control, sacrifice_count: int) -> void:
-	if badge == null:
-		return
-	var positions := [
-		{"left": 0.0, "right": 0.0},
-		{"left": -16.0, "right": -16.0},
-		{"left": 16.0, "right": 16.0},
-	]
-	for i in range(mini(sacrifice_count, positions.size())):
-		var streak := TextureRect.new()
-		streak.texture = TEZ_BLOODSTREAK_TEXTURE
-		streak.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-		streak.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		streak.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		streak.z_index = 2
-		streak.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		var pos: Dictionary = positions[i]
-		streak.offset_left = float(pos.get("left", 0.0))
-		streak.offset_right = float(pos.get("right", 0.0))
-		streak.offset_top = 6.0
-		streak.offset_bottom = -6.0
-		streak.modulate = Color(1.0, 1.0, 1.0, 0.92)
-		badge.add_child(streak)
+	BloodStreaksScript.attach(badge, sacrifice_count)
 
 func _add_priority_response_aura(overlay: Control) -> void:
 	if overlay == null:

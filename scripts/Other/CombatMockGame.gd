@@ -752,6 +752,7 @@ var _network_host_series_phase_active: bool = false
 var _forfeit_button_default_text: String = ""
 var _forfeit_match_confirm_pending: bool = false
 var _observer_perspective_button: Button = null
+var _observer_series_format_label: Label = null
 var _observer_perspective_player_index: int = 0
 var _all_sound_muted: bool = false
 var _action_log_view: RichTextLabel = null
@@ -1150,6 +1151,7 @@ const AUDIO_MUTE_BUTTON_WIDTH := 40.0
 const FORFEIT_BUTTON_WIDTH := 112.0
 const FORFEIT_MATCH_BUTTON_WIDTH := 144.0
 const OBSERVER_PERSPECTIVE_BUTTON_WIDTH := 132.0
+const OBSERVER_SERIES_FORMAT_LABEL_WIDTH := 176.0
 const CORNER_ACTION_MARGIN := 16.0
 const CORNER_ACTION_GAP := 8.0
 const PRIORITY_CONTROLS_RIGHT_MARGIN := 2.0
@@ -2788,6 +2790,24 @@ func _ready() -> void:
 	_observer_perspective_button.disabled = true
 	add_child(_observer_perspective_button)
 	_promote_transient_ui(_observer_perspective_button, TRANSIENT_UI_Z_INDEX + 100)
+	_observer_series_format_label = Label.new()
+	_observer_series_format_label.name = "ObserverSeriesFormatLabel"
+	_observer_series_format_label.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	_observer_series_format_label.offset_left = _observer_perspective_button.offset_right + CORNER_ACTION_GAP
+	_observer_series_format_label.offset_top = forfeit_button.offset_top
+	_observer_series_format_label.offset_right = _observer_series_format_label.offset_left + OBSERVER_SERIES_FORMAT_LABEL_WIDTH
+	_observer_series_format_label.offset_bottom = forfeit_button.offset_bottom
+	_observer_series_format_label.mouse_filter = Control.MOUSE_FILTER_PASS
+	_observer_series_format_label.visible = false
+	_observer_series_format_label.add_theme_font_size_override("font_size", 14)
+	_observer_series_format_label.add_theme_color_override("font_color", Color("f4e8cd"))
+	_observer_series_format_label.add_theme_color_override("font_outline_color", Color(0.04, 0.03, 0.02, 0.95))
+	_observer_series_format_label.add_theme_constant_override("outline_size", 4)
+	_observer_series_format_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_observer_series_format_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_observer_series_format_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	add_child(_observer_series_format_label)
+	_promote_transient_ui(_observer_series_format_label, TRANSIENT_UI_Z_INDEX + 100)
 	resized.connect(_layout_board_art_background)
 
 	draw_button.pressed.connect(_on_local_deck_pressed)
@@ -4583,6 +4603,7 @@ func _process(delta: float) -> void:
 	_layout_match_grave_turn_label()
 	_sync_turn_start_props()
 	_layout_turn_start_props()
+	_sync_observer_series_format_label()
 	_sync_priority_control_turn_boundary()
 	_sync_turn_activity_timers()
 	_sync_turn_clocktower()
@@ -7113,6 +7134,7 @@ func _sync_deck_rank_badge(badge: RankBadgeScript, player: Player) -> void:
 			rank_name = str(rank["name"])
 	badge.visible = not rank_name.is_empty()
 	badge.set_badge(rank_name, entry.get("portrait", {}))
+	badge.set_series_wins(_get_observer_series_wins_for_player_index(index))
 
 func _add_deck_rank_badge_name(node_name: String) -> Label:
 	var label := Label.new()
@@ -11994,21 +12016,10 @@ func _position_hand_hover_preview() -> void:
 	preview.size = preview_sz
 	if keywords_panel != null and is_instance_valid(keywords_panel):
 		keywords_panel.size = keywords_sz
-	var viewport_margin := 4.0
-	var preview_scale := minf(
-		1.0,
-		minf(
-			maxf(0.25, (vp_size.x - viewport_margin * 2.0) / maxf(preview_sz.x, 1.0)),
-			maxf(0.25, (vp_size.y - viewport_margin * 2.0) / maxf(preview_sz.y, 1.0))
-		)
-	)
-	preview.scale = Vector2(preview_scale, preview_scale)
-	var scaled_preview_sz := preview_sz * preview_scale
-	var desired_px := card_cx - (large_vc.position.x + card_sz.x * 0.5)
-	var px := clampf(desired_px, viewport_margin, maxf(viewport_margin, vp_size.x - scaled_preview_sz.x - viewport_margin))
-	var py := viewport_margin if source_side < 0 else maxf(viewport_margin, vp_size.y - scaled_preview_sz.y - viewport_margin)
-	preview.global_position = Vector2(px, py)
-	preview.visible = true
+	# Never cover the hovered hand card: the preview rises above the local
+	# hand card and drops below the enemy peek, scaling down only if it must.
+	var source_rect: Rect2 = vc.get_global_transform() * Rect2(Vector2.ZERO, vc.size)
+	CardDetailContentBuilderScript.place_hover_panel(preview, source_rect, source_rect, false)
 
 func _refresh_hand_hover_from_mouse() -> void:
 	if _is_match_replay_open():
@@ -23705,6 +23716,10 @@ func _try_handle_escape_key(event: InputEvent) -> bool:
 	var key_event := event as InputEventKey
 	if not key_event.pressed or key_event.echo or key_event.keycode != KEY_ESCAPE:
 		return false
+	if _is_observer_mode and _is_reinforcement_overlay_open():
+		_hide_reinforcement_overlay()
+		get_viewport().set_input_as_handled()
+		return true
 	if _is_settings_menu_open():
 		_show_pause_menu_page()
 		get_viewport().set_input_as_handled()
@@ -30096,6 +30111,40 @@ func _is_bo3_series_match() -> bool:
 		return true
 	return int(_series_snapshot.get("best_of", 1)) >= 3
 
+## While observing a Bo3 series, each player's deck badge wears one Necoc
+## Yaotl blood streak per game win so the live score is readable at a glance.
+func _get_observer_series_wins_for_player_index(player_index: int) -> int:
+	if not _is_observer_mode or not _is_bo3_series_match() or player_index < 0:
+		return 0
+	var series := _get_known_series_snapshot()
+	var wins = series.get("wins", [])
+	if wins is Array and player_index < wins.size():
+		return int(wins[player_index])
+	return 0
+
+func _sync_observer_series_format_label() -> void:
+	if _observer_series_format_label == null or not is_instance_valid(_observer_series_format_label):
+		return
+	if not _is_observer_mode:
+		if _observer_series_format_label.visible:
+			_observer_series_format_label.hide()
+		return
+	var series := _get_known_series_snapshot()
+	var wins = series.get("wins", [])
+	var score_a := int(wins[0]) if wins is Array and wins.size() > 0 else 0
+	var score_b := int(wins[1]) if wins is Array and wins.size() > 1 else 0
+	var text := "Bo1 Match"
+	var tooltip := "This observed match is a single game (Bo1)."
+	if int(series.get("best_of", 1)) >= 3:
+		text = "Bo3 Series · %d–%d" % [score_a, score_b]
+		tooltip = "Best-of-3 series, first to %d game wins. Each blood streak on a deck's rank badge marks that player's win." % int(series.get("games_to_win", 2))
+	if _observer_series_format_label.text != text:
+		_observer_series_format_label.text = text
+	if _observer_series_format_label.tooltip_text != tooltip:
+		_observer_series_format_label.tooltip_text = tooltip
+	if not _observer_series_format_label.visible:
+		_observer_series_format_label.show()
+
 func _get_known_series_snapshot() -> Dictionary:
 	if not _series_snapshot.is_empty():
 		return _series_snapshot
@@ -30151,6 +30200,7 @@ func _hide_reinforcement_overlay() -> void:
 		_reinforcement_overlay.queue_free()
 	_reinforcement_overlay = null
 	if _reinforcement_layer != null and is_instance_valid(_reinforcement_layer):
+		_reinforcement_layer.hide()
 		_reinforcement_layer.queue_free()
 	_reinforcement_layer = null
 	_reinforcement_main_option = null
@@ -30164,6 +30214,96 @@ func _hide_reinforcement_overlay() -> void:
 	_reinforcement_status_label = null
 	_reinforcement_submit_button = null
 	_reinforcement_locked = false
+
+func _show_spectator_reinforcements(title: String, status: String, changes: Array, close_text: String) -> void:
+	_hide_reinforcement_overlay()
+	var layer := CanvasLayer.new()
+	layer.name = "SpectatorReinforcementLayer"
+	layer.layer = REINFORCEMENT_MODAL_LAYER
+	add_child(layer)
+	_reinforcement_layer = layer
+
+	var overlay := ColorRect.new()
+	overlay.color = Color(0.02, 0.03, 0.06, 0.9)
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	layer.add_child(overlay)
+	_reinforcement_overlay = overlay
+
+	var panel := PanelContainer.new()
+	overlay.add_child(panel)
+	panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	panel.offset_left = 32.0
+	panel.offset_top = 32.0
+	panel.offset_right = -32.0
+	panel.offset_bottom = -32.0
+	panel.add_theme_stylebox_override("panel", _make_pause_menu_style(Color(0.35, 0.72, 1.0)))
+
+	var content := VBoxContainer.new()
+	content.add_theme_constant_override("separation", 16)
+	panel.add_child(content)
+	var heading := Label.new()
+	heading.text = title
+	heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	heading.add_theme_font_size_override("font_size", 26)
+	content.add_child(heading)
+
+	if changes.is_empty():
+		var message := Label.new()
+		message.text = status
+		message.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		message.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		message.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		message.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		content.add_child(message)
+	else:
+		var scroll := ScrollContainer.new()
+		scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+		scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		content.add_child(scroll)
+		var results := VBoxContainer.new()
+		results.add_theme_constant_override("separation", 16)
+		results.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		scroll.add_child(results)
+		for player_index in range(changes.size()):
+			var player_changes: Dictionary = changes[player_index]
+			var player_name := Label.new()
+			player_name.text = _get_player_display_name_for_index(player_index)
+			player_name.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			player_name.add_theme_font_size_override("font_size", 22)
+			results.add_child(player_name)
+			var columns := HBoxContainer.new()
+			columns.add_theme_constant_override("separation", 24)
+			results.add_child(columns)
+			_add_spectator_reinforcement_column(columns, "Out of main deck", player_changes.get("out", {}))
+			_add_spectator_reinforcement_column(columns, "Into main deck", player_changes.get("in", {}))
+			if player_index < changes.size() - 1:
+				results.add_child(HSeparator.new())
+
+	var close_button := Button.new()
+	close_button.text = close_text
+	close_button.custom_minimum_size.y = 44
+	close_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	close_button.pressed.connect(_hide_reinforcement_overlay)
+	content.add_child(close_button)
+
+func _add_spectator_reinforcement_column(parent: HBoxContainer, title: String, cards: Dictionary) -> void:
+	var column := VBoxContainer.new()
+	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	parent.add_child(column)
+	var heading := Label.new()
+	heading.text = title
+	heading.add_theme_color_override("font_color", Color(0.62, 0.85, 1.0))
+	column.add_child(heading)
+	var card_names := cards.keys()
+	card_names.sort()
+	var entries: PackedStringArray = []
+	for card_name in card_names:
+		entries.append("%d × %s" % [int(cards[card_name]), card_name])
+	var list := Label.new()
+	list.text = "None" if entries.is_empty() else "\n".join(entries)
+	list.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	column.add_child(list)
 
 func _show_reinforcement_phase(data: Dictionary) -> void:
 	_hide_game_result_overlay()
@@ -30608,13 +30748,10 @@ func _position_reinforcement_hover_popup(tile: Control, popup_root: Control, pop
 		else:
 			popup.position = Vector2.ZERO
 			keywords_panel.position = Vector2(popup_size.x + gap, 0.0)
-	var px := tile_rect.end.x + gap
-	if px + total_size.x > viewport_size.x - 4.0:
-		px = tile_rect.position.x - total_size.x - gap
-	px = clampf(px, 4.0, maxf(4.0, viewport_size.x - total_size.x - 4.0))
-	var py := clampf(tile_rect.position.y, 4.0, maxf(4.0, viewport_size.y - total_size.y - 4.0))
 	popup_root.size = total_size
-	popup_root.global_position = Vector2(px, py)
+	# Never cover the tile the popup describes: place_hover_panel picks a
+	# clear side of the tile and scales the popup down if space is tight.
+	CardDetailContentBuilderScript.place_hover_panel(popup_root, tile_rect, tile_rect, true)
 
 func _on_reinforcement_card_dropped(card_name: String, from_zone: String, to_zone: String) -> void:
 	if _reinforcement_locked:
@@ -31339,12 +31476,26 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 				]
 		"series_game_started":
 			_begin_next_series_game(data)
+			var changes: Array = data.get("reinforcement_changes", [])
+			if _is_observer_mode and not changes.is_empty():
+				var game_number := int(_series_snapshot.get("game_number", 2))
+				_show_spectator_reinforcements(
+					"Reinforcement changes for Game %d" % game_number, "", changes, "Watch Game %d" % game_number
+				)
 		"series_game_ended":
 			_series_snapshot = (data.get("series", {}) as Dictionary).duplicate(true)
 			_current_match_info["series"] = _series_snapshot.duplicate(true)
 			_series_between_games_active = true
 			var result_message := str(data.get("result_message", "")).strip_edges()
 			_set_action_label_text(result_message if not result_message.is_empty() else "A game in the series has ended.")
+			if _is_observer_mode:
+				var game_number := int(_series_snapshot.get("game_number", 1))
+				var status := "Waiting for both players to lock in."
+				if not result_message.is_empty():
+					status = result_message + "\n\n" + status
+				_show_spectator_reinforcements(
+					"Reinforcements before Game %d" % (game_number + 1), status, [], "Back to board"
+				)
 		"series_ended":
 			_series_snapshot = (data.get("series", {}) as Dictionary).duplicate(true)
 			_current_match_info["series"] = _series_snapshot.duplicate(true)
@@ -33031,6 +33182,7 @@ func _begin_local_bot_series_window(winner: Player, loser: Player) -> bool:
 	var match_session = headless_match_host.match_session if headless_match_host != null else null
 	if match_session == null or game_manager == null:
 		return false
+	var spectate_listen := bool(_current_match_info.get("spectate_listen", false))
 	var winner_index := game_manager.players.find(winner)
 	if game_manager.game_end_reason == GameManager.GAME_END_REASON_MATCH_FORFEIT and winner_index >= 0:
 		# A forfeit ends the whole series immediately, mirroring the dedicated
@@ -33041,6 +33193,8 @@ func _begin_local_bot_series_window(winner: Player, loser: Player) -> bool:
 		match_session.series_wins_by_session[forfeit_winner_session_id] = match_session.games_to_win
 		_series_snapshot = match_session.get_series_snapshot().duplicate(true)
 		_current_match_info["series"] = _series_snapshot.duplicate(true)
+		if spectate_listen:
+			_broadcast_network_host_series_ended(winner_index)
 		return false
 	var snapshot: Dictionary = match_session.record_series_game_win(winner_index) \
 		if winner_index >= 0 else match_session.get_series_snapshot()
@@ -33048,7 +33202,15 @@ func _begin_local_bot_series_window(winner: Player, loser: Player) -> bool:
 	_current_match_info["series"] = _series_snapshot.duplicate(true)
 	if match_session.is_series_complete():
 		# The normal path reports the whole series exactly once.
+		if spectate_listen:
+			_broadcast_network_host_series_ended(winner_index)
 		return false
+	if spectate_listen:
+		headless_match_host.begin_reinforcement_phase()
+		_network_host_series_phase_active = true
+		if game_event_broadcaster != null:
+			game_event_broadcaster.suppress_next_game_end = true
+		headless_match_host.broadcast_spectator_reinforcement_phase()
 	# The bot sideboards against everything it has seen this series before the
 	# game state goes away.
 	var bot_player_index := _find_local_bot_player_index(match_session)
@@ -33128,13 +33290,14 @@ func _submit_local_bot_series_reinforcements() -> void:
 		_reinforcement_submit_button.disabled = true
 	if _reinforcement_status_label != null:
 		_reinforcement_status_label.text = "Deck locked. Starting the next game..."
-	_start_next_local_bot_series_game()
+	if _network_host_series_phase_active:
+		call_deferred("_start_next_network_host_series_game")
+	else:
+		_start_next_local_bot_series_game()
 
 ## Rebuild the in-process match for the next series game through the normal
 ## start_game path, which rewires every manager and rebuilds both decks from
-## the session's (now sideboarded) submissions. The relaunch binds a fresh
-## transport, so live spectators of a client-hosted bot challenge lose their
-## feed between games; correctness of the series itself is unaffected.
+## the session's (now sideboarded) submissions for an offline bot series.
 func _start_next_local_bot_series_game() -> void:
 	var match_session = headless_match_host.match_session if headless_match_host != null else null
 	if match_session == null:
@@ -33156,7 +33319,6 @@ func _start_next_local_bot_series_game() -> void:
 	_restore_corner_action_button()
 	_set_action_label_text("Next game starting...")
 	var match_info := _current_match_info.duplicate(true)
-	match_info["spectate_listen"] = false
 	call_deferred("_relaunch_local_bot_series_game", match_info, match_session)
 
 func _relaunch_local_bot_series_game(match_info: Dictionary, match_session) -> void:
@@ -33200,7 +33362,7 @@ func _begin_network_host_series_window(winner: Player, loser: Player) -> bool:
 		_broadcast_network_host_series_ended(winner_index)
 		return false
 	# The series continues: swap the result flow for the Reinforcement window.
-	headless_match_host.series_between_games = true
+	headless_match_host.begin_reinforcement_phase()
 	_network_host_series_phase_active = true
 	if game_event_broadcaster != null:
 		# Without this the game_ended broadcast would mark the opponent's
@@ -33251,12 +33413,7 @@ func _send_network_host_reinforcement_phase(winner_index: int, result_message: S
 			"reinforcements": submission.get("reinforcements", {}),
 			"is_ready": bool(match_session.reinforcement_ready_by_session.get(opponent_session_id, false)),
 		})
-	for spectator_peer_id in network_manager.spectator_peer_ids:
-		network_manager.broadcast_event_to_peer(int(spectator_peer_id), "series_game_ended", {
-			"winner_index": winner_index,
-			"series": match_session.get_series_snapshot(),
-			"result_message": result_message,
-		})
+	headless_match_host.broadcast_spectator_reinforcement_phase()
 
 func _broadcast_network_host_reinforcement_readiness() -> void:
 	if network_manager == null or headless_match_host == null or headless_match_host.match_session == null:
@@ -33411,6 +33568,7 @@ func _start_next_network_host_series_game() -> void:
 		return
 	_network_host_series_phase_active = false
 	headless_match_host.series_between_games = false
+	_series_between_games_active = false
 	match_session.begin_next_series_game()
 	_series_snapshot = match_session.get_series_snapshot().duplicate(true)
 	_current_match_info["series"] = _series_snapshot.duplicate(true)
@@ -33431,6 +33589,7 @@ func _start_next_network_host_series_game() -> void:
 	if game_event_broadcaster != null:
 		game_event_broadcaster.shutdown()
 		game_event_broadcaster = null
+	_detach_local_bot_match_bot()
 	game_manager = GameManager.new()
 	match_manager = MatchManager.new(game_manager)
 	prompt_router = PromptRouterScript.new(game_manager)
@@ -33449,6 +33608,7 @@ func _start_next_network_host_series_game() -> void:
 		return
 	player1 = match_players.get("player1", null)
 	player2 = match_players.get("player2", null)
+	_attach_local_bot_match_bot_if_needed(_current_match_info, match_session)
 	_connect_game_and_player_ui_signals()
 	game_input = InProcessGameInputScript.new(match_manager)
 	if game_input != null and game_input.has_signal("submission_rejected"):
@@ -33458,10 +33618,10 @@ func _start_next_network_host_series_game() -> void:
 	if not _is_networked_client and game_manager.players.size() > 0:
 		game_manager.feedback_viewer = game_manager.players[0]
 	_sync_priority_preferences_to_match(true)
-	network_manager.broadcast_event_to_all("series_game_started", {
-		"series": match_session.get_series_snapshot(),
-	})
+	headless_match_host.broadcast_next_series_game()
 	game_manager.start_turn()
+	if _local_bot_match_bot != null:
+		_local_bot_match_bot.poll()
 	update_ui()
 	_open_upkeep_choice_window()
 

@@ -2,6 +2,7 @@ extends Control
 
 const Catalog = preload("res://scripts/core/RankBadgeCatalog.gd")
 const TextureCache = preload("res://scripts/ui/UITextureCache.gd")
+const BloodStreaksScript = preload("res://scripts/ui/BloodStreaks.gd")
 const COLORS := Catalog.LEAGUE_COLORS
 const SHIELD := [
 	Vector2(0.50, 0.03), Vector2(0.90, 0.19), Vector2(0.95, 0.36),
@@ -14,6 +15,8 @@ var _league := -1
 var _selection := {}
 var _crop := {}
 var _texture: Texture2D
+var _series_wins := -1
+var _series_win_streaks: Array[TextureRect] = []
 
 func _ready() -> void:
 	resized.connect(queue_redraw)
@@ -33,6 +36,20 @@ func set_badge(rank_name: String, portrait: Dictionary) -> void:
 			_texture = TextureCache.get_texture(art_path)
 	tooltip_text = "%s · %s" % [_rank_name, _crop["card"]] if not _crop.is_empty() else _rank_name
 	queue_redraw()
+
+## Necoc Yaotl-style blood streaks marking this player's wins in a Bo3 series.
+## Call every frame if convenient; the no-change case is a plain early-out.
+func set_series_wins(wins: int) -> void:
+	var resolved := maxi(0, wins)
+	if _series_wins == resolved:
+		return
+	_series_wins = resolved
+	for streak in _series_win_streaks:
+		if is_instance_valid(streak):
+			streak.queue_free()
+	_series_win_streaks.clear()
+	if resolved > 0:
+		_series_win_streaks = BloodStreaksScript.attach(self, resolved)
 
 func get_crop_center_after_drag(relative: Vector2) -> Vector2:
 	if _texture == null:

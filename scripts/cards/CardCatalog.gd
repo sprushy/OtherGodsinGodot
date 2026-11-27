@@ -423,4 +423,4 @@ static func to_lookup_key(card_name: String) -> String:
 		var is_lower := codepoint >= 97 and codepoint <= 122
 		if is_digit or is_upper or is_lower:
 			output += normalized_name[char_index]
-	return output
+	return "hermespsychopompos" if output == "hermespsychopompus" else output

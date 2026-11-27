@@ -83,6 +83,7 @@ func run() -> bool:
 	_check_ranked_bot_pool(failures)
 	_check_quarantined_bot_release(failures)
 	_check_bo3_bot_ladder_separation(failures)
+	_check_cross_format_bot_identity_sync(failures)
 	_check_community_bot_rank_badge(failures)
 	_check_community_bot_quarantine(failures)
 	_check_community_bot_replay_identity(failures)
@@ -6563,6 +6564,20 @@ func _check_bot_e2_abzu_sage_retrieval(failures: PackedStringArray) -> void:
 	player.power_zones[0].add_card(walk)
 	if not BotCardStrategyScript.walk_tutor_can_reach(bot, enki) or not bot._plan_strategy_support().is_empty():
 		failures.append("Walk of the Sage should be able to plan its tutor with E2-abzu still in hand")
+	# While both halves stand ready, a high-level Mer Sage still in the deck is
+	# one Walk activation away from the Void, so its retrieval floor is spend
+	# potential the same way a Voided mage's is. The 2-cost Seventh Sage pins
+	# the gap: its 8-mana floor beats everything the plain card scans reach
+	# (Enki's own 8-cost deck entry would mask it), so Enki sits this check out.
+	player.deck_zone.remove_card(enki)
+	var seventh := SeventhSageUtuabzu.new()
+	seventh.card_owner = player
+	player.deck_zone.add_card(seventh)
+	if BotCardStrategyScript._mana_saturation_ceiling(bot) \
+			< E2Abzu.RETURN_TO_HAND_COST + 1 + seventh.get_effective_level():
+		failures.append("Mana ceiling ignored a reachable deck Mer Sage while the tutor line stands ready")
+	player.deck_zone.remove_card(seventh)
+	player.deck_zone.add_card(enki)
 	player.power_zones[0].remove_card(walk)
 	player.move_card(enki, player.abyss_zone)
 	var retrieval_floor := E2Abzu.RETURN_TO_HAND_COST + 1 + enki.get_effective_level()
@@ -6591,6 +6606,28 @@ func _check_bot_e2_abzu_sage_retrieval(failures: PackedStringArray) -> void:
 			break
 	if not retrieved:
 		failures.append("Bot left a retrievable Enki stranded in the Void through the main phase")
+	enki.current_zone.remove_card(enki)
+	# The held line funds its own retrieval: a Voided Enki with E2-abzu
+	# standing charges competing spends that dip below the retrieval floor,
+	# and the upkeep mana option wins while its income is what closes the
+	# funding gap. Enki goes back to the Void for these checks.
+	player.move_card(enki, player.abyss_zone)
+	player.mana = 3
+	bot._mana_econ_cache = {}
+	bot._tutor_line_cache = {}
+	var hold_with_line := BotCardStrategyScript.mana_penalty(bot, 1)
+	player.move_card(enki, player.graveyard_zone)
+	bot._mana_econ_cache = {}
+	bot._tutor_line_cache = {}
+	if BotCardStrategyScript.mana_penalty(bot, 1) >= hold_with_line:
+		failures.append("Competing spend paid nothing for dipping below the held tutor retrieval funding")
+	player.move_card(enki, player.abyss_zone)
+	bot._mana_econ_cache = {}
+	bot._tutor_line_cache = {}
+	var mana_gain := game.get_effective_upkeep_mana_gain(game.get_base_upkeep_mana_gain(), player)
+	player.mana = E2Abzu.RETURN_TO_HAND_COST + 1 + enki.get_effective_level() - mana_gain
+	if bot._choose_upkeep_option(player.frontline_zones[0]).get("choice", "") != "mana":
+		failures.append("Upkeep draw won while the mana option closed the held tutor retrieval funding")
 	enki.current_zone.remove_card(enki)
 	# A retrieved Adapa is bought for its Silence, priced through the same
 	# impact table the Seventh Sage's channel uses; a passive-only Sage
@@ -6774,10 +6811,24 @@ func _check_ladder_pages(failures: PackedStringArray) -> void:
 	if not portraits_valid:
 		failures.append("Ladder pages did not return valid saved portraits and crops")
 	var bo3 := lobby._build_ladder_page({"best_of": 3, "request_id": 0, "page": 0})
-	if bot_count != 1 or bo3["ladder"].any(func(row: Dictionary) -> bool: return row.get("is_bot", false)):
-		failures.append("Ladder did not show ranked bots in their match format")
 	if not bo3["ladder"].any(func(row: Dictionary) -> bool: return row.get("portrait") == portrait):
 		failures.append("Bo3 ladder did not include the player's saved crop")
+	# The mirrored Bo3 copy starts at zero points, so it sorts below every
+	# zero-point player on the unfiltered ladder; query the bots-only view to
+	# inspect its zeroed record.
+	var bo3_bots := lobby._build_ladder_page({
+		"best_of": 3, "request_id": 55, "page": 0, "player_type": LobbyProtocolScript.LADDER_FILTER_BOTS,
+	})
+	var bo3_bot_rows: Array = bo3_bots["ladder"].filter(func(row: Dictionary) -> bool: return bool(row.get("is_bot", false)))
+	if bot_count != 1:
+		failures.append("Ladder did not show ranked bots in their match format")
+	if bo3_bot_rows.size() != 1:
+		failures.append("The Bo3 ladder did not mirror the Bo1-only bot with a zeroed record")
+	else:
+		var mirrored_row: Dictionary = bo3_bot_rows[0]
+		if int(mirrored_row.get("wins", 0)) != 0 or int(mirrored_row.get("losses", 0)) != 0 \
+				or int(mirrored_row.get("points", 0)) != 0:
+			failures.append("A mirrored Bo3 ladder bot carried the Bo1 record instead of a zeroed one")
 	var player_entry_update := lobby._ladder_rank_update(249, 149, LobbyServerScript.PLAYER_LADDER_NOTIFICATION_DEPTH)
 	var bot_entry_update := lobby._ladder_rank_update(149, 99, LobbyServerScript.LADDER_NOTIFICATION_DEPTH)
 	var top_ten_climb := lobby._ladder_rank_update(7, 4, LobbyServerScript.LADDER_NOTIFICATION_DEPTH)
@@ -6858,20 +6909,28 @@ func _check_ladder_pages(failures: PackedStringArray) -> void:
 	DirAccess.remove_absolute(result_dir.path_join("%s.json" % session.match_id.sha256_text()))
 	DirAccess.remove_absolute(result_dir)
 
+## Bo1 and Bo3 replays stay format-local for records, stars, and quarantine,
+## while identity reconciliation mirrors each format's bots onto the other
+## ladder. A Bo1 seek must never be answered by a Bo3-quarantined bot and vice
+## versa, and mirrored copies must carry zeroed records.
 func _check_bo3_bot_ladder_separation(failures: PackedStringArray) -> void:
 	var storage_file := "preflight_bo3_bot_pool_%d.json" % OS.get_process_id()
 	var writer := MatchHistoryStoreScript.new(storage_file, true)
 	var deck_counts := _known_good_deck_counts()
+	# Distinct decks keep the two fixtures separate identities: identical deck
+	# content minted in both formats is reconciled into one bot by design.
+	var bo3_deck_counts := deck_counts.duplicate()
+	bo3_deck_counts["Fall of the Mighty"] = 3
 	var specs: Array[Dictionary] = [
-		{"match_id": "bo1_only_bot", "best_of": 1, "bot_name": "Thor: Bo1 Only"},
-		{"match_id": "bo3_only_bot", "best_of": 3, "bot_name": "Thor: Bo3 Only"},
+		{"match_id": "bo1_only_bot", "best_of": 1, "bot_name": "Thor: Bo1 Only", "cards": deck_counts},
+		{"match_id": "bo3_only_bot", "best_of": 3, "bot_name": "Thor: Bo3 Only", "cards": bo3_deck_counts},
 	]
 	for spec: Dictionary in specs:
 		var bot_session_id := "BOT_%s" % str(spec["match_id"]).to_upper()
 		var session := MatchSessionScript.new(str(spec["match_id"]), "preflight_room", "127.0.0.1", 12345,
 			[bot_session_id, "human"], {
 				bot_session_id: {
-					"bot_god_name": "Thor", "bot_name": str(spec["bot_name"]), "cards": deck_counts.duplicate(),
+					"bot_god_name": "Thor", "bot_name": str(spec["bot_name"]), "cards": (spec["cards"] as Dictionary).duplicate(),
 				},
 			}, {
 				bot_session_id: {"is_bot": true, "player_name": str(spec["bot_name"])},
@@ -6884,6 +6943,10 @@ func _check_bo3_bot_ladder_separation(failures: PackedStringArray) -> void:
 			failures.append("Could not record the %s bot result" % spec["match_id"])
 	var reader := MatchHistoryStoreScript.new(storage_file, true)
 	var results := reader.get_bot_deck_results()
+	var bo3_record := reader.get_ranked_bot_record_page("bo3_only_bot", 3, 50, "")
+	var mirrored_record := reader.get_ranked_bot_record_page("bo3_only_bot", 1, 50, "")
+	if bo3_record["matches"].size() != 1 or not mirrored_record["matches"].is_empty():
+		failures.append("Bot records omitted the founding match or mixed ladder formats")
 	var bo1_count := 0
 	var bo3_count := 0
 	for result: Dictionary in results:
@@ -6898,9 +6961,22 @@ func _check_bo3_bot_ladder_separation(failures: PackedStringArray) -> void:
 	lobby._refresh_ranked_bot_deck_pool()
 	var bo1_pool := lobby._ranked_bot_deck_pool
 	var bo3_pool := lobby._ranked_bot_deck_pool_bo3
-	if bo1_pool.get_deck_details("bo1_only_bot").is_empty() or not bo3_pool.get_deck_details("bo1_only_bot").is_empty() \
-			or bo3_pool.get_deck_details("bo3_only_bot").is_empty() or not bo1_pool.get_deck_details("bo3_only_bot").is_empty():
-		failures.append("Bo1 and Bo3 bot pools replayed each other's results")
+	# Identity reconciliation mirrors each format's bots onto the other ladder
+	# with a zeroed record. What must stay format-local is the record itself:
+	# a mirrored copy cannot inherit the other format's wins or stars.
+	var bo1_details := bo1_pool.get_deck_details("bo1_only_bot")
+	var bo1_mirror := bo3_pool.get_deck_details("bo1_only_bot")
+	var bo3_details := bo3_pool.get_deck_details("bo3_only_bot")
+	var bo3_mirror := bo1_pool.get_deck_details("bo3_only_bot")
+	if bo1_details.is_empty() or int(bo1_details.get("wins", 0)) != 1 or int(bo1_details.get("stars", 0)) != 1 \
+			or bo1_mirror.is_empty() or int(bo1_mirror.get("wins", 0)) != 0 or int(bo1_mirror.get("stars", 0)) != 0 \
+			or bo3_details.is_empty() or int(bo3_details.get("wins", 0)) != 1 or int(bo3_details.get("stars", 0)) != 1 \
+			or bo3_mirror.is_empty() or int(bo3_mirror.get("wins", 0)) != 0 or int(bo3_mirror.get("stars", 0)) != 0:
+		failures.append("A mirrored cross-format bot carried the other format's record instead of a zeroed one")
+	if str(bo1_mirror.get("deck_name", "")) != str(bo1_details.get("deck_name", "")) \
+			or str(bo3_mirror.get("deck_name", "")) != str(bo3_details.get("deck_name", "")) \
+			or str(bo1_mirror.get("cards", {})) != str(bo1_details.get("cards", {})):
+		failures.append("A mirrored cross-format bot changed decks or display names between formats")
 	# Quarantine one bot in each pool. Iron V matchmaking must pull the Bo1 bot
 	# for a Bo1 seek and the Bo3 bot for a Bo3 seek, never the other format's.
 	var bo1_thor: Dictionary = bo1_pool._by_god["Thor"]
@@ -6927,6 +7003,64 @@ func _check_bo3_bot_ladder_separation(failures: PackedStringArray) -> void:
 				or int(bo3_bot.get("bot_stars", -1)) != int(bo3_pool.get_deck_details("bo3_only_bot", true).get("stars", -2)):
 			failures.append("Ranked bot seek ranks did not come from the format-specific ladder")
 	lobby.free()
+
+## One bot name must mean one decklist across both ladders: a Bo3 naming
+## collision is renamed (the Bo1 identity keeps the name), Bo3-only bots are
+## mirrored onto the Bo1 ladder with zeroed records and vice versa, both pools
+## converge on one shared name map, and quarantine stays format-local.
+func _check_cross_format_bot_identity_sync(failures: PackedStringArray) -> void:
+	var bo1_pool := RankedBotDeckPoolScript.new()
+	var bo3_pool := RankedBotDeckPoolScript.new()
+	var bo1_results: Array[Dictionary] = [
+		_bot_pool_result("bo1_bloodaxe", "", {"Thor": 1, "Bloodaxe Deck": 40}, "win", true),
+	]
+	bo1_results[0]["bot_name"] = "Thor: Bloodaxe"
+	# Bo3 independently mints a different deck that claims the same display
+	# name, plus a Bo3-only bot with a name of its own.
+	var bo3_results: Array[Dictionary] = [
+		_bot_pool_result("bo3_bloodaxe", "", {"Thor": 1, "Different Deck": 40}, "win", true),
+		_bot_pool_result("bo3_storm", "", {"Thor": 1, "Storm Deck": 40}, "win", true),
+	]
+	bo3_results[0]["bot_name"] = "Thor: Bloodaxe"
+	bo3_results[1]["bot_name"] = "Thor: Stormbelt"
+	bo1_pool.refresh(bo1_results)
+	bo3_pool.refresh(bo3_results)
+	var summary: Dictionary = bo1_pool.sync_shared_identities(bo3_pool, true)
+	var bo1_bloodaxe := bo1_pool.get_deck_details("bo1_bloodaxe")
+	var bo1_mirror_of_bloodaxe := bo3_pool.get_deck_details("bo1_bloodaxe")
+	var bo3_bloodaxe := bo3_pool.get_deck_details("bo3_bloodaxe")
+	var bo1_mirror_of_bo3_bloodaxe := bo1_pool.get_deck_details("bo3_bloodaxe")
+	var bo1_mirror_of_storm := bo1_pool.get_deck_details("bo3_storm")
+	var bo3_storm := bo3_pool.get_deck_details("bo3_storm")
+	if bo1_bloodaxe.get("deck_name", "") != "Thor: Bloodaxe" or int(bo1_bloodaxe.get("wins", 0)) != 1:
+		failures.append("The primary-format identity lost its name or record during identity sync")
+	if str(bo3_bloodaxe.get("deck_name", "")).is_empty() or str(bo3_bloodaxe.get("deck_name", "")) == "Thor: Bloodaxe":
+		failures.append("A Bo3 bot kept a display name already owned by a different Bo1 deck")
+	if bo1_mirror_of_bloodaxe.is_empty() or int(bo1_mirror_of_bloodaxe.get("wins", 0)) != 0 \
+			or bo1_mirror_of_bo3_bloodaxe.is_empty() or int(bo1_mirror_of_bo3_bloodaxe.get("wins", 0)) != 0 \
+			or bo1_mirror_of_storm.is_empty() or int(bo1_mirror_of_storm.get("stars", 0)) != 0:
+		failures.append("Bo1 did not mirror the Bo3-only bots with zeroed records")
+	if int(bo3_bloodaxe.get("wins", 0)) != 1 or bo1_mirror_of_bloodaxe.is_empty() \
+			or str(bo1_mirror_of_bloodaxe.get("cards", {})) != str(bo1_bloodaxe.get("cards", {})) \
+			or str(bo1_mirror_of_storm.get("cards", {})) != str(bo3_storm.get("cards", {})):
+		failures.append("A mirrored bot did not keep the source deck's cards or the source kept its own record")
+	# Both pools share one assigned-name map so future replays keep agreeing.
+	var shared_map: Dictionary = bo1_pool._assigned_names_by_list_id
+	if bo1_pool._assigned_names_by_list_id != bo3_pool._assigned_names_by_list_id \
+			or str(shared_map.get("bo1_bloodaxe", "")) != "Thor: Bloodaxe" \
+			or str(shared_map.get("bo3_bloodaxe", "")) != str(bo3_bloodaxe.get("deck_name", "")) \
+			or str(shared_map.get("bo3_storm", "")) != "Thor: Stormbelt":
+		failures.append("The two format pools did not converge on one shared bot name map")
+	# A repeated reconciliation must be a no-op: no new mirrors, no renames.
+	var resync: Dictionary = bo1_pool.sync_shared_identities(bo3_pool, true)
+	if int(summary.get("mirrored", -1)) != 3 or int(summary.get("renamed", -1)) != 1 \
+			or int(resync.get("mirrored", -1)) != 0 or int(resync.get("renamed", -1)) != 0:
+		failures.append("A repeated identity sync duplicated mirrors or renames")
+	# Quarantining a mirrored bot in one format leaves it active in the other.
+	var bo3_thor: Dictionary = bo3_pool._by_god["Thor"]
+	bo3_pool._retire_list(bo3_thor, bo3_pool._find_list_by_id(bo3_thor, "bo1_bloodaxe"))
+	if bo3_pool.can_play_list("Thor", "bo1_bloodaxe") or not bo1_pool.can_play_list("Thor", "bo1_bloodaxe"):
+		failures.append("A bot quarantined in Bo3 was not quarantined independently of Bo1")
 
 func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 	var named_results: Array[Dictionary] = [
@@ -7011,6 +7145,15 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 		failures.append("Self-play spectator assignment did not identify the bots")
 	var self_play_saved := writer.record_completed_match(self_play, 1, 0, "Odin", "Thor", {"turns": 9})
 	var recent := reader.get_recent_bot_matches(1)
+	var first_page := reader.get_ranked_bot_record_page("bot_win", 1, 1, "")
+	var last_page := reader.get_ranked_bot_record_page("bot_win", 1, 1, first_page["next_cursor"])
+	var first_page_matches: Array = first_page["matches"]
+	var last_page_matches: Array = last_page["matches"]
+	if first_page_matches.size() != 1 or first_page_matches[0]["opponent_name"] != "Odin: Test" \
+			or first_page["next_cursor"] != "bot_self_play" or last_page_matches.size() != 1 \
+			or last_page_matches[0]["opponent_god_name"] != "Odin" or last_page_matches[0]["result"] != "win" \
+			or not str(last_page["next_cursor"]).is_empty():
+		failures.append("Bot record pagination lost or duplicated a ranked match")
 	var self_play_results := reader.get_bot_deck_results()
 	if (not self_play_saved.get("success", false)
 			or self_play_saved["entry"].get("advances_rank", true)

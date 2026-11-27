@@ -9617,6 +9617,7 @@ func _bind_lobby_client_signals() -> void:
 	if not lobby_client.bot_ladder_received.is_connected(_on_bot_ladder_received):
 		lobby_client.bot_ladder_received.connect(_on_bot_ladder_received)
 		lobby_client.bot_deck_received.connect(_on_bot_deck_received)
+		lobby_client.bot_record_received.connect(_on_bot_record_received)
 		lobby_client.bot_match_history_received.connect(_on_bot_match_history_received)
 	if lobby_client.has_signal("bot_league_result_received") and not lobby_client.bot_league_result_received.is_connected(_on_bot_league_result_received):
 		lobby_client.bot_league_result_received.connect(_on_bot_league_result_received)
@@ -12317,6 +12318,7 @@ func _open_bot_ladder(quarantined_only: bool = false) -> void:
 	_bot_ladder_view.page_requested.connect(_request_bot_ladder)
 	_bot_ladder_view.search_requested.connect(_on_bot_ladder_search_requested)
 	_bot_ladder_view.deck_requested.connect(_request_bot_deck)
+	_bot_ladder_view.record_requested.connect(_request_bot_record)
 	_bot_ladder_view.delete_requested.connect(_on_bot_ladder_delete_requested)
 	_bot_ladder_view.quarantine_requested.connect(_on_bot_ladder_quarantine_requested)
 	_bot_ladder_view.add_deck_requested.connect(_on_bot_ladder_add_deck_requested)
@@ -12368,7 +12370,19 @@ func _on_bot_ladder_received(summary: Dictionary) -> void:
 
 func _request_bot_deck(list_id: String) -> void:
 	if is_instance_valid(_bot_ladder_view) and _has_active_lobby_connection():
-		lobby_client.request_bot_deck(list_id, _bot_ladder_view.quarantined_only)
+		lobby_client.request_bot_deck(
+			list_id, _bot_ladder_view.quarantined_only, _bot_ladder_view.get_best_of()
+		)
+
+func _request_bot_record(list_id: String, before_match_id: String, request_id: int) -> void:
+	if is_instance_valid(_bot_ladder_view) and _has_active_lobby_connection():
+		lobby_client.request_bot_record(
+			list_id, _bot_ladder_view.get_best_of(), _bot_ladder_view.quarantined_only, before_match_id, request_id
+		)
+
+func _on_bot_record_received(record: Dictionary) -> void:
+	if is_instance_valid(_bot_ladder_view) and _has_active_lobby_connection():
+		_bot_ladder_view.show_record_page(record)
 
 func _on_bot_deck_received(list_id: String, deck: Dictionary) -> void:
 	if is_instance_valid(_bot_ladder_view) and _has_active_lobby_connection():

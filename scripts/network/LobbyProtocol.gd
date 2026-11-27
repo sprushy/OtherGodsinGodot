@@ -38,6 +38,7 @@ const REQUEST_PROFILE_SUMMARY := "request_profile_summary"
 const SET_RANK_BADGE := "set_rank_badge"
 const REQUEST_BOT_LADDER := "request_bot_ladder"
 const REQUEST_BOT_DECK := "request_bot_deck"
+const REQUEST_BOT_RECORD := "request_bot_record"
 const REQUEST_BOT_MATCH_HISTORY := "request_bot_match_history"
 const REQUEST_BOT_WORK := "request_bot_work"
 const REPORT_BOT_WORK_STARTED := "report_bot_work_started"
@@ -95,6 +96,7 @@ const PROFILE_SUMMARY := "profile_summary"
 const RANK_BADGE_RESULT := "rank_badge_result"
 const BOT_LADDER := "bot_ladder"
 const BOT_DECK := "bot_deck"
+const BOT_RECORD := "bot_record"
 const BOT_MATCH_HISTORY := "bot_match_history"
 const BOT_WORK_ASSIGNMENT := "bot_work_assignment"
 const BOT_WORK_RESULT := "bot_work_result"
@@ -278,12 +280,18 @@ static func validate_request(message: Dictionary) -> String:
 				var search_query = payload["search_query"]
 				if not search_query is String or search_query.length() > 64:
 					return "Invalid ladder search query."
-		REQUEST_BOT_DECK:
+		REQUEST_BOT_DECK, REQUEST_BOT_RECORD:
 			var list_id = payload.get("list_id", "")
 			if not list_id is String or list_id.is_empty() or list_id.length() > 64:
 				return "Invalid bot list id."
 			if not payload.get("quarantined_only", false) is bool:
 				return "Invalid quarantined bot deck request."
+			if payload.has("best_of") and payload.get("best_of") not in [1, 3]:
+				return "Invalid bot deck match format."
+			if message_type == REQUEST_BOT_RECORD:
+				var cursor = payload.get("before_match_id", "")
+				if not cursor is String or cursor.length() > 64 or not payload.get("request_id") is int:
+					return "Invalid bot record request."
 		REQUEST_BOT_MATCH_HISTORY:
 			var cursor = payload.get("before_match_id", "")
 			if not cursor is String or cursor.length() > 64:

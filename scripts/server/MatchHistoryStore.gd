@@ -322,9 +322,7 @@ func get_bot_deck_results() -> Array[Dictionary]:
 			_bot_results.append(legacy)
 		for row: Dictionary in entry.get("bot_deck_results", []):
 			var result := row.duplicate(true)
-			result["match_id"] = match_id
-			if entry["bot_deck_results"].size() > 1:
-				result["match_id"] = "%s_%d" % [match_id, int(result["player_index"])]
+			result["match_id"] = _get_bot_result_match_id(entry, result)
 			result["bot_eliminated"] = false
 			if not result.has("played_unix"):
 				result["played_unix"] = float(entry.get("played_unix", 0.0))
@@ -529,33 +527,58 @@ func get_recent_ranked_matches_for_player(account_id: String, limit: int = 10, r
 		})
 	return matches
 
-func get_recent_ranked_bot_matches_for_list(list_id: String, limit: int = 10, rescan: bool = true) -> Array[Dictionary]:
+func get_recent_ranked_bot_matches_for_list(list_id: String, limit: int = 10, rescan: bool = true, best_of: int = 1) -> Array[Dictionary]:
+	return get_ranked_bot_record_page(list_id, best_of, limit, "", rescan)["matches"]
+
+func get_ranked_bot_record_page(list_id: String, best_of: int, limit: int, before_match_id: String, rescan: bool = true) -> Dictionary:
 	_ensure_loaded()
 	if rescan:
 		_load_dedicated_results()
 	var matches: Array[Dictionary] = []
 	var match_ids := _get_sorted_bot_ids_for_list(list_id)
-	for index in range(match_ids.size() - 1, -1, -1):
-		if matches.size() >= maxi(1, limit):
-			break
-		var entry: Dictionary = _matches_by_id.get(match_ids[index], {})
+	var start := match_ids.size() - 1 if before_match_id.is_empty() else match_ids.find(before_match_id) - 1
+	var last_match_id := ""
+	var next_cursor := ""
+	for index in range(start, -1, -1):
+		var match_id := match_ids[index]
+		var entry: Dictionary = _matches_by_id.get(match_id, {})
 		var bot_result: Dictionary = {}
-		for result: Dictionary in entry.get("bot_deck_results", []):
-			if str(result.get("list_id", "")) == list_id:
+		for result: Dictionary in _get_indexable_bot_results(entry):
+			if int(result.get("best_of", entry.get("best_of", 1))) == best_of and _get_bot_record_list_id(entry, result) == list_id:
 				bot_result = result
 				break
 		if bot_result.is_empty():
 			continue
+		if matches.size() >= maxi(1, limit):
+			next_cursor = last_match_id
+			break
 		var player_index := int(bot_result.get("player_index", -1))
 		var opponent: Dictionary = _get_opponent_entry_for_index(entry, player_index)
 		matches.append({
 			"played_unix": int(entry.get("played_unix", 0)),
-			"best_of": int(entry.get("best_of", 1)),
+			"best_of": best_of,
 			"result": str(bot_result.get("result", "draw")),
 			"opponent_name": _activity_player_name(opponent),
 			"opponent_god_name": str(opponent.get("god_name", "")),
 		})
-	return matches
+		last_match_id = match_id
+	return {"matches": matches, "next_cursor": next_cursor}
+
+func _get_indexable_bot_results(entry: Dictionary) -> Array:
+	if entry.has("bot_deck_results"):
+		return entry["bot_deck_results"]
+	return [entry["bot_deck_result"]] if entry.has("bot_deck_result") else []
+
+func _get_bot_record_list_id(entry: Dictionary, result: Dictionary) -> String:
+	var list_id := str(result.get("list_id", "")).strip_edges()
+	# The pool uses the first result's ID when it adopts an anonymous bot.
+	return _get_bot_result_match_id(entry, result) if list_id.is_empty() else list_id
+
+func _get_bot_result_match_id(entry: Dictionary, result: Dictionary) -> String:
+	var match_id := str(entry["match_id"])
+	if entry.get("bot_deck_results", []).size() > 1:
+		return "%s_%d" % [match_id, int(result["player_index"])]
+	return match_id
 
 func _get_player_entry_for_account(entry: Dictionary, account_id: String) -> Dictionary:
 	for player: Dictionary in entry.get("players", []):
@@ -644,11 +667,14 @@ func _index_result(entry: Dictionary) -> void:
 	_all_match_ids.append(match_id)
 	if entry.has("bot_deck_result") or entry.has("bot_deck_results"):
 		_bot_deck_match_ids.append(match_id)
-		for bot_result in entry.get("bot_deck_results", []):
+		for bot_result in _get_indexable_bot_results(entry):
 			if not (bot_result is Dictionary):
 				continue
-			var list_id := str(bot_result.get("list_id", ""))
-			_bot_match_ids_by_list_id.get_or_add(list_id, []).append(match_id)
+			var list_id := _get_bot_record_list_id(entry, bot_result)
+			var list_match_ids: Array = _bot_match_ids_by_list_id.get_or_add(list_id, [])
+			if not list_match_ids.is_empty() and list_match_ids.back() == match_id:
+				continue
+			list_match_ids.append(match_id)
 			_sorted_bot_ids_by_list_id.erase(list_id)
 	for player_entry in entry["players"]:
 		var profile_id := str(player_entry["profile_id"])

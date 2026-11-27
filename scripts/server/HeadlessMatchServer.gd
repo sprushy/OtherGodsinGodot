@@ -422,11 +422,11 @@ func _on_game_ended(_winner: Player, _loser: Player) -> void:
 		match_session.series_wins_by_session[winner_session_id] = match_session.games_to_win
 		series_snapshot = match_session.get_series_snapshot()
 	if match_session != null and match_session.series_best_of > 1 and not match_session.is_series_complete():
+		headless_match_host.begin_reinforcement_phase()
 		_mark_bot_reinforcements_ready()
 		if game_event_broadcaster != null:
 			game_event_broadcaster.suppress_next_game_end = true
 		_reinforcement_phase_active = true
-		headless_match_host.series_between_games = true
 		_broadcast_reinforcement_phase(series_snapshot, winner_index, result_message)
 		# Bots submit their swaps immediately, so a match whose seats are all
 		# bot-controlled (self-play, volunteer bot work) is fully ready here.
@@ -570,12 +570,7 @@ func _broadcast_reinforcement_phase(
 		return
 	for player_index in network_manager.player_peer_ids.keys():
 		_send_reinforcement_phase_to_player(int(player_index), series_snapshot, winner_index, result_message)
-	for peer_id in network_manager.spectator_peer_ids:
-		network_manager.broadcast_event_to_peer(int(peer_id), "series_game_ended", {
-			"winner_index": winner_index,
-			"series": series_snapshot,
-			"result_message": result_message,
-		})
+	headless_match_host.broadcast_spectator_reinforcement_phase()
 
 func _send_reinforcement_phase_to_player(
 	player_index: int,
@@ -649,9 +644,7 @@ func _start_next_series_game() -> void:
 	headless_match_host.enable_authoritative_broadcasts()
 	game_event_broadcaster = headless_match_host.game_event_broadcaster
 	_attach_server_bots_for_match()
-	network_manager.broadcast_event_to_all("series_game_started", {
-		"series": match_session.get_series_snapshot(),
-	})
+	headless_match_host.broadcast_next_series_game()
 	game_manager.start_turn()
 	_poll_server_bots()
 	_write_status_file(MatchSessionScript.STATUS_ACTIVE)

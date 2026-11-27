@@ -52,6 +52,7 @@ signal profile_summary_received(summary: Dictionary)
 signal rank_badge_result(success: bool, message: String)
 signal bot_ladder_received(summary: Dictionary)
 signal bot_deck_received(list_id: String, deck: Dictionary)
+signal bot_record_received(record: Dictionary)
 signal bot_match_history_received(history: Dictionary)
 signal bot_work_assignment_received(job: Dictionary)
 signal bot_work_result_received(job_id: String, success: bool, message: String)
@@ -581,12 +582,19 @@ func request_ladder(best_of: int, page: int, request_id: int, search_query: Stri
 	elif supports_bot_ladder:
 		_send_request(LobbyProtocolScript.REQUEST_BOT_LADDER)
 
-func request_bot_deck(list_id: String, quarantined_only: bool = false) -> void:
+func request_bot_deck(list_id: String, quarantined_only: bool = false, best_of: int = 1) -> void:
 	if is_authenticated() and supports_bot_ladder and (not quarantined_only or can_view_quarantined_bots):
-		var payload := {"list_id": list_id}
+		var payload := {"list_id": list_id, "best_of": 3 if best_of == 3 else 1}
 		if quarantined_only:
 			payload["quarantined_only"] = true
 		_send_request(LobbyProtocolScript.REQUEST_BOT_DECK, payload)
+
+func request_bot_record(list_id: String, best_of: int, quarantined_only: bool, before_match_id: String, request_id: int) -> void:
+	if is_authenticated() and supports_bot_ladder and (not quarantined_only or can_view_quarantined_bots):
+		_send_request(LobbyProtocolScript.REQUEST_BOT_RECORD, {
+			"list_id": list_id, "best_of": best_of, "quarantined_only": quarantined_only,
+			"before_match_id": before_match_id, "request_id": request_id,
+		})
 
 func request_bot_match_history(before_match_id: String = "") -> void:
 	if is_authenticated() and supports_bot_ladder:
@@ -937,6 +945,9 @@ func lobby_event(message: Dictionary) -> void:
 		LobbyProtocolScript.BOT_DECK:
 			if is_authenticated():
 				bot_deck_received.emit(str(payload.get("list_id", "")), payload.get("deck", {}))
+		LobbyProtocolScript.BOT_RECORD:
+			if is_authenticated():
+				bot_record_received.emit(payload)
 		LobbyProtocolScript.BOT_MATCH_HISTORY:
 			if is_authenticated():
 				bot_match_history_received.emit(payload)

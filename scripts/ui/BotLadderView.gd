@@ -5,6 +5,7 @@ signal refresh_requested
 signal page_requested(page: int)
 signal search_requested(query: String)
 signal deck_requested(list_id: String)
+signal record_requested(list_id: String, before_match_id: String, request_id: int)
 signal delete_requested(list_id: String)
 signal quarantine_requested(list_id: String, quarantined: bool)
 signal add_deck_requested(deck: Dictionary)
@@ -57,6 +58,13 @@ var _add_deck_button: Button
 var _loaded_deck: Dictionary = {}
 var _deck_contents: RichTextLabel
 var _deck_timeout: Timer
+var _record_footer: HBoxContainer
+var _record_button: Button
+var _record_status: Label
+var _record_timeout: Timer
+var _record_request_id := 0
+var _record_cursor := ""
+var _record_supported := false
 var _selected_list_id := ""
 var _selected_entry: Dictionary = {}
 var _own_username := ""
@@ -209,6 +217,22 @@ func _ready() -> void:
 	_deck_contents.focus_mode = Control.FOCUS_ALL
 	_deck_contents.hide()
 	body.add_child(_deck_contents)
+	_record_footer = HBoxContainer.new()
+	_record_footer.hide()
+	body.add_child(_record_footer)
+	_record_button = _add_button(_record_footer, "See full record", _request_record_page)
+	_record_status = Label.new()
+	_record_status.add_theme_color_override("font_color", MUTED)
+	_record_footer.add_child(_record_status)
+	_record_timeout = Timer.new()
+	_record_timeout.one_shot = true
+	_record_timeout.wait_time = 5.0
+	_record_timeout.timeout.connect(func() -> void:
+		_record_request_id = 0
+		_record_button.disabled = false
+		_record_status.text = "The lobby did not respond. Try again."
+	)
+	add_child(_record_timeout)
 	_deck_timeout = Timer.new()
 	_deck_timeout.one_shot = true
 	_deck_timeout.wait_time = 5.0
@@ -241,7 +265,9 @@ func set_status(message: String, can_refresh: bool, clear_table: bool = false) -
 
 func set_paging_supported(supported: bool) -> void:
 	_paging_supported = supported
-	_format.visible = supported and not quarantined_only and _selected_entry.is_empty()
+	# The format selector stays available in the quarantined view so admins
+	# can see bots quarantined on the Bo3 ladder as well as the Bo1 one.
+	_format.visible = supported and _selected_entry.is_empty()
 	if not supported:
 		_format.select(0)
 		_current_page = 0
@@ -283,6 +309,7 @@ func _on_search_text_changed(_text: String) -> void:
 	_search_debounce.start()
 
 func show_summary(summary: Dictionary) -> void:
+	_record_supported = bool(summary.get("supports_bot_records", false))
 	_current_page = int(summary.get("page", 0))
 	_last_page = int(summary.get("last_page", 0))
 	_ladder_entries = summary.get("ladder", []).duplicate()
@@ -296,7 +323,9 @@ func show_summary(summary: Dictionary) -> void:
 
 func _empty_ladder_message() -> String:
 	if quarantined_only:
-		return "No matching quarantined bots." if not get_search_query().is_empty() else "No bots are quarantined."
+		if not get_search_query().is_empty():
+			return "No matching quarantined bots."
+		return "No bots are quarantined on the Bo%d ladder." % get_best_of()
 	var has_narrowing := not get_search_query().is_empty() \
 		or get_player_filter() != LobbyProtocolScript.LADDER_FILTER_EVERYONE
 	return "No matching ladder entries." if has_narrowing else "No ladder entries yet."
@@ -429,6 +458,11 @@ func _open_selected_entry() -> void:
 	_selected_list_id = str(_selected_entry.get("list_id", ""))
 	_render_selected_entry()
 	_deck_contents.show()
+	_record_footer.visible = _record_supported and not _selected_list_id.is_empty()
+	_record_button.text = "See full record"
+	_record_button.disabled = false
+	_record_button.show()
+	_record_status.text = ""
 	_back_button.show()
 	_view_deck_button.visible = not _selected_list_id.is_empty()
 	_delete_button.visible = not _selected_list_id.is_empty() and bool(_selected_entry.get("can_delete", false))
@@ -441,6 +475,10 @@ func _open_selected_entry() -> void:
 	_refresh_button.hide()
 	_format.hide()
 	_pagination.hide()
+	_set_entry_focus_order()
+	_back_button.grab_focus()
+
+func _set_entry_focus_order() -> void:
 	var focus_order: Array[Control] = [_back_button]
 	if _view_deck_button.visible:
 		focus_order.append(_view_deck_button)
@@ -448,9 +486,12 @@ func _open_selected_entry() -> void:
 		focus_order.append(_delete_button)
 	if _quarantine_button.visible:
 		focus_order.append(_quarantine_button)
+	if _add_deck_button.visible:
+		focus_order.append(_add_deck_button)
 	focus_order.append_array([_close_button, _deck_contents])
+	if _record_button.is_visible_in_tree():
+		focus_order.append(_record_button)
 	_set_focus_order(focus_order)
-	_back_button.grab_focus()
 
 func set_own_profile_summary(username: String, summary: Dictionary) -> void:
 	if _own_username == username and _own_profile_summary == summary:
@@ -465,7 +506,7 @@ func _is_own_profile_selected() -> bool:
 	return not _own_username.is_empty() and not bool(_selected_entry.get("is_bot", false)) \
 		and str(_selected_entry.get("name", "")).nocasecmp_to(_own_username) == 0
 
-func _render_selected_entry() -> void:
+func _render_selected_entry(record: Dictionary = {}) -> void:
 	_deck_contents.clear()
 	var player_name := str(_selected_entry.get("name", "Player"))
 	var wins := int(_selected_entry.get("wins", 0))
@@ -490,21 +531,63 @@ func _render_selected_entry() -> void:
 	_deck_contents.pop()
 	if _is_own_profile_selected() and not _own_profile_summary.is_empty():
 		_render_own_profile_record()
-	_add_record_heading("Recent ranked matches")
-	var recent_matches: Array = _selected_entry.get("recent_matches", [])
-	if recent_matches.is_empty():
+	_add_record_heading("Recent ranked matches" if record.is_empty() else "Full ranked record · Bo%d" % get_best_of())
+	var matches: Array = _selected_entry.get("recent_matches", []) if record.is_empty() else record["matches"]
+	if matches.is_empty():
 		_deck_contents.add_text("No ranked matches recorded yet.\n")
-	else:
-		for recent: Dictionary in recent_matches:
-			var result := str(recent.get("result", "draw")).capitalize()
-			var opponent := str(recent.get("opponent_name", "Opponent"))
-			var opponent_god := str(recent.get("opponent_god_name", "")).strip_edges()
-			var date := _format_match_date(int(recent.get("played_unix", 0)))
-			var opponent_text := opponent if opponent_god.is_empty() else "%s (%s)" % [opponent, opponent_god]
-			_deck_contents.add_text("%s · Bo%d · %s vs %s\n" % [
-				date, int(recent.get("best_of", 1)), result, opponent_text,
-			])
+	_append_record_matches(matches)
 	_deck_contents.scroll_to_line(0)
+
+func _append_record_matches(matches: Array) -> void:
+	for match_row: Dictionary in matches:
+		var result := str(match_row.get("result", "draw")).capitalize()
+		var opponent := str(match_row.get("opponent_name", "Opponent"))
+		var opponent_god := str(match_row.get("opponent_god_name", "")).strip_edges()
+		var date := _format_match_date(int(match_row.get("played_unix", 0)))
+		var opponent_text := opponent if opponent_god.is_empty() else "%s (%s)" % [opponent, opponent_god]
+		_deck_contents.add_text("%s · Bo%d · %s vs %s\n" % [
+			date, int(match_row.get("best_of", 1)), result, opponent_text,
+		])
+
+func _request_record_page() -> void:
+	_record_request_id = Time.get_ticks_usec()
+	_record_button.disabled = true
+	_record_status.text = "Loading ranked matches…"
+	_record_timeout.start()
+	record_requested.emit(_selected_list_id, _record_cursor, _record_request_id)
+
+func show_record_page(record: Dictionary) -> void:
+	if _record_request_id == 0 or record.get("request_id") != _record_request_id:
+		return
+	_record_request_id = 0
+	_record_timeout.stop()
+	if not bool(record.get("available", false)):
+		_record_button.hide()
+		_record_status.text = "This bot is no longer available. Go back and refresh the ladder."
+		_set_entry_focus_order()
+		_deck_contents.grab_focus()
+		return
+	if _record_cursor.is_empty():
+		_render_selected_entry(record)
+	else:
+		_append_record_matches(record["matches"])
+	_record_cursor = str(record.get("next_cursor", ""))
+	_record_button.visible = not _record_cursor.is_empty()
+	_record_button.disabled = false
+	_record_button.text = "Load older matches"
+	_record_status.text = ""
+	_record_footer.visible = _record_button.visible
+	_set_entry_focus_order()
+	if _record_button.visible:
+		_record_button.grab_focus()
+	else:
+		_deck_contents.grab_focus()
+
+func _close_record() -> void:
+	_record_footer.hide()
+	_record_timeout.stop()
+	_record_request_id = 0
+	_record_cursor = ""
 
 func _render_own_profile_record() -> void:
 	_add_record_heading("Match record")
@@ -585,10 +668,12 @@ func _request_selected_deck() -> void:
 	if _selected_list_id.is_empty():
 		return
 	_deck_contents.text = "Loading %s…" % str(_selected_entry.get("name", "bot deck"))
+	_close_record()
 	_view_deck_button.hide()
 	_delete_button.hide()
 	_quarantine_button.hide()
 	_add_deck_button.hide()
+	_set_entry_focus_order()
 	_deck_timeout.start()
 	deck_requested.emit(_selected_list_id)
 
@@ -636,6 +721,7 @@ func show_deck(list_id: String, deck: Dictionary) -> void:
 	_delete_button.hide()
 	_quarantine_button.hide()
 	_add_deck_button.visible = not quarantined_only
+	_set_entry_focus_order()
 	_deck_contents.push_color(GOLD)
 	_deck_contents.add_text(str(deck["name"]) + "\n\n")
 	_deck_contents.pop()
@@ -760,6 +846,7 @@ func close_deck() -> bool:
 	_selected_list_id = ""
 	_selected_entry.clear()
 	_deck_timeout.stop()
+	_close_record()
 	_deck_contents.hide()
 	_back_button.hide()
 	_view_deck_button.hide()
@@ -768,7 +855,7 @@ func close_deck() -> bool:
 	_add_deck_button.hide()
 	_status.visible = not _status.text.is_empty()
 	_refresh_button.show()
-	_format.visible = _paging_supported and not quarantined_only
+	_format.visible = _paging_supported
 	_filter_bar.show()
 	_pagination.visible = _last_page > 0
 	_table.deselect_all()

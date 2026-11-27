@@ -193,6 +193,11 @@ real two-window/two-network test proves the public UDP path.
 - Reconnect keeps the same punched local port and either the original direct
   endpoint or the lobby relay endpoint.
 - No `not accepting spectators right now` error appears while the host match is live.
+- The spectator's bottom-left corner shows the match format: `Bo1 Match` or
+  `Bo3 Series · <score>` (the label's tooltip explains the streak marks).
+- In a Bo3, each deck's rank badge wears one Necoc Yaotl blood streak per game
+  win by that player, updating as `series_game_ended` arrives. Bo1 matches and
+  non-spectator seats show no streaks.
 
 ## Current Known Risk
 

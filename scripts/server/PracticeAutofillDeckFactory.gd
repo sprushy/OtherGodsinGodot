@@ -22,6 +22,25 @@ const KEY_OF_SOLOMON_MIN_TARGETS := 4
 const VISION_OF_TARTARUS_MIN_VOID_SOURCES := 3
 const TABLET_OF_LIFE_CARD_NAME := "Tablet of Life"
 const TABLET_OF_LIFE_MIN_ANCIENT_CREATURES := 6
+# Ranked bot decks pick one of four fill rubrics: 10% the old mixed fill,
+# 30% an even Creature/non-Creature split, 30% a deck heavily weighted toward
+# one random non-Creature category, and 30% a support package (support card at
+# max copies plus 2.5x its required targets) before re-rolling for the rest.
+const RUBRIC_LEGACY := 0
+const RUBRIC_BALANCED := 1
+const RUBRIC_CATEGORY := 2
+const RUBRIC_SUPPORT_PACKAGE := 3
+const RUBRIC_LEGACY_WEIGHT := 0.10
+const RUBRIC_BALANCED_WEIGHT := 0.30
+const RUBRIC_CATEGORY_WEIGHT := 0.30
+const RUBRIC_CATEGORY_BIAS := 0.75
+const SUPPORT_TARGET_MULTIPLIER := 2.5
+const MAX_PACKAGE_COMMITS := 3
+const RANKED_SUPPORT_CAP := 10
+const NON_CREATURE_CATEGORIES := [
+	Card.CardType.SPELL, Card.CardType.HEX, Card.CardType.CHARM,
+	Card.CardType.EQUIPMENT, Card.CardType.STRUCTURE,
+]
 const VOID_SOURCE_CARD_NAMES := [
 	"Bit Meseri",
 	"Void Shield",
@@ -37,6 +56,9 @@ var _all_cards: Array[Card] = []
 var _gods: Array[GodCard] = []
 var _cards_by_name: Dictionary = {}
 var _restricted_equipment_lookup: Dictionary = {}
+# {card, required, exclude, matches: Callable(Card)->bool}
+# Built once at init so the package pool can be filtered per god at roll time.
+var _support_packages: Array[Dictionary] = []
 
 func _init() -> void:
 	_all_cards = CardCatalogScript.make_all_cards()
@@ -47,6 +69,7 @@ func _init() -> void:
 		if card is GodCard:
 			_gods.append(card as GodCard)
 	_build_restricted_equipment_lookup()
+	_build_support_packages()
 
 func get_ranked_god_names() -> Array[String]:
 	var names: Array[String] = []
@@ -426,6 +449,188 @@ func _remove_culture_incompatible_cards(cards: Dictionary, god: GodCard) -> void
 	for card_name in names_to_remove:
 		cards.erase(card_name)
 
+# --- Ranked bot deck rubrics ------------------------------------------------
+# Each support package names one payoff card and the target shape its deckbuilding
+# rule counts. Committing a package puts roughly 2.5x the rule's required targets
+# in the deck, then the payoff itself at its maximum copy count.
+
+func _build_support_packages() -> void:
+	_add_support_package("Durinn Secondborn", 3, _card_type_matcher([Card.CardType.EQUIPMENT]))
+	_add_support_package("Circle of Rebirth", 5, _any_type_matcher(["Animal", "Plant"]))
+	_add_support_package(TABLET_OF_LIFE_CARD_NAME, TABLET_OF_LIFE_MIN_ANCIENT_CREATURES, _culture_creature_matcher("Ancient"))
+	_add_support_package("Key of Solomon", KEY_OF_SOLOMON_MIN_TARGETS, _type_matcher(["Demon"]))
+	_add_support_package("Key of Solomon", KEY_OF_SOLOMON_MIN_SOURCES, _type_matcher(["Animal"]))
+	_add_support_package("Apollyon's Demiurge", 3, _type_matcher(["Demon"]))
+	_add_support_package("Eridu, City of Sages", 3, _type_matcher(["Mage"]))
+	_add_support_package("Advanced Building Techniques", 2, _card_type_matcher([Card.CardType.STRUCTURE]))
+	_add_support_package("Myrkwood", 2, _type_matcher(["Animal"]))
+	_add_support_package("Isimud", 3, _type_matcher(["Divine Manifestation"]))
+	_add_support_package("Fourth Sage Enmegalamma", 3, _type_matcher(["Mer", "Sage"]))
+	_add_support_package("Sixth Sage An-Enlilda", 2, Callable(self, "_match_ancient_dwelling"))
+	_add_support_package("Robotic Footsoldier", 2, _type_matcher(["Machine"]))
+	_add_support_package("Beyla", 3, _named_matcher(["Berserker", "Gidim Ensi"]))
+	_add_support_package("Caleuche, the Ghost Ship", 2, _type_matcher(["Spirit"]))
+	_add_support_package("E2-abzu", 2, _type_matcher(["Mer"]))
+	_add_support_package("Vision of Tartarus", VISION_OF_TARTARUS_MIN_VOID_SOURCES, _named_matcher(VOID_SOURCE_CARD_NAMES))
+	_add_support_package("Huginn", 1, _type_matcher(["Hex"], false))
+	_add_support_package("Muninn", 1, _type_matcher(["Charm"], false))
+	_add_support_package("Wild Magic", 1, _card_type_matcher([Card.CardType.SPELL, Card.CardType.HEX, Card.CardType.CHARM]))
+
+func _add_support_package(card_name: String, required: int, matcher: Callable) -> void:
+	var card: Card = _cards_by_name.get(card_name, null) as Card
+	if card == null:
+		push_warning("[PracticeAutofillDeckFactory] support package references unknown card: %s" % card_name)
+		return
+	_support_packages.append({
+		"card": card,
+		"required": required,
+		"exclude": card_name,
+		"matches": matcher,
+	})
+
+func _make_god_autofill_package(required: int, matcher: Callable) -> Dictionary:
+	return {"card": null, "required": required, "exclude": "", "matches": matcher}
+
+func _eligible_support_packages(god: GodCard) -> Array[Dictionary]:
+	var eligible: Array[Dictionary] = []
+	for package in _support_packages:
+		var card: Card = package.get("card", null)
+		if card == null or _is_card_compatible_with_god(card, god):
+			eligible.append(package)
+	# The god's own autofill rules count as support packages too, e.g. Freyja's
+	# Norse Warrior requirement rather than a single named payoff card.
+	var rules: Array[Dictionary] = []
+	if god is Thor or god is Freyja:
+		rules.append(_make_god_autofill_package(6, _type_matcher(["Norse", "Warrior"])))
+	elif god is TezcatlipocaTheSmokingMirror:
+		rules.append(_make_god_autofill_package(4, _type_matcher(["Shapeshifter"])))
+	elif god is NuskuFirebearer:
+		rules.append(_make_god_autofill_package(NUSKU_MIN_ANCIENT_MAGICAL, Callable(self, "_is_ancient_spell_or_charm")))
+	elif god is ManannanMacLir:
+		rules.append(_make_god_autofill_package(MANANNAN_MAC_LIR_MIN_TRISKELION_CREATURES, _culture_creature_matcher("Triskelion")))
+	elif god is Odin:
+		rules.append(_make_god_autofill_package(ODIN_MIN_RUNIC_ACTIVATORS, Callable(self, "_is_odin_runic_activator")))
+	elif god is Cernunnos:
+		rules.append(_make_god_autofill_package(CERNUNNOS_MIN_LEVEL_5_ANIMALS, Callable(self, "_is_level_5_or_higher_animal")))
+	elif god is HermesPsychopompus:
+		rules.append(_make_god_autofill_package(HERMES_PSYCHOPOMPUS_MIN_GHOSTS, _type_matcher(["Ghost"])))
+	eligible.append_array(rules)
+	return eligible
+
+func _roll_fill_rubric(rng: RandomNumberGenerator, allow_package: bool = true) -> int:
+	# Disabling the package rubric renormalizes the remaining three so a
+	# package re-roll keeps the same relative 10/30/30 weights.
+	var span := RUBRIC_LEGACY_WEIGHT + RUBRIC_BALANCED_WEIGHT + RUBRIC_CATEGORY_WEIGHT
+	if allow_package:
+		span += RUBRIC_CATEGORY_WEIGHT
+	var roll := rng.randf() * span
+	if roll < RUBRIC_LEGACY_WEIGHT:
+		return RUBRIC_LEGACY
+	if roll < RUBRIC_LEGACY_WEIGHT + RUBRIC_BALANCED_WEIGHT:
+		return RUBRIC_BALANCED
+	if roll < RUBRIC_LEGACY_WEIGHT + RUBRIC_BALANCED_WEIGHT + RUBRIC_CATEGORY_WEIGHT:
+		return RUBRIC_CATEGORY
+	return RUBRIC_SUPPORT_PACKAGE
+
+func _package_target_count(package: Dictionary, cards: Dictionary) -> int:
+	var matcher: Callable = package["matches"]
+	var exclude := str(package.get("exclude", ""))
+	var total := 0
+	for name in cards:
+		var card_name := str(name)
+		if card_name == exclude:
+			continue
+		var template: Card = _cards_by_name.get(card_name, null)
+		if template != null and bool(matcher.call(template)):
+			total += int(cards[name])
+	return total
+
+func _package_target_candidates(package: Dictionary, god: GodCard, deck_cards: Dictionary) -> Array[Card]:
+	var matcher: Callable = package["matches"]
+	var exclude := str(package.get("exclude", ""))
+	var result: Array[Card] = []
+	for template in _all_cards:
+		if not _is_safe_regular_card(template, god, deck_cards, false, true):
+			continue
+		if str(template.card_name) == exclude:
+			continue
+		if bool(matcher.call(template)):
+			result.append(template)
+	return result
+
+func _commit_support_package(deck_cards: Dictionary, god: GodCard, rng: RandomNumberGenerator) -> Dictionary:
+	var pool := _eligible_support_packages(god)
+	var result := {"regular": 0, "support": 0, "legendary": 0}
+	if pool.is_empty():
+		return result
+	var package: Dictionary = pool[rng.randi_range(0, pool.size() - 1)]
+	var target_total := int(floor(float(int(package["required"])) * SUPPORT_TARGET_MULTIPLIER))
+	var attempts := 0
+	while attempts < MAX_RANDOM_PICK_ATTEMPTS \
+			and _package_target_count(package, deck_cards) < target_total \
+			and _count_regular_cards(deck_cards) < DEFAULT_REGULAR_CARD_COUNT:
+		attempts += 1
+		var candidates := _package_target_candidates(package, god, deck_cards)
+		if candidates.is_empty():
+			break
+		var chosen: Card = candidates[rng.randi_range(0, candidates.size() - 1)]
+		deck_cards[chosen.card_name] = int(deck_cards.get(chosen.card_name, 0)) + 1
+		result["regular"] = int(result["regular"]) + 1
+		if chosen.card_type != Card.CardType.CREATURE:
+			result["support"] = int(result["support"]) + 1
+		if chosen.is_legendary:
+			result["legendary"] = int(result["legendary"]) + 1
+	var support_card: Card = package.get("card", null)
+	if support_card != null and _is_safe_regular_card(support_card, god, deck_cards, support_card.is_legendary, true):
+		var copies := mini(_max_copies(support_card), DEFAULT_REGULAR_CARD_COUNT - _count_regular_cards(deck_cards))
+		if support_card.is_legendary:
+			copies = mini(copies, LEGENDARY_DECK_TARGET - _count_regular_legendary_cards(deck_cards))
+		for _copy in range(maxi(0, copies)):
+			deck_cards[support_card.card_name] = int(deck_cards.get(support_card.card_name, 0)) + 1
+			result["regular"] = int(result["regular"]) + 1
+			if support_card.card_type != Card.CardType.CREATURE:
+				result["support"] = int(result["support"]) + 1
+			if support_card.is_legendary:
+				result["legendary"] = int(result["legendary"]) + 1
+	return result
+
+func _card_type_matcher(types: Array) -> Callable:
+	return func(card: Card) -> bool:
+		return card != null and not card.is_god and int(card.card_type) in types
+
+func _type_matcher(tags: Array, require_creature: bool = true) -> Callable:
+	return func(card: Card) -> bool:
+		if card == null or card.is_god:
+			return false
+		if require_creature and card.card_type != Card.CardType.CREATURE:
+			return false
+		for tag in tags:
+			if not card.has_type(str(tag)):
+				return false
+		return true
+
+func _any_type_matcher(tags: Array) -> Callable:
+	return func(card: Card) -> bool:
+		if card == null or card.is_god or card.card_type != Card.CardType.CREATURE:
+			return false
+		for tag in tags:
+			if card.has_type(str(tag)):
+				return true
+		return false
+
+func _culture_creature_matcher(culture: String) -> Callable:
+	return func(card: Card) -> bool:
+		return card != null and not card.is_god and card.card_type == Card.CardType.CREATURE \
+			and str(card.culture).strip_edges() == culture
+
+func _named_matcher(names: Array) -> Callable:
+	return func(card: Card) -> bool:
+		return card != null and str(card.card_name) in names
+
+func _match_ancient_dwelling(card: Card) -> bool:
+	return card != null and card.card_type == Card.CardType.STRUCTURE \
+		and card.has_type("Dwelling") and str(card.culture).strip_edges() == "Ancient"
+
 func _fill_regular_cards_for_god(
 	deck_cards: Dictionary,
 	god: GodCard,
@@ -433,10 +638,34 @@ func _fill_regular_cards_for_god(
 	ranked: bool = false,
 	preloaded_regular_count: int = 0
 ) -> bool:
-	var regular_count := preloaded_regular_count
-	var legendary_count := 0
+	# Ranked bot decks commit to one of the four archetype rubrics. A support
+	# package rubric re-rolls until it finds a fill plan for the remaining slots;
+	# every later quota is relative to those slots, not a fresh 40-card deck.
+	var rubric := RUBRIC_LEGACY
+	var focus_category := -1
+	var support_target := RANKED_SUPPORT_CAP
+	var committed := {"regular": 0, "support": 0, "legendary": 0}
+	if ranked:
+		rubric = _roll_fill_rubric(rng)
+		var package_commits := 0
+		while rubric == RUBRIC_SUPPORT_PACKAGE and package_commits < MAX_PACKAGE_COMMITS:
+			committed = _commit_support_package(deck_cards, god, rng)
+			package_commits += 1
+			if int(committed["regular"]) <= 0:
+				rubric = _roll_fill_rubric(rng, false)
+				break
+			rubric = _roll_fill_rubric(rng)
+		if rubric == RUBRIC_SUPPORT_PACKAGE:
+			rubric = _roll_fill_rubric(rng, false)
+		if rubric == RUBRIC_CATEGORY:
+			focus_category = NON_CREATURE_CATEGORIES[rng.randi_range(0, NON_CREATURE_CATEGORIES.size() - 1)]
+		if rubric == RUBRIC_BALANCED or rubric == RUBRIC_CATEGORY:
+			var remaining := DEFAULT_REGULAR_CARD_COUNT - preloaded_regular_count - int(committed["regular"])
+			support_target = int(committed["support"]) + remaining / 2
+	var regular_count := preloaded_regular_count + int(committed["regular"])
+	var legendary_count := int(committed["legendary"])
 	var preferred_added := 0
-	var support_added := 0
+	var support_added := int(committed["support"])
 	while regular_count < DEFAULT_REGULAR_CARD_COUNT:
 		var only_legendary := legendary_count < LEGENDARY_DECK_TARGET and rng.randf() < 0.12
 		var candidates := _get_regular_candidates(god, deck_cards, only_legendary, ranked)
@@ -445,17 +674,29 @@ func _fill_regular_cards_for_god(
 				candidates = _get_regular_candidates(god, deck_cards, false, ranked)
 			if candidates.is_empty():
 				return false
+		var wants_support := false
+		if ranked:
+			if rubric == RUBRIC_LEGACY:
+				wants_support = support_added < RANKED_SUPPORT_CAP \
+					and (support_added < 4 or rng.randf() < 0.25)
+			else:
+				wants_support = support_added < support_target
 		var preferred_candidates := _get_preferred_regular_candidates(god, deck_cards, ranked)
-		if ranked and support_added < 10 and (support_added < 4 or rng.randf() < 0.25):
+		if wants_support:
 			var support := candidates.filter(func(card: Card) -> bool: return card.card_type != Card.CardType.CREATURE)
 			if not support.is_empty():
+				if rubric == RUBRIC_CATEGORY and rng.randf() < RUBRIC_CATEGORY_BIAS:
+					var focused := support.filter(func(card: Card) -> bool: return card.card_type == focus_category)
+					if not focused.is_empty():
+						support = focused
 				candidates = support
 		elif ranked:
 			candidates = candidates.filter(func(card: Card) -> bool: return card.card_type == Card.CardType.CREATURE)
 			if candidates.is_empty():
 				candidates = _get_regular_candidates(god, deck_cards, false, ranked)
 		var chosen := candidates[rng.randi_range(0, candidates.size() - 1)]
-		if preferred_added < 7 and not preferred_candidates.is_empty() and rng.randf() < 0.35:
+		if preferred_added < 7 and not preferred_candidates.is_empty() and rng.randf() < 0.35 \
+				and (not ranked or rubric == RUBRIC_LEGACY or chosen.card_type == Card.CardType.CREATURE):
 			chosen = preferred_candidates[rng.randi_range(0, preferred_candidates.size() - 1)]
 			preferred_added += 1
 		var copies_to_add := _get_copy_count_to_add(chosen, deck_cards)
@@ -464,7 +705,8 @@ func _fill_regular_cards_for_god(
 		if chosen.is_legendary:
 			copies_to_add = 1
 		if ranked and chosen.card_type != Card.CardType.CREATURE:
-			copies_to_add = mini(copies_to_add, 10 - support_added)
+			var cap := RANKED_SUPPORT_CAP if rubric == RUBRIC_LEGACY else support_target
+			copies_to_add = mini(copies_to_add, maxi(1, cap - support_added))
 		copies_to_add = mini(copies_to_add, DEFAULT_REGULAR_CARD_COUNT - regular_count)
 		if chosen.is_legendary and legendary_count + copies_to_add > LEGENDARY_DECK_TARGET:
 			continue

@@ -15,7 +15,6 @@ const PasswordRecoveryMailerScript = preload("res://scripts/server/PasswordRecov
 const DeckStoreScript = preload("res://scripts/server/DeckStore.gd")
 const FriendStoreScript = preload("res://scripts/server/FriendStore.gd")
 const DeckValidatorScript = preload("res://scripts/server/DeckValidator.gd")
-const CardCatalogScript = preload("res://scripts/cards/CardCatalog.gd")
 const MatchHistoryStoreScript = preload("res://scripts/server/MatchHistoryStore.gd")
 const PracticeAutofillDeckFactoryScript = preload("res://scripts/server/PracticeAutofillDeckFactory.gd")
 const RankedBotDeckPoolScript = preload("res://scripts/server/RankedBotDeckPool.gd")
@@ -108,7 +107,10 @@ var server_bot_deck_factory = null
 
 var _seek_timeout_check_elapsed: float = 0.0
 var _server_bot_seed_counter: int = 0
-# Bot ladders are maintained independently for Bo1 and Bo3. `_ranked_bot_deck_pool`
+# Bot ladders replay separate Bo1 and Bo3 result streams so records, stars,
+# quarantine, and trials stay per-format, but bot identities (decklists plus
+# display names) are reconciled across both pools after every refresh, so one
+# bot name always means the same deck on either ladder. `_ranked_bot_deck_pool`
 # stays as the Bo1 pool name for existing callers and stored state; Bo3 uses its
 # own pool, result replay, and persistence file.
 var _ranked_bot_deck_pool := RankedBotDeckPoolScript.new()
@@ -493,7 +495,7 @@ func _handle_request(peer_id: int, message: Dictionary) -> void:
 			_handle_request_profile_summary(peer_id)
 		LobbyProtocolScript.SET_RANK_BADGE:
 			_handle_set_rank_badge(peer_id, payload)
-		LobbyProtocolScript.REQUEST_BOT_LADDER, LobbyProtocolScript.REQUEST_BOT_DECK:
+		LobbyProtocolScript.REQUEST_BOT_LADDER, LobbyProtocolScript.REQUEST_BOT_DECK, LobbyProtocolScript.REQUEST_BOT_RECORD:
 			_handle_request_bot_ladder(peer_id, message_type, payload)
 		LobbyProtocolScript.REQUEST_BOT_MATCH_HISTORY:
 			if not _get_session_for_peer(peer_id).is_empty():
@@ -1858,16 +1860,13 @@ func _handle_submit_bot_deck(peer_id: int, payload: Dictionary) -> void:
 	var owner_name := str(session.get("username", session.get("player_name", "Player"))).strip_edges()
 	if owner_name.is_empty():
 		owner_name = "Player"
-	var god_name := str(deck.get("god_name", deck.get("god", ""))).strip_edges()
-	if god_name.is_empty():
-		var catalog_cards := CardCatalogScript.make_all_cards()
-		for card_name in (validation.get("cards", {}) as Dictionary).keys():
-			for card in catalog_cards:
-				if card != null and bool(card.is_god) and str(card.card_name) == str(card_name):
-					god_name = str(card.card_name)
-					break
-			if not god_name.is_empty():
-				break
+	var god_name := ""
+	var catalog_cards := DeckValidatorScript.get_shared_cards_by_name()
+	for card_name in validation["cards"]:
+		var card: Card = catalog_cards.get(card_name)
+		if card != null and card.is_god:
+			god_name = card.card_name
+			break
 	var bot := {
 		"bot_id": bot_id,
 		"account_id": account_id,
@@ -2327,6 +2326,17 @@ func _handle_request_bot_ladder(peer_id: int, message_type: String, payload: Dic
 		_send_error_to_peer(peer_id, "Only admins can view quarantined bots.")
 		return
 	_ensure_match_history_store()
+	if message_type == LobbyProtocolScript.REQUEST_BOT_RECORD:
+		_refresh_ranked_bot_deck_pool()
+		var list_id: String = payload["list_id"]
+		var best_of := int(payload.get("best_of", 1))
+		var cursor: String = payload.get("before_match_id", "")
+		var available := not _bot_pool(best_of).get_deck_details(list_id, quarantined_only).is_empty()
+		var record: Dictionary = match_history_store.get_ranked_bot_record_page(list_id, best_of, 50, cursor, cursor.is_empty()) if available else {}
+		record["available"] = available
+		record["request_id"] = payload["request_id"]
+		_send_to_peer(peer_id, LobbyProtocolScript.BOT_RECORD, record)
+		return
 	if message_type == LobbyProtocolScript.REQUEST_BOT_DECK:
 		_refresh_ranked_bot_deck_pool()
 		var list_id: String = payload["list_id"]
@@ -2460,12 +2470,13 @@ func _build_ladder_page(request: Dictionary, current_username: String = "") -> D
 	if search_query.is_empty() and player_type == LobbyProtocolScript.LADDER_FILTER_EVERYONE and ladder.size() > 100:
 		ladder.resize(100)
 	if not is_paged:
-		return {"ladder": _public_ladder_rows(ladder, best_of)}
+		return {"ladder": _public_ladder_rows(ladder, best_of), "supports_bot_records": true}
 	var last_page := maxi(0, ceili(float(ladder.size()) / LobbyProtocolScript.LADDER_PAGE_SIZE) - 1)
 	var page := mini(int(request.get("page", 0)), last_page)
 	var start := page * LobbyProtocolScript.LADDER_PAGE_SIZE
 	return {
 		"ladder": _public_ladder_rows(ladder.slice(start, start + LobbyProtocolScript.LADDER_PAGE_SIZE), best_of),
+		"supports_bot_records": true,
 		"request_id": request.get("request_id", 0),
 		"page": page,
 		"last_page": last_page,
@@ -2591,7 +2602,7 @@ func _decorate_ladder_rows(rows: Array[Dictionary], best_of: int = 1) -> void:
 					bot_deck.get("reinforcements", {})
 				)
 			if not row.has("recent_matches"):
-				row["recent_matches"] = match_history_store.get_recent_ranked_bot_matches_for_list(list_id, 10, false)
+				row["recent_matches"] = match_history_store.get_recent_ranked_bot_matches_for_list(list_id, 10, false, best_of)
 
 func _public_ladder_rows(rows: Array[Dictionary], best_of: int = 1) -> Array[Dictionary]:
 	_decorate_ladder_rows(rows, best_of)
@@ -3305,11 +3316,18 @@ func _refresh_ranked_bot_deck_pool() -> void:
 		bot_pool.sync_community_bots(community_bots)
 		var format_results: Array[Dictionary] = _pool_results_by_format[best_of]
 		bot_pool.refresh(format_results)
-		# Persist only when the replay or the community sync actually changed
-		# pool state; a refresh triggered by a human result or profile change
-		# must not rewrite both format's state files.
+	# Reconcile bot identities across the two format pools so one bot name
+	# means the same decklist on both ladders. Bo3 naming collisions yield to
+	# Bo1 names, missing identities are mirrored with zeroed records, and the
+	# assigned-name maps are unified; records and quarantine stay per-format.
+	_ranked_bot_deck_pool.sync_shared_identities(_ranked_bot_deck_pool_bo3, true)
+	# Persist only when the replay, community sync, or identity reconciliation
+	# actually changed pool state; a refresh triggered by a human result or
+	# profile change must not rewrite both format's state files.
+	for best_of in [1, 3]:
+		var bot_pool := _bot_pool(best_of)
 		if is_default_store and bot_pool.needs_save():
-			bot_pool.save_state(_pool_state_paths[best_of], format_results.size())
+			bot_pool.save_state(_pool_state_paths[best_of], (_pool_results_by_format[best_of] as Array[Dictionary]).size())
 	_log_slow_path("bot pool refresh", started_msec)
 
 # Splits the bot result stream into per-format buckets incrementally: the full
@@ -3800,6 +3818,10 @@ func _observe_local_bot_match(session_id: String, match_id: String) -> void:
 			spectator_bot_stars.append(int(bot_submission.get("bot_stars", 0)))
 		else:
 			spectator_bot_stars.append(-1)
+	# The host client owns the live series state; the lobby only knows the
+	# format. Publish it so spectators can tell Bo1 from Bo3 immediately, and
+	# let the host's series events correct the win counts as games end.
+	var spectator_best_of := 3 if int(entry.get("best_of", 1)) == 3 else 1
 	_send_to_session(session_id, LobbyProtocolScript.MATCH_ASSIGNED, {
 		"match_id": match_id,
 		"room_id": str(entry.get("room_id", "")),
@@ -3825,7 +3847,13 @@ func _observe_local_bot_match(session_id: String, match_id: String) -> void:
 		# this endpoint when the relay never comes up.
 		"spectate_direct_host_ip": spectate_ip,
 		"spectate_direct_host_port": spectate_port,
-		"series": {},
+		"series": {
+			"best_of": spectator_best_of,
+			"games_to_win": 2 if spectator_best_of == 3 else 1,
+			"game_number": 1,
+			"wins": [0, 0],
+			"is_complete": false,
+		},
 		"reconnect_window_seconds": 0,
 		"waiting_for_reconnect": false,
 		"spectate_via_punch": via_punch,

@@ -263,7 +263,7 @@ static func combat_visible(bot, action: CardAction) -> bool:
 	var defender: Card = bot._get_attack_defender_card(action)
 	return defender == null or visible(bot, defender)
 
-static func mana_penalty(bot, amount: int, available_mana: int = -1, ignore_altar_hold := false) -> int:
+static func mana_penalty(bot, amount: int, available_mana: int = -1, ignore_altar_hold := false, ignore_tutor_hold := false) -> int:
 	# Spending prices each paid point of mana at its own marginal rate: the
 	# last points of a large stock are nearly free once nothing in the deck
 	# can still use them, while early points of a tight stock are expensive.
@@ -285,6 +285,13 @@ static func mana_penalty(bot, amount: int, available_mana: int = -1, ignore_alta
 	# themselves open.
 	if spend > 0 and not ignore_altar_hold:
 		score += altar_line_hold_charge(bot, stock, spend)
+	# A spend that dips the stock below the held Walk of the Sage + E2-abzu
+	# line's retrieval funding delays that payoff until later upkeep income
+	# rebuilds the dip, so competing plays carry a share of it. The line's
+	# own steps pass `ignore_tutor_hold` so the Walk's unlock and activation
+	# never pay for holding themselves open.
+	if spend > 0 and not ignore_tutor_hold:
+		score += tutor_line_hold_charge(bot, stock, spend)
 	return score
 
 static func mana_gain_value(bot, amount: int, at_level: int = -1) -> int:
@@ -342,6 +349,18 @@ static func _mana_saturation_ceiling(bot) -> int:
 					or not void_card.has_type("Mer") or not void_card.has_type("Mage"):
 				continue
 			top = maxi(top, E2Abzu.RETURN_TO_HAND_COST + 1 + void_card.get_effective_level())
+	# While both halves of the tutor stand ready, every Mer Mage still in the
+	# deck is one cheap Walk of the Sage activation away from the Void, so its
+	# retrieval floor is spend potential the same way a Voided mage's is.
+	# Without this the low-cost Sages read as nothing to save for, the stock
+	# spends down every turn, and the line only starts once it happens to be
+	# affordable instead of being banked toward.
+	var walk := find_walk_of_the_sage(bot)
+	if walk != null and not walk.abilities_suppressed_by_effects() \
+			and bot.game_manager.can_player_use_powers(bot.bot_player) and e2_abzu_available(bot):
+		for deck_card in player.deck_zone.cards:
+			if is_mer_mage(deck_card):
+				top = maxi(top, E2Abzu.RETURN_TO_HAND_COST + 1 + deck_card.get_effective_level())
 	for zone in player.power_zones:
 		for card in zone.cards:
 			if card is PowerCard:
@@ -3623,6 +3642,91 @@ static func walk_tutor_can_reach(bot, target: Card) -> bool:
 	if budget < 0:
 		return false
 	return target.get_effective_level() + E2Abzu.RETURN_TO_HAND_COST + 1 <= budget
+
+# A Mer Mage: the body type E2-abzu can both Void temporarily and retrieve
+# from the Void to hand. Kept in one place so the ceiling scan and the held
+# line agree with the structure's own targeting on the same shape.
+static func is_mer_mage(card: Card) -> bool:
+	return card != null \
+			and card.card_type == Card.CardType.CREATURE \
+			and not card.is_god \
+			and card.has_type("Mer") \
+			and card.has_type("Mage")
+
+# The payoff premium for retrieving a Voided card back into hand: the line
+# converts a dead Abyss entry into a live hand card, the same conversion the
+# Altar's Void removal premium prices.
+const TUTOR_RETRIEVAL_PREMIUM := 1500
+# Share of the held tutor line's payoff a competing spend carries when it
+# dips the stock below the retrieval floor, mirroring the Altar hold's
+# strand share.
+const TUTOR_HOLD_STRAND_SHARE := 0.3
+
+# The held Walk of the Sage + E2-abzu retrieval line, cached per decision
+# step like the held Altar line. The ceiling already counts a Voided Mer
+# Mage's retrieval floor (Item 12); this package adds what the ceiling
+# cannot do on its own: a hold that charges competing spends for dipping
+# below the funding, and the upkeep override's `need`.
+static func held_tutor_line(bot) -> Dictionary:
+	if bot == null:
+		return {"live": false, "need": 0, "gain": 0, "mage": null}
+	var cache = bot.get("_tutor_line_cache")
+	if cache is Dictionary and cache.has("live"):
+		return cache
+	var fresh := _compute_held_tutor_line(bot)
+	bot.set("_tutor_line_cache", fresh)
+	return fresh
+
+static func _compute_held_tutor_line(bot) -> Dictionary:
+	var result := {"live": false, "need": 0, "gain": 0, "mage": null}
+	if bot == null or bot.bot_player == null or bot.game_manager == null:
+		return result
+	if not e2_abzu_available(bot):
+		return result
+	var best_mage: Card = null
+	var best_value := 0
+	var best_floor := 0
+	for void_card in bot.bot_player.abyss_zone.cards:
+		if not is_mer_mage(void_card):
+			continue
+		var retrieval_floor: int = E2Abzu.RETURN_TO_HAND_COST + 1 + void_card.get_effective_level()
+		var card_value: int = value(bot, void_card)
+		if best_mage == null or card_value > best_value \
+				or (card_value == best_value and retrieval_floor > best_floor):
+			best_mage = void_card
+			best_value = card_value
+			best_floor = retrieval_floor
+	if best_mage == null:
+		return result
+	# The hold only exists while the retrieval is actually fundable within a
+	# few upkeeps: a drain-heavy board or dead income should not strand the
+	# whole economy behind an unreachable floor.
+	if projected_upkeep_mana(bot, 3) < best_floor:
+		return result
+	result["live"] = true
+	result["mage"] = best_mage
+	result["need"] = best_floor
+	result["gain"] = best_value + TUTOR_RETRIEVAL_PREMIUM
+	return result
+
+# The charge for a spend that would dip the stock below the held tutor line's
+# retrieval funding: the payoff waits until later upkeep income rebuilds the
+# dip. The line's own summon — the held mage itself arriving from the Void —
+# never pays for holding itself open. Zero while the line is not live,
+# already funded, the spend stays above its need, or the card is the line's
+# own mage.
+static func tutor_line_hold_charge(bot, stock: int, spend: int, card: Card = null) -> int:
+	if spend <= 0:
+		return 0
+	var line := held_tutor_line(bot)
+	if not bool(line.get("live", false)):
+		return 0
+	if card != null and line.get("mage") == card:
+		return 0
+	var need := int(line.get("need", 0))
+	if need <= 0 or stock - spend >= need:
+		return 0
+	return int(float(line.get("gain", 0)) * TUTOR_HOLD_STRAND_SHARE)
 
 # Isimud is standing by to deploy a Divine Manifestation: in hand (one free
 # summon away) or face-up on the field with its abilities live.

@@ -277,6 +277,7 @@ func _handle_ui_interaction(prompt_player_index: int, type: String, data: Dictio
 	_mana_econ_cache = {}
 	_tonal_setup_cache = {}
 	_altar_line_cache = {}
+	_tutor_line_cache = {}
 	if type == "priority":
 		_queue_step()
 		return
@@ -427,6 +428,7 @@ func _run_step() -> void:
 	_mana_econ_cache = {}
 	_tonal_setup_cache = {}
 	_altar_line_cache = {}
+	_tutor_line_cache = {}
 	if not _should_queue_step():
 		return
 	if _owns_pending_click_selection():
@@ -598,6 +600,8 @@ func _choose_upkeep_option(zone: Zone) -> Dictionary:
 	if _upkeep_mana_enables_tonal_extraction(mana_gain):
 		return {"choice": "mana"}
 	if _upkeep_mana_enables_altar_line(mana_gain):
+		return {"choice": "mana"}
+	if _upkeep_mana_enables_tutor_line(mana_gain):
 		return {"choice": "mana"}
 	if bot_player.hand_zone.cards.size() >= 3:
 		for card in bot_player.hand_zone.cards:
@@ -1977,6 +1981,26 @@ func _upkeep_mana_enables_altar_line(mana_gain: int) -> bool:
 	if bot_player.mana + brew >= gross:
 		return false
 	return bot_player.mana + brew + mana_gain >= gross
+
+# The held Walk of the Sage + E2-abzu line keeps a funding level for its
+# retrieval — the structure's level-under-mana rule needs the whole retrieval
+# price plus the mage's level on hand at once — so the mana option wins when
+# its income is what still closes that gap.
+func _upkeep_mana_enables_tutor_line(mana_gain: int) -> bool:
+	if mana_gain <= 0 or game_manager == null:
+		return false
+	var line := CardStrategy.held_tutor_line(self)
+	if not bool(line.get("live", false)):
+		return false
+	var need := int(line.get("need", 0))
+	if need <= 0:
+		return false
+	# The brew is available under either upkeep choice, so the income only
+	# counts when the line needs more than the brew already funds.
+	var brew := _ready_brew_mana_gain()
+	if bot_player.mana + brew >= need:
+		return false
+	return bot_player.mana + brew + mana_gain >= need
 
 func _plan_god_manifestation(attack: Dictionary = {}, danger: int = -1) -> Dictionary:
 	var god := _find_player_god()
@@ -5136,7 +5160,10 @@ func _plan_special_power(power: PowerCard, danger: int, combat: Dictionary, unlo
 					or not CardStrategy.can_remove_from_board(self, power, target, true):
 				continue
 			gain = CardStrategy.removal_score(self, power, target) - _deck_card_hand_value(discard, bot_player.mana - cost)
-		var score := gain - CardStrategy.mana_penalty(self, cost)
+		# The Walk's unlock and activation are the tutor line's own entry
+		# payment, so they never pay the hold that keeps the stock for the
+		# retrieval they are opening.
+		var score := gain - CardStrategy.mana_penalty(self, cost, -1, false, power is WalkOfTheSage)
 		var command := {"type": "activate_power", "power_uid": power.uid, "target_uid": target.uid}
 		if discard != null:
 			command["discard_uids"] = [discard.uid]
@@ -5168,8 +5195,10 @@ func _walk_of_the_sage_gain(target: Card, cost: int) -> int:
 	if CardStrategy.walk_tutor_can_reach(self, target) \
 			and game_manager.can_player_add_to_hand_now(bot_player):
 		var danger := _forecast_incoming_follower_loss()
+		# The retrieval payment is the line's own step, so it never pays the
+		# hold that keeps the stock for exactly this retrieval.
 		var tutor_gain := _deck_pick_value(target, bot_player.mana - cost + 2, danger) \
-			- CardStrategy.mana_penalty(self, E2Abzu.RETURN_TO_HAND_COST) - 1200
+			- CardStrategy.mana_penalty(self, E2Abzu.RETURN_TO_HAND_COST, -1, false, true) - 1200
 		gain = maxi(gain, tutor_gain)
 	if game_manager._get_active_powers().any(func(power: PowerCard) -> bool: return power is ACostToWalkTheWorlds):
 		gain -= _score_follower_loss(bot_player, ACostToWalkTheWorlds.LOSS_AMOUNT)
@@ -10943,6 +10972,7 @@ var _mana_econ_cache := {}
 # inputs (powers, hand, board, stock) only move between steps. Mirrors the
 # mana econ cache's clear points.
 var _altar_line_cache := {}
+var _tutor_line_cache := {}
 
 func _locked_board_state() -> bool:
 	if game_manager == null:
@@ -11437,10 +11467,16 @@ func _score_creature_play_in_zone(
 	# strand share prices the optionality the body spends away. The line's own
 	# summon — a Demon or Spirit coster the Altar pays for, or one held for
 	# exactly that Void window whose direct payment already carries the burn
-	# charge — never pays for holding itself open.
+	# charge — never pays for holding itself open. The charge is subtracted:
+	# it prices a cost, exactly like the mana_penalty hold it mirrors.
 	if payment_plan.get("altar_void_uids", []).is_empty() \
 			and not (CardStrategy._is_demon_or_spirit_coster(card) and CardStrategy.find_altar_of_dreams(self) != null):
-		score += CardStrategy.altar_line_hold_charge(self, available_mana, mana_cost)
+		score -= CardStrategy.altar_line_hold_charge(self, available_mana, mana_cost)
+	# The same light 12%-of-rate mana pricing would let a body strand the
+	# held Walk of the Sage + E2-abzu retrieval funding, so the summon carries
+	# its share of that payoff. The held mage's own summon pays nothing: it
+	# is the line's payoff step, exempt by identity.
+	score -= CardStrategy.tutor_line_hold_charge(self, available_mana, mana_cost, card)
 	score += _estimate_tonal_extraction_setup_bonus(card)
 	score += _summon_trigger_setup_bonus(card, zone)
 	score += CardStrategy.clanking_chains_gain(self, card, removed)
