@@ -1363,8 +1363,11 @@ func _handle_request_bot_work(peer_id: int, payload: Dictionary = {}) -> void:
 			})
 			return
 		deck_a = owned_bot
-		var available := _bot_pool(best_of).select_deck(busy, _bot_deck_rng, 0)
-		deck_b = _validate_server_bot_deck(available) if not available.is_empty() else _build_fresh_bot_deck_submission({}, best_of)
+		var available := _bot_pool(best_of).select_deck(busy, _bot_deck_rng, int(owned_bot["stars"]))
+		if not available.is_empty():
+			deck_b = _validate_server_bot_deck(available)
+		elif RankedBotDeckPoolScript.can_self_play_pair(owned_bot, {}):
+			deck_b = _build_fresh_bot_deck_submission({}, best_of)
 	elif below_top_50:
 		var below_ids := _get_bots_below_top_50_list_ids(best_of)
 		if below_ids.is_empty():

@@ -85,6 +85,7 @@ func run() -> bool:
 	_check_quarantined_bot_release(failures)
 	_check_bo3_bot_ladder_separation(failures)
 	_check_cross_format_bot_identity_sync(failures)
+	_check_reused_bot_list_id_names(failures)
 	_check_community_bot_rank_badge(failures)
 	_check_community_bot_quarantine(failures)
 	_check_community_bot_replay_identity(failures)
@@ -7238,11 +7239,11 @@ func _check_cross_format_bot_identity_sync(failures: PackedStringArray) -> void:
 			or str(bo1_mirror_of_storm.get("cards", {})) != str(bo3_storm.get("cards", {})):
 		failures.append("A mirrored bot did not keep the source deck's cards or the source kept its own record")
 	# Both pools share one assigned-name map so future replays keep agreeing.
-	var shared_map: Dictionary = bo1_pool._assigned_names_by_list_id
-	if bo1_pool._assigned_names_by_list_id != bo3_pool._assigned_names_by_list_id \
-			or str(shared_map.get("bo1_bloodaxe", "")) != "Thor: Bloodaxe" \
-			or str(shared_map.get("bo3_bloodaxe", "")) != str(bo3_bloodaxe.get("deck_name", "")) \
-			or str(shared_map.get("bo3_storm", "")) != "Thor: Stormbelt":
+	var shared_map: Dictionary = bo1_pool._assigned_names_by_deck
+	if bo1_pool._assigned_names_by_deck != bo3_pool._assigned_names_by_deck \
+			or str(shared_map.get(bo1_pool._deck_name_key(bo1_bloodaxe), "")) != "Thor: Bloodaxe" \
+			or str(shared_map.get(bo3_pool._deck_name_key(bo3_bloodaxe), "")) != str(bo3_bloodaxe.get("deck_name", "")) \
+			or str(shared_map.get(bo3_pool._deck_name_key(bo3_storm), "")) != "Thor: Stormbelt":
 		failures.append("The two format pools did not converge on one shared bot name map")
 	# A repeated reconciliation must be a no-op: no new mirrors, no renames.
 	var resync: Dictionary = bo1_pool.sync_shared_identities(bo3_pool, true)
@@ -7254,6 +7255,54 @@ func _check_cross_format_bot_identity_sync(failures: PackedStringArray) -> void:
 	bo3_pool._retire_list(bo3_thor, bo3_pool._find_list_by_id(bo3_thor, "bo1_bloodaxe"))
 	if bo3_pool.can_play_list("Thor", "bo1_bloodaxe") or not bo1_pool.can_play_list("Thor", "bo1_bloodaxe"):
 		failures.append("A bot quarantined in Bo3 was not quarantined independently of Bo1")
+
+func _check_reused_bot_list_id_names(failures: PackedStringArray) -> void:
+	for list_id: String in ["league_Thor_001", "newrubric_1_1"]:
+		var pools := [RankedBotDeckPoolScript.new(), RankedBotDeckPoolScript.new()]
+		var names := ["Thor: Bloodaxe", "Thor: Stormbelt"]
+		var decks := [{"Thor": 1, "Bloodaxe Deck": 40}, {"Thor": 1, "Storm Deck": 40}]
+		for index in range(pools.size()):
+			var pool = pools[index]
+			var results: Array[Dictionary] = [
+				_bot_pool_result("before", list_id, decks[index], "win", true),
+			]
+			results[0]["bot_name"] = names[index]
+			pool.refresh(results)
+			var path := ProjectSettings.globalize_path("user://preflight_names_%d_%d.json" % [OS.get_process_id(), index])
+			var legacy_state := {
+				"by_god": pool._by_god,
+				"replayed_match_count": 1,
+				"last_replayed_id": "before",
+				"assigned_names": {list_id: names[1]},
+			}
+			if not JsonStoreScript.save_json(path, legacy_state, "preflight_names") or not pool.load_state(path):
+				failures.append("Could not load legacy name state for %s" % list_id)
+				return
+			pool.refresh(results)
+		pools[0].sync_shared_identities(pools[1], true)
+		for index in range(pools.size()):
+			var path := ProjectSettings.globalize_path("user://preflight_names_%d_%d.json" % [OS.get_process_id(), index])
+			var restored := RankedBotDeckPoolScript.new()
+			if not pools[index].save_state(path) or not restored.load_state(path):
+				failures.append("Could not save and reload resolved names for %s" % list_id)
+				return
+			if restored.needs_save():
+				failures.append("Current name state migrated again for %s" % list_id)
+			pools[index] = restored
+			var replay: Array[Dictionary] = [
+				_bot_pool_result("after", list_id, decks[index], "win", true),
+			]
+			replay[0]["bot_name"] = "Thor: Challenger"
+			restored.refresh(replay)
+			DirAccess.remove_absolute(path)
+			DirAccess.remove_absolute(path + ".bak")
+		var summary: Dictionary = pools[0].sync_shared_identities(pools[1], true)
+		if summary["renamed"] != 0 or summary["mirrored"] != 0:
+			failures.append("Reloading reused list ID %s caused another rename or mirror" % list_id)
+		for index in range(pools.size()):
+			var deck: Dictionary = pools[index].get_deck_details(list_id)
+			if deck.get("deck_name") != names[index] or deck.get("cards") != decks[index]:
+				failures.append("Reused list ID %s changed the Bo%d bot name or deck" % [list_id, 2 * index + 1])
 
 func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 	var named_results: Array[Dictionary] = [
@@ -7435,6 +7484,19 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 		{}, band_pair_rng, one_allowed_id, one_allowed_id, true
 	).is_empty():
 		failures.append("Below-top-50 bot self-play accepted a single bot instead of a full pair")
+	var band_peer_entry := _bot_pool_result("band_peer", "", {"Odin": 1, "Band Peer": 40}, "win")
+	band_peer_entry["god_name"] = "Odin"
+	band_pair_results.append(band_peer_entry)
+	for i in range(44):
+		var band_peer_seed := _bot_pool_result("band_peer_seed_%d" % i, "band_peer", {}, "win")
+		band_peer_seed["god_name"] = "Odin"
+		band_pair_results.append(band_peer_seed)
+	band_pair_pool.refresh(band_pair_results)
+	for i in range(60):
+		var high_pair := band_pair_pool.select_self_play_pair({}, band_pair_rng, {"band_far": true})
+		if high_pair.size() != 2 or high_pair[0]["list_id"] != "band_far" or high_pair[1]["list_id"] != "band_peer":
+			failures.append("Restricted self-play passed over an in-band opponent for a high-ranked bot")
+			break
 	var result_dir := ServerPathsScript.get_server_data_file_path(storage_file).get_basename() + "_results"
 	DirAccess.remove_absolute(result_dir.path_join("%s.json" % session.match_id.sha256_text()))
 	for match_id in human_win_ids:

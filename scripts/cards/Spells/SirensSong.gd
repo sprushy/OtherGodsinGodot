@@ -17,7 +17,7 @@ func _init() -> void:
 	flavor_text = ""
 	artist = "User provided"
 	art_path = ART_PATH
-	ability_text = "Take control of an opposing face-up creature until end of turn. Restore all of its action points."
+	ability_text = "Take control of an opposing face-up creature until end of turn. If you have not attacked this turn, restore all of its action points."
 
 func get_valid_targets(game_manager: GameManager) -> Array[Card]:
 	var valid_targets: Array[Card] = []
@@ -61,9 +61,17 @@ func resolve(game_manager: GameManager, target = null) -> void:
 			failure_reason = "no open zone is available."
 		game_manager.note_player_feedback("Siren's Song fizzles: " + failure_reason)
 		return
-	# The stolen body arrives ready to act for its new controller.
-	target_card.reset_creature_action_state()
-	game_manager.note_player_feedback("Siren's Song steals %s until end of turn and restores its action points." % target_card.card_name)
+	# The stolen body arrives ready to act for its new controller only before
+	# this turn's first attack has resolved.
+	var restore_action_points := not game_manager.has_resolved_attack_this_turn
+	if restore_action_points:
+		target_card.reset_creature_action_state()
+	var feedback := "Siren's Song steals %s until end of turn." % target_card.card_name
+	if restore_action_points:
+		feedback += " Restores all of its action points."
+	else:
+		feedback += " No action points are restored because you have already attacked this turn."
+	game_manager.note_player_feedback(feedback)
 
 func can_be_played(game_manager: GameManager, player: Player) -> bool:
 	if not super.can_be_played(game_manager, player):

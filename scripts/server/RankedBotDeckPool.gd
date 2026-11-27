@@ -18,6 +18,8 @@ const QUARANTINE_RELEASE_WIN_RATE_DENOMINATOR := 5
 # Self-play pairings spend 30% of matches on exploration instead of always
 # using the rating-weighted pair.
 const EXPLORATION_CHANCE := 0.30
+const DECK_NAME_KEY_PREFIX := "D|"
+const ASSIGNED_NAMES_VERSION := 2
 # How many of the worst bots per god are kept as quarantined bad bots for
 # forced matchmaking (Iron V and post-loss Iron/Bronze pairing).
 const QUARANTINED_PER_GOD := 1
@@ -159,7 +161,7 @@ var _state_changed := true
 # are exempt from early retirement so they can finish their round-robin.
 var _league_mode: bool = false
 var _league_list_ids: Array = []
-var _assigned_names_by_list_id: Dictionary = {}
+var _assigned_names_by_deck: Dictionary = {}
 var _community_bots_by_id: Dictionary = {}
 # Older matches may keep the submission ID after losing the community flag.
 var _community_bot_id_pattern := RegEx.create_from_string("^[0-9a-f]{12}_[A-HJ-NP-Z2-9]{12}$")
@@ -197,10 +199,10 @@ func _ensure_unique_deck_names() -> void:
 	for god_name in _by_god:
 		var pool: Dictionary = _by_god[god_name]
 		for list: Dictionary in pool["lists"]:
-			decks.append({"god_name": str(god_name), "deck": list})
+			decks.append({"god_name": str(god_name), "deck": list, "name_key": _deck_name_key(list)})
 		var challenger: Dictionary = pool["challenger"]
 		if not challenger.is_empty():
-			decks.append({"god_name": str(god_name), "deck": challenger})
+			decks.append({"god_name": str(god_name), "deck": challenger, "name_key": _deck_name_key(challenger)})
 
 	var used_names := {}
 	var needs_name: Array[Dictionary] = []
@@ -211,14 +213,14 @@ func _ensure_unique_deck_names() -> void:
 		if bool(deck.get("is_community_bot", false)):
 			used_names[str(deck["deck_name"]).to_lower()] = true
 
-	# Pass 2: Previously assigned names from _assigned_names_by_list_id
+	# Pass 2: Previously assigned names for the same deck
 	for entry: Dictionary in decks:
 		var deck: Dictionary = entry["deck"]
 		if bool(deck.get("is_community_bot", false)):
 			continue
-		var list_id := str(deck.get("list_id", "")).strip_edges()
-		if not list_id.is_empty() and _assigned_names_by_list_id.has(list_id):
-			var assigned := str(_assigned_names_by_list_id[list_id]).strip_edges()
+		var name_key: String = entry["name_key"]
+		if not name_key.is_empty() and _assigned_names_by_deck.has(name_key):
+			var assigned := str(_assigned_names_by_deck[name_key]).strip_edges()
 			if not _is_generic_bot_name(assigned) and not used_names.has(assigned.to_lower()):
 				if str(deck.get("deck_name", "")) != assigned:
 					_state_changed = true
@@ -229,8 +231,8 @@ func _ensure_unique_deck_names() -> void:
 	var non_community: Array[Dictionary] = []
 	for entry: Dictionary in decks:
 		var deck: Dictionary = entry["deck"]
-		var list_id := str(deck.get("list_id", "")).strip_edges()
-		if str(deck.get("owner_name", "")).strip_edges().is_empty() and not (not list_id.is_empty() and _assigned_names_by_list_id.has(list_id)):
+		var name_key: String = entry["name_key"]
+		if str(deck.get("owner_name", "")).strip_edges().is_empty() and not _assigned_names_by_deck.has(name_key):
 			non_community.append(entry)
 
 	non_community.sort_custom(func(first: Dictionary, second: Dictionary) -> bool:
@@ -251,14 +253,14 @@ func _ensure_unique_deck_names() -> void:
 
 	for entry: Dictionary in non_community:
 		var deck: Dictionary = entry["deck"]
-		var list_id := str(deck.get("list_id", "")).strip_edges()
+		var name_key: String = entry["name_key"]
 		var base_name := str(deck.get("deck_name", "")).strip_edges()
 		if _is_generic_bot_name(base_name) or used_names.has(base_name.to_lower()):
 			needs_name.append(entry)
 			continue
 		used_names[base_name.to_lower()] = true
-		if not list_id.is_empty() and str(_assigned_names_by_list_id.get(list_id, "")) != base_name:
-			_assigned_names_by_list_id[list_id] = base_name
+		if not name_key.is_empty() and str(_assigned_names_by_deck.get(name_key, "")) != base_name:
+			_assigned_names_by_deck[name_key] = base_name
 			_state_changed = true
 
 	# Replace saved numeric fallback names after reserving established names.
@@ -274,13 +276,13 @@ func _ensure_unique_deck_names() -> void:
 	# Pass 4: Assign unique names to the bots that need one.
 	for entry: Dictionary in needs_name:
 		var deck: Dictionary = entry["deck"]
-		var list_id := str(deck.get("list_id", "")).strip_edges()
+		var name_key: String = entry["name_key"]
 		var deck_god := display_god_name(str(entry["god_name"]))
 		var base_name := _make_unique_bot_name(deck_god, deck, used_names)
 		deck["deck_name"] = base_name
 		used_names[base_name.to_lower()] = true
-		if not list_id.is_empty():
-			_assigned_names_by_list_id[list_id] = base_name
+		if not name_key.is_empty():
+			_assigned_names_by_deck[name_key] = base_name
 		_state_changed = true
 
 func _bot_name_priority(deck: Dictionary) -> int:
@@ -419,7 +421,7 @@ func register_league_list(god_name: String, deck: Dictionary, explicit_list_id: 
 	pool.get("lists", []).append(new_list)
 	_league_list_ids.append(list_id)
 	_league_mode = true
-	_assigned_names_by_list_id[list_id] = new_list["deck_name"]
+	_assigned_names_by_deck[_deck_name_key(new_list)] = new_list["deck_name"]
 	_state_changed = true
 	_ensure_unique_deck_names()
 	return list_id
@@ -431,7 +433,7 @@ func sync_community_bots(community_bots_by_id: Dictionary) -> void:
 		var list_id := str(list["list_id"])
 		if _is_inactive_community_bot(list, list_id):
 			removed_ids[list_id] = true
-			_assigned_names_by_list_id.erase(list_id)
+			_assigned_names_by_deck.erase(_deck_name_key(list))
 			return false
 		var submission: Dictionary = _community_bots_by_id.get(list_id, {})
 		if not submission.is_empty():
@@ -479,7 +481,7 @@ func _apply_community_metadata(deck: Dictionary, submission: Dictionary) -> void
 	# A submitter can quarantine their own bot. Unlike the system's weak-bot
 	# quarantine, this bot must never be paired — not even in forced matchmaking.
 	deck["excluded_from_matchmaking"] = excluded
-	_assigned_names_by_list_id[deck["list_id"]] = deck["deck_name"]
+	_assigned_names_by_deck[_deck_name_key(deck)] = deck["deck_name"]
 
 func finalize_league(god_names: Array[String]) -> Dictionary:
 	# Keeps every seeded bot on the ladder (pre-existing ranked bots plus all
@@ -917,7 +919,7 @@ func _find_list_by_id(pool: Dictionary, list_id: String) -> Dictionary:
 			return pending
 	return {}
 
-## With a first-bot restriction, a single returned deck needs a fresh opponent.
+## With a first-bot restriction, a single returned deck can face a fresh zero-star opponent.
 ## `allowed_list_ids`, when non-empty, restricts both bots in the pair.
 func select_self_play_pair(
 	busy_list_ids: Dictionary,
@@ -972,9 +974,13 @@ func select_self_play_pair(
 	if candidates.is_empty():
 		return []
 	if rng.randf() < EXPLORATION_CHANCE and not require_pair:
-		if restrict_first:
-			return [eligible_first[rng.randi_range(0, eligible_first.size() - 1)].duplicate(true)]
-		return []
+		if not restrict_first:
+			return []
+		var fresh_opponent_candidates := eligible_first.filter(func(list: Dictionary) -> bool:
+			return can_self_play_pair(list, {})
+		)
+		if not fresh_opponent_candidates.is_empty():
+			return [fresh_opponent_candidates[rng.randi_range(0, fresh_opponent_candidates.size() - 1)].duplicate(true)]
 	var total_weight := 0.0
 	var pair_weights: Array[float] = []
 	for pair in candidates:
@@ -1051,7 +1057,8 @@ func save_state(path: String, result_count: int = 0) -> bool:
 		"replayed_match_count": _replayed_match_count,
 		"last_replayed_id": _last_replayed_id,
 		"result_count": result_count,
-		"assigned_names": _assigned_names_by_list_id,
+		"assigned_names_version": ASSIGNED_NAMES_VERSION,
+		"assigned_names": _assigned_names_by_deck,
 	}
 	# Machine-only state file: compact JSON roughly halves its size versus the
 	# tab-indented default.
@@ -1071,12 +1078,26 @@ func load_state(path: String) -> bool:
 	_eliminated_bot_match_ids = (loaded.get("eliminated", {}) as Dictionary).duplicate(true)
 	_replayed_match_count = int(loaded.get("replayed_match_count", -1))
 	_last_replayed_id = str(loaded.get("last_replayed_id", ""))
-	_assigned_names_by_list_id = (loaded.get("assigned_names", {}) as Dictionary).duplicate(true)
+	_assigned_names_by_deck = (loaded.get("assigned_names", {}) as Dictionary).duplicate(true)
 	# The loaded state matches the file on disk; only genuine repairs below
 	# (or later refreshes/syncs) should mark state as needing a save.
 	_state_changed = false
+	if int(loaded.get("assigned_names_version", 1)) < ASSIGNED_NAMES_VERSION:
+		_migrate_saved_deck_names()
 	_audit_active_lists()
 	return true
+
+# Older maps stored a single claim per list ID. The local deck snapshots
+# still identify which deck carried each name, even if the shared claim differed.
+func _migrate_saved_deck_names() -> void:
+	_assigned_names_by_deck.clear()
+	for side: Dictionary in _collect_identity_sides(self):
+		var entry: Dictionary = side["entry"]
+		var name_key := _name_key_for_fingerprint(str(entry.get("list_id", "")).strip_edges(), side["fingerprint"])
+		var deck_name := str(entry.get("deck_name", "")).strip_edges()
+		if not name_key.is_empty() and not _is_generic_bot_name(deck_name):
+			_assigned_names_by_deck.get_or_add(name_key, deck_name)
+	_state_changed = true
 
 # Repairs ladder lists restored from saved state, which may have been written
 # under older deck rules. Lists created during replay are audited at creation
@@ -1109,10 +1130,14 @@ func _audit_active_list(list: Dictionary) -> void:
 	})
 	if audited.is_empty():
 		return
+	var previous_name_key := _deck_name_key(list)
 	list["cards"] = (audited.get("cards", {}) as Dictionary).duplicate(true)
 	list["reinforcements"] = (audited.get("reinforcements", {}) as Dictionary).duplicate(true)
 	list["special_setup"] = (audited.get("special_setup", {}) as Dictionary).duplicate(true)
 	list["fingerprint"] = _fingerprint(list)
+	var name_key := _deck_name_key(list)
+	if name_key != previous_name_key and _assigned_names_by_deck.has(previous_name_key):
+		_assigned_names_by_deck.get_or_add(name_key, _assigned_names_by_deck[previous_name_key])
 	_state_changed = true
 
 func can_play_list(god_name: String, list_id: String) -> bool:
@@ -1239,8 +1264,9 @@ func _apply_result(result: Dictionary) -> void:
 		# so later results resolve to the same entry instead of creating a new bot.
 		adopted_list_id = list_id
 	var initial_deck_name := "%s: Challenger" % display_god_name(god_name)
-	if not adopted_list_id.is_empty() and _assigned_names_by_list_id.has(adopted_list_id):
-		initial_deck_name = str(_assigned_names_by_list_id[adopted_list_id])
+	var name_key := _name_key_for_fingerprint(adopted_list_id, _deck_name_fingerprint(audited_result))
+	if _assigned_names_by_deck.has(name_key):
+		initial_deck_name = str(_assigned_names_by_deck[name_key])
 	elif not _is_generic_bot_name(self_play_name):
 		initial_deck_name = self_play_name
 	elif not _is_generic_bot_name(bot_name):
@@ -1264,8 +1290,8 @@ func _apply_result(result: Dictionary) -> void:
 	}
 	if not submission.is_empty():
 		_apply_community_metadata(new_list, submission)
-	elif not _is_generic_bot_name(initial_deck_name) and not adopted_list_id.is_empty():
-		_assigned_names_by_list_id[adopted_list_id] = initial_deck_name
+	elif not _is_generic_bot_name(initial_deck_name) and not name_key.is_empty():
+		_assigned_names_by_deck[name_key] = initial_deck_name
 	_update_record(new_list, outcome)
 	# A historical result carrying an existing ladder id is restoring an
 	# established bot, so don't let a single early loss discard it. New
@@ -1443,15 +1469,15 @@ func _fingerprint(deck: Dictionary) -> String:
 func _name_list(list: Dictionary, other_lists: Array) -> void:
 	if bool(list.get("is_community_bot", false)):
 		return
-	var list_id := str(list.get("list_id", "")).strip_edges()
-	if not list_id.is_empty() and _assigned_names_by_list_id.has(list_id):
-		var assigned := str(_assigned_names_by_list_id[list_id]).strip_edges()
+	var name_key := _deck_name_key(list)
+	if not name_key.is_empty() and _assigned_names_by_deck.has(name_key):
+		var assigned := str(_assigned_names_by_deck[name_key]).strip_edges()
 		if not _is_generic_bot_name(assigned):
 			list["deck_name"] = assigned
 			return
 
 	var used_names := {}
-	for name_val in _assigned_names_by_list_id.values():
+	for name_val in _assigned_names_by_deck.values():
 		var n_str := str(name_val).strip_edges().to_lower()
 		if not n_str.is_empty():
 			used_names[n_str] = true
@@ -1469,37 +1495,37 @@ func _name_list(list: Dictionary, other_lists: Array) -> void:
 		var author_name := current_name if not _is_generic_bot_name(current_name) else self_play_name
 		if not _is_generic_bot_name(author_name):
 			list["deck_name"] = author_name
-			if not list_id.is_empty():
-				_assigned_names_by_list_id[list_id] = author_name
+			if not name_key.is_empty():
+				_assigned_names_by_deck[name_key] = author_name
 			return
 
 	# Established non-generic name that doesn't collide
 	if not _is_generic_bot_name(current_name) and not used_names.has(current_name.to_lower()):
-		if not list_id.is_empty():
-			_assigned_names_by_list_id[list_id] = current_name
+		if not name_key.is_empty():
+			_assigned_names_by_deck[name_key] = current_name
 		return
 
 	# Non-generic self_play_name that doesn't collide
 	if not _is_generic_bot_name(self_play_name) and not used_names.has(self_play_name.to_lower()):
 		list["deck_name"] = self_play_name
-		if not list_id.is_empty():
-			_assigned_names_by_list_id[list_id] = self_play_name
+		if not name_key.is_empty():
+			_assigned_names_by_deck[name_key] = self_play_name
 		return
 
 	# Transition from Challenger to a new permanent unique name
 	var god := display_god_name(str(list.get("god_name", "")))
 	var chosen_name := _make_unique_bot_name(god, list, used_names)
 	list["deck_name"] = chosen_name
-	if not list_id.is_empty():
-		_assigned_names_by_list_id[list_id] = chosen_name
+	if not name_key.is_empty():
+		_assigned_names_by_deck[name_key] = chosen_name
 
 ## Cross-format bot identity reconciliation. Bo1 and Bo3 replay separate result
 ## streams, so left alone each ladder mints its own identities and one display
 ## name can mean two different decks across formats. Reconciling with the other
 ## format's pool makes one bot identity (deck content plus display name) mean
 ## the same thing on both ladders:
-## - Entries are matched by list id (community submissions, league lists, and
-##   established bots) or, for anonymous generated decks, by deck fingerprint.
+## - Entries are matched by list id and deck fingerprint. Anonymous generated
+##   decks can also match by fingerprint across different list ids.
 ## - Each identity resolves one display name; when two identities claim the
 ##   same name, the secondary-format origin is renamed, never the primary one.
 ## - An identity that exists on only one ladder is mirrored onto the other
@@ -1519,7 +1545,7 @@ func sync_shared_identities(other, self_is_primary: bool) -> Dictionary:
 	# Phase 1: bucket every entry by its identity key.
 	var buckets := {}
 	for side: Dictionary in sides:
-		var key := _identity_bucket_key(side["entry"])
+		var key := _name_key_for_fingerprint(str(side["entry"].get("list_id", "")).strip_edges(), side["fingerprint"], true)
 		if not buckets.has(key):
 			buckets[key] = []
 		(buckets[key] as Array).append(side)
@@ -1536,26 +1562,27 @@ func sync_shared_identities(other, self_is_primary: bool) -> Dictionary:
 		var group: Array = buckets[key]
 		var anchor: Dictionary = group[0]
 		var anchor_entry: Dictionary = anchor["entry"]
-		var anchor_fp := str(anchor_entry.get("fingerprint", ""))
-		if _is_anonymous_entry(anchor_entry) and not anchor_fp.is_empty():
+		var anchor_fp := str(anchor["fingerprint"])
+		if group.back()["pool"] == anchor["pool"] and _is_anonymous_entry(anchor_entry):
 			for raw_other_key in buckets.keys():
 				var other_key := str(raw_other_key)
 				if merged_keys.has(other_key):
 					continue
 				var other_group: Array = buckets[other_key]
 				var other_anchor: Dictionary = other_group[0]
-				if other_anchor["pool"] == anchor["pool"] \
+				if other_anchor["pool"] == anchor["pool"] or other_group.back()["pool"] == anchor["pool"] \
 						or not _is_anonymous_entry(other_anchor["entry"]) \
-						or str(other_anchor["entry"].get("fingerprint", "")) != anchor_fp:
+						or str(other_anchor["fingerprint"]) != anchor_fp:
 					continue
 				group.append_array(other_group)
 				merged_keys[other_key] = true
-		var identity := {"god_name": str(anchor["god_name"]), "entries": group, "ids": {}, "has_owner": false}
+				break
+		var identity := {"god_name": str(anchor["god_name"]), "entries": group, "name_keys": {}, "has_owner": false}
 		for side: Dictionary in group:
 			var entry: Dictionary = side["entry"]
-			var list_id := str(entry.get("list_id", "")).strip_edges()
-			if not list_id.is_empty():
-				identity["ids"][list_id] = true
+			var name_key := _name_key_for_fingerprint(str(entry.get("list_id", "")).strip_edges(), side["fingerprint"])
+			if not name_key.is_empty():
+				identity["name_keys"][name_key] = true
 			if not str(entry.get("owner_name", "")).strip_edges().is_empty():
 				identity["has_owner"] = true
 		identities.append(identity)
@@ -1636,11 +1663,10 @@ func sync_shared_identities(other, self_is_primary: bool) -> Dictionary:
 			if str(entry.get("deck_name", "")) != resolved:
 				entry["deck_name"] = resolved
 				side["pool"]._state_changed = true
-		for raw_list_id in (identity["ids"] as Dictionary).keys():
-			var list_id := str(raw_list_id)
+		for name_key: String in identity["name_keys"]:
 			for pool in [self, other]:
-				if str(pool._assigned_names_by_list_id.get(list_id, "")) != resolved:
-					pool._assigned_names_by_list_id[list_id] = resolved
+				if str(pool._assigned_names_by_deck.get(name_key, "")) != resolved:
+					pool._assigned_names_by_deck[name_key] = resolved
 					pool._state_changed = true
 	# Phase 6: mirror ladder identities the other format has never seen, with a
 	# zeroed record. Quarantined holds, active trials, and pending challengers
@@ -1665,22 +1691,31 @@ func _collect_identity_sides(pool) -> Array:
 		var god_pool: Dictionary = pool._by_god[god_name]
 		for location in ["lists", "pending", "quarantined_lists"]:
 			for entry: Dictionary in god_pool.get(location, []):
-				sides.append({"pool": pool, "god_name": str(god_name), "location": location, "entry": entry})
+				sides.append({"pool": pool, "god_name": str(god_name), "location": location, "entry": entry, "fingerprint": _deck_name_fingerprint(entry)})
 		var challenger: Dictionary = god_pool.get("challenger", {})
 		if not challenger.is_empty():
-			sides.append({"pool": pool, "god_name": str(god_name), "location": "challenger", "entry": challenger})
+			sides.append({"pool": pool, "god_name": str(god_name), "location": "challenger", "entry": challenger, "fingerprint": _deck_name_fingerprint(challenger)})
 	return sides
 
-func _identity_bucket_key(entry: Dictionary) -> String:
-	var list_id := str(entry.get("list_id", "")).strip_edges()
-	var fingerprint := str(entry.get("fingerprint", ""))
-	# League seeds reuse "league_<god>_<index>" ids across formats for
-	# different decks, so league identities key on id plus fingerprint.
-	if _is_league_entry(entry):
-		return "L|%s|%s" % [list_id, fingerprint]
-	if not list_id.is_empty():
-		return "I|%s" % list_id
-	return "F|%s" % fingerprint
+# Match results can update a list's stored fingerprint independently of its
+# cards. Name claims always follow the deck contents held by the pool.
+func _deck_name_key(entry: Dictionary) -> String:
+	return _name_key_for_fingerprint(str(entry.get("list_id", "")).strip_edges(), _deck_name_fingerprint(entry))
+
+func _deck_name_fingerprint(deck: Dictionary) -> String:
+	# JSON loads card counts as floats, while deck validation produces ints.
+	var cards := {}
+	var reinforcements := {}
+	for card_name in deck["cards"]:
+		cards[card_name] = int(deck["cards"][card_name])
+	for card_name in deck["reinforcements"]:
+		reinforcements[card_name] = int(deck["reinforcements"][card_name])
+	return JSON.stringify([cards, reinforcements, deck["special_setup"]]).sha256_text()
+
+func _name_key_for_fingerprint(list_id: String, fingerprint: String, include_anonymous: bool = false) -> String:
+	if list_id.is_empty() and not include_anonymous:
+		return ""
+	return "%s%s|%s" % [DECK_NAME_KEY_PREFIX, list_id, fingerprint]
 
 func _is_league_entry(entry: Dictionary) -> bool:
 	return bool(entry.get("league_list", false)) or str(entry.get("list_id", "")).begins_with("league_")
@@ -1691,10 +1726,10 @@ func _is_anonymous_entry(entry: Dictionary) -> bool:
 			and not bool(entry.get("is_community_bot", false))
 
 func _identity_side_name_claim(identity: Dictionary, pool) -> String:
-	var ids: Array = (identity["ids"] as Dictionary).keys()
-	ids.sort()
-	for raw_id in ids:
-		var candidate := str(pool._assigned_names_by_list_id.get(str(raw_id), "")).strip_edges()
+	var name_keys: Array = (identity["name_keys"] as Dictionary).keys()
+	name_keys.sort()
+	for name_key: String in name_keys:
+		var candidate := str(pool._assigned_names_by_deck.get(name_key, "")).strip_edges()
 		if _is_valid_name_claim(candidate, str(identity["god_name"])):
 			return candidate
 	var entry: Dictionary = _first_entry_on_side(identity, pool)
@@ -1755,25 +1790,24 @@ func _mirror_ladder_entry(target, source_entry: Dictionary, deck_name: String) -
 	var god_name := str(source_entry.get("god_name", "")).strip_edges()
 	if god_name.is_empty():
 		return false
-	var target_pool: Dictionary = target._by_god.get_or_add(god_name, _new_god_pool())
-	# Never mirror into a pool that already holds the list id (league seeds
-	# reuse ids across formats) or the same anonymous deck under another id.
-	var fingerprint := str(source_entry.get("fingerprint", ""))
-	var active_challenger: Dictionary = target_pool.get("challenger", {})
-	if not active_challenger.is_empty() and str(active_challenger.get("list_id", "")) == list_id:
-		return false
-	for location in ["lists", "pending", "quarantined_lists"]:
-		for held: Dictionary in target_pool.get(location, []):
+	# Deck lookup is format-wide, so an ID already in use cannot be mirrored,
+	# even if the other deck belongs to a different god.
+	for god_pool: Dictionary in target._by_god.values():
+		if not _find_list_by_id(god_pool, list_id).is_empty():
+			return false
+		for held: Dictionary in god_pool.get("quarantined_lists", []):
 			if str(held.get("list_id", "")) == list_id:
 				return false
-	if _is_anonymous_entry(source_entry) and not fingerprint.is_empty():
+	var target_pool: Dictionary = target._by_god.get_or_add(god_name, _new_god_pool())
+	if _is_anonymous_entry(source_entry):
+		var fingerprint := _deck_name_fingerprint(source_entry)
 		for location in ["lists", "pending", "quarantined_lists"]:
 			for held: Dictionary in target_pool.get(location, []):
-				if _is_anonymous_entry(held) and str(held.get("fingerprint", "")) == fingerprint:
+				if _is_anonymous_entry(held) and _deck_name_fingerprint(held) == fingerprint:
 					return false
 	var mirrored := {
 		"list_id": list_id,
-		"fingerprint": fingerprint,
+		"fingerprint": _fingerprint(source_entry),
 		"god_name": god_name,
 		"deck_name": deck_name,
 		"cards": (source_entry.get("cards", {}) as Dictionary).duplicate(true),
