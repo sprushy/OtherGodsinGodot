@@ -242,7 +242,7 @@ Each entry gives proposed wording, an edit to make, or a reason to retain the ex
 | [Light of Morning's Doors](../scripts/cards/Spells/LightOfMorningsDoors.gd) | Keep “Reveal all of your opponent’s face-down cards.” |
 | [Occult Singularity](../scripts/cards/Spells/OccultSingularity.gd) | Keep “Destroy all magical cards on the field.” |
 | [Runic Spellbreaker](../scripts/cards/Spells/RunicSpellbreaker.gd) | “Destroy a face-up or revealed magical card. Send copies of it from your opponent’s deck to their Graveyard.” Keep “or revealed” to cover the additional target state. |
-| [Siren's Song](../scripts/cards/Spells/SirensSong.gd) | Keep “Take control of an opposing face-up creature until end of turn.” |
+| [Siren's Song](../scripts/cards/Spells/SirensSong.gd) | “Take control of an opposing face-up creature until end of turn. Restore all of its action points.” |
 | [Snowball](../scripts/cards/Spells/Snowball.gd) | “A creature gets −2 STR until end of turn.” |
 | [Tablet of Life](../scripts/cards/Spells/TabletOfLife.gd) | “Resurrect one of your Ancient creatures. Silence it and give it Undead. If it’s level 3 or higher, destroy it at end of turn.” Use Silence only if it matches the implemented suppression. |
 | [The Changeling Exchange](../scripts/cards/Spells/TheChangelingExchange.gd) | Keep both sentences in controller order. Use “Exchange control” only if the game requires both transfers to succeed together. |

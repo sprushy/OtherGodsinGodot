@@ -17,7 +17,7 @@ func _init() -> void:
 	flavor_text = ""
 	artist = "User provided"
 	art_path = ART_PATH
-	ability_text = "Take control of an opposing face-up creature until end of turn."
+	ability_text = "Take control of an opposing face-up creature until end of turn. Restore all of its action points."
 
 func get_valid_targets(game_manager: GameManager) -> Array[Card]:
 	var valid_targets: Array[Card] = []
@@ -61,7 +61,9 @@ func resolve(game_manager: GameManager, target = null) -> void:
 			failure_reason = "no open zone is available."
 		game_manager.note_player_feedback("Siren's Song fizzles: " + failure_reason)
 		return
-	game_manager.note_player_feedback("Siren's Song steals %s until end of turn." % target_card.card_name)
+	# The stolen body arrives ready to act for its new controller.
+	target_card.reset_creature_action_state()
+	game_manager.note_player_feedback("Siren's Song steals %s until end of turn and restores its action points." % target_card.card_name)
 
 func can_be_played(game_manager: GameManager, player: Player) -> bool:
 	if not super.can_be_played(game_manager, player):

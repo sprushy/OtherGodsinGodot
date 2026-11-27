@@ -1410,9 +1410,11 @@ static func _namburbi_action_targets_ward(bot, ward: Card, action: CardAction) -
 		return false
 	if not can_remove_from_board(bot, source, ward, true, true):
 		return false
-	if action.target == ward:
-		return true
-	return action.target is Array and ward in action.target
+	if action.target is Card:
+		return action.target == ward
+	if action.target is Array:
+		return ward in action.target
+	return false
 
 # Visible opposing cards the given mana budget can still pay for. Shared by the
 # next-turn preparation forecast and the this-turn banked-ward forecast so both

@@ -695,7 +695,7 @@ func _choose_priority_response() -> Card:
 		if top_action.type == CardAction.Type.ATTACK:
 			for response_card in responses:
 				if response_card is JiangZiyaFisherOfKings \
-						and (top_action.target == response_card or top_action.interceptor == response_card):
+						and (_target_includes_card(top_action.target, response_card) or top_action.interceptor == response_card):
 					return response_card
 			for response_card in responses:
 				# Sighting is a free summon while one of our Warriors or
