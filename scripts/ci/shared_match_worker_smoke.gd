@@ -14,6 +14,8 @@ var _lobby = null
 var _match_ids: Array[String] = []
 
 class VolunteerMenu extends "res://scripts/Other/MainMenu.gd":
+	var share_match_process := true
+
 	func _ready() -> void:
 		pass
 
@@ -22,6 +24,11 @@ class VolunteerMenu extends "res://scripts/Other/MainMenu.gd":
 
 	func _get_local_bot_match_capacity() -> int:
 		return MATCH_COUNT
+
+	func _start_local_bot_match_worker(session: MatchSession) -> bool:
+		if share_match_process:
+			return _local_bot_match_supervisor.start_local_bot_match(session, true)
+		return super._start_local_bot_match_worker(session)
 
 class VolunteerLobbyClient extends LobbyClient:
 	var started: Array[String] = []
@@ -144,7 +151,7 @@ func _run() -> void:
 	if failures.is_empty():
 		await _check_volunteer_matches(volunteer_decks, failures)
 	if failures.is_empty():
-		print("shared_match_worker_smoke: PASS (lobby and volunteer matches share a process, and a volunteer match advanced after another finished)")
+		print("shared_match_worker_smoke: PASS (series rollover, concurrent workers, and isolated volunteer spectating)")
 	else:
 		for failure in failures:
 			push_error("shared_match_worker_smoke: %s" % failure)
@@ -179,9 +186,45 @@ func _check_volunteer_matches(decks: Array[Dictionary], failures: PackedStringAr
 	menu._stop_local_bot_match_worker()
 	if not lobby_client.cancelled.has(_match_ids[1]) or menu._get_local_bot_match_count() != 0:
 		failures.append("Stopping volunteer hosting did not cancel the remaining match.")
+	_remove_bot_reviews()
+	if failures.is_empty():
+		await _check_isolated_volunteer_worker(menu, lobby_client, decks, failures)
 	scene.queue_free()
 	await process_frame
 	_remove_bot_reviews()
+
+func _check_isolated_volunteer_worker(menu, lobby_client: VolunteerLobbyClient, decks: Array[Dictionary], failures: PackedStringArray) -> void:
+	menu.share_match_process = false
+	var match_id := "volunteer_smoke_%d_isolated" % OS.get_process_id()
+	_match_ids.assign([match_id])
+	menu._request_local_bot_match(false)
+	lobby_client.bot_work_assignment_received.emit({"job_id": match_id, "decks": decks, "best_of": 3})
+	var supervisor: MatchSupervisor = menu._local_bot_match_supervisor
+	var session: MatchSession = supervisor.get_match(match_id)
+	if session == null or not session.has_spawned_process() or supervisor._shared_bot_match_servers.has(match_id):
+		failures.append("The local best-of-three worker did not start in a dedicated process.")
+		menu._stop_local_bot_match_worker()
+		return
+	var worker_pid := int(session.process_id)
+	var match_info := session.to_spectator_match_info("local_volunteer_host")
+	var host := HeadlessMatchHostScript.new()
+	var transport := host.setup_transport(menu, false, true, session.server_ip, session.match_port, true, match_info)
+	var spectator := MatchClientScript.new(null, transport, true, true, match_info, session.server_ip, session.match_port)
+	var events: Array[String] = []
+	spectator.game_event_received.connect(func(event: String, _data: Dictionary) -> void: events.append(event))
+	var deadline := Time.get_ticks_msec() + TEST_TIMEOUT_MSEC
+	while Time.get_ticks_msec() < deadline and OS.is_process_running(worker_pid):
+		if events.has("full_state") and supervisor.get_bot_match_turn_count(match_id) > 0:
+			break
+		await create_timer(0.1).timeout
+	if not events.has("match_join_ok") or not events.has("full_state") or supervisor.get_bot_match_turn_count(match_id) <= 0:
+		failures.append("The spectator did not receive match state and progress from the isolated worker.")
+	spectator.shutdown()
+	if is_instance_valid(transport):
+		transport.queue_free()
+	menu._stop_local_bot_match_worker()
+	if not lobby_client.cancelled.has(match_id) or supervisor.get_match(match_id) != null:
+		failures.append("Stopping local hosting did not close the isolated worker.")
 
 func _check_volunteer_completion(menu, lobby_client: VolunteerLobbyClient, failures: PackedStringArray) -> void:
 	var supervisor = menu._local_bot_match_supervisor
@@ -240,6 +283,8 @@ func _check_volunteer_completion(menu, lobby_client: VolunteerLobbyClient, failu
 func _check_volunteer_series_transition(runtime: HeadlessMatchServer, game_number: int, failures: PackedStringArray) -> bool:
 	# Simulate a previous game that finished close to the stall deadline.
 	var old_progress := Time.get_ticks_msec() - 30_000
+	var previous_game: WeakRef = weakref(runtime.game_manager)
+	var previous_player: WeakRef = weakref(runtime.game_manager.players[0])
 	runtime._bot_review_progress_msec = old_progress
 	var losing_index := 1 if game_number == 2 else 0
 	runtime.game_manager.forfeit_game(runtime.game_manager.players[losing_index])
@@ -247,6 +292,8 @@ func _check_volunteer_series_transition(runtime: HeadlessMatchServer, game_numbe
 	while is_instance_valid(runtime) and Time.get_ticks_msec() < deadline:
 		if int(runtime.match_session.series_game_number) == game_number and runtime._bot_review_turn == runtime.game_manager.turn_number \
 				and runtime._bot_review_turn > 0 and runtime._bot_review_progress_msec > old_progress:
+			if previous_game.get_ref() != null or previous_player.get_ref() != null:
+				failures.append("A completed volunteer game retained match state after game %d started." % game_number)
 			return true
 		await create_timer(0.1).timeout
 	failures.append("The bot stall detector did not track turns in game %d of the watched series." % game_number)

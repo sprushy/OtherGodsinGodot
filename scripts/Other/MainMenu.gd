@@ -3747,7 +3747,7 @@ func _on_local_bot_work_assigned(job: Dictionary) -> void:
 		_local_bot_match_supervisor.name = "LocalBotMatchSupervisor"
 		_local_bot_match_supervisor.match_closed.connect(_on_local_bot_match_closed)
 		add_child(_local_bot_match_supervisor)
-	if not _local_bot_match_supervisor.start_shared_bot_match(session):
+	if not _start_local_bot_match_worker(session):
 		_watch_next_local_bot_match_pending = false
 		lobby_client.cancel_bot_work(session.match_id)
 		if continuous:
@@ -3777,6 +3777,9 @@ func _on_local_bot_work_assigned(job: Dictionary) -> void:
 	]
 	lobby_client.report_bot_work_started(session.match_id)
 	_update_host_bot_match_button()
+
+func _start_local_bot_match_worker(session: MatchSession) -> bool:
+	return _local_bot_match_supervisor.start_local_bot_match(session)
 
 func _allocate_local_bot_match_port() -> int:
 	var used_ports := {}

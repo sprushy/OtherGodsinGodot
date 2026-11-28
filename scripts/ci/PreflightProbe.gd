@@ -50,6 +50,7 @@ func run() -> bool:
 		return true
 	_ran = true
 	var failures: PackedStringArray = []
+	_check_bot_crowded_board_planning(failures)
 	_check_card_catalog(failures)
 	_check_legacy_card_culture(failures)
 	_check_harii_shaman_culture(failures)
@@ -3465,6 +3466,60 @@ func _check_bot_grindylow_combat_lookahead(failures: PackedStringArray) -> void:
 	player.move_card(grindylow, player.hand_zone)
 	if not bot._take_main_phase_action() or not grindylow.is_stealth:
 		failures.append("Bot did not bank Grindylow's Drown Below against Lamashatu")
+	bot.detach()
+
+
+func _check_bot_crowded_board_planning(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 23
+	game._upkeep_resolved_turn = game.turn_number
+	for seat in game.players.size():
+		var side := game.players[seat]
+		side.game_manager = game
+		side.mana = 14
+		side.guard = 5
+		var frontline := [HyenaPack.new(), Gallu.new(), Lindwyrm.new(), Mopsus.new(), WarriorDragon.new()] if seat == 0 \
+				else [Alu.new(), Anzu.new(), LesserMushussu.new(), Hrimgrimmnir.new(), KurJara.new()]
+		var reserve := [Hati.new(), Pegasus.new(), GarmWatchdogOfHel.new(), LowLightTroll.new()] if seat == 0 \
+				else [Aurboda.new(), Asakku.new(), Rabisu.new(), TelchineApprentice.new()]
+		for index in frontline.size():
+			var attacker: Card = frontline[index]
+			attacker.card_owner = side
+			attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
+			side.frontline_zones[index].add_card(attacker)
+		for index in reserve.size():
+			var defender: Card = reserve[index]
+			defender.card_owner = side
+			defender.creature_mode = Card.CreatureMode.DEFENSIVE
+			side.reserve_zones[index].add_card(defender)
+		for card: Card in [Mummu.new(), WardingStone.new(), Smite.new(), BaneOfTheSvartalfar.new()] if seat == 0 \
+				else [AphroditeAreia.new(), PalisadePower.new(), SavingGrace.new(), SapStrength.new()]:
+			card.card_owner = side
+			if card is GodCard:
+				side.god_zone.add_card(card)
+			elif card is PowerCard:
+				side.power_zones[0].add_card(card)
+			else:
+				side.hand_zone.add_card(card)
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var started := Time.get_ticks_msec()
+	var forecast := bot._forecast_opponent_turn({}, false, {}, true)
+	var forecast_msec := Time.get_ticks_msec() - started
+	print("Crowded board forecast: ", forecast, " in ", forecast_msec, " ms")
+	if forecast_msec > 5_000:
+		failures.append("The crowded-board combat forecast blocked planning for more than five seconds.")
+	started = Time.get_ticks_msec()
+	var acted := bot._take_main_phase_action()
+	print("Crowded board main-phase decision: ", Time.get_ticks_msec() - started, " ms")
+	if not acted:
+		failures.append("Bot did not find a legal action on a crowded board.")
 	bot.detach()
 
 

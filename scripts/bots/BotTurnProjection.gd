@@ -138,29 +138,6 @@ func release() -> void:
 	bots.clear()
 	_unknown_cards.clear()
 	match_rules.reset_runtime_state()
-	for action in game.action_stack + game.resolving_stack_actions:
-		action.resolve_callback = Callable()
-	game.action_stack.clear()
-	game.resolving_stack_actions.clear()
-	game._pending_doorway_continue = Callable()
-	game._queued_doorway_requests.clear()
-	game._pending_return_to_hand_continue = Callable()
-	game._deferred_combat_resume = Callable()
-	for player in game.players:
-		player.game_manager = null
-		player.reserved_active_god = null
-		for zone in GameState._get_player_card_zones(player):
-			for card in zone.cards:
-				card.active_buffs.clear()
-				card.active_statuses.clear()
-				card.sleeping_from = null
-				for equipment in card.equipment:
-					equipment.equipped_on = null
-				card.equipment.clear()
-				card.current_zone = null
-			zone.cards.clear()
-			zone.clear_deck_knowledge()
-			zone.zone_owner = null
-	game.players.clear()
+	GameState.release_manager(game)
 	match_rules = null
 	game = null

@@ -622,9 +622,7 @@ func _start_next_series_game() -> void:
 	_reinforcement_phase_active = false
 	headless_match_host.series_between_games = false
 	match_session.begin_next_series_game()
-	_detach_server_bots()
-	if game_event_broadcaster != null:
-		game_event_broadcaster.shutdown()
+	_release_finished_game()
 
 	game_manager = GameManager.new()
 	game_manager.sfx_enabled = false
@@ -651,6 +649,18 @@ func _start_next_series_game() -> void:
 	game_manager.start_turn()
 	_poll_server_bots()
 	_write_status_file(MatchSessionScript.STATUS_ACTIVE)
+
+func _release_finished_game() -> void:
+	_detach_server_bots()
+	if game_event_broadcaster != null:
+		game_event_broadcaster.shutdown()
+	if match_manager != null:
+		match_manager.reset_runtime_state()
+	if game_manager != null:
+		GameState.release_manager(game_manager)
+
+func _exit_tree() -> void:
+	_release_finished_game()
 
 func _shutdown_if_match_was_abandoned() -> void:
 	if _abandoned_shutdown_started or match_session == null:

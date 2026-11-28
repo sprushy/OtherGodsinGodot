@@ -157,22 +157,30 @@ func create_match(
 func get_match(match_id: String):
 	return active_matches.get(match_id, null)
 
-func start_shared_bot_match(session: MatchSession) -> bool:
+func start_local_bot_match(session: MatchSession, shared_worker: bool = false) -> bool:
 	if session == null or not session.is_bot_self_play() or active_matches.has(session.match_id):
 		return false
-	if not _launch_shared_bot_match(session):
-		return false
+	if shared_worker:
+		if not _launch_shared_bot_match(session):
+			return false
+	else:
+		# Use the same executable and resources as the spectator client. A
+		# dedicated process keeps synchronous bot planning off the UI thread.
+		godot_executable_path = OS.get_executable_path()
+		project_path = ProjectSettings.globalize_path("res://")
+		if not _launch_dedicated_match(session, true):
+			return false
 	active_matches[session.match_id] = session
 	match_created.emit(session)
 	return true
 
-## Current turn number for an in-process shared bot match, or 0 when the match
-## has not started, runs as a dedicated subprocess, or already closed.
+## Current bot turn from the shared runtime or the worker's last heartbeat.
 func get_bot_match_turn_count(match_id: String) -> int:
-	var match_server = _shared_bot_match_servers.get(match_id.strip_edges(), null)
-	if not is_instance_valid(match_server) or match_server.game_manager == null:
-		return 0
-	return maxi(0, int(match_server.game_manager.turn_number))
+	var resolved_id := match_id.strip_edges()
+	var match_server = _shared_bot_match_servers.get(resolved_id, null)
+	if is_instance_valid(match_server) and match_server.game_manager != null:
+		return maxi(0, int(match_server.game_manager.turn_number))
+	return maxi(0, int(_load_status_file(get_match(resolved_id)).get("bot_turn", 0)))
 
 ## Returns "" when a background bot worker may launch, otherwise a short
 ## reason naming the port or disk constraint that blocks it.
@@ -327,12 +335,13 @@ func _allocate_match_port() -> int:
 		return -1
 	return allocated_port
 
-func _launch_dedicated_match(session) -> bool:
+func _launch_dedicated_match(session, local_bot_worker: bool = false) -> bool:
 	if session == null:
 		return false
-	if session.is_bot_self_play():
+	if session.is_bot_self_play() and not local_bot_worker:
 		return _launch_shared_bot_match(session)
-	var uses_exported_runtime := _is_exported_server_runtime(godot_executable_path)
+	var uses_exported_runtime := _is_exported_server_runtime(godot_executable_path) \
+		or (local_bot_worker and OS.has_feature("template"))
 	if godot_executable_path.is_empty() or (not uses_exported_runtime and project_path.is_empty()):
 		session.mark_process_launch_failed("Godot executable path or project path was not configured.")
 		return false

@@ -29,6 +29,14 @@ const VEIL_CONCEALMENT_VALUE := 1200
 const SINGLE_TARGET_REMOVAL_HOLD_VALUE := 1000
 const COMBAT_ATTACK_SEARCH_WIDTH := 64
 const COMBAT_REMOVAL_SEARCH_WIDTH := 32
+const TURN_ATTACK_SEARCH_LIMIT := 512
+const TURN_ATTACK_SEARCH_INCOMPLETE := -2147483648
+# Both the live planner and speculative actions can ask for combat forecasts.
+# Share the expensive reply budget across a main-phase decision on large boards.
+const CROWDED_REPLY_FORECAST_LIMIT := 2
+const CROWDED_BOARD_CREATURES := 12
+const CROWDED_COMBAT_SEARCH_WIDTH := 3
+const CROWDED_COMBAT_SEARCH_DEPTH := 2
 const NECOC_YAOTL_SEARCH_WIDTH := 8
 const TURN_PROJECTION_WIDTH := 4
 const COMBAT_RESPONSE_SEARCH_WIDTH := 24
@@ -98,6 +106,7 @@ var _posture_cache := {"turn": -1, "value": {}}
 var _posture_evaluating := false
 var _locked_board_evaluating := false
 var _scoring_byggvir_brewing := false
+var _crowded_reply_forecasts_left: Array[int] = []
 # Opt-in decision tracing for summon planning. Set OTHERGODS_BOT_DECISION_LOG=1
 # on the bot's process (practice window or headless server) to print every
 # evaluated summon plan with its score components, so a chosen chump blocker
@@ -968,6 +977,13 @@ func _submit_priority_response(card: Card) -> bool:
 	return false
 
 func _take_main_phase_action() -> bool:
+	if _get_board_creatures(bot_player).size() + _get_board_creatures(opponent).size() >= CROWDED_BOARD_CREATURES:
+		_crowded_reply_forecasts_left = [CROWDED_REPLY_FORECAST_LIMIT]
+	var acted := _choose_main_phase_action()
+	_crowded_reply_forecasts_left = []
+	return acted
+
+func _choose_main_phase_action() -> bool:
 	# Compare acting first against attacking now and ending the turn.
 	var mana_budget := bot_player.mana + _ready_brew_mana_gain()
 	var attacks := _get_combat_candidates(mana_budget)
@@ -1122,6 +1138,7 @@ func _new_turn_projection_bot(game: GameManager, rules: MatchManager, seat: int)
 	bot.bot_player = game.players[seat]
 	bot.opponent = game.get_opponent(bot.bot_player)
 	bot._decision_log_enabled = false
+	bot._crowded_reply_forecasts_left = _crowded_reply_forecasts_left
 	if seat == player_index:
 		bot._strategy_activation_turns = _strategy_activation_turns.duplicate()
 		bot._dellingr_revealed_target_uids = _dellingr_revealed_target_uids.duplicate()
@@ -7060,12 +7077,16 @@ func _forecast_opponent_turn(change: Dictionary, this_turn: bool, recruits: Dict
 	var retaliation_mana := mana_left + game_manager.get_automatic_upkeep_mana_gain(bot_player, game_manager.turn_number + 2) \
 		+ game_manager.get_effective_upkeep_mana_gain(game_manager.get_base_upkeep_mana_gain(), bot_player)
 	var plans: Dictionary = setups["plans"]
+	# A single forecast can combine several summon setups with two turns of
+	# attack orders and interceptions. Share one limit across both searches.
+	var branches_left: Array[int] = [TURN_ATTACK_SEARCH_LIMIT]
 	for summoned: Array in plans:
 		var lines := attack_lines.filter(func(line: Dictionary) -> bool:
 			return line["attacker"] not in setup_attackers or line["attacker"] in summoned
 		)
+		var attack_mana := int(plans[summoned])
 		var continuation := Callable()
-		if counterattack and enemy_followers > 0:
+		if branches_left[0] > 0 and counterattack and enemy_followers > 0:
 			var counter_lines := _forecast_counterattack_lines(
 				defenders, _get_board_creatures(opponent) + summoned, change, summoned_forms, removed, stats
 			)
@@ -7073,8 +7094,13 @@ func _forecast_opponent_turn(change: Dictionary, this_turn: bool, recruits: Dict
 				var counter_memo := {}
 				continuation = func(casualties: Array, remaining: Vector4i) -> int:
 					var reversed := Vector4i(remaining.z, remaining.w, remaining.x, remaining.y)
-					return _search_turn_attacks(counter_lines, retaliation_mana, reversed, [], casualties, counter_memo)
-		worst = maxi(worst, _search_turn_attacks(lines, int(plans[summoned]), resources, [], [], {}, scale, continuation))
+					return _search_turn_attacks(counter_lines, retaliation_mana, reversed, [], casualties, counter_memo, branches_left)
+		var score := _search_turn_attacks(lines, attack_mana, resources, [], [], {}, branches_left, scale, continuation)
+		if score == TURN_ATTACK_SEARCH_INCOMPLETE:
+			# Score the best immediate attack against every legal reply when the
+			# full search runs out of work. Partial searches depend on move order.
+			score = _search_turn_attacks(lines, attack_mana, resources, [], [], {}, branches_left, scale, Callable(), true)
+		worst = maxi(worst, score)
 		if worst >= followers_after_upkeep * scale:
 			break
 	var damage := ceili(float(worst) / scale)
@@ -7166,8 +7192,13 @@ func _forecast_counterattack_outcome(action: CardAction, stats: Dictionary) -> D
 # Resources hold the defending side's Followers and Guard, then the attacking side's.
 func _search_turn_attacks(
 	lines: Array[Dictionary], mana: int, resources: Vector4i,
-	spent: Array, casualties: Array, memo: Dictionary, scale: int = 1, continuation: Callable = Callable()
+	spent: Array, casualties: Array, memo: Dictionary, branches_left: Array[int],
+	scale: int = 1, continuation: Callable = Callable(), immediate_only: bool = false
 ) -> int:
+	if not immediate_only:
+		if branches_left[0] <= 0:
+			return TURN_ATTACK_SEARCH_INCOMPLETE
+		branches_left[0] -= 1
 	var spent_ids := spent.map(func(card: Card) -> int: return card.get_instance_id())
 	var casualty_ids := casualties.map(func(card: Card) -> int: return card.get_instance_id())
 	spent_ids.sort()
@@ -7177,7 +7208,10 @@ func _search_turn_attacks(
 		return int(memo[key])
 	# Stopping now is also a legal choice. Evaluate what can attack back
 	# after the opponent is done, with the casualties shared across turns.
-	var most_damage := -int(continuation.call(casualties, resources)) if continuation.is_valid() else 0
+	var retaliation := int(continuation.call(casualties, resources)) if continuation.is_valid() else 0
+	if retaliation == TURN_ATTACK_SEARCH_INCOMPLETE:
+		return TURN_ATTACK_SEARCH_INCOMPLETE
+	var most_damage := -retaliation
 	var followers := resources.x
 	for line in lines:
 		var attacker := line["attacker"] as Card
@@ -7210,13 +7244,20 @@ func _search_turn_attacks(
 					if least_damage <= most_damage:
 						break
 					continue
+			if immediate_only:
+				least_damage = mini(least_damage, loss * scale)
+				if least_damage <= most_damage:
+					break
+				continue
 			var remaining_casualties := casualties.duplicate()
 			for casualty: Card in result["casualties"]:
 				if casualty != null and casualty not in remaining_casualties:
 					remaining_casualties.append(casualty)
 			var followup := _search_turn_attacks(
-				lines, mana - cost, remaining, next_spent, remaining_casualties, memo, scale, continuation
+				lines, mana - cost, remaining, next_spent, remaining_casualties, memo, branches_left, scale, continuation
 			)
+			if followup == TURN_ATTACK_SEARCH_INCOMPLETE:
+				return TURN_ATTACK_SEARCH_INCOMPLETE
 			least_damage = mini(least_damage, loss * scale + followup)
 			if least_damage <= most_damage:
 				break
@@ -7749,6 +7790,8 @@ func _plan_combat(candidates: Array[Dictionary], removed: Array = [], committed:
 	var best := {}
 	var best_score := 0
 	var best_is_lethal := false
+	var crowded := not _crowded_reply_forecasts_left.is_empty()
+	var search_width := CROWDED_COMBAT_SEARCH_WIDTH if crowded else COMBAT_ATTACK_SEARCH_WIDTH
 	var available_mana := (bot_player.mana if projected_mana < 0 else projected_mana) - mana_spent
 	var enslave_targets := _get_projected_violent_delights_targets(available_mana)
 	# The opponent Aphrodite's Violent Delights is standing danger when her
@@ -7770,6 +7813,7 @@ func _plan_combat(candidates: Array[Dictionary], removed: Array = [], committed:
 		"uncontested": true, "scavenged": false,
 	}]
 	var reply_cache := {}
+	var denial_cache := {}
 	var hold_safety := 0
 	if forecast_replies and not forecast.get("change", {}).is_empty():
 		hold_safety = _combat_reply_safety(frontier[0], forecast, reply_cache)
@@ -7777,7 +7821,7 @@ func _plan_combat(candidates: Array[Dictionary], removed: Array = [], committed:
 	if candidates.is_empty():
 		return {}
 	var depth := 0
-	while not frontier.is_empty():
+	while not frontier.is_empty() and (not crowded or depth < CROWDED_COMBAT_SEARCH_DEPTH):
 		var next := {}
 		var weight := pow(0.75, depth)
 		for line in frontier:
@@ -7795,7 +7839,10 @@ func _plan_combat(candidates: Array[Dictionary], removed: Array = [], committed:
 						and int(extended["mana"]) >= AphroditeAreia.ACTIVATION_COST:
 					capture = _score_violent_delights_attack(attack, enslave_targets, removed, occupied_zone)
 				# Compare the capture with continuing combat from this same attack.
-				var denial := _opponent_aphrodite_denial_gain(extended["removed"], standing_enslave_exposure)
+				var loss_set: Array = extended["removed"]
+				if not denial_cache.has(loss_set):
+					denial_cache[loss_set] = _opponent_aphrodite_denial_gain(loss_set, standing_enslave_exposure)
+				var denial := int(denial_cache[loss_set])
 				var credit := capture + denial
 				if (lethal and not best_is_lethal) or (lethal == best_is_lethal and score + credit > best_score):
 					best_score = score + credit
@@ -7816,8 +7863,8 @@ func _plan_combat(candidates: Array[Dictionary], removed: Array = [], committed:
 		# breadth without limiting how many ready creatures can attack.
 		frontier.assign(next.values())
 		frontier.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a["evaluation"]) > int(b["evaluation"]))
-		if frontier.size() > COMBAT_ATTACK_SEARCH_WIDTH:
-			frontier.resize(COMBAT_ATTACK_SEARCH_WIDTH)
+		if frontier.size() > search_width:
+			frontier.resize(search_width)
 		depth += 1
 	return best
 
@@ -7850,6 +7897,12 @@ func _combat_reply_safety(line: Dictionary, forecast: Dictionary, cache: Diction
 	var enemy_guard := int(line["opponent_guard"])
 	var key := str([followers, guard, mana, removed_ids, sleeping_ids, red_caps, enemy_followers, enemy_guard])
 	if not cache.has(key):
+		if not _crowded_reply_forecasts_left.is_empty():
+			if _crowded_reply_forecasts_left[0] <= 0:
+				# Keep the tactical score and give no credit for an unsearched
+				# improvement in the opponent's reply.
+				return int(forecast.get("hold_safety", 0))
+			_crowded_reply_forecasts_left[0] -= 1
 		var change: Dictionary = forecast.get("change", {}).merged({
 			"removed": removed, "followers": followers, "guard": guard,
 			"committed_attackers": line["attackers"], "sleeping": sleeping, "mana_left": mana,

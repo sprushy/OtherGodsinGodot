@@ -742,6 +742,36 @@ static func _collect_card_uid_map_entry(card: Card, uid_map: Dictionary) -> void
 			continue
 		_collect_card_uid_map_entry(nested_card, uid_map)
 
+## Break ownership cycles once a match state can no longer be used.
+static func release_manager(gm: GameManager) -> void:
+	gm.is_game_over = true
+	for action in gm.action_stack + gm.resolving_stack_actions:
+		action.resolve_callback = Callable()
+	gm.action_stack.clear()
+	gm.resolving_stack_actions.clear()
+	gm._pending_doorway_continue = Callable()
+	gm._queued_doorway_requests.clear()
+	gm._pending_return_to_hand_continue = Callable()
+	gm._deferred_combat_resume = Callable()
+	for player in gm.players:
+		player.game_manager = null
+		player.reserved_active_god = null
+		player.current_deck.clear()
+		player.card_collection.clear()
+		for zone in _get_player_card_zones(player):
+			for card in zone.cards:
+				card.active_buffs.clear()
+				card.active_statuses.clear()
+				card.sleeping_from = null
+				for equipment in card.equipment:
+					equipment.equipped_on = null
+				card.equipment.clear()
+				card.current_zone = null
+			zone.cards.clear()
+			zone.clear_deck_knowledge()
+			zone.zone_owner = null
+	gm.players.clear()
+
 static func _get_player_card_zones(player: Player) -> Array:
 	var zones: Array = [
 		player.hand_zone,
