@@ -3072,9 +3072,9 @@ func _find_rank_matched_bot_deck(best_of: int, account_id: String, is_ranked: bo
 	var rank := RankedProgressionScript.summarize_bot_stars(target_stars)
 	var league := int(rank["league"])
 	var post_loss: bool = is_ranked and league <= 1 and match_history_store.should_serve_quarantined_next(account_id)
-	# Iron V always uses this pool in ranked bot challenges. Other Iron and
+	# The entry division always uses this pool in ranked bot challenges. Other Iron and
 	# Bronze divisions use it once after a qualifying loss.
-	var force_quarantined: bool = is_ranked and (rank["name"] == "Iron V" or post_loss)
+	var force_quarantined: bool = is_ranked and (target_stars < RankedProgressionScript.STARS_PER_DIVISION or post_loss)
 	var unavailable := _busy_bot_list_ids()
 	var bot_pool := _bot_pool(best_of)
 	var deck := bot_pool.select_deck(unavailable, _bot_deck_rng, target_stars, force_quarantined)
@@ -3142,7 +3142,7 @@ func seed_bot_league(count_per_god: int = 10, best_of: int = 1) -> Dictionary:
 
 # Finalizes the seeded bot league. Keeps the strongest seeded bot of each god as
 # the active ladder bot, quarantines the weakest seeded bot of each god as a
-# forced-matchmaking bad bot (for Iron V and post-loss Iron/Bronze pairing), and
+# forced-matchmaking bad bot (for Iron III and post-loss Iron/Bronze pairing), and
 # removes every other seeded bot.
 func finalize_bot_league(best_of: int = 1) -> Dictionary:
 	_ensure_match_history_store()

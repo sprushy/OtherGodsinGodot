@@ -134,6 +134,7 @@ func run() -> bool:
 	_check_bot_call_of_the_crossing_holistic(failures)
 	_check_bot_combat_mana_budget(failures)
 	_check_aphrodite_aspect_shift(failures)
+	_check_skotia_stealth_stone_monkey(failures)
 	_check_bot_violent_delights_upkeep(failures)
 	_check_bot_shift_and_extraction(failures)
 	_check_bot_combat_buff_value(failures)
@@ -1127,14 +1128,20 @@ func _check_match_supervisor_launch_config(failures: PackedStringArray) -> void:
 func _check_ranked_progression(failures: PackedStringArray) -> void:
 	var progress := {}
 	var season := RankedProgressionScript.season_for_time(1767225600.0)
+	var fresh_player := RankedProgressionScript.summarize({}, season)
+	if str(fresh_player["rank_name"]) != "Iron III" or int(fresh_player["points"]) != 0:
+		failures.append("A player with no ranked record did not start at Iron III")
+	var fresh_bot := RankedProgressionScript.summarize_bot_stars(0)
+	if str(fresh_bot["name"]) != "Iron III" or int(fresh_bot["stars"]) != 0:
+		failures.append("A bot with no record did not start at Iron III")
 	RankedProgressionScript.apply_result(progress, "loss", season)
 	var summary := RankedProgressionScript.summarize(progress, season)
-	if summary["rank_name"] != "Iron V" or summary["last_delta"] != 0:
+	if summary["rank_name"] != "Iron III" or summary["last_delta"] != 0:
 		failures.append("Ranked progression did not protect the entry rank")
 	for _win in range(3):
 		RankedProgressionScript.apply_result(progress, "win", season)
 	summary = RankedProgressionScript.summarize(progress, season)
-	if summary["rank_name"] != "Iron IV" or summary["stars"] != 1 or summary["last_delta"] != 2:
+	if summary["rank_name"] != "Iron II" or summary["stars"] != 1 or summary["last_delta"] != 2:
 		failures.append("Ranked progression did not apply the third-win bonus and promotion")
 	RankedProgressionScript.apply_result(progress, "loss", season)
 	summary = RankedProgressionScript.summarize(progress, season)
@@ -1144,14 +1151,20 @@ func _check_ranked_progression(failures: PackedStringArray) -> void:
 		RankedProgressionScript.apply_result(progress, "win", season)
 	RankedProgressionScript.apply_result(progress, "draw", season)
 	summary = RankedProgressionScript.summarize(progress, season)
-	if summary["rank_name"] != "Iron III" or summary["last_delta"] != 0 or summary["win_streak"] != 0:
+	if summary["rank_name"] != "Iron I" or summary["last_delta"] != 0 or summary["win_streak"] != 0:
 		failures.append("Ranked progression did not preserve stars and clear the streak on a draw")
-	for _win in range(8):
+	if RankedProgressionScript.summarize_bot_stars(8)["name"] != "Iron I" \
+			or RankedProgressionScript.summarize_bot_stars(9)["name"] != "Bronze V":
+		failures.append("Ranked progression did not promote Iron I to Bronze V at nine stars")
+	for _win in range(5):
 		RankedProgressionScript.apply_result(progress, "win", season)
 	RankedProgressionScript.apply_result(progress, "loss", season)
 	summary = RankedProgressionScript.summarize(progress, season)
 	if summary["rank_name"] != "Bronze IV" or summary["stars"] != 2 or summary["last_delta"] != 0 or not summary["at_floor"]:
 		failures.append("Ranked progression did not protect earned Bronze stars")
+	var iron_reset := RankedProgressionScript.summarize(progress.duplicate(), season + 1)
+	if iron_reset["rank_name"] != "Iron III" or iron_reset["points"] != 0:
+		failures.append("Ranked progression did not reset Bronze to Iron III")
 	for _win in range(6):
 		RankedProgressionScript.apply_result(progress, "win", season)
 	RankedProgressionScript.apply_result(progress, "loss", season)
@@ -1171,7 +1184,7 @@ func _check_ranked_progression(failures: PackedStringArray) -> void:
 		var rank_before: String = summary["rank_name"]
 		RankedProgressionScript.apply_result(progress, "win", season)
 		summary = RankedProgressionScript.summarize(progress, season)
-		if summary["points"] == 60 and (rank_before != "Gold I" or summary["rank_name"] != "Diamond V" or summary["last_delta"] != 2):
+		if summary["points"] == 54 and (rank_before != "Gold I" or summary["rank_name"] != "Diamond V" or summary["last_delta"] != 2):
 			failures.append("Ranked progression did not promote Gold I directly to Diamond V with the streak bonus")
 		if rank_before.begins_with("Diamond") and int(progress["last_delta"]) != 1:
 			failures.append("Ranked progression applied a streak bonus in Diamond")
@@ -1179,8 +1192,8 @@ func _check_ranked_progression(failures: PackedStringArray) -> void:
 	RankedProgressionScript.apply_result(progress, "loss", season)
 	RankedProgressionScript.apply_result(progress, "draw", season)
 	summary = RankedProgressionScript.summarize(progress, season)
-	if summary["rank_name"] != "Divine" or summary["points"] != 90 or summary["stars"] != 0 or summary["last_delta"] != 0:
-		failures.append("Ranked progression did not reach or protect Divine at 90 stars")
+	if summary["rank_name"] != "Divine" or summary["points"] != 84 or summary["stars"] != 0 or summary["last_delta"] != 0:
+		failures.append("Ranked progression did not reach or protect Divine at 84 stars")
 	var bo3_progress := {}
 	RankedProgressionScript.apply_result(bo3_progress, "win", season, RankedProgressionScript.star_multiplier_for_format(3))
 	RankedProgressionScript.apply_result(bo3_progress, "win", season, RankedProgressionScript.star_multiplier_for_format(3))
@@ -1188,19 +1201,19 @@ func _check_ranked_progression(failures: PackedStringArray) -> void:
 	if summary["points"] != 4 or summary["stars"] != 1 or summary["last_delta"] != 2:
 		failures.append("Bo3 wins did not award double stars")
 	var bo3_loss_progress := {
-		"season": season, "points": 40, "peak_points": 40,
+		"season": season, "points": 34, "peak_points": 34,
 		"win_streak": 0, "matches": 0, "last_delta": 0,
 	}
 	RankedProgressionScript.apply_result(bo3_loss_progress, "loss", season, RankedProgressionScript.star_multiplier_for_format(3))
 	summary = RankedProgressionScript.summarize(bo3_loss_progress, season)
-	if summary["points"] != 38 or summary["last_delta"] != -2:
+	if summary["points"] != 32 or summary["last_delta"] != -2:
 		failures.append("Bo3 losses did not deduct double stars")
 	summary = RankedProgressionScript.summarize(progress, season + 2)
 	if summary["rank_name"] != "Diamond V" or summary["season"] != "2026-03" or summary["matches"] != 0:
 		failures.append("Ranked progression did not reset using the peak and elapsed seasons")
 
 func _check_rank_badges(failures: PackedStringArray) -> void:
-	var ranks := ["Iron V", "Bronze V", "Silver V", "Gold V", "Diamond V", "Ascendant V", "Divine"]
+	var ranks := ["Iron III", "Bronze V", "Silver V", "Gold V", "Diamond V", "Ascendant V", "Divine"]
 	var defaults := ["Wolf Cub", "Minotaur Footsoldier", "Berserker", "En-hedu-anna", "Nergal Lion", "Enki, Lord of Eridu", "Freyja"]
 	for league in range(ranks.size()):
 		var default_portrait := RankBadgeCatalog.resolve_portrait(league, {})
@@ -1217,7 +1230,7 @@ func _check_rank_badges(failures: PackedStringArray) -> void:
 			or RankBadgeCatalog.validate_portrait(6, {"card": "Freyja, Active God"}).is_empty():
 		failures.append("Rank badge eligibility or crop validation failed")
 	var session := MatchSessionScript.new("badge_match", "badge_room", "127.0.0.1", 12345, ["seat_a", "seat_b"], {}, {
-		"seat_a": {"rank_badge": {"rank_name": "Iron V", "portrait": saved}},
+		"seat_a": {"rank_badge": {"rank_name": "Iron III", "portrait": saved}},
 		"seat_b": {"rank_badge": {"rank_name": "Bronze IV"}},
 	})
 	var badges: Array = session.to_spectator_match_info()["rank_badges"]
@@ -1292,12 +1305,12 @@ func _check_dedicated_ranked_history(failures: PackedStringArray) -> void:
 	var winner_summary := reader.get_profile_summary("profile_a", 5, "account_a")
 	var loser_summary := reader.get_profile_summary("profile_b", 5, "account_b")
 	if winner_summary["total_wins"] != 6 or winner_summary["ranked_progress"]["matches"] != 3 \
-			or winner_summary["ranked_progress"]["rank_name"] != "Iron IV" or winner_summary["ranked_progress"]["stars"] != 1 \
+			or winner_summary["ranked_progress"]["rank_name"] != "Iron II" or winner_summary["ranked_progress"]["stars"] != 1 \
 			or loser_summary["ranked_progress"]["matches"] != 3 or loser_summary["ranked_progress"]["stars"] != 0:
 		failures.append("Dedicated ranked history lost, duplicated, or miscounted match results")
 	var bo3_progress: Dictionary = winner_summary["ranked_bo3_progress"]
 	if bo3_progress["matches"] != 1 or bo3_progress["win_streak"] != 1 \
-			or bo3_progress["rank_name"] != "Iron V" or bo3_progress["stars"] != 2:
+			or bo3_progress["rank_name"] != "Iron III" or bo3_progress["stars"] != 2:
 		failures.append("Bo3 ranked progression did not stay independent of Bo1 or double its star gain")
 	var usernames := {"account_a": "Winner", "account_b": "Opponent"}
 	var bo1_ladder := reader.get_human_ladder(usernames, 1)
@@ -1319,7 +1332,7 @@ func _check_dedicated_ranked_history(failures: PackedStringArray) -> void:
 	var first_results := reader.get_ranked_match_results(first_match["entry"])
 	var first_win: Dictionary = first_results.get(0, {})
 	var first_loss: Dictionary = first_results.get(1, {})
-	if first_win.get("best_of") != 1 or first_win.get("star_delta") != 1 or first_win.get("stars") != 1 or first_win.get("rank_name") != "Iron V" \
+	if first_win.get("best_of") != 1 or first_win.get("star_delta") != 1 or first_win.get("stars") != 1 or first_win.get("rank_name") != "Iron III" \
 			or first_loss.get("star_delta") != 0 or first_loss.get("stars") != 0 or first_loss.get("loss_protected") != true:
 		failures.append("Ranked recap did not return each player's exact result after later matches")
 	var bo3_result: Dictionary = reader.get_ranked_match_results(bo3_match["entry"]).get(0, {})
@@ -1327,8 +1340,8 @@ func _check_dedicated_ranked_history(failures: PackedStringArray) -> void:
 			or bo3_result.get("stars") != 2 or bo3_result.get("star_delta") != 2:
 		failures.append("Bo3 ranked recap used progress from a different format or a single-star gain")
 	var promotion: Dictionary = reader.get_ranked_match_results(promotion_match["entry"]).get(0, {})
-	if promotion.get("previous_rank_name") != "Iron V" or promotion.get("previous_stars") != 2 \
-			or promotion.get("rank_name") != "Iron IV" or promotion.get("stars") != 1 or promotion.get("star_delta") != 2:
+	if promotion.get("previous_rank_name") != "Iron III" or promotion.get("previous_stars") != 2 \
+			or promotion.get("rank_name") != "Iron II" or promotion.get("stars") != 1 or promotion.get("star_delta") != 2:
 		failures.append("Ranked recap did not report both sides of a promotion with carryover stars")
 	if not reader.get_ranked_match_results(guest_match["entry"]).is_empty():
 		failures.append("Ranked recap awarded stars for an ineligible match")
@@ -4741,6 +4754,64 @@ func _check_aphrodite_aspect_shift(failures: PackedStringArray) -> void:
 			or player.mana != 12 - AphroditeAreia.ACTIVATION_COST:
 		failures.append("Violent Delights did not capture the attacker after the shift")
 
+func _check_skotia_stealth_stone_monkey(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = opponent
+	game.other_player = player
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	var skotia := AphroditeSkotia.new()
+	skotia.card_owner = player
+	player.god_zone.add_card(skotia)
+	var defender := StoneMonkey.new()
+	defender.card_owner = player
+	defender.is_stealth = true
+	defender.is_face_down = true
+	defender.creature_mode = Card.CreatureMode.DEFENSIVE
+	player.frontline_zones[0].add_card(defender)
+	var attacker := CreatureCard.new()
+	attacker.card_owner = opponent
+	attacker.strength = 20
+	attacker.speed = 2
+	attacker.creature_mode = Card.CreatureMode.AGGRESSIVE
+	opponent.frontline_zones[0].add_card(attacker)
+	var defender_zone := player.frontline_zones[0]
+	game.creature_attack(attacker, defender)
+	if defender.current_zone != defender_zone or defender.current_zone == player.graveyard_zone:
+		failures.append("A Skotia-owned stealth Stone Monkey was Slain in combat instead of staying on the board")
+	if not defender.is_stealth or not defender.is_face_down:
+		failures.append("A Skotia-owned stealth Stone Monkey was revealed by combat despite Veil of Night")
+
+	var game2 := _new_fixture_game()
+	var player2 := _new_fixture_player()
+	var opponent2 := _new_fixture_player()
+	game2.players.assign([player2, opponent2])
+	game2.current_player = opponent2
+	game2.other_player = player2
+	game2.turn_number = 3
+	game2._upkeep_resolved_turn = game2.turn_number
+	var defender2 := StoneMonkey.new()
+	defender2.card_owner = player2
+	defender2.is_stealth = true
+	defender2.is_face_down = true
+	defender2.creature_mode = Card.CreatureMode.DEFENSIVE
+	player2.frontline_zones[0].add_card(defender2)
+	var attacker2 := CreatureCard.new()
+	attacker2.card_owner = opponent2
+	attacker2.strength = 20
+	attacker2.speed = 2
+	attacker2.creature_mode = Card.CreatureMode.AGGRESSIVE
+	opponent2.frontline_zones[0].add_card(attacker2)
+	var defender_zone2 := player2.frontline_zones[0]
+	game2.creature_attack(attacker2, defender2)
+	if defender2.current_zone != defender_zone2 or defender2.current_zone == player2.graveyard_zone:
+		failures.append("A stealth Stone Monkey without Skotia should reveal in combat and survive via Stone Skin")
+	if defender2.is_stealth or defender2.is_face_down:
+		failures.append("A stealth Stone Monkey without Skotia should be revealed by combat")
+
 func _check_bot_aspect_shift(failures: PackedStringArray) -> void:
 	var game := _new_fixture_game()
 	var player := _new_fixture_player()
@@ -7679,7 +7750,7 @@ func _check_bo3_bot_ladder_separation(failures: PackedStringArray) -> void:
 			or str(bo3_mirror.get("deck_name", "")) != str(bo3_details.get("deck_name", "")) \
 			or str(bo1_mirror.get("cards", {})) != str(bo1_details.get("cards", {})):
 		failures.append("A mirrored cross-format bot changed decks or display names between formats")
-	# Quarantine one bot in each pool. Iron V matchmaking must pull the Bo1 bot
+	# Quarantine one bot in each pool. Iron III matchmaking must pull the Bo1 bot
 	# for a Bo1 seek and the Bo3 bot for a Bo3 seek, never the other format's.
 	var bo1_thor: Dictionary = bo1_pool._by_god["Thor"]
 	bo1_pool._retire_list(bo1_thor, bo1_pool._find_list_by_id(bo1_thor, "bo1_only_bot"))
@@ -7880,7 +7951,7 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 	var after_win := seek.get_deck_submission(seek.host_session_id)
 	if not matched_before or before_win.get("bot_list_id") != held_id \
 			or not matched_after or after_win.get("bot_list_id") != "bot_win":
-		failures.append("Iron V did not use the quarantine pool or Iron IV failed to resume regular matchmaking")
+		failures.append("Iron III did not use the quarantine pool or Iron II failed to resume regular matchmaking")
 	reader.set_serve_quarantined_next("human_account", true)
 	if lobby._find_rank_matched_bot_deck(1, "human_account", false).get("bot_list_id") != "bot_win" \
 			or lobby._find_rank_matched_bot_deck(1, "human_account").get("bot_list_id") != held_id \
@@ -7924,9 +7995,9 @@ func _check_ranked_bot_pool(failures: PackedStringArray) -> void:
 			replay_results.append(thor_seed)
 		replay_results.append(result)
 	self_play_results = replay_results
-	if (not RankedBotDeckPoolScript.can_self_play_pair({"stars": 14}, {"stars": 17})
-			or RankedBotDeckPoolScript.can_self_play_pair({"stars": 0}, {"stars": 90})
-			or RankedBotDeckPoolScript.can_self_play_pair({"stars": 14}, {"stars": 45})
+	if (not RankedBotDeckPoolScript.can_self_play_pair({"stars": 8}, {"stars": 9})
+			or RankedBotDeckPoolScript.can_self_play_pair({"stars": 0}, {"stars": 84})
+			or RankedBotDeckPoolScript.can_self_play_pair({"stars": 8}, {"stars": 24})
 			or not RankedBotDeckPoolScript.can_self_play_pair({"stars": 5}, {"stars": 9})
 			or RankedBotDeckPoolScript.can_self_play_pair({"stars": 5, "list_id": "same"}, {"stars": 5, "list_id": "same"})):
 		failures.append("Bot matchmaking did not enforce the adjacent-league band and distinct seats")
@@ -8405,7 +8476,7 @@ func _check_community_bot_rank_badge(failures: PackedStringArray) -> void:
 		DirAccess.remove_absolute(fixture_path + ".tmp")
 	lobby.free()
 
-## A submitter quarantine is distinct from the Iron V weak-bot quarantine: it
+## A submitter quarantine is distinct from the Iron III weak-bot quarantine: it
 ## keeps the submission on disk but removes it from every matchmaking path.
 func _check_community_bot_quarantine(failures: PackedStringArray) -> void:
 	var owner_id := "quarantine_owner_%d" % OS.get_process_id()

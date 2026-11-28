@@ -1,6 +1,6 @@
 extends RefCounted
 
-const BOT_FEEDBACK := "Notice a way for a bot to improve its play? Submit a report through the main menu and I will try to improve it. There are many cards so there should be many ways!"
+const BOT_FEEDBACK := "Notice a way for a bot to improve its play? Submit a report through the main menu and I will try to improve it."
 
 const GENERAL: Array[String] = [
 	# Turns and resources.

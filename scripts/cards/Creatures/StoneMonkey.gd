@@ -29,7 +29,7 @@ func get_self_graveyard_replacement_zone(
 ) -> Zone:
 	if not combat_death or send_to_abyss:
 		return null
-	if abilities_suppressed():
+	if abilities_suppressed_by_effects():
 		return null
 	if current_zone == null or not current_zone.is_board_zone():
 		return null

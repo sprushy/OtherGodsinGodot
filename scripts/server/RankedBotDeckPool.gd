@@ -22,9 +22,9 @@ const DECK_NAME_KEY_PREFIX := "D|"
 const ASSIGNED_NAMES_VERSION := 2
 # Bumped when the star math changes so saved per-format pools full-replay
 # instead of resuming from records computed under the old rules.
-const STAR_RULES_VERSION := 2
+const STAR_RULES_VERSION := 3
 # How many of the worst bots per god are kept as quarantined bad bots for
-# forced matchmaking (Iron V and post-loss Iron/Bronze pairing).
+# forced matchmaking (Iron III and post-loss Iron/Bronze pairing).
 const QUARANTINED_PER_GOD := 1
 # Opponents are drawn from the target league and the leagues directly above and
 # below it (e.g. Iron, Bronze, or Silver for a Bronze player). When the band has
@@ -489,7 +489,7 @@ func _apply_community_metadata(deck: Dictionary, submission: Dictionary) -> void
 func finalize_league(god_names: Array[String]) -> Dictionary:
 	# Keeps every seeded bot on the ladder (pre-existing ranked bots plus all
 	# new tournament bots), clears their tournament flags, and marks the weakest
-	# seeded bot of each god as quarantined for forced matchmaking (Iron V and
+	# seeded bot of each god as quarantined for forced matchmaking (Iron III and
 	# post-loss Iron/Bronze pairing). Nothing is removed.
 	_state_changed = true
 	var summary: Dictionary = {}
@@ -1384,7 +1384,7 @@ func _should_retire_early(list: Dictionary) -> bool:
 	return 3 * int(list["losses"]) >= 2 * games_played
 
 ## Quarantine bookkeeping shared by every retirement path: retired weak bots
-## are held for forced matchmaking (Iron V and post-loss Iron/Bronze pairing)
+## are held for forced matchmaking (Iron III and post-loss Iron/Bronze pairing)
 ## instead of discarded, and can earn their way back through the release rule.
 func _hold_retired_list(pool: Dictionary, list: Dictionary) -> void:
 	var list_id := str(list.get("list_id", ""))
@@ -1409,7 +1409,7 @@ func _retire_list(pool: Dictionary, list: Dictionary) -> void:
 	if list_id.is_empty():
 		return
 	# Quarantine retired weak bots but hold onto them for forced matchmaking
-	# (Iron V and post-loss Iron/Bronze pairing) instead of discarding them.
+	# (Iron III and post-loss Iron/Bronze pairing) instead of discarding them.
 	_hold_retired_list(pool, list)
 	if pool["challenger"].get("list_id", "") == list_id:
 		pool["challenger"] = {}

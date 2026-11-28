@@ -33,6 +33,10 @@ const COLLECTION_MODE_SAVED_DECKS := "saved_decks"
 const DECK_SHARE_PREFIX := "OGDECK1:"
 const DECK_SHARE_FORMAT := "OtherGodsDeck"
 const LEVEL_FILTER_ANY := "Any"
+const USER_SETTINGS_PATH := "user://settings.cfg"
+const DECK_BUILDER_SETTINGS_SECTION := "deck_builder"
+const SHOW_ILLEGAL_CARDS_KEY := "show_illegal"
+const ILLEGAL_CARD_FADE_DURATION := 0.14
 const MAX_DECK_UNDO_STATES := 100
 const MIN_DECK_PANEL_WIDTH := 260.0
 const MAX_DECK_PANEL_WIDTH := 380.0
@@ -94,6 +98,7 @@ var _next_page_btn:    Button
 var _card_view_controls_bar: HBoxContainer
 var _card_view_label:       Label
 var _card_overlays_toggle:  CheckBox
+var _show_illegal_toggle:   CheckBox
 var _deck_panel:       VBoxContainer
 var _preview_outer:    PanelContainer
 var _preview_layout:   HBoxContainer
@@ -193,6 +198,7 @@ var _visual_deck_drag_active: bool = false
 var _visual_deck_drag_offset: Vector2 = Vector2.ZERO
 var _visual_deck_drag_ghost: Control = null
 var _show_collection_card_overlays: bool = false
+var _show_illegal_cards: bool = false
 var _saved_deck_state: Dictionary = {}
 
 func _escape_preview_bbcode_text(text: String) -> String:
@@ -227,6 +233,7 @@ func _ready() -> void:
 	add_to_group(UIHoverSfxScript.SUPPRESS_ALL_GROUP)
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	resized.connect(_queue_responsive_layout_refresh)
+	_load_deck_builder_settings()
 	_all_cards = _make_all_cards()
 	_rebuild_filtered_cards_cache()
 	_build_ui()
@@ -487,6 +494,15 @@ func _add_card_view_controls(parent: Control) -> void:
 	overlay_toggle.custom_minimum_size = Vector2(164, 28)
 	overlay_toggle.toggled.connect(_set_show_collection_card_overlays)
 	parent.add_child(overlay_toggle)
+
+	var illegal_toggle := CheckBox.new()
+	_show_illegal_toggle = illegal_toggle
+	illegal_toggle.text = "Show Illegal"
+	illegal_toggle.tooltip_text = "Include cards that cannot be added to the current deck. Illegal cards fade with a red X while hovered."
+	illegal_toggle.button_pressed = _show_illegal_cards
+	illegal_toggle.custom_minimum_size = Vector2(112, 28)
+	illegal_toggle.toggled.connect(_set_show_illegal_cards)
+	parent.add_child(illegal_toggle)
 
 func _build_collection_panel(parent: Control) -> void:
 	var panel := PanelContainer.new()
@@ -1386,6 +1402,7 @@ func _make_card_item(card: Card) -> Control:
 	_collection_card_roots[card.card_name] = root
 	var unavailable_reason := _get_card_unavailable_reason(card)
 	var is_unavailable := not unavailable_reason.is_empty()
+	root.set_meta("is_unavailable", is_unavailable)
 	if is_unavailable:
 		root.tooltip_text = unavailable_reason
 		root.mouse_default_cursor_shape = Control.CURSOR_FORBIDDEN
@@ -1532,6 +1549,9 @@ func _make_card_item(card: Card) -> Control:
 	var unavailable_overlay := ColorRect.new()
 	unavailable_overlay.name = "UnavailableOverlay"
 	unavailable_overlay.color = Color(0.05, 0.0, 0.0, 0.62) if is_unavailable else Color(0.0, 0.0, 0.0, 0.0)
+	if is_unavailable:
+		# Illegal cards look normal until hovered; the red wash fades in there.
+		unavailable_overlay.modulate.a = 0.0
 	unavailable_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	unavailable_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	card_body.add_child(unavailable_overlay)
@@ -1602,6 +1622,8 @@ func _make_card_item(card: Card) -> Control:
 	unavailable_mark.add_theme_constant_override("shadow_offset_y", 2)
 	unavailable_mark.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	unavailable_mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if is_unavailable:
+		unavailable_mark.modulate.a = 0.0
 	card_body.add_child(unavailable_mark)
 
 	if is_unavailable and not unavailable_badge_text.is_empty():
@@ -1617,6 +1639,7 @@ func _make_card_item(card: Card) -> Control:
 		unavailable_band.offset_top = -74
 		unavailable_band.offset_bottom = -44
 		unavailable_band.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		unavailable_band.modulate.a = 0.0
 		card_body.add_child(unavailable_band)
 
 		var unavailable_reason_lbl := Label.new()
@@ -1636,6 +1659,7 @@ func _make_card_item(card: Card) -> Control:
 		unavailable_reason_lbl.offset_top = -74
 		unavailable_reason_lbl.offset_bottom = -44
 		unavailable_reason_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		unavailable_reason_lbl.modulate.a = 0.0
 		card_body.add_child(unavailable_reason_lbl)
 
 	# Active God tag
@@ -2082,6 +2106,32 @@ func _set_collection_card_overlay_state(root: Control, hovered: bool) -> void:
 	if name_label is Control:
 		var hover_only := bool((name_label as Control).get_meta("hover_only", false))
 		(name_label as Control).visible = hovered if hover_only else true
+	if bool(root.get_meta("is_unavailable", false)):
+		_fade_illegal_card_hover_state(root, hovered)
+
+func _fade_illegal_card_hover_state(root: Control, hovered: bool) -> void:
+	var overlay_alpha := 1.0 if hovered else 0.0
+	var body_alpha := 0.55 if hovered else 1.0
+	var targets: Array[CanvasItem] = []
+	for node_name in ["UnavailableOverlay", "UnavailableMark", "UnavailableReasonBand", "UnavailableReasonLabel"]:
+		var node := root.find_child(node_name, true, false)
+		if node is CanvasItem and not is_equal_approx((node as CanvasItem).modulate.a, overlay_alpha):
+			targets.append(node as CanvasItem)
+	var card_body := root.get_node_or_null("CardBody")
+	var fade_body := card_body is CanvasItem and not is_equal_approx((card_body as CanvasItem).modulate.a, body_alpha)
+	if targets.is_empty() and not fade_body:
+		return
+
+	var previous_tween: Variant = root.get_meta("illegal_hover_tween", null)
+	if previous_tween is Tween:
+		(previous_tween as Tween).kill()
+	var tween := create_tween()
+	tween.set_parallel(true)
+	for target in targets:
+		tween.tween_property(target, "modulate:a", overlay_alpha, ILLEGAL_CARD_FADE_DURATION)
+	if fade_body:
+		tween.tween_property(card_body, "modulate:a", body_alpha, ILLEGAL_CARD_FADE_DURATION)
+	root.set_meta("illegal_hover_tween", tween)
 
 func _set_show_collection_card_overlays(enabled: bool) -> void:
 	if _show_collection_card_overlays == enabled:
@@ -2092,6 +2142,33 @@ func _set_show_collection_card_overlays(enabled: bool) -> void:
 			var control_root := root as Control
 			var hovered := control_root.get_global_rect().has_point(get_viewport().get_mouse_position())
 			_set_collection_card_overlay_state(control_root, hovered)
+
+func _load_deck_builder_settings() -> void:
+	var config := ConfigFile.new()
+	if config.load(USER_SETTINGS_PATH) != OK:
+		return
+	_show_illegal_cards = bool(config.get_value(DECK_BUILDER_SETTINGS_SECTION, SHOW_ILLEGAL_CARDS_KEY, false))
+
+func _save_show_illegal_cards_setting() -> void:
+	var config := ConfigFile.new()
+	config.load(USER_SETTINGS_PATH)
+	config.set_value(DECK_BUILDER_SETTINGS_SECTION, SHOW_ILLEGAL_CARDS_KEY, _show_illegal_cards)
+	var error := config.save(USER_SETTINGS_PATH)
+	if error != OK:
+		push_warning("Could not save deck builder show-illegal setting: %s" % str(error))
+
+func _set_show_illegal_cards(enabled: bool) -> void:
+	if _show_illegal_cards == enabled:
+		return
+	_show_illegal_cards = enabled
+	_save_show_illegal_cards_setting()
+	if not enabled and not _selected_collection_card_name.is_empty():
+		var selected_card := _find_template(_selected_collection_card_name)
+		if selected_card != null and not _get_card_unavailable_reason(selected_card).is_empty():
+			_clear_selected_collection_card()
+	_current_page = 0
+	_rebuild_filtered_cards_cache()
+	_refresh_collection_grid_and_layout()
 
 func _refresh_deck_panel(rebuild_collection: bool = false, refresh_layout: bool = false) -> void:
 	_submit_bot_button.disabled = _deck.is_empty()
@@ -5083,8 +5160,11 @@ func _rebuild_filtered_cards_cache() -> void:
 	for card in _all_cards:
 		if selected_god != null and card.is_god and not _filters.has("Gods"):
 			continue
-		if _matches_filter(card):
-			_filtered_cards_cache.append(card)
+		if not _matches_filter(card):
+			continue
+		if not _show_illegal_cards and not _get_card_unavailable_reason(card).is_empty():
+			continue
+		_filtered_cards_cache.append(card)
 	if _collection_sort == "Alphabetical":
 		_filtered_cards_cache.sort_custom(_alphabetical_card_less)
 
@@ -5163,6 +5243,8 @@ func _refresh_saved_decks_view_button() -> void:
 		_card_view_label.text = "Deck Size:" if saved_decks_mode else "Card View:"
 	if _card_overlays_toggle != null:
 		_card_overlays_toggle.visible = not saved_decks_mode
+	if _show_illegal_toggle != null:
+		_show_illegal_toggle.visible = not saved_decks_mode
 
 func _max_copies(card: Card) -> int:
 	if card.is_god:       return 1

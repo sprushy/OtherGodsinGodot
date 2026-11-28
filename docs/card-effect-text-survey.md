@@ -259,7 +259,7 @@ Each entry gives proposed wording, an edit to make, or a reason to retain the ex
 | [Sap](../scripts/cards/Hexes/Sap.gd) | “When cards enter the Frontline, destroy those cards.” Keep the possibility of several cards entering together and verify that “enter” captures every placement path. |
 | [Sap Strength](../scripts/cards/Hexes/SapStrength.gd) | “A creature gets −10 STR until end of turn.” |
 | [Sep Lemutti](../scripts/cards/Hexes/SepLemutti.gd) | “When a Spirit, Monster, Undead or Demon is summoned, Shelve it.” |
-| [Shroud of the Ancients](../scripts/cards/Hexes/ShroudOfTheAncients.gd) | “Put all creatures in Stealth.” |
+| [Shroud of the Ancients](../scripts/cards/Hexes/ShroudOfTheAncients.gd) | “Put all creatures in Stealth and exhaust their minor actions.” |
 | [Smite](../scripts/cards/Hexes/Smite.gd) | Keep. “Declares an attack” is the operative event. |
 | [Spell Demolition](../scripts/cards/Hexes/SpellDemolition.gd) | Keep both verbs in “Silence and destroy a Spell.” |
 | [The Deluge](../scripts/cards/Hexes/TheDeluge.gd) | Keep the one-line trigger and “all physical cards.” The physical-card category determines the scope. |

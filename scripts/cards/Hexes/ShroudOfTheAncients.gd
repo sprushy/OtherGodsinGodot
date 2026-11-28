@@ -11,7 +11,7 @@ func _init() -> void:
 	speed = 4
 	culture = "Ancient"
 	card_types = ["Cloak", "Stealth"]
-	ability_text = "Change all creatures to stealth stance."
+	ability_text = "Change all creatures to stealth stance and exhaust their minor actions."
 	flavor_text = ""
 	artist = ""
 	art_path = "res://images/card_art/hexes/ShroudoftheAncientsArt.jpg"
@@ -68,7 +68,7 @@ func on_activate_action(game_manager: GameManager, _action: CardAction) -> void:
 			no_effect_feedback += " %d creature(s) were immune." % immune_count
 		game_manager.note_player_feedback(no_effect_feedback)
 	else:
-		var feedback := "%s changed %d creature(s) to stealth stance." % [card_name, affected_count]
+		var feedback := "%s changed %d creature(s) to stealth stance and exhausted their minor actions." % [card_name, affected_count]
 		if immune_count > 0:
 			feedback += " %d creature(s) were immune." % immune_count
 		game_manager.note_player_feedback(feedback)
@@ -86,3 +86,6 @@ func _apply_stealth_stance(creature: Card) -> void:
 	creature.is_face_down = true
 	creature.is_stealth = true
 	creature.creature_mode = STEALTH_MODE
+	var unspent_minor_actions := maxi(0, creature.get_max_minor_creature_actions_per_turn() - creature.creature_minor_actions_used)
+	for _i in range(unspent_minor_actions):
+		creature.spend_minor_creature_action()

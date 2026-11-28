@@ -3,6 +3,7 @@ extends RefCounted
 const LEAGUES := ["Iron", "Bronze", "Silver", "Gold", "Diamond", "Ascendant", "Divine"]
 const STARS_PER_DIVISION := 3
 const DIVISIONS := ["V", "IV", "III", "II", "I"]
+const IRON_DIVISIONS := ["III", "II", "I"]
 const FIRST_LEAGUE_WITH_STAR_LOSS := 2
 const FIRST_LEAGUE_WITHOUT_STREAK_BONUS := 4
 const WIN_STREAK_BONUS_THRESHOLD := 3
@@ -19,7 +20,7 @@ static func advance_to_season(progress: Dictionary, season: int) -> void:
 		return
 	var previous_peak := _rank_at(int(progress.get("peak_points", 0)))
 	var reset_league := maxi(0, int(previous_peak["league"]) - (season - previous_season))
-	var reset_points := reset_league * _stars_per_league()
+	var reset_points := _league_start(reset_league)
 	progress.merge({
 		"season": season,
 		"points": reset_points,
@@ -113,11 +114,16 @@ static func summarize(progress: Dictionary, season: int) -> Dictionary:
 static func summarize_bot_stars(total_stars: int) -> Dictionary:
 	return _rank_at(maxi(0, total_stars))
 
+static func divisions_for_league(league: int) -> Array:
+	return IRON_DIVISIONS if league == 0 else DIVISIONS
+
 static func _rank_at(points: int) -> Dictionary:
-	var stars_per_league := _stars_per_league()
-	@warning_ignore("integer_division")
-	var league := mini(points / stars_per_league, DIVINE)
-	var league_start := league * stars_per_league
+	var bronze_start := _league_start(1)
+	var league := 0
+	if points >= bronze_start:
+		@warning_ignore("integer_division")
+		league = mini(1 + (points - bronze_start) / _stars_per_standard_league(), DIVINE)
+	var league_start := _league_start(league)
 	if league < DIVINE:
 		var stars_in_league := points - league_start
 		@warning_ignore("integer_division")
@@ -126,7 +132,7 @@ static func _rank_at(points: int) -> Dictionary:
 		if league < FIRST_LEAGUE_WITH_STAR_LOSS:
 			floor_points = points
 		return {
-			"name": "%s %s" % [LEAGUES[league], DIVISIONS[division]],
+			"name": "%s %s" % [LEAGUES[league], divisions_for_league(league)[division]],
 			"league": league,
 			"stars": stars_in_league % STARS_PER_DIVISION,
 			"stars_required": STARS_PER_DIVISION,
@@ -140,5 +146,10 @@ static func _rank_at(points: int) -> Dictionary:
 		"floor_points": league_start,
 	}
 
-static func _stars_per_league() -> int:
+static func _stars_per_standard_league() -> int:
 	return DIVISIONS.size() * STARS_PER_DIVISION
+
+static func _league_start(league: int) -> int:
+	if league == 0:
+		return 0
+	return IRON_DIVISIONS.size() * STARS_PER_DIVISION + (league - 1) * _stars_per_standard_league()

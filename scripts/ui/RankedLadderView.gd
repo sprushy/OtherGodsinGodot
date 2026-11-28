@@ -91,7 +91,6 @@ func _ready() -> void:
 	rows.add_theme_constant_override("separation", 7)
 	_scroll.add_child(rows)
 	var next_league_rank := ""
-	var divisions: Array = RankedProgressionScript.DIVISIONS
 	for league_index in range(RankedProgressionScript.LEAGUES.size() - 1, -1, -1):
 		var league_name: String = RankedProgressionScript.LEAGUES[league_index]
 		var row := HBoxContainer.new()
@@ -103,6 +102,7 @@ func _ready() -> void:
 			_add_rank_cell(row, league_name, "Open-ended")
 			next_league_rank = league_name
 			continue
+		var divisions := RankedProgressionScript.divisions_for_league(league_index)
 		for division_index in range(divisions.size()):
 			var division: String = divisions[division_index]
 			var rank_name := "%s %s" % [league_name, division]
