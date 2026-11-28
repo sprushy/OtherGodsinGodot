@@ -1019,6 +1019,10 @@ func _choose_main_phase_action() -> bool:
 				equipped_line["lethal"] = true
 			if _is_better_strategy_plan(equipped_line, attack_setup):
 				attack_setup = equipped_line
+	# Price the reveal against the final summon continuations, including any
+	# equipment line that replaced the attack setup above.
+	var reveal_sacrifice := _plan_reveal_before_sacrifice(summon)
+	var reveal_attack_sacrifice := _plan_reveal_before_sacrifice(attack_setup)
 
 	var removals: Array[Dictionary] = []
 	var play := _get_best_strategy_action(attacks, combat, danger, removals)
@@ -1037,7 +1041,8 @@ func _choose_main_phase_action() -> bool:
 			power_activation = {}
 	var plans: Array[Dictionary] = [
 		play, god_removal, power_activation, paired_removal, unlock, support, building_line,
-		summon, attack_setup, _plan_summoned_removal_ability(attacks, combat, danger),
+		summon, attack_setup, reveal_sacrifice, reveal_attack_sacrifice,
+		_plan_summoned_removal_ability(attacks, combat, danger),
 		_plan_god_manifestation(danger, attacks), _plan_deck_god_ability(danger, attacks, combat, mana_budget),
 		equipment, hermes_plan, aspect_shift, _plan_shift(attacks, combat, danger),
 		_plan_defensive_stance(danger), _plan_equipment_pickup(), _plan_united_front(attacks, combat),
@@ -4052,6 +4057,77 @@ func _plan_summoned_removal_ability(attacks: Array[Dictionary], baseline: Dictio
 				}
 				if _is_better_strategy_plan(plan, best):
 					best = plan
+	return best
+
+func _summon_plan_mana_cost(command: Dictionary) -> int:
+	var command_type := str(command.get("type", ""))
+	if command_type == "play_creature":
+		var card := game_manager.get_card_by_uid(str(command.get("card_uid", "")))
+		return _get_play_cost(card, false) if card != null else 0
+	if command_type == "wolf_master_summon":
+		var fenrir := game_manager.get_card_by_uid(str(command.get("fenrir_uid", ""))) as Fenrir
+		var lupine := game_manager.get_card_by_uid(str(command.get("lupine_uid", "")))
+		if fenrir != null and lupine != null:
+			return game_manager.get_creature_summon_mana_cost(bot_player, lupine, fenrir)
+	return 0
+
+# A stealth reveal-removal body (Dalkhu Break / Drown Below) is cheap to
+# sacrifice only while its trigger is unspent. When the summon planner picked
+# such a body as payment, reveal it first: the stance change fires the trigger
+# on the best current target, then the next planning pass replays the same
+# summon against the now-revealed body without paying Part A's forfeit charge.
+# The plan is scored as the summon line plus the harvested trigger, less the
+# minor-action mana, so it only wins when the reveal is worth the tempo.
+func _plan_reveal_before_sacrifice(summon: Dictionary) -> Dictionary:
+	if summon.is_empty():
+		return {}
+	var command: Dictionary = summon.get("command", {})
+	var sacrifice_uids: Array = command.get("sacrifice_uids", [])
+	if sacrifice_uids.is_empty():
+		return {}
+	var best := {}
+	for raw_uid in sacrifice_uids:
+		var creature := game_manager.get_card_by_uid(str(raw_uid))
+		if creature == null or not creature.is_stealth or creature.abilities_suppressed_by_effects():
+			continue
+		if creature.is_sleeping or creature.is_paralyzed() \
+				or not creature.can_take_minor_creature_action() \
+				or not game_manager.can_pay_creature_action_mana_cost(creature, "change stance"):
+			continue
+		# Only harvest a trigger that has a real target right now. With no
+		# target the body is a banked removal, and Part A already charges the
+		# hold value instead of spending it on a reveal.
+		var trigger_value := _estimate_reveal_trigger_value(creature)
+		if trigger_value <= 0:
+			continue
+		var stance_cost := game_manager.get_creature_action_mana_cost(creature, "change stance")
+		# The stance tax comes out of the same mana pool as the summon. If the
+		# summon can no longer be paid after the reveal, let the next planning
+		# pass find a different payment instead of stranding the body. Only
+		# count the brew when this summon line already plans to take it.
+		var remaining_mana := bot_player.mana - stance_cost
+		if bool(summon.get("brew_setup", false)):
+			remaining_mana += _ready_brew_mana_gain()
+		if remaining_mana < _summon_plan_mana_cost(command):
+			continue
+		# The summon score already paid Part A's charge for sacrificing this
+		# body while hidden. Revealing refunds that charge (including any
+		# debilitation discount) and adds the trigger's own value, at the
+		# price of the minor action.
+		var refund := _score_summon_sacrifice_candidate(creature) \
+			- _score_summon_sacrifice_candidate(creature, false)
+		var benefit := trigger_value + refund - stance_cost * _mana_rate()
+		if benefit <= 0:
+			continue
+		var plan := {
+			"score": int(summon.get("score", 0)) + benefit,
+			"combat_score": int(summon.get("combat_score", 0)),
+			"lethal": bool(summon.get("lethal", false)),
+			"combined_setup": true,
+			"command": {"type": "change_mode", "card_uid": creature.uid, "mode": Card.CreatureMode.DEFENSIVE},
+		}
+		if _is_better_strategy_plan(plan, best):
+			best = plan
 	return best
 
 func _score_e2_abzu_build(abzu: E2Abzu, excluded: Array) -> int:
@@ -11083,6 +11159,14 @@ func _banked_reveal_removal_value(card: Card) -> int:
 	@warning_ignore("integer_division")
 	return ECON_CARD_VALUE * 3 / 4
 
+# The value a stealth reveal-removal body loses when it is sacrificed while
+# still hidden. Use the spend-now trigger value when a target exists, and the
+# banked-removal floor when the body is only holding the option.
+func _stealth_reveal_sacrifice_charge(card: Card) -> int:
+	if card == null or not card.is_stealth or card.abilities_suppressed_by_effects():
+		return 0
+	return maxi(_estimate_reveal_trigger_value(card), _banked_reveal_removal_value(card))
+
 func _estimate_reveal_trigger_value(card: Card) -> int:
 	if card.abilities_suppressed_by_effects():
 		return 0
@@ -12700,10 +12784,15 @@ func _score_lowest_selection_candidate(card: Card, score_mode: String) -> int:
 		_:
 			return _score_summon_sacrifice_candidate(card)
 
-func _score_summon_sacrifice_candidate(card: Card) -> int:
+func _score_summon_sacrifice_candidate(card: Card, include_reveal_charge: bool = true) -> int:
 	if card == null or card.is_god or card is ActiveGodCard:
 		return 1000000
 	var score := _score_projected_card(card)
+	# A stealth creature with a banked reveal trigger forfeits that trigger
+	# when sacrificed without revealing first. Charge the full trigger value
+	# so the bot either finds a cheaper sacrifice or reveals before paying.
+	if include_reveal_charge:
+		score += _stealth_reveal_sacrifice_charge(card)
 	if card.creature_mode == Card.CreatureMode.DEFENSIVE:
 		score += 250
 	if not card.can_take_major_creature_action():
