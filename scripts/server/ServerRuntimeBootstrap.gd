@@ -106,6 +106,7 @@ func _boot_match_runtime(launch_args: Dictionary) -> void:
 		get_tree().quit(1)
 		return
 	var match_server = match_server_script.new()
+	match_server.owns_match_process = true
 	match_server.name = "HeadlessMatchServer"
 	add_child(match_server)
 	_server_node = match_server

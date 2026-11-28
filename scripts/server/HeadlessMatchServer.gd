@@ -36,6 +36,7 @@ var network_manager: Node = null
 var game_event_broadcaster: GameEventBroadcaster = null
 var match_session = null
 var exit_tree_on_shutdown: bool = true
+var owns_match_process := false
 
 var _default_match_setup = DefaultMatchSetupScript.new()
 var _match_history_store = MatchHistoryStoreScript.new(MatchHistoryStoreScript.DEFAULT_STORAGE_FILE_NAME, true)
@@ -67,8 +68,6 @@ var _ranked_timeout_deadline_msec := 0
 # of the pending interaction list buy nothing.
 var _ranked_clock_check_elapsed: float = 0.0
 const _RANKED_CLOCK_CHECK_INTERVAL_SECONDS := 0.25
-# The status directory is created once; the heartbeat writes skip the mkdir.
-var _status_dir_ensured: bool = false
 
 func _process(delta: float) -> void:
 	if not _abandoned_shutdown_started:
@@ -318,6 +317,7 @@ func _attach_server_bots_for_match() -> void:
 			continue
 		var bot_input = ServerBotGameInputScript.new(match_manager, player_index, match_session)
 		var bot = PracticeFuzzPlayerBotScript.new()
+		bot.allow_deep_crowded_combat = owns_match_process
 		if match_session.is_bot_self_play():
 			bot.get_step_delay = _get_self_play_step_delay
 		bot.attach(game_manager, match_manager, bot_input, player_index)
@@ -740,12 +740,13 @@ func _get_spectator_bot_ranked_result(winner_index: int) -> Dictionary:
 	var previous_points := maxi(0, int(submission.get("bot_stars", 0)))
 	var previous := RankedProgressionScript.summarize_bot_stars(previous_points)
 	var outcome := "win" if ranked_player_index == winner_index else "loss"
+	var star_multiplier := RankedProgressionScript.star_multiplier_for_format(int(match_session.series_best_of))
 	var next_points := previous_points
 	if outcome == "win":
 		next_points = previous_points + RankedProgressionScript.win_bonus_stars(
-			int(submission.get("bot_win_streak", 0)) + 1, previous_points)
+			int(submission.get("bot_win_streak", 0)) + 1, previous_points) * star_multiplier
 	else:
-		next_points = maxi(int(previous["floor_points"]), previous_points - 1)
+		next_points = maxi(int(previous["floor_points"]), previous_points - star_multiplier)
 	var after := RankedProgressionScript.summarize_bot_stars(next_points)
 	return {
 		"best_of": int(match_session.series_best_of),
@@ -788,26 +789,8 @@ func _write_status_file(status_override: String = "", reason: String = "") -> vo
 	if match_session.is_bot_self_play() and _bot_review_started_msec > 0:
 		payload["bot_turn"] = _bot_review_turn
 		payload["bot_issues"] = _bot_review_issues
-	# Status files are disposable heartbeat data the supervisor reads only to
-	# detect staleness, so write them directly instead of the atomic
-	# temp+backup+rename dance: a torn write parses as no-status data and the
-	# supervisor falls back to its 20s staleness threshold, which is the same
-	# outcome as a failed atomic write.
-	var status_dir := status_path.get_base_dir()
-	if not _status_dir_ensured and not status_dir.is_empty():
-		var mkdir_err := DirAccess.make_dir_recursive_absolute(status_dir)
-		if mkdir_err != OK and mkdir_err != ERR_ALREADY_EXISTS:
-			return
-		_status_dir_ensured = true
-	var file := FileAccess.open(status_path, FileAccess.WRITE)
-	if file == null:
-		# The directory may have been removed since the last write; retry the
-		# mkdir on the next heartbeat.
-		_status_dir_ensured = false
-		return
-	file.store_string(JSON.stringify(payload, "", false))
-	file.flush()
-	file.close()
+	# The supervisor polls from another process and can read during replacement.
+	JsonStoreScript.save_json(status_path, payload, "HeadlessMatchServer", true)
 
 func _track_bot_review_game() -> void:
 	_bot_review_turn = 0

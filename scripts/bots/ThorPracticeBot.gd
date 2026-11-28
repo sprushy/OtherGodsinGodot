@@ -15,6 +15,7 @@ var opponent: Player = null
 # An optional selector responder for manual sandboxes; empty means full play.
 var prompt_types_only: Array[String] = []
 var get_step_delay: Callable
+var allow_deep_crowded_combat := false
 
 const STEP_DELAY_SECONDS := 0.35
 const RETRY_POLL_DELAY_SECONDS := 0.15
@@ -32,11 +33,13 @@ const COMBAT_REMOVAL_SEARCH_WIDTH := 32
 const TURN_ATTACK_SEARCH_LIMIT := 512
 const TURN_ATTACK_SEARCH_INCOMPLETE := -2147483648
 # Both the live planner and speculative actions can ask for combat forecasts.
-# Share the expensive reply budget across a main-phase decision on large boards.
+# Share their expensive work across one decision on large boards.
 const CROWDED_REPLY_FORECAST_LIMIT := 2
 const CROWDED_BOARD_CREATURES := 12
 const CROWDED_COMBAT_SEARCH_WIDTH := 3
 const CROWDED_COMBAT_SEARCH_DEPTH := 2
+const CROWDED_WORKER_SEARCH_DEPTH := 4
+const CROWDED_EXTRA_ATTACK_TRIALS := 384
 const NECOC_YAOTL_SEARCH_WIDTH := 8
 const TURN_PROJECTION_WIDTH := 4
 const COMBAT_RESPONSE_SEARCH_WIDTH := 24
@@ -106,7 +109,12 @@ var _posture_cache := {"turn": -1, "value": {}}
 var _posture_evaluating := false
 var _locked_board_evaluating := false
 var _scoring_byggvir_brewing := false
-var _crowded_reply_forecasts_left: Array[int] = []
+
+class CrowdedPlanningBudget:
+	var replies_left := CROWDED_REPLY_FORECAST_LIMIT
+	var extra_attack_trials_left := 0
+
+var _crowded_budget: CrowdedPlanningBudget
 # Opt-in decision tracing for summon planning. Set OTHERGODS_BOT_DECISION_LOG=1
 # on the bot's process (practice window or headless server) to print every
 # evaluated summon plan with its score components, so a chosen chump blocker
@@ -155,6 +163,7 @@ func detach() -> void:
 	_last_submitted_prompt_id = -1
 	_posture_cache = {"turn": -1, "value": {}}
 	_posture_evaluating = false
+	_crowded_budget = null
 
 func poll() -> void:
 	_queue_step()
@@ -976,11 +985,16 @@ func _submit_priority_response(card: Card) -> bool:
 		})
 	return false
 
-func _take_main_phase_action() -> bool:
+func _begin_crowded_planning(deepen: bool) -> void:
 	if _get_board_creatures(bot_player).size() + _get_board_creatures(opponent).size() >= CROWDED_BOARD_CREATURES:
-		_crowded_reply_forecasts_left = [CROWDED_REPLY_FORECAST_LIMIT]
+		_crowded_budget = CrowdedPlanningBudget.new()
+		if deepen:
+			_crowded_budget.extra_attack_trials_left = CROWDED_EXTRA_ATTACK_TRIALS
+
+func _take_main_phase_action() -> bool:
+	_begin_crowded_planning(allow_deep_crowded_combat)
 	var acted := _choose_main_phase_action()
-	_crowded_reply_forecasts_left = []
+	_crowded_budget = null
 	return acted
 
 func _choose_main_phase_action() -> bool:
@@ -1143,7 +1157,7 @@ func _new_turn_projection_bot(game: GameManager, rules: MatchManager, seat: int)
 	bot.bot_player = game.players[seat]
 	bot.opponent = game.get_opponent(bot.bot_player)
 	bot._decision_log_enabled = false
-	bot._crowded_reply_forecasts_left = _crowded_reply_forecasts_left
+	bot._crowded_budget = _crowded_budget
 	if seat == player_index:
 		bot._strategy_activation_turns = _strategy_activation_turns.duplicate()
 		bot._dellingr_revealed_target_uids = _dellingr_revealed_target_uids.duplicate()
@@ -1156,6 +1170,7 @@ func _compare_main_phase_continuations(candidates: Array[Dictionary], baseline: 
 	if candidates.is_empty() or (bool(candidates[0].get("lethal", false)) and not bool(candidates[0].get("risky_lethal", false))):
 		return
 	var snapshot := {}
+	var source_cards := {}
 	var projected_count := 0
 	var tried_attack_first := false
 	var seen_commands: Array[Dictionary] = []
@@ -1179,7 +1194,8 @@ func _compare_main_phase_continuations(candidates: Array[Dictionary], baseline: 
 		tried_attack_first = tried_attack_first or attack_first
 		if snapshot.is_empty():
 			snapshot = TurnProjection.capture(self)
-		var projection := TurnProjection.new(self, snapshot)
+			source_cards = GameState._build_card_uid_map(game_manager)
+		var projection := TurnProjection.new(self, snapshot, source_cards)
 		if projection.play(player_index, command):
 			_score_turn_continuation(projection, line, baseline, danger, mana_budget, can_deploy)
 		projection.release()
@@ -7095,6 +7111,7 @@ func _forecast_opponent_turn(change: Dictionary, this_turn: bool, recruits: Dict
 		if cost > budget:
 			continue
 		var speed := attacker.get_effective_speed()
+		var intercepted_outcomes := {}
 		for target in targets:
 			var target_form: Variant = shifted_form if target == shifting else target
 			if attacker is ActiveGodCard and attacker in setup_attackers and _has_prepared_answer_to_champions_call(
@@ -7131,15 +7148,18 @@ func _forecast_opponent_turn(change: Dictionary, this_turn: bool, recruits: Dict
 				elif interceptor in summons:
 					mode = Card.CreatureMode.DEFENSIVE if defensive_summons or interceptor in defensive_recruits else Card.CreatureMode.AGGRESSIVE
 				var target_zone := destination if target == moved else summons.get(target) as Zone
-				var projected_stealth := summon_stealth and interceptor == summon
 				var intercept_form: Card = summoned_forms.get(interceptor, shifted_form if interceptor == shifting else interceptor)
 				var legal := match_manager._can_intercept(intercept_form, attacker, target_form, null, 0, speed, projected_zone, mode, target_zone)
 				if not legal:
 					continue
-				action.interceptor = interceptor
-				var interceptor_stance := interceptor if interceptor in summons else stance
-				var interceptor_defensive := (defensive and interceptor == stance) or (defensive_summons and interceptor in summons) or interceptor in defensive_recruits
-				replies[interceptor] = _forecast_incoming_combat(action, interceptor_stance, interceptor_defensive, projected_stealth, removed, stats)
+				# Legality depends on the protected target. The ensuing fight uses
+				# the same two combatants and projected stats for this attacker.
+				if not intercepted_outcomes.has(interceptor):
+					action.interceptor = interceptor
+					var interceptor_stance := interceptor if interceptor in summons else stance
+					var interceptor_defensive := (defensive and interceptor == stance) or (defensive_summons and interceptor in summons) or interceptor in defensive_recruits
+					intercepted_outcomes[interceptor] = _forecast_incoming_combat(action, interceptor_stance, interceptor_defensive, summon_stealth and interceptor == summon, removed, stats)
+				replies[interceptor] = intercepted_outcomes[interceptor]
 			attack_lines.append({"attacker": attacker, "target": target, "replies": replies, "barriers": barriers, "cost": cost})
 	var exposure := 0 if this_turn else _aphrodite_exposure_pulse(removed)
 	var guard := int(change.get("guard", bot_player.guard))
@@ -7271,17 +7291,19 @@ func _search_turn_attacks(
 	spent: Array, casualties: Array, memo: Dictionary, branches_left: Array[int],
 	scale: int = 1, continuation: Callable = Callable(), immediate_only: bool = false
 ) -> int:
-	if not immediate_only:
-		if branches_left[0] <= 0:
-			return TURN_ATTACK_SEARCH_INCOMPLETE
-		branches_left[0] -= 1
 	var spent_ids := spent.map(func(card: Card) -> int: return card.get_instance_id())
 	var casualty_ids := casualties.map(func(card: Card) -> int: return card.get_instance_id())
 	spent_ids.sort()
 	casualty_ids.sort()
-	var key := str([mana, resources, spent_ids, casualty_ids])
+	var key := [mana, resources, spent_ids, casualty_ids]
 	if memo.has(key):
 		return int(memo[key])
+	# Different attack orders can reach the same position. Only a new
+	# evaluation needs a search visit, even when the budget has run out.
+	if not immediate_only:
+		if branches_left[0] <= 0:
+			return TURN_ATTACK_SEARCH_INCOMPLETE
+		branches_left[0] -= 1
 	# Stopping now is also a legal choice. Evaluate what can attack back
 	# after the opponent is done, with the casualties shared across turns.
 	var retaliation := int(continuation.call(casualties, resources)) if continuation.is_valid() else 0
@@ -7866,7 +7888,7 @@ func _plan_combat(candidates: Array[Dictionary], removed: Array = [], committed:
 	var best := {}
 	var best_score := 0
 	var best_is_lethal := false
-	var crowded := not _crowded_reply_forecasts_left.is_empty()
+	var crowded := _crowded_budget != null
 	var search_width := CROWDED_COMBAT_SEARCH_WIDTH if crowded else COMBAT_ATTACK_SEARCH_WIDTH
 	var available_mana := (bot_player.mana if projected_mana < 0 else projected_mana) - mana_spent
 	var enslave_targets := _get_projected_violent_delights_targets(available_mana)
@@ -7897,7 +7919,20 @@ func _plan_combat(candidates: Array[Dictionary], removed: Array = [], committed:
 	if candidates.is_empty():
 		return {}
 	var depth := 0
-	while not frontier.is_empty() and (not crowded or depth < CROWDED_COMBAT_SEARCH_DEPTH):
+	while not frontier.is_empty():
+		if crowded and depth >= CROWDED_COMBAT_SEARCH_DEPTH:
+			# Extend only the best surviving position. Charge a full layer before
+			# starting it so candidate order cannot decide where the budget cuts off.
+			if depth >= CROWDED_WORKER_SEARCH_DEPTH or best_is_lethal \
+					or candidates.size() > _crowded_budget.extra_attack_trials_left:
+				break
+			_crowded_budget.extra_attack_trials_left -= candidates.size()
+			frontier.resize(1)
+		# Every move at the last depth still competes for best. Its resulting
+		# position only needs indexing when another layer can actually use it.
+		var keep_next_layer := not crowded or depth + 1 < CROWDED_COMBAT_SEARCH_DEPTH or (
+			depth + 1 < CROWDED_WORKER_SEARCH_DEPTH and candidates.size() <= _crowded_budget.extra_attack_trials_left
+		)
 		var next := {}
 		var weight := pow(0.75, depth)
 		for line in frontier:
@@ -7930,13 +7965,12 @@ func _plan_combat(candidates: Array[Dictionary], removed: Array = [], committed:
 						"mana_required": available_mana - int(extended["min_mana"]) + mana_spent,
 						"counterattack_baseline": forecast.get("counterattack_baseline", -1),
 					}
-				if extended["terminal"]:
+				if extended["terminal"] or not keep_next_layer:
 					continue
 				var key := _combat_line_key(extended)
 				if not next.has(key) or score > int(next[key]["evaluation"]):
 					next[key] = extended
-		# Equivalent board and resource states share one continuation. Limit
-		# breadth without limiting how many ready creatures can attack.
+		# Equivalent board and resource states share one continuation.
 		frontier.assign(next.values())
 		frontier.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a["evaluation"]) > int(b["evaluation"]))
 		if frontier.size() > search_width:
@@ -7954,6 +7988,8 @@ func _combat_reply_mana(line: Dictionary, forecast: Dictionary) -> int:
 
 
 func _combat_reply_safety(line: Dictionary, forecast: Dictionary, cache: Dictionary) -> int:
+	if _crowded_budget != null and _crowded_budget.replies_left <= 0 and cache.is_empty():
+		return int(forecast.get("hold_safety", 0))
 	var followers := int(line["bot_followers"])
 	var guard := int(line["bot_guard"])
 	var mana := _combat_reply_mana(line, forecast)
@@ -7973,12 +8009,12 @@ func _combat_reply_safety(line: Dictionary, forecast: Dictionary, cache: Diction
 	var enemy_guard := int(line["opponent_guard"])
 	var key := str([followers, guard, mana, removed_ids, sleeping_ids, red_caps, enemy_followers, enemy_guard])
 	if not cache.has(key):
-		if not _crowded_reply_forecasts_left.is_empty():
-			if _crowded_reply_forecasts_left[0] <= 0:
+		if _crowded_budget != null:
+			if _crowded_budget.replies_left <= 0:
 				# Keep the tactical score and give no credit for an unsearched
 				# improvement in the opponent's reply.
 				return int(forecast.get("hold_safety", 0))
-			_crowded_reply_forecasts_left[0] -= 1
+			_crowded_budget.replies_left -= 1
 		var change: Dictionary = forecast.get("change", {}).merged({
 			"removed": removed, "followers": followers, "guard": guard,
 			"committed_attackers": line["attackers"], "sleeping": sleeping, "mana_left": mana,
@@ -11391,7 +11427,7 @@ func _add_combat_casualty(
 		# risk charges only for a combat kill her attack makes; when the BOT's
 		# attack kills her, the unlock doesn't follow (her turn starts with
 		# empty combat events). Charge part of the expected enslaved target.
-		var enslave_risk := _opponent_aphrodite_enslavement_risk(victim)
+		var enslave_risk := _aphrodite_survivor_risk(_opponent_aphrodite_enslave_targets([]), victim)
 		if enslave_risk > 0:
 			result["enslavement_risk"] = int(result.get("enslavement_risk", 0)) + enslave_risk
 		# Losing a frontline body can also hand Guan Yu's Tactical Break clock
@@ -11455,26 +11491,31 @@ func _opponent_freyja_reanimate_discount(victim: Card) -> int:
 # OWN turn (the guard's combat events clear every turn start). If her Aphrodite
 # could pay and a target remains, the forecast should expect to lose part of
 # that creature's value.
-func _opponent_aphrodite_enslavement_risk(dying_victim: Card, removed: Array = []) -> int:
+func _opponent_aphrodite_enslave_targets(removed: Array) -> Array[Card]:
+	var targets: Array[Card] = []
 	if opponent == null or game_manager == null:
-		return 0
+		return targets
 	var god := _find_opponent_god()
 	if not (god is AphroditeAreia) or god.is_muted or not CardStrategy.visible(self, god):
-		return 0
+		return targets
 	if opponent.mana + 4 < AphroditeAreia.ACTIVATION_COST:
-		return 0
-	var best := 0
+		return targets
 	for creature in _get_board_creatures(bot_player):
-		if creature == dying_victim or creature in removed \
+		if creature in removed \
 				or not CardStrategy.visible(self, creature) or creature.is_face_down:
 			continue
 		if not god.is_valid_activation_target(creature):
 			continue
 		if game_manager._is_protected_from_enslavement(creature):
 			continue
-		best = maxi(best, _get_card_economic_value(creature))
-	if best <= 0:
-		return 0
+		targets.append(creature)
+	return targets
+
+func _aphrodite_survivor_risk(targets: Array[Card], dying_victim: Card) -> int:
+	var best := 0
+	for creature in targets:
+		if creature != dying_victim:
+			best = maxi(best, _get_card_economic_value(creature))
 	# She still has to reach her turn, pay, and find the window open.
 	@warning_ignore("integer_division")
 	return best / 4
@@ -11524,33 +11565,24 @@ func _aphrodite_exposure_pulse(removed: Array = []) -> int:
 # removed list lets forecasts re-price the combo after a contemplated line
 # kills her unlock enabler or clears the kill/enslave pool.
 func _opponent_aphrodite_enslave_exposure(removed: Array = []) -> int:
-	if opponent == null or game_manager == null:
-		return 0
-	var aphrodite := _find_opponent_god() as AphroditeAreia
-	if aphrodite == null or aphrodite.is_muted or not CardStrategy.visible(self, aphrodite):
-		return 0
-	if opponent.mana + 4 < AphroditeAreia.ACTIVATION_COST:
+	var targets := _opponent_aphrodite_enslave_targets(removed)
+	if targets.size() < 2:
 		return 0
 	var budget := opponent.mana + game_manager.get_automatic_upkeep_mana_gain(opponent, game_manager.turn_number + 1) \
 		+ game_manager.get_effective_upkeep_mana_gain(game_manager.get_base_upkeep_mana_gain(), opponent)
 	if budget <= 0:
 		return 0
-	var exposure := 0
-	for creature in _get_board_creatures(bot_player):
-		if creature == null or creature in removed or creature.is_face_down \
-				or not CardStrategy.visible(self, creature):
-			continue
-		if not aphrodite.is_valid_activation_target(creature):
-			continue
-		if game_manager._is_protected_from_enslavement(creature):
-			continue
+	var only_victim: Card = null
+	for creature in targets:
 		var barrier := _creature_kill_barrier(creature)
 		if barrier <= 0:
 			continue
-		if _visible_stack_can_kill(creature, budget, removed) \
-				or budget * ECON_FORECAST_SUMMON_STR_PER_MANA > barrier:
-			exposure = maxi(exposure, _opponent_aphrodite_enslavement_risk(creature, removed))
-	return exposure
+		if budget * ECON_FORECAST_SUMMON_STR_PER_MANA > barrier or _visible_stack_can_kill(creature, budget, removed):
+			# With two possible kills, any target can survive one of them.
+			if only_victim != null:
+				return _aphrodite_survivor_risk(targets, null)
+			only_victim = creature
+	return _aphrodite_survivor_risk(targets, only_victim) if only_victim != null else 0
 
 # Value a combat line denies by breaking the opponent Aphrodite's standing
 # Violent Delights line: guaranteed casualties that kill her unlock enabler

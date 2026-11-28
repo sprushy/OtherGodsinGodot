@@ -6,6 +6,7 @@ const DIVISIONS := ["V", "IV", "III", "II", "I"]
 const FIRST_LEAGUE_WITH_STAR_LOSS := 2
 const FIRST_LEAGUE_WITHOUT_STREAK_BONUS := 4
 const WIN_STREAK_BONUS_THRESHOLD := 3
+const BO3_STAR_MULTIPLIER := 2
 const DIVINE := 6
 
 static func season_for_time(unix_time: float) -> int:
@@ -28,19 +29,20 @@ static func advance_to_season(progress: Dictionary, season: int) -> void:
 		"last_delta": 0,
 	}, true)
 
-static func apply_result(progress: Dictionary, result: String, season: int) -> void:
+static func apply_result(progress: Dictionary, result: String, season: int, star_multiplier: int = 1) -> void:
 	advance_to_season(progress, season)
 	var previous_points: int = progress["points"]
 	var current_rank := _rank_at(previous_points)
 	var points := previous_points
 	var streak: int = progress["win_streak"]
+	var multiplier := maxi(1, star_multiplier)
 	match result:
 		"win":
 			streak += 1
-			points += win_bonus_stars(streak, previous_points)
+			points += win_bonus_stars(streak, previous_points) * multiplier
 		"loss":
 			streak = 0
-			points = maxi(points - 1, int(current_rank["floor_points"]))
+			points = maxi(points - multiplier, int(current_rank["floor_points"]))
 		"draw":
 			streak = 0
 		_:
@@ -60,23 +62,28 @@ static func win_bonus_stars(streak_including_win: int, current_points: int) -> i
 		bonus = 2
 	return bonus
 
+# Bo3 rated matches move stars at double the Bo1 rate in both directions.
+static func star_multiplier_for_format(best_of: int) -> int:
+	return BO3_STAR_MULTIPLIER if best_of == 3 else 1
+
 # Applies a rated outcome to a bot ladder record ("wins"/"losses"/"draws",
 # "stars", and "win_streak") using the same ladder rules as players. Bots never
 # store season progress, so the streak lives directly on the record that
 # RankedBotDeckPool replays from history.
-static func apply_bot_result(record: Dictionary, outcome: String) -> void:
+static func apply_bot_result(record: Dictionary, outcome: String, star_multiplier: int = 1) -> void:
+	var multiplier := maxi(1, star_multiplier)
 	match outcome:
 		"win":
 			record["wins"] = int(record.get("wins", 0)) + 1
 			var streak := int(record.get("win_streak", 0)) + 1
 			record["win_streak"] = streak
 			var stars := int(record.get("stars", 0))
-			record["stars"] = stars + win_bonus_stars(streak, stars)
+			record["stars"] = stars + win_bonus_stars(streak, stars) * multiplier
 		"loss":
 			record["losses"] = int(record.get("losses", 0)) + 1
 			record["win_streak"] = 0
 			var stars := int(record.get("stars", 0))
-			record["stars"] = maxi(int(_rank_at(stars)["floor_points"]), stars - 1)
+			record["stars"] = maxi(int(_rank_at(stars)["floor_points"]), stars - multiplier)
 		"draw":
 			record["draws"] = int(record.get("draws", 0)) + 1
 			record["win_streak"] = 0

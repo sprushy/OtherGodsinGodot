@@ -115,6 +115,7 @@ const RANKED_RULES_TOOLTIP := "Both players must sign in for a rated match to co
 	+ "Each division takes three stars. A win earns one star. " \
 	+ "From your third consecutive win through Gold, wins earn two stars. " \
 	+ "Losses cost one star starting in Silver, with floors at Divisions V and III. " \
+	+ "Bo3 wins and losses count double for stars. " \
 	+ "Ranks reset monthly based on your season peak."
 const LOCAL_BOT_MATCH_MIN_AVAILABLE_BYTES := 2 * 1024 * 1024 * 1024
 const LOCAL_BOT_MATCH_MEMORY_PER_WORKER := 1024 * 1024 * 1024
@@ -1636,8 +1637,6 @@ func _fit_embedded_game_to_container(game: Node) -> void:
 		return
 	var control := game as Control
 	control.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	control.position = Vector2.ZERO
-	control.size = game_container.size
 
 func _fit_to_viewport() -> void:
 	position = Vector2.ZERO

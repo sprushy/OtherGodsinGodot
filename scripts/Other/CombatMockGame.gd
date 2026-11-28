@@ -6840,6 +6840,10 @@ func _prepare_for_match_launch(status_message: String = "Connecting to match..."
 	_pending_post_game_return_to_menu = false
 	_series_between_games_active = false
 	_network_host_series_phase_active = false
+	# A new match must not inherit the previous series' score: the observer
+	# badge streaks and format label read this snapshot in preference to the
+	# fresh series data in _current_match_info until the next series event.
+	_series_snapshot.clear()
 	_temporary_full_control = false
 	_constant_full_control = false
 	_full_control_chord_latched = false
@@ -30240,7 +30244,13 @@ func _hide_reinforcement_overlay() -> void:
 	_reinforcement_submit_button = null
 	_reinforcement_locked = false
 
-func _show_spectator_reinforcements(title: String, status: String, changes: Array, close_text: String) -> void:
+func _show_spectator_reinforcements(
+	title: String,
+	status: String,
+	changes: Array,
+	close_text: String,
+	decks: Array = []
+) -> void:
 	_hide_reinforcement_overlay()
 	var layer := CanvasLayer.new()
 	layer.name = "SpectatorReinforcementLayer"
@@ -30273,15 +30283,25 @@ func _show_spectator_reinforcements(title: String, status: String, changes: Arra
 	heading.add_theme_font_size_override("font_size", 26)
 	content.add_child(heading)
 
-	if changes.is_empty():
+	var status_text := status.strip_edges()
+	if not status_text.is_empty():
+		var status_label := Label.new()
+		status_label.text = status_text
+		status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		content.add_child(status_label)
+
+	var player_count := maxi(changes.size(), decks.size())
+	if player_count <= 0:
 		var message := Label.new()
-		message.text = status
+		message.text = "Waiting for the players to finish sideboarding."
 		message.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		message.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		message.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		message.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		content.add_child(message)
 	else:
+		var waiting_for_swaps := not status_text.is_empty()
 		var scroll := ScrollContainer.new()
 		scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 		scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -30290,19 +30310,51 @@ func _show_spectator_reinforcements(title: String, status: String, changes: Arra
 		results.add_theme_constant_override("separation", 16)
 		results.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		scroll.add_child(results)
-		for player_index in range(changes.size()):
-			var player_changes: Dictionary = changes[player_index]
+		for player_index in range(player_count):
+			var deck_entry: Dictionary = {}
+			if player_index < decks.size() and decks[player_index] is Dictionary:
+				deck_entry = decks[player_index]
+			var player_changes: Dictionary = {}
+			if player_index < changes.size() and changes[player_index] is Dictionary:
+				player_changes = changes[player_index]
+			var player_name_text := str(deck_entry.get("player_name", "")).strip_edges()
+			if player_name_text.is_empty():
+				player_name_text = _get_player_display_name_for_index(player_index)
 			var player_name := Label.new()
-			player_name.text = _get_player_display_name_for_index(player_index)
+			player_name.text = player_name_text
 			player_name.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 			player_name.add_theme_font_size_override("font_size", 22)
 			results.add_child(player_name)
 			var columns := HBoxContainer.new()
 			columns.add_theme_constant_override("separation", 24)
+			columns.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			results.add_child(columns)
-			_add_spectator_reinforcement_column(columns, "Out of main deck", player_changes.get("out", {}))
-			_add_spectator_reinforcement_column(columns, "Into main deck", player_changes.get("in", {}))
-			if player_index < changes.size() - 1:
+			if not deck_entry.is_empty():
+				_add_spectator_deck_column(columns, "Main Deck", deck_entry.get("cards", {}), 2.2)
+				_add_spectator_deck_column(columns, "Reinforcements", deck_entry.get("reinforcements", {}), 1.4)
+			var swaps := VBoxContainer.new()
+			swaps.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			swaps.size_flags_stretch_ratio = 1.4
+			swaps.add_theme_constant_override("separation", 8)
+			columns.add_child(swaps)
+			var swaps_heading := Label.new()
+			swaps_heading.text = "Swaps"
+			swaps_heading.add_theme_color_override("font_color", Color(0.62, 0.85, 1.0))
+			swaps.add_child(swaps_heading)
+			var out_cards = player_changes.get("out", {})
+			var in_cards = player_changes.get("in", {})
+			var has_swaps := (out_cards is Dictionary and not (out_cards as Dictionary).is_empty()) \
+				or (in_cards is Dictionary and not (in_cards as Dictionary).is_empty())
+			if has_swaps:
+				_add_spectator_swap_list(swaps, "Out of main deck", out_cards)
+				_add_spectator_swap_list(swaps, "Into main deck", in_cards)
+			else:
+				var no_swaps := Label.new()
+				no_swaps.text = "Swaps will appear after both players lock in." if waiting_for_swaps \
+					else "No cards were swapped."
+				no_swaps.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+				swaps.add_child(no_swaps)
+			if player_index < player_count - 1:
 				results.add_child(HSeparator.new())
 
 	var close_button := Button.new()
@@ -30312,23 +30364,123 @@ func _show_spectator_reinforcements(title: String, status: String, changes: Arra
 	close_button.pressed.connect(_hide_reinforcement_overlay)
 	content.add_child(close_button)
 
-func _add_spectator_reinforcement_column(parent: HBoxContainer, title: String, cards: Dictionary) -> void:
+func _add_spectator_deck_column(
+	parent: HBoxContainer,
+	title: String,
+	cards,
+	stretch_ratio: float = 1.0
+) -> void:
 	var column := VBoxContainer.new()
 	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	column.size_flags_stretch_ratio = stretch_ratio
 	parent.add_child(column)
 	var heading := Label.new()
 	heading.text = title
 	heading.add_theme_color_override("font_color", Color(0.62, 0.85, 1.0))
 	column.add_child(heading)
-	var card_names := cards.keys()
+	var list := Label.new()
+	list.text = _format_spectator_deck_text(cards)
+	list.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	column.add_child(list)
+
+func _format_spectator_deck_text(cards) -> String:
+	if not (cards is Dictionary) or (cards as Dictionary).is_empty():
+		return "None"
+	var card_names: Array = []
+	var order_by_name: Dictionary = {}
+	for raw_name in (cards as Dictionary).keys():
+		if int((cards as Dictionary)[raw_name]) <= 0:
+			continue
+		var card_name := str(raw_name)
+		card_names.append(card_name)
+		order_by_name[card_name] = _get_spectator_deck_type_order(card_name)
+	card_names.sort_custom(func(a, b) -> bool:
+		var order_a := int(order_by_name.get(str(a), 8))
+		var order_b := int(order_by_name.get(str(b), 8))
+		if order_a != order_b:
+			return order_a < order_b
+		return str(a).to_lower() < str(b).to_lower()
+	)
+	var total := 0
+	var lines: PackedStringArray = []
+	var last_order := -1
+	for card_name in card_names:
+		total += int((cards as Dictionary)[card_name])
+		var order := int(order_by_name.get(str(card_name), 8))
+		if order != last_order:
+			if not lines.is_empty():
+				lines.append("")
+			lines.append(_get_spectator_deck_type_heading(order))
+			last_order = order
+		lines.append("%d × %s" % [int((cards as Dictionary)[card_name]), str(card_name)])
+	return "%d cards\n%s" % [total, "\n".join(lines)]
+
+func _get_spectator_deck_type_order(card_name: String) -> int:
+	var card := CardCatalog.instantiate_card_by_name(card_name)
+	if card == null:
+		return 8
+	if card.is_god:
+		return 0
+	if card.is_power:
+		return 1
+	match card.card_type:
+		Card.CardType.CREATURE:
+			return 2
+		Card.CardType.EQUIPMENT:
+			return 3
+		Card.CardType.CHARM:
+			return 4
+		Card.CardType.SPELL:
+			return 5
+		Card.CardType.STRUCTURE:
+			return 6
+		Card.CardType.HEX:
+			return 7
+	return 8
+
+func _get_spectator_deck_type_heading(order: int) -> String:
+	match order:
+		0:
+			return "— Gods —"
+		1:
+			return "— Powers —"
+		2:
+			return "— Creatures —"
+		3:
+			return "— Equipment —"
+		4:
+			return "— Charms —"
+		5:
+			return "— Spells —"
+		6:
+			return "— Structures —"
+		7:
+			return "— Hexes —"
+	return "— Other —"
+
+func _add_spectator_swap_list(parent: VBoxContainer, title: String, cards) -> void:
+	var heading := Label.new()
+	heading.text = title
+	heading.add_theme_color_override("font_color", Color(0.72, 0.78, 0.86))
+	parent.add_child(heading)
+	var list := Label.new()
+	list.text = _format_spectator_card_counts(cards)
+	list.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	parent.add_child(list)
+
+func _format_spectator_card_counts(cards) -> String:
+	if not (cards is Dictionary) or (cards as Dictionary).is_empty():
+		return "None"
+	var card_names: Array = (cards as Dictionary).keys()
 	card_names.sort()
 	var entries: PackedStringArray = []
-	for card_name in card_names:
-		entries.append("%d × %s" % [int(cards[card_name]), card_name])
-	var list := Label.new()
-	list.text = "None" if entries.is_empty() else "\n".join(entries)
-	list.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	column.add_child(list)
+	for raw_name in card_names:
+		var count := int((cards as Dictionary)[raw_name])
+		if count <= 0:
+			continue
+		entries.append("%d × %s" % [count, str(raw_name)])
+	return "None" if entries.is_empty() else "\n".join(entries)
 
 func _show_reinforcement_phase(data: Dictionary) -> void:
 	_hide_game_result_overlay()
@@ -31502,10 +31654,15 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 		"series_game_started":
 			_begin_next_series_game(data)
 			var changes: Array = data.get("reinforcement_changes", [])
-			if _is_observer_mode and not changes.is_empty():
+			var spectator_decks: Array = data.get("decks", [])
+			if _is_observer_mode and (not changes.is_empty() or not spectator_decks.is_empty()):
 				var game_number := int(_series_snapshot.get("game_number", 2))
 				_show_spectator_reinforcements(
-					"Reinforcement changes for Game %d" % game_number, "", changes, "Watch Game %d" % game_number
+					"Reinforcement changes for Game %d" % game_number,
+					"",
+					changes,
+					"Watch Game %d" % game_number,
+					spectator_decks
 				)
 		"series_game_ended":
 			_series_snapshot = (data.get("series", {}) as Dictionary).duplicate(true)
@@ -31519,7 +31676,11 @@ func _apply_network_event(event_type: String, data: Dictionary) -> void:
 				if not result_message.is_empty():
 					status = result_message + "\n\n" + status
 				_show_spectator_reinforcements(
-					"Reinforcements before Game %d" % (game_number + 1), status, [], "Back to board"
+					"Reinforcements before Game %d" % (game_number + 1),
+					status,
+					[],
+					"Back to board",
+					data.get("decks", [])
 				)
 		"series_ended":
 			_series_snapshot = (data.get("series", {}) as Dictionary).duplicate(true)

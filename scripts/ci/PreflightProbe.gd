@@ -51,6 +51,7 @@ func run() -> bool:
 	_ran = true
 	var failures: PackedStringArray = []
 	_check_bot_crowded_board_planning(failures)
+	_check_bot_crowded_combat_forecasts(failures)
 	_check_card_catalog(failures)
 	_check_legacy_card_culture(failures)
 	_check_harii_shaman_culture(failures)
@@ -1180,6 +1181,20 @@ func _check_ranked_progression(failures: PackedStringArray) -> void:
 	summary = RankedProgressionScript.summarize(progress, season)
 	if summary["rank_name"] != "Divine" or summary["points"] != 90 or summary["stars"] != 0 or summary["last_delta"] != 0:
 		failures.append("Ranked progression did not reach or protect Divine at 90 stars")
+	var bo3_progress := {}
+	RankedProgressionScript.apply_result(bo3_progress, "win", season, RankedProgressionScript.star_multiplier_for_format(3))
+	RankedProgressionScript.apply_result(bo3_progress, "win", season, RankedProgressionScript.star_multiplier_for_format(3))
+	summary = RankedProgressionScript.summarize(bo3_progress, season)
+	if summary["points"] != 4 or summary["stars"] != 1 or summary["last_delta"] != 2:
+		failures.append("Bo3 wins did not award double stars")
+	var bo3_loss_progress := {
+		"season": season, "points": 40, "peak_points": 40,
+		"win_streak": 0, "matches": 0, "last_delta": 0,
+	}
+	RankedProgressionScript.apply_result(bo3_loss_progress, "loss", season, RankedProgressionScript.star_multiplier_for_format(3))
+	summary = RankedProgressionScript.summarize(bo3_loss_progress, season)
+	if summary["points"] != 38 or summary["last_delta"] != -2:
+		failures.append("Bo3 losses did not deduct double stars")
 	summary = RankedProgressionScript.summarize(progress, season + 2)
 	if summary["rank_name"] != "Diamond V" or summary["season"] != "2026-03" or summary["matches"] != 0:
 		failures.append("Ranked progression did not reset using the peak and elapsed seasons")
@@ -1282,12 +1297,12 @@ func _check_dedicated_ranked_history(failures: PackedStringArray) -> void:
 		failures.append("Dedicated ranked history lost, duplicated, or miscounted match results")
 	var bo3_progress: Dictionary = winner_summary["ranked_bo3_progress"]
 	if bo3_progress["matches"] != 1 or bo3_progress["win_streak"] != 1 \
-			or bo3_progress["rank_name"] != "Iron V" or bo3_progress["stars"] != 1:
-		failures.append("Bo3 ranked progression did not stay independent of Bo1")
+			or bo3_progress["rank_name"] != "Iron V" or bo3_progress["stars"] != 2:
+		failures.append("Bo3 ranked progression did not stay independent of Bo1 or double its star gain")
 	var usernames := {"account_a": "Winner", "account_b": "Opponent"}
 	var bo1_ladder := reader.get_human_ladder(usernames, 1)
 	var bo3_ladder := reader.get_human_ladder(usernames, 3)
-	if bo1_ladder[0]["points"] != 4 or bo3_ladder[0]["points"] != 1:
+	if bo1_ladder[0]["points"] != 4 or bo3_ladder[0]["points"] != 2:
 		failures.append("Ladder standings did not use the requested ranked format")
 	if bo1_ladder[0]["wins"] != 3 or bo3_ladder[0]["wins"] != 1 \
 			or bo1_ladder[0]["losses"] != 0 or bo3_ladder[0]["losses"] != 0 \
@@ -1308,8 +1323,9 @@ func _check_dedicated_ranked_history(failures: PackedStringArray) -> void:
 			or first_loss.get("star_delta") != 0 or first_loss.get("stars") != 0 or first_loss.get("loss_protected") != true:
 		failures.append("Ranked recap did not return each player's exact result after later matches")
 	var bo3_result: Dictionary = reader.get_ranked_match_results(bo3_match["entry"]).get(0, {})
-	if bo3_result.get("best_of") != 3 or bo3_result.get("previous_stars") != 0 or bo3_result.get("stars") != 1:
-		failures.append("Bo3 ranked recap used progress from a different format")
+	if bo3_result.get("best_of") != 3 or bo3_result.get("previous_stars") != 0 \
+			or bo3_result.get("stars") != 2 or bo3_result.get("star_delta") != 2:
+		failures.append("Bo3 ranked recap used progress from a different format or a single-star gain")
 	var promotion: Dictionary = reader.get_ranked_match_results(promotion_match["entry"]).get(0, {})
 	if promotion.get("previous_rank_name") != "Iron V" or promotion.get("previous_stars") != 2 \
 			or promotion.get("rank_name") != "Iron IV" or promotion.get("stars") != 1 or promotion.get("star_delta") != 2:
@@ -3515,11 +3531,76 @@ func _check_bot_crowded_board_planning(failures: PackedStringArray) -> void:
 	print("Crowded board forecast: ", forecast, " in ", forecast_msec, " ms")
 	if forecast_msec > 5_000:
 		failures.append("The crowded-board combat forecast blocked planning for more than five seconds.")
+	bot.allow_deep_crowded_combat = true
 	started = Time.get_ticks_msec()
 	var acted := bot._take_main_phase_action()
 	print("Crowded board main-phase decision: ", Time.get_ticks_msec() - started, " ms")
 	if not acted:
 		failures.append("Bot did not find a legal action on a crowded board.")
+	if bot._crowded_budget != null:
+		failures.append("Bot retained crowded-board search work after submitting its move.")
+	bot.detach()
+
+
+func _check_bot_crowded_combat_forecasts(failures: PackedStringArray) -> void:
+	var game := _new_fixture_game()
+	var player := _new_fixture_player()
+	var opponent := _new_fixture_player()
+	game.players.assign([player, opponent])
+	game.current_player = player
+	game.other_player = opponent
+	game.turn_number = 3
+	game._upkeep_resolved_turn = game.turn_number
+	opponent.followers = 35
+	for side: Player in game.players:
+		side.game_manager = game
+		for zone in side.frontline_zones + [side.reserve_zones[0]]:
+			var creature := CreatureCard.new()
+			creature.card_owner = side
+			creature.strength = 10
+			creature.creature_mode = Card.CreatureMode.AGGRESSIVE
+			creature.is_sleeping = side == opponent
+			zone.add_card(creature)
+	var manager := _new_fixture_match(game)
+	var bot := _new_fixture_bot()
+	bot.attach(game, manager, ServerBotGameInput.new(manager, 0), 0)
+	var attacks := bot._get_combat_candidates()
+	bot._begin_crowded_planning(false)
+	var shallow := bot._plan_combat(attacks)
+	bot._begin_crowded_planning(true)
+	var deep := bot._plan_combat(attacks)
+	if shallow.get("lethal", false) or not deep.get("lethal", false) or deep.get("attackers", []).size() != 4:
+		failures.append("Isolated crowded-board search missed a four-attack lethal beyond the shared-host horizon.")
+	var work_left := bot._crowded_budget.extra_attack_trials_left
+	if work_left != bot.CROWDED_EXTRA_ATTACK_TRIALS - 2 * attacks.size():
+		failures.append("The deeper combat search did not charge each extra attack layer to the decision.")
+	bot._crowded_budget.extra_attack_trials_left = attacks.size() - 1
+	if bot._plan_combat(attacks) != shallow:
+		failures.append("An exhausted search budget changed the best completed shallow combat plan.")
+	bot._crowded_budget = null
+	# With only two surviving targets, a kill can open an enslavement of the other.
+	var goddess := AphroditeAreia.new()
+	goddess.card_owner = opponent
+	opponent.god_zone.add_card(goddess)
+	opponent.mana = AphroditeAreia.ACTIVATION_COST
+	var creatures := bot._get_board_creatures(player)
+	var removed := creatures.slice(2)
+	var first := creatures[0]
+	var second := creatures[1]
+	first.strength = 1000
+	second.strength = 1000
+	if bot._opponent_aphrodite_enslave_exposure(removed) != 0:
+		failures.append("Aphrodite forecast an enslavement without a possible opening kill.")
+	first.strength = 10
+	@warning_ignore("integer_division")
+	var survivor_risk := bot._get_card_economic_value(second) / 4
+	if bot._opponent_aphrodite_enslave_exposure(removed) != survivor_risk:
+		failures.append("Aphrodite did not value the survivor of the only possible kill.")
+	second.strength = 10
+	@warning_ignore("integer_division")
+	var best_risk := maxi(bot._get_card_economic_value(first), bot._get_card_economic_value(second)) / 4
+	if bot._opponent_aphrodite_enslave_exposure(removed) != best_risk:
+		failures.append("Aphrodite missed the best surviving target when either creature could be killed.")
 	bot.detach()
 
 
@@ -3546,6 +3627,14 @@ func _check_bot_opponent_turn_lookahead(failures: PackedStringArray) -> void:
 		opponent.frontline_zones[index].add_card(attacker)
 	if bot._forecast_incoming_follower_loss() != 20:
 		failures.append("Bot did not count three legal attacks with shared Guard")
+	var memo := {}
+	var visits: Array[int] = [1]
+	var resources := Vector4i(100, 4, 100, 0)
+	var spent := [opponent.frontline_zones[0].cards[0], opponent.frontline_zones[1].cards[0]]
+	var completed := bot._search_turn_attacks([], 0, resources, spent, [], memo, visits)
+	spent.reverse()
+	if completed != 0 or visits[0] != 0 or bot._search_turn_attacks([], 0, resources, spent, [], memo, visits) != completed:
+		failures.append("An equivalent attack order could not reuse a completed forecast after the last search visit.")
 
 	var change := {"removed": [opponent.frontline_zones[1].cards.front(), opponent.frontline_zones[2].cards.front()]}
 	var god := HermesPsychopompus.new()
@@ -3655,6 +3744,19 @@ func _check_bot_turn_line_projection(failures: PackedStringArray) -> void:
 		{"score": 100, "command": {"type": "creature_move", "card_uid": attacker.uid, "player_index": 0,
 			"zone_type": Zone.ZoneType.FRONTLINE, "zone_index": 0}},
 	]
+	# A large gap in the immediate estimates must not veto a crowded-board replay.
+	bot._crowded_budget = ThorPracticeBot.CrowdedPlanningBudget.new()
+	var ranked: Array[Dictionary] = [actions[0].merged({"line_score": 8000}), actions[1].merged({"line_score": 100})]
+	for row in [Zone.ZoneType.FRONTLINE, Zone.ZoneType.RESERVE]:
+		var alternate := actions[1].duplicate(true)
+		alternate["command"]["zone_type"] = row
+		alternate["command"]["zone_index"] = 1
+		alternate["line_score"] = 50
+		ranked.append(alternate)
+	bot._compare_main_phase_continuations(ranked, 0, 0, 0)
+	if not ranked.all(func(line: Dictionary) -> bool: return line.has("combat_score")):
+		failures.append("Crowded planning skipped the follow-up to a move with a low immediate estimate.")
+	bot._crowded_budget = null
 	if not bot._execute_best_main_phase_line(actions, [], {}, 0, 0) or attacker.current_zone != player.frontline_zones[0] \
 			or attacker.creature_mode != Card.CreatureMode.AGGRESSIVE:
 		failures.append("Bot chose the higher immediate score over the move that opened the better attack line")
@@ -7329,7 +7431,14 @@ func _check_request_next(failures: PackedStringArray) -> void:
 			or lobby._build_room_list(viewer["session_id"])[0].has("request_next_match_id"):
 		failures.append("Request Next did not distinguish a finished match from a rejoinable match")
 	DirAccess.remove_absolute(session.status_file_path)
+	# Simulate the window during replacement when only the previous status is visible.
+	var after_startup_grace := session.created_unix + MatchSupervisorScript.MATCH_STATUS_FILE_STARTUP_GRACE_SECONDS
+	if not supervisor.is_match_ready_for_clients(session.match_id) \
+			or not supervisor._get_status_file_close_reason(session, after_startup_grace).is_empty():
+		failures.append("MatchSupervisor did not use the previous status during replacement")
 	DirAccess.remove_absolute(session.status_file_path + ".bak")
+	if supervisor._get_status_file_close_reason(session, after_startup_grace) != MatchSessionScript.STATUS_ABANDONED:
+		failures.append("MatchSupervisor did not time out a match with no status after the startup grace period")
 	supervisor.free()
 	lobby.free()
 
@@ -7563,7 +7672,7 @@ func _check_bo3_bot_ladder_separation(failures: PackedStringArray) -> void:
 	var bo3_mirror := bo1_pool.get_deck_details("bo3_only_bot")
 	if bo1_details.is_empty() or int(bo1_details.get("wins", 0)) != 1 or int(bo1_details.get("stars", 0)) != 1 \
 			or bo1_mirror.is_empty() or int(bo1_mirror.get("wins", 0)) != 0 or int(bo1_mirror.get("stars", 0)) != 0 \
-			or bo3_details.is_empty() or int(bo3_details.get("wins", 0)) != 1 or int(bo3_details.get("stars", 0)) != 1 \
+			or bo3_details.is_empty() or int(bo3_details.get("wins", 0)) != 1 or int(bo3_details.get("stars", 0)) != 2 \
 			or bo3_mirror.is_empty() or int(bo3_mirror.get("wins", 0)) != 0 or int(bo3_mirror.get("stars", 0)) != 0:
 		failures.append("A mirrored cross-format bot carried the other format's record instead of a zeroed one")
 	if str(bo1_mirror.get("deck_name", "")) != str(bo1_details.get("deck_name", "")) \

@@ -56,6 +56,7 @@ func _send_spectator_reinforcement_phase(peer_id: int) -> void:
 		"winner_index": game_manager.players.find(game_manager.winning_player),
 		"series": match_session.get_series_snapshot(),
 		"result_message": game_manager.get_game_result_message(),
+		"decks": _get_spectator_deck_payload(),
 	})
 
 func broadcast_next_series_game() -> void:
@@ -81,7 +82,30 @@ func _send_spectator_series_game_started(peer_id: int) -> void:
 	network_manager.broadcast_event_to_peer(peer_id, "series_game_started", {
 		"series": match_session.get_series_snapshot(),
 		"reinforcement_changes": _last_reinforcement_changes,
+		"decks": _get_spectator_deck_payload(),
 	})
+
+## Full main deck and Reinforcement lists for the between-games spectator
+## screen. Only spectator payloads call this; player payloads stay personalized.
+func _get_spectator_deck_payload() -> Array[Dictionary]:
+	var decks: Array[Dictionary] = []
+	if match_session == null:
+		return decks
+	var public_names: Array = match_session.get_public_player_names()
+	for player_index in range(match_session.player_session_ids.size()):
+		var session_id := str(match_session.player_session_ids[player_index]).strip_edges()
+		var submission: Dictionary = match_session.player_decks_by_session.get(session_id, {})
+		if not (submission is Dictionary):
+			submission = {}
+		var cards = submission.get("cards", {})
+		var reinforcements = submission.get("reinforcements", {})
+		decks.append({
+			"player_name": str(public_names[player_index]) if player_index < public_names.size() \
+				else "Player %d" % (player_index + 1),
+			"cards": (cards as Dictionary).duplicate(true) if cards is Dictionary else {},
+			"reinforcements": (reinforcements as Dictionary).duplicate(true) if reinforcements is Dictionary else {},
+		})
+	return decks
 
 static func _get_removed_card_counts(before: Dictionary, after: Dictionary) -> Dictionary:
 	var removed := {}

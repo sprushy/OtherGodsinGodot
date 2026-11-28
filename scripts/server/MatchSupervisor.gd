@@ -558,13 +558,12 @@ func _get_status_file_close_reason(session, now_unix: int) -> String:
 	var status_path := str(session.status_file_path).strip_edges()
 	if status_path.is_empty():
 		return ""
-	if not FileAccess.file_exists(status_path):
-		var created_unix := int(session.created_unix)
-		if created_unix > 0 and now_unix - created_unix >= MATCH_STATUS_FILE_STARTUP_GRACE_SECONDS:
-			return MatchSessionScript.STATUS_ABANDONED
-		return ""
-	var status_data := JsonStoreScript.load_dictionary(status_path, {}, "MatchSupervisor")
+	var status_data := _load_status_file(session)
 	if status_data.is_empty():
+		var created_unix := int(session.created_unix)
+		if created_unix > 0 and now_unix - created_unix >= MATCH_STATUS_FILE_STARTUP_GRACE_SECONDS \
+				and not FileAccess.file_exists(status_path) and not FileAccess.file_exists(status_path + ".bak"):
+			return MatchSessionScript.STATUS_ABANDONED
 		return ""
 	var status := str(status_data.get("status", "")).strip_edges()
 	if status == MatchSessionScript.STATUS_FINISHED:
@@ -591,9 +590,10 @@ func _load_status_file(session) -> Dictionary:
 	if session == null:
 		return {}
 	var status_path := str(session.status_file_path).strip_edges()
-	if status_path.is_empty() or not FileAccess.file_exists(status_path):
+	if status_path.is_empty():
 		return {}
-	return JsonStoreScript.load_dictionary(status_path, {}, "MatchSupervisor")
+	# The primary path can briefly disappear during replacement on Windows.
+	return JsonStoreScript.load_dictionary(status_path, {}, "MatchSupervisor", false)
 
 func _resolve_headless_executable_path(executable_path: String) -> String:
 	var normalized_path := executable_path.strip_edges()

@@ -33,8 +33,10 @@ static func capture(bot) -> Dictionary:
 	return snapshot
 
 
-func _init(origin, snapshot: Dictionary) -> void:
+func _init(origin, snapshot: Dictionary, source_cards: Dictionary = {}) -> void:
 	var live: GameManager = origin.game_manager
+	if source_cards.is_empty():
+		source_cards = GameState._build_card_uid_map(live)
 	game = GameManager.new()
 	game.sfx_enabled = false
 	game.log_player_feedback = false
@@ -69,7 +71,7 @@ func _init(origin, snapshot: Dictionary) -> void:
 				if card.uid.is_empty() or card.card_name == "Hidden card":
 					_unknown_cards[card] = zone
 					continue
-				var source := live.get_card_by_uid(card.uid)
+				var source := source_cards.get(card.uid) as Card
 				if source == null:
 					continue
 				var owner_index := live.players.find(source.card_owner)

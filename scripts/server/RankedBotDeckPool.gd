@@ -20,6 +20,9 @@ const QUARANTINE_RELEASE_WIN_RATE_DENOMINATOR := 5
 const EXPLORATION_CHANCE := 0.30
 const DECK_NAME_KEY_PREFIX := "D|"
 const ASSIGNED_NAMES_VERSION := 2
+# Bumped when the star math changes so saved per-format pools full-replay
+# instead of resuming from records computed under the old rules.
+const STAR_RULES_VERSION := 2
 # How many of the worst bots per god are kept as quarantined bad bots for
 # forced matchmaking (Iron V and post-loss Iron/Bronze pairing).
 const QUARANTINED_PER_GOD := 1
@@ -1058,6 +1061,7 @@ func save_state(path: String, result_count: int = 0) -> bool:
 		"last_replayed_id": _last_replayed_id,
 		"result_count": result_count,
 		"assigned_names_version": ASSIGNED_NAMES_VERSION,
+		"star_rules_version": STAR_RULES_VERSION,
 		"assigned_names": _assigned_names_by_deck,
 	}
 	# Machine-only state file: compact JSON roughly halves its size versus the
@@ -1082,6 +1086,11 @@ func load_state(path: String) -> bool:
 	# The loaded state matches the file on disk; only genuine repairs below
 	# (or later refreshes/syncs) should mark state as needing a save.
 	_state_changed = false
+	if int(loaded.get("star_rules_version", 1)) < STAR_RULES_VERSION:
+		# Records saved under older star math are replayed from the full
+		# result history so the new rule applies retroactively.
+		_replayed_match_count = -1
+		_last_replayed_id = ""
 	if int(loaded.get("assigned_names_version", 1)) < ASSIGNED_NAMES_VERSION:
 		_migrate_saved_deck_names()
 	_audit_active_lists()
@@ -1160,6 +1169,7 @@ func _apply_result(result: Dictionary) -> void:
 		return
 	var submission: Dictionary = _community_bots_by_id.get(list_id, {})
 	var outcome: String = result["result"]
+	var best_of := int(result.get("best_of", 1))
 	# Losses to human players do not count toward bot evaluation: only self-play
 	# results and wins against players shape records, stars, retirement, and
 	# trials. Records are rebuilt by replaying history, so this applies
@@ -1171,7 +1181,7 @@ func _apply_result(result: Dictionary) -> void:
 	var challenger: Dictionary = pool["challenger"]
 	if not list_id.is_empty():
 		if not challenger.is_empty() and list_id == challenger["list_id"]:
-			_update_record(challenger, outcome)
+			_update_record(challenger, outcome, best_of)
 			if _get_played_match_count(challenger) >= int(challenger["trial_target_games"]):
 				_resolve_trial(pool)
 			return
@@ -1182,7 +1192,7 @@ func _apply_result(result: Dictionary) -> void:
 				var new_fingerprint := _fingerprint(result)
 				if list.get("fingerprint", "") != new_fingerprint:
 					list["fingerprint"] = new_fingerprint
-				_update_record(list, outcome)
+				_update_record(list, outcome, best_of)
 				if _is_quarantined_list(pool, list_id):
 					_maybe_release_quarantined(pool, list)
 				if list_id == pool["quarantined_id"] and not challenger.is_empty():
@@ -1199,7 +1209,7 @@ func _apply_result(result: Dictionary) -> void:
 				var held_fingerprint := _fingerprint(result)
 				if held.get("fingerprint", "") != held_fingerprint:
 					held["fingerprint"] = held_fingerprint
-				_update_record(held, outcome)
+				_update_record(held, outcome, best_of)
 				_maybe_release_quarantined(pool, held)
 				return
 		if submission.is_empty() and _eliminated_bot_match_ids.has(str(result.get("match_id", ""))):
@@ -1231,7 +1241,7 @@ func _apply_result(result: Dictionary) -> void:
 	if list_id.is_empty():
 		for list: Dictionary in lists:
 			if not bool(list.get("is_community_bot", false)) and list.get("fingerprint", "") == fingerprint:
-				_update_record(list, outcome)
+				_update_record(list, outcome, best_of)
 				if list["list_id"] == pool["quarantined_id"] and not challenger.is_empty():
 					challenger["trial_target_games"] = _get_played_match_count(list)
 					return
@@ -1240,13 +1250,13 @@ func _apply_result(result: Dictionary) -> void:
 					_retire_list(pool, list)
 				return
 		if not bool(challenger.get("is_community_bot", false)) and challenger.get("fingerprint", "") == fingerprint:
-			_update_record(challenger, outcome)
+			_update_record(challenger, outcome, best_of)
 			if _get_played_match_count(challenger) >= int(challenger["trial_target_games"]):
 				_resolve_trial(pool)
 			return
 		for pending: Dictionary in pool["pending"]:
 			if not bool(pending.get("is_community_bot", false)) and pending.get("fingerprint", "") == fingerprint:
-				_update_record(pending, outcome)
+				_update_record(pending, outcome, best_of)
 				if _should_retire_early(pending):
 					pool["pending"].erase(pending)
 				return
@@ -1292,7 +1302,7 @@ func _apply_result(result: Dictionary) -> void:
 		_apply_community_metadata(new_list, submission)
 	elif not _is_generic_bot_name(initial_deck_name) and not name_key.is_empty():
 		_assigned_names_by_deck[name_key] = initial_deck_name
-	_update_record(new_list, outcome)
+	_update_record(new_list, outcome, best_of)
 	# A historical result carrying an existing ladder id is restoring an
 	# established bot, so don't let a single early loss discard it. New
 	# challengers (no stable list id) still use the early-retirement rule.
@@ -1358,10 +1368,11 @@ func _start_trial(pool: Dictionary, challenger: Dictionary) -> void:
 	if _get_played_match_count(challenger) >= int(challenger["trial_target_games"]):
 		_resolve_trial(pool)
 
-func _update_record(list: Dictionary, outcome: String) -> void:
+func _update_record(list: Dictionary, outcome: String, best_of: int = 1) -> void:
 	# Records are rebuilt by replaying the full stored result history in finish
 	# order, so rule changes here apply retroactively on the next full replay.
-	RankedProgressionScript.apply_bot_result(list, outcome)
+	RankedProgressionScript.apply_bot_result(
+		list, outcome, RankedProgressionScript.star_multiplier_for_format(best_of))
 
 func _should_retire_early(list: Dictionary) -> bool:
 	var games_played := _get_played_match_count(list)

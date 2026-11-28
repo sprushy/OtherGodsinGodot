@@ -29,6 +29,7 @@ func _initialize() -> void:
 
 func _boot_server(config: Dictionary) -> void:
 	_server = HeadlessMatchServerScript.new()
+	_server.owns_match_process = true
 	get_root().add_child(_server)
 	_server.startup_failed.connect(_on_server_startup_failed)
 

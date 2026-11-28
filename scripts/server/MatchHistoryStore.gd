@@ -403,7 +403,8 @@ func get_recent_match_activities(limit: int = 12, eliminated_bot_match_ids: Dict
 		if not winner_bot_result.is_empty():
 			var previous_points := int(winner.get("bot_stars", 0))
 			var star_delta := RankedProgressionScript.win_bonus_stars(
-				int(winner.get("bot_win_streak", 0)) + 1, previous_points)
+				int(winner.get("bot_win_streak", 0)) + 1, previous_points) \
+				* RankedProgressionScript.star_multiplier_for_format(int(entry.get("best_of", 1)))
 			var previous_bot_rank := RankedProgressionScript.summarize_bot_stars(previous_points)
 			var after_bot_rank := RankedProgressionScript.summarize_bot_stars(previous_points + star_delta)
 			if previous_bot_rank["name"] != after_bot_rank["name"]:
@@ -641,6 +642,7 @@ func get_ranked_match_results(entry: Dictionary) -> Dictionary:
 		return {}
 	var best_of := int(stored_entry.get("best_of", 1))
 	var season := RankedProgressionScript.season_for_time(float(stored_entry["played_unix"]))
+	var star_multiplier := RankedProgressionScript.star_multiplier_for_format(best_of)
 	var results := {}
 	for player_entry in stored_entry["players"]:
 		var account_id := str(player_entry["account_id"])
@@ -649,7 +651,7 @@ func get_ranked_match_results(entry: Dictionary) -> Dictionary:
 		var progress := _replay_ranked_history(account_id, best_of, match_id)
 		var before := RankedProgressionScript.summarize(progress, season)
 		var outcome := str(player_entry["result"])
-		RankedProgressionScript.apply_result(progress, outcome, season)
+		RankedProgressionScript.apply_result(progress, outcome, season, star_multiplier)
 		var after := RankedProgressionScript.summarize(progress, season)
 		results[int(player_entry["player_index"])] = {
 			"best_of": best_of,
@@ -669,6 +671,7 @@ func get_ranked_match_results(entry: Dictionary) -> Dictionary:
 func _replay_ranked_history(account_id: String, best_of: int, stop_before_match_id: String = "") -> Dictionary:
 	var progress := {}
 	var match_ids := _get_sorted_ranked_ids_for_account(account_id)
+	var star_multiplier := RankedProgressionScript.star_multiplier_for_format(best_of)
 	for match_id in match_ids:
 		if match_id == stop_before_match_id:
 			break
@@ -679,7 +682,7 @@ func _replay_ranked_history(account_id: String, best_of: int, stop_before_match_
 		var season := RankedProgressionScript.season_for_time(float(entry["played_unix"]))
 		for player_entry in entry["players"]:
 			if str(player_entry["account_id"]) == account_id:
-				RankedProgressionScript.apply_result(progress, str(player_entry["result"]), season)
+				RankedProgressionScript.apply_result(progress, str(player_entry["result"]), season, star_multiplier)
 				break
 	return progress
 

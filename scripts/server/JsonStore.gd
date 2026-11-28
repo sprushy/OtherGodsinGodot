@@ -3,17 +3,18 @@ class_name JsonStore
 
 const MAX_JSON_STORE_BYTES := 16777216
 
-static func load_dictionary(storage_path: String, fallback: Dictionary = {}, label: String = "JsonStore") -> Dictionary:
+static func load_dictionary(storage_path: String, fallback: Dictionary = {}, label: String = "JsonStore", warn_on_recovery: bool = true) -> Dictionary:
 	var resolved_path := _globalize_path(storage_path)
 	var primary := _read_dictionary_result(resolved_path)
 	if bool(primary.get("ok", false)):
 		return (primary.get("data", {}) as Dictionary).duplicate(true)
-	if FileAccess.file_exists(resolved_path):
+	if warn_on_recovery and FileAccess.file_exists(resolved_path):
 		push_warning("%s: failed to read %s, trying backup." % [label, resolved_path])
 	var backup_path := _backup_path(resolved_path)
 	var backup := _read_dictionary_result(backup_path)
 	if bool(backup.get("ok", false)):
-		push_warning("%s: recovered %s from backup." % [label, resolved_path])
+		if warn_on_recovery:
+			push_warning("%s: recovered %s from backup." % [label, resolved_path])
 		return (backup.get("data", {}) as Dictionary).duplicate(true)
 	return fallback.duplicate(true)
 
@@ -41,7 +42,11 @@ static func save_json(storage_path: String, payload, label: String = "JsonStore"
 	if file == null:
 		push_warning("%s: failed to open temp JSON store %s." % [label, temp_path])
 		return false
-	file.store_string(json_text)
+	if not file.store_string(json_text):
+		file.close()
+		DirAccess.remove_absolute(temp_path)
+		push_warning("%s: failed to write temp JSON store %s." % [label, temp_path])
+		return false
 	file.flush()
 	file.close()
 
@@ -77,10 +82,11 @@ static func _read_dictionary_result(storage_path: String) -> Dictionary:
 	if file.get_length() > MAX_JSON_STORE_BYTES:
 		file.close()
 		return {"ok": false, "data": {}}
-	var parsed = JSON.parse_string(file.get_as_text())
+	var json_text := file.get_as_text()
 	file.close()
-	if parsed is Dictionary:
-		return {"ok": true, "data": (parsed as Dictionary).duplicate(true)}
+	var json := JSON.new()
+	if json.parse(json_text) == OK and json.data is Dictionary:
+		return {"ok": true, "data": (json.data as Dictionary).duplicate(true)}
 	return {"ok": false, "data": {}}
 
 static func _copy_file(source_path: String, target_path: String) -> bool:
